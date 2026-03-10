@@ -16,16 +16,20 @@ const API = (() => {
     const url = CONFIG.GAS_URL || localStorage.getItem(CONFIG.LS_KEYS.GAS_URL) || '';
     if (!url) throw new Error('GAS URLが設定されていません。設定画面から入力してください。');
 
-    const body = JSON.stringify({ action, ...payload });
+    // GASはGETリクエストでCORSを回避する
+    const params = new URLSearchParams({
+      action,
+      payload: JSON.stringify(payload),
+    });
+    const fullUrl = `${url}?${params.toString()}`;
+
     const ctrl = new AbortController();
     const tid  = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
 
     try {
-      const res = await fetch(url, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body,
-        signal:  ctrl.signal,
+      const res = await fetch(fullUrl, {
+        method: 'GET',
+        signal: ctrl.signal,
       });
       clearTimeout(tid);
 
