@@ -28,8 +28,9 @@ const API = (() => {
 
     try {
       const res = await fetch(fullUrl, {
-        method: 'GET',
-        signal: ctrl.signal,
+        method:   'GET',
+        redirect: 'follow',
+        signal:   ctrl.signal,
       });
       clearTimeout(tid);
 
