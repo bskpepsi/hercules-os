@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#0d1a0d">
+  <title>HerculesOS</title>
+  <link rel="stylesheet" href="css/styles.css">
+  <!-- QRコード生成ライブラリ（ラベル印刷用） -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <!-- グラフライブラリ（体重推移グラフ用） -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+</head>
+<body>
+
+<div id="app">
+  <!-- メインコンテンツ（各ページがここに動的表示される） -->
+  <main id="main">
+    <div class="spinner-wrap" style="padding-top:40px">
+      <div class="spinner"></div>
+    </div>
+  </main>
+
+  <!-- ボトムナビ（5タブ） -->
+  <nav class="bottom-nav">
+    <button class="nav-tab" data-nav="dashboard">
+      <span class="nav-icon">🏠</span>
+      <span>ホーム</span>
+    </button>
+    <button class="nav-tab" data-nav="qr-scan">
+      <span class="nav-icon">📷</span>
+      <span>スキャン</span>
+    </button>
+    <button class="nav-tab" data-nav="ind-list">
+      <span class="nav-icon">🐛</span>
+      <span>個体</span>
+    </button>
+    <button class="nav-tab" data-nav="manage">
+      <span class="nav-icon">📋</span>
+      <span>管理</span>
+    </button>
+    <button class="nav-tab" data-nav="settings">
+      <span class="nav-icon">⚙️</span>
+      <span>設定</span>
+    </button>
+  </nav>
+</div>
+
+<!-- ローディング画面 -->
+<div id="loading-overlay">
+  <div class="spinner" style="width:48px;height:48px;border-width:4px"></div>
+</div>
+
+<!-- トースト通知 -->
+<div id="toast"></div>
+
+<!--
+  ★ JS読み込み順序（変更禁止）
+  config.js → api.js → store.js → app.js → pages/*.js
+-->
+<script src="js/config.js"></script>
+<script src="js/api.js"></script>
+<script src="js/store.js"></script>
+<script src="js/app.js"></script>
+<script src="js/pages/individual.js"></script>
+<script src="js/pages/lot.js"></script>
+<script src="js/pages/growth.js"></script>
+<script src="js/pages/dashboard.js"></script>
+<script src="js/pages/parent.js"></script>
+<script src="js/pages/bloodline.js"></script>
+<script src="js/pages/pairing.js"></script>
+<script src="js/pages/label.js"></script>
+<script src="js/pages/manage.js"></script>
+<script src="js/pages/settings.js"></script>
+<script src="js/pages/scan.js"></script>
+
+</body>
+</html>
