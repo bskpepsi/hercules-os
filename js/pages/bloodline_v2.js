@@ -185,7 +185,7 @@ async function _bldSave() {
   try {
     UI.loading(true);
     await API.phase2.createBloodline(payload);
-    await Store.refreshDB();
+    await syncAll(true);
     UI.toast('血統を登録しました');
     routeTo('bloodline-list');
   } catch(e) {

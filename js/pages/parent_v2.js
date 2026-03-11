@@ -52,7 +52,7 @@ function _parentCard(p) {
     badge = '<span class="badge badge-gray">後食中</span>';
   }
 
-  const tags = _parseTags2(p.bloodline_tags);
+  const tags = _parseTags(p.bloodline_tags);
 
   return `
     <div class="card card-row" onclick="routeTo('parent-detail','${p.par_id}')">
@@ -75,10 +75,10 @@ Pages.parentDetail = async function (parId) {
   if (!p) { main.innerHTML = UI.header('種親詳細',{back:true}) + UI.empty('見つかりません'); return; }
 
   const pid    = p.parent_display_id || p.display_name;
-  const tags   = _parseTags2(p.bloodline_tags);
-  const pTags  = _parseTags2(p.paternal_tags);
-  const mTags  = _parseTags2(p.maternal_tags);
-  const cTags  = _parseTags2(p.child_tags);
+  const tags   = _parseTags(p.bloodline_tags);
+  const pTags  = _parseTags(p.paternal_tags);
+  const mTags  = _parseTags(p.maternal_tags);
+  const cTags  = _parseTags(p.child_tags);
 
   // ペアリング可能状況
   const today = new Date(); today.setHours(0,0,0,0);
@@ -340,7 +340,7 @@ async function _parentAutoExtract(type) {
     const res = await API.phase2.extractTags(raw);
     tags = res.tags || [];
   } catch(e) {
-    tags = _clientExtractTags2(raw);
+    tags = _clientExtractTags(raw);
   }
 
   if (type === 'blood') { window._parentTags  = tags; _parentRenderTags('blood'); }
@@ -630,6 +630,28 @@ async function _phSave(maleParId) {
 // parent_v2.js は parent.js より後に読み込まれるため、
 // ここで登録することで確実に v2 の関数が使われる
 // ════════════════════════════════════════════════════════════════
+// ── ユーティリティ ───────────────────────────────────────────
+function _parseTags(json) {
+  try { return JSON.parse(json) || []; } catch(e) { return []; }
+}
+
+function _clientExtractTags(raw) {
+  if (!raw) return [];
+  const known = ['T117','FF','FOX','TREX','OAKS','LS','U71','U6I','MX',
+    'KING','ROYAL','BLACK','WHITE','GOLD','SILVER','ACE',
+    'ZEUS','TITAN','ATLAS','GIANT','MAX','SUPER','HYPER',
+    'JKS','YKS','MKS','BKS','DKS','OKS',
+    'vol','CBS','WF','WD','WB','WC','SDU'];
+  const tokens = raw.split(/[×x\.\-_\s]+/i).map(t=>t.trim()).filter(Boolean);
+  const tags = new Set();
+  tokens.forEach(t => {
+    const up = t.toUpperCase();
+    known.forEach(k => { if (up.includes(k)) tags.add(k); });
+    if (/^\d{3,}$/.test(t)) tags.add(t);
+  });
+  return Array.from(tags);
+}
+
 PAGES['parent-list']      = () => Pages.parentList();
 PAGES['parent-new']       = () => Pages.parentNew(Store.getParams());
 PAGES['parent-detail']    = () => Pages.parentDetail(Store.getParams().id);
