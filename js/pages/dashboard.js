@@ -18,6 +18,8 @@ Pages.dashboard = async function () {
   if (gasUrl) {
     try {
       await syncAll(true);
+      // ★修正: syncAll完了時点でdashboard以外の画面に遷移していたら描画しない
+      if (Store.getPage() !== 'dashboard') return;
       _renderDashboard(main);
     } catch (e) { /* 失敗してもキャッシュ表示を維持 */ }
   }
