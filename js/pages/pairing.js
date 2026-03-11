@@ -98,7 +98,8 @@ Pages.pairingDetail = async function (setId) {
     ]);
     if (Store.getPage() !== 'pairing-detail') return; // 画面離脱ガード
     if (pairRes.status === 'fulfilled') pair = pairRes.value.pairing;
-    const eggs = eggRes.status === 'fulfilled' ? (eggRes.value.egg_records || []) : null;
+    // eggRes失敗時は空配列にフォールバック（旧データはcollect_datesから表示）
+    const eggs = eggRes.status === 'fulfilled' ? (eggRes.value.egg_records || []) : [];
     _renderPairDetail(pair, eggs, main);
   } catch (e) {
     if (!pair) main.innerHTML = UI.header('エラー', { back: true }) +
@@ -233,9 +234,9 @@ function _eggHistoryHtml(eggRecords, pair) {
     return `<div class="card">${title}<span>採卵履歴</span><span style="font-size:.72rem;font-weight:400;color:var(--text3)">${sorted.length}回 / 計${sumEggs}個 / 孵化${sumHatch}頭</span></div>${cards}</div>`;
   }
 
-  // eggRecordsがnull＝まだ読み込み中
+  // eggRecordsがnull＝まだ読み込み中（初期キャッシュ表示時のみ）
   if (eggRecords === null) {
-    return `<div class="card">${title}<span>採卵履歴</span><span></span></div><div style="text-align:center;padding:16px;color:var(--text3);font-size:.85rem">読み込み中…</div></div>`;
+    return `<div class="card"><div class="card-title">採卵履歴</div><div style="text-align:center;padding:16px;color:var(--text3);font-size:.85rem">読み込み中…</div></div>`;
   }
 
   // 旧データ（collect_datesのみ）フォールバック
