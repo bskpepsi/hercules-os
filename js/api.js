@@ -113,7 +113,8 @@ const API = (() => {
     list:      (f) => call('getPairings',   f || {}),
     get:       (id)=> call('getPairing',    { set_id: id }),
     update:    (d) => call('updatePairing', d),
-    addEgg:    (d) => call('addEggRecord',  d),
+    addEgg:        (d) => call('addEggRecord',  d),
+    getEggRecords: (d) => call('getEggRecords', d),
   };
 
   // ── ラベル ────────────────────────────────────────────────────
@@ -201,7 +202,29 @@ const API = (() => {
     updateSetFields: (d)      => call('updatePairing',   d),
   };
 
-  return { system, line, lot, individual, growth, parent, bloodline, pairing, label, drive, gemini, backup, scan };
+  // ── Phase2 拡張API ──────────────────────────────────────────
+  const phase2 = {
+    // 血統
+    extractTags:      (raw)      => call('extractBloodlineTags', { bloodline_raw: raw }),
+    createBloodline:  (d)        => call('createBloodlineV2', d),
+    // 種親V2
+    createParent:     (d)        => call('createParentV2', d),
+    updateParent:     (d)        => call('updateParentV2', d),
+    getPairingReady:  ()         => call('getPairingReadyStatus', {}),
+    // ペアリング履歴
+    createPairingHistory: (d)    => call('createPairingHistory', d),
+    getPairingHistories:  (d)    => call('getPairingHistories', d || {}),
+    getMalePairingStats:  (mid)  => call('getMalePairingStats', { male_parent_id: mid }),
+    // ラインV2
+    createLine:       (d)        => call('createLineV2', d),
+    // 分析
+    getLineAnalysis:  ()         => call('getLineAnalysis', {}),
+    getMotherRanking: ()         => call('getMotherRanking', {}),
+    getHeatmap:       ()         => call('getBloodlineHeatmap', {}),
+    getDashboardExt:  ()         => call('getDashboardExtended', {}),
+  };
+
+  return { system, line, lot, individual, growth, parent, bloodline, pairing, label, drive, gemini, backup, scan, phase2 };
 })();
 
 // ── Gemini プロンプト ──────────────────────────────────────────

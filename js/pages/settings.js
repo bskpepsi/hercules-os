@@ -198,6 +198,11 @@ function _renderSettings(main) {
           <input id="set-pairing-interval" class="form-input" type="number" min="1" max="60"
                  value="${Store.getSetting('male_pairing_interval_min_days') || '7'}">
           <div class="form-hint">この日数未満でペアリングすると警告が表示されます</div>
+
+          <label class="form-label" style="margin-top:16px">🥚 産卵セット交換間隔（日）</label>
+          <input id="set-exchange-days" class="form-input" type="number" min="1" max="30"
+                 value="${Store.getSetting('pairing_set_exchange_days') || '7'}">
+          <div class="form-hint">セット開始からこの日数後に交換リマインドを表示します（初期値: 7日）</div>
           <button class="btn btn-primary btn-full" style="margin-top:12px"
                   onclick="Pages._savePairingSettings()">後食・ペアリング設定を保存</button>
         </div>
@@ -531,6 +536,7 @@ Pages._savePairingSettings = async function () {
   const maleWait     = document.getElementById('set-male-wait')?.value;
   const femaleWait   = document.getElementById('set-female-wait')?.value;
   const intervalMin  = document.getElementById('set-pairing-interval')?.value;
+  const exchDays     = document.getElementById('set-exchange-days')?.value;
   if (!maleWait || !femaleWait || !intervalMin) {
     UI.toast('すべての値を入力してください'); return;
   }
@@ -539,9 +545,11 @@ Pages._savePairingSettings = async function () {
     await API.system.updateSetting('male_pairing_wait_days',    maleWait);
     await API.system.updateSetting('female_pairing_wait_days',  femaleWait);
     await API.system.updateSetting('male_pairing_interval_min_days', intervalMin);
+    if (exchDays) await API.system.updateSetting('pairing_set_exchange_days', exchDays);
     Store.setSetting('male_pairing_wait_days',    maleWait);
     Store.setSetting('female_pairing_wait_days',  femaleWait);
     Store.setSetting('male_pairing_interval_min_days', intervalMin);
+    if (exchDays) Store.setSetting('pairing_set_exchange_days', exchDays);
     UI.toast('設定を保存しました');
   } catch(e) {
     UI.toast('エラー: ' + e.message, 'error');

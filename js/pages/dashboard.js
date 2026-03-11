@@ -50,7 +50,7 @@ function _renderDashboard(main) {
   });
 
   // マット交換推奨（最終交換から60日以上経過したロット）
-  const today = new Date();
+  const today = new Date(); today.setHours(0,0,0,0);
   const exchangeDue = actLot.filter(l => {
     if (!l.mat_changed_at) return false;
     const parts = l.mat_changed_at.split('/');
@@ -59,6 +59,34 @@ function _renderDashboard(main) {
     const days = Math.floor((today - last) / 86400000);
     return days >= 60;
   });
+
+  // 産卵セット交換リマインド
+  const pairings      = Store.getDB('pairings') || [];
+  const activePairs   = pairings.filter(p => p.status === 'active' && p.set_start);
+  const exchDays      = parseInt(Store.getSetting('pairing_set_exchange_days') || '7', 10);
+  const tomorrow      = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
+
+  function _pairExchangeDue(pair) {
+    const parts = String(pair.set_start).split(/[\/\-]/);
+    if (parts.length < 3) return null;
+    const d = new Date(+parts[0], +parts[1]-1, +parts[2]);
+    d.setDate(d.getDate() + exchDays);
+    return d;
+  }
+
+  const setExchangeOverdue  = [];
+  const setExchangeToday    = [];
+  const setExchangeTomorrow = [];
+  activePairs.forEach(p => {
+    const due = _pairExchangeDue(p);
+    if (!due) return;
+    const diff = Math.floor((due - today) / 86400000);
+    const label = p.set_name || p.display_id;
+    if (diff < 0)   setExchangeOverdue.push({ label, diff: Math.abs(diff) });
+    else if (diff === 0) setExchangeToday.push({ label });
+    else if (diff === 1) setExchangeTomorrow.push({ label });
+  });
+  const hasSetReminder = setExchangeOverdue.length || setExchangeToday.length || setExchangeTomorrow.length;
 
   const gasUrl = Store.getSetting('gas_url') || CONFIG.GAS_URL;
 
@@ -175,6 +203,42 @@ function _renderDashboard(main) {
         }).join('')}
         ${exchangeDue.length > 4 ? `<div class="sec-more" onclick="routeTo('lot-list')">+${exchangeDue.length-4}件を見る</div>` : ''}
       </div>` : ''}
+
+      <!-- 産卵セット交換リマインド -->
+      \${hasSetReminder ? \`
+      <div class="card" style="border-color:rgba(231,76,60,.3)">
+        <div class="card-title" style="color:var(--red)">🥚 産卵セット交換リマインド</div>
+        \${setExchangeOverdue.map(s => \`
+          <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer"
+            onclick="routeTo('pairing-list')">
+            <span style="color:var(--red)">⚠️</span>
+            <div style="flex:1">
+              <div style="font-size:.82rem;font-weight:600">\${s.label}</div>
+              <div style="font-size:.7rem;color:var(--text3)">交換期限超過</div>
+            </div>
+            <div style="font-size:.75rem;color:var(--red);font-weight:700">\${s.diff}日超過</div>
+          </div>\`).join('')}
+        \${setExchangeToday.map(s => \`
+          <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer"
+            onclick="routeTo('pairing-list')">
+            <span style="color:var(--red)">🔔</span>
+            <div style="flex:1">
+              <div style="font-size:.82rem;font-weight:600">\${s.label}</div>
+              <div style="font-size:.7rem;color:var(--text3)">今日が交換予定日</div>
+            </div>
+            <div style="font-size:.75rem;color:var(--red);font-weight:700">今日</div>
+          </div>\`).join('')}
+        \${setExchangeTomorrow.map(s => \`
+          <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer"
+            onclick="routeTo('pairing-list')">
+            <span style="color:var(--amber)">📅</span>
+            <div style="flex:1">
+              <div style="font-size:.82rem;font-weight:600">\${s.label}</div>
+              <div style="font-size:.7rem;color:var(--text3)">明日が交換予定日</div>
+            </div>
+            <div style="font-size:.75rem;color:var(--amber);font-weight:700">明日</div>
+          </div>\`).join('')}
+      </div>\` : ''}
 
       <!-- QRスキャン大ボタン（1タップアクセス） -->
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:4px">
