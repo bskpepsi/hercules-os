@@ -205,40 +205,40 @@ function _renderDashboard(main) {
       </div>` : ''}
 
       <!-- 産卵セット交換リマインド -->
-      \${hasSetReminder ? \`
+      ${hasSetReminder ? `
       <div class="card" style="border-color:rgba(231,76,60,.3)">
         <div class="card-title" style="color:var(--red)">🥚 産卵セット交換リマインド</div>
-        \${setExchangeOverdue.map(s => \`
+        ${setExchangeOverdue.map(s => `
           <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer"
             onclick="routeTo('pairing-list')">
             <span style="color:var(--red)">⚠️</span>
             <div style="flex:1">
-              <div style="font-size:.82rem;font-weight:600">\${s.label}</div>
+              <div style="font-size:.82rem;font-weight:600">${s.label}</div>
               <div style="font-size:.7rem;color:var(--text3)">交換期限超過</div>
             </div>
-            <div style="font-size:.75rem;color:var(--red);font-weight:700">\${s.diff}日超過</div>
-          </div>\`).join('')}
-        \${setExchangeToday.map(s => \`
+            <div style="font-size:.75rem;color:var(--red);font-weight:700">${s.diff}日超過</div>
+          </div>`).join('')}
+        ${setExchangeToday.map(s => `
           <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer"
             onclick="routeTo('pairing-list')">
             <span style="color:var(--red)">🔔</span>
             <div style="flex:1">
-              <div style="font-size:.82rem;font-weight:600">\${s.label}</div>
+              <div style="font-size:.82rem;font-weight:600">${s.label}</div>
               <div style="font-size:.7rem;color:var(--text3)">今日が交換予定日</div>
             </div>
             <div style="font-size:.75rem;color:var(--red);font-weight:700">今日</div>
-          </div>\`).join('')}
-        \${setExchangeTomorrow.map(s => \`
+          </div>`).join('')}
+        ${setExchangeTomorrow.map(s => `
           <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer"
             onclick="routeTo('pairing-list')">
             <span style="color:var(--amber)">📅</span>
             <div style="flex:1">
-              <div style="font-size:.82rem;font-weight:600">\${s.label}</div>
+              <div style="font-size:.82rem;font-weight:600">${s.label}</div>
               <div style="font-size:.7rem;color:var(--text3)">明日が交換予定日</div>
             </div>
             <div style="font-size:.75rem;color:var(--amber);font-weight:700">明日</div>
-          </div>\`).join('')}
-      </div>\` : ''}
+          </div>`).join('')}
+      </div>` : ''}
 
       <!-- QRスキャン大ボタン（1タップアクセス） -->
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:4px">
