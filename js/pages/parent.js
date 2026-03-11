@@ -104,7 +104,7 @@ function _renderParDetail(par, main) {
   const isRetired = par.status && par.status !== 'active';
 
   main.innerHTML = `
-    ${UI.header(par.display_name, {})}
+    ${UI.header(par.display_name, { back: true })}
     <div class="page-body">
 
       <div class="card card-gold">
@@ -203,7 +203,7 @@ Pages.parentNew = function (params = {}) {
   const v = (f, d = '') => par ? (par[f] !== undefined ? par[f] : d) : d;
 
   main.innerHTML = `
-    ${UI.header(isEdit ? '種親編集' : '種親登録', {})}
+    ${UI.header(isEdit ? '種親編集' : '種親登録', { back: true })}
     <div class="page-body">
       <form id="par-form" class="form-section">
 

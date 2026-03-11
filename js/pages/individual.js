@@ -257,7 +257,7 @@ function _renderDetail(ind, main) {
   ].filter(Boolean).join(' ');
 
   main.innerHTML = `
-    ${UI.header(ind.display_id, {})}
+    ${UI.header(ind.display_id, { back: true })}
     <div class="page-body">
 
       <!-- ヘッダーカード -->
@@ -492,7 +492,7 @@ Pages.individualNew = function (params = {}) {
     ind ? (ind[field] !== undefined ? ind[field] : fallback) : (params[field] || fallback);
 
   main.innerHTML = `
-    ${UI.header(isEdit ? '個体編集' : '個体登録', {})}
+    ${UI.header(isEdit ? '個体編集' : '個体登録', { back: true })}
     <div class="page-body">
       <form id="ind-form" class="form-section">
 

@@ -188,8 +188,8 @@ const UI = {
 
   // ── ページヘッダー ──────────────────────────────────────────
   header(title, opts = {}) {
-    const back = opts.back !== false
-      ? `<button class="btn-icon btn-back" onclick="Store.back()">←</button>` : '';
+    const back = opts.back === true || (opts.back && opts.back !== false)
+      ? `<button class="btn-icon btn-back" onclick="${opts.backFn || 'Store.back()'}">←</button>` : '';
     const action = opts.action
       ? `<button class="btn-icon btn-action" onclick="${opts.action.fn}">${opts.action.icon || '＋'}</button>` : '';
     return `<header class="page-header">

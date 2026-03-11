@@ -46,7 +46,7 @@ Pages.growthRecord = function (params = {}) {
     const today     = new Date().toISOString().split('T')[0];
 
     main.innerHTML = `
-      ${UI.header('成長記録入力', {})}
+      ${UI.header('成長記録入力', { back: true })}
       <div class="page-body">
 
         <!-- 対象選択 -->

@@ -194,7 +194,7 @@ Pages.bloodlineNew = function (params = {}) {
   const v = (f, d = '') => bld ? (bld[f] !== undefined ? bld[f] : d) : d;
 
   main.innerHTML = `
-    ${UI.header(isEdit ? '血統編集' : '血統登録', {})}
+    ${UI.header(isEdit ? '血統編集' : '血統登録', { back: true })}
     <div class="page-body">
       <form id="bld-form" class="form-section">
 

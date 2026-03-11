@@ -138,6 +138,7 @@ function _renderLotDetail(lot, main) {
 
   main.innerHTML = `
     ${UI.header(lot.display_id, {
+      back: true,
       action: { fn: `_lotQuickActions('${lot.lot_id}')`, icon: '…' }
     })}
     <div class="page-body">
@@ -409,7 +410,7 @@ Pages.lotNew = function (params = {}) {
   const lines = Store.getDB('lines') || [];
 
   main.innerHTML = `
-    ${UI.header('ロット登録', {})}
+    ${UI.header('ロット登録', { back: true })}
     <div class="page-body">
       <form id="lot-form" class="form-section">
         ${UI.field('ライン', UI.select('line_id',

@@ -268,7 +268,7 @@ Pages.lineNew = function (params = {}) {
   const curYear = new Date().getFullYear();
 
   main.innerHTML = `
-    ${UI.header(isEdit ? 'ライン編集' : 'ライン登録', {})}
+    ${UI.header(isEdit ? 'ライン編集' : 'ライン登録', { back: true })}
     <div class="page-body">
       <form id="line-form" class="form-section">
 

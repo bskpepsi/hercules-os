@@ -240,7 +240,7 @@ Pages.pairingNew = function (params = {}) {
   const today  = new Date().toISOString().split('T')[0];
 
   main.innerHTML = `
-    ${UI.header(isEdit ? '産卵セット編集' : '産卵セット登録', {})}
+    ${UI.header(isEdit ? '産卵セット編集' : '産卵セット登録', { back: true })}
     <div class="page-body">
       <form id="pair-form" class="form-section">
 
