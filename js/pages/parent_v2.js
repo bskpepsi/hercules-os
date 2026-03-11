@@ -113,7 +113,12 @@ Pages.parentDetail = async function (parId) {
       <div class="detail-card">
         <div class="detail-label">血統タグ</div>
         <div class="tag-row">${tags.map(t=>`<span class="tag tag-gold">${t}</span>`).join('')}</div>
-        ${p.bloodline_raw ? `<div class="detail-raw text-mono" style="margin-top:8px">${p.bloodline_raw}</div>` : ''}
+        ${p.bloodline_raw ? `<div class="detail-raw text-mono" style="margin-top:4px;font-size:.78rem;color:var(--text2)">${p.bloodline_raw}</div>` : ''}
+            ${(p.paternal_raw || p.maternal_raw) ? `
+            <div style="margin-top:6px;font-size:.75rem">
+              ${p.paternal_raw ? `<div><span style="color:var(--text3)">父系:</span> <span class="text-mono">${p.paternal_raw}</span></div>` : ''}
+              ${p.maternal_raw ? `<div><span style="color:var(--text3)">母系:</span> <span class="text-mono">${p.maternal_raw}</span></div>` : ''}
+            </div>` : ''}
       </div>` : ''}
 
       ${(pTags.length || mTags.length || cTags.length) ? `
@@ -233,15 +238,16 @@ Pages.parentNew = function () {
                placeholder="例: 65.0">
       </div>
 
+      <!-- ── 血統情報 ── -->
+      <div style="font-size:.75rem;font-weight:700;color:var(--text3);letter-spacing:.06em;padding:4px 0 2px">全体血統</div>
       <div class="form-section">
-        <label class="form-label">血統原文（ヤフオク表記）</label>
+        <label class="form-label">血統原文（ヤフオク等の表記）</label>
         <input id="inp-raw" class="form-input text-mono" type="text"
                placeholder="例: LS175xNo120.U71U6I-FF.FOX-FOX"
-               oninput="_parentAutoExtract()">
+               oninput="_parentAutoExtract('blood')">
       </div>
-
       <div class="form-section" id="tag-section" style="display:none">
-        <label class="form-label">血統タグ <span class="badge badge-green">自動抽出</span></label>
+        <label class="form-label">血統タグ <span class="badge badge-green">自動抽出・編集可</span></label>
         <div id="tag-preview" class="tag-row"></div>
         <div style="display:flex;gap:8px;margin-top:8px">
           <input id="inp-tag-add" class="form-input" type="text" placeholder="タグ追加" style="flex:1">
@@ -249,13 +255,36 @@ Pages.parentNew = function () {
         </div>
       </div>
 
+      <div style="font-size:.75rem;font-weight:700;color:var(--text3);letter-spacing:.06em;padding:8px 0 2px">父系</div>
       <div class="form-section">
-        <label class="form-label">父系タグ</label>
-        <input id="inp-ptags" class="form-input" type="text" placeholder="例: LS,FF,U71（カンマ区切り）">
+        <label class="form-label">父系原文</label>
+        <input id="inp-praw" class="form-input text-mono" type="text"
+               placeholder="例: LS175×No120（父方の血統原文）"
+               oninput="_parentAutoExtract('pat')">
       </div>
+      <div class="form-section" id="ptag-section" style="display:none">
+        <label class="form-label">父系タグ <span class="badge badge-green">自動抽出・編集可</span></label>
+        <div id="ptag-preview" class="tag-row"></div>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <input id="inp-ptag-add" class="form-input" type="text" placeholder="タグ追加" style="flex:1">
+          <button class="btn btn-sm" onclick="_parentAddTag('pat')">追加</button>
+        </div>
+      </div>
+
+      <div style="font-size:.75rem;font-weight:700;color:var(--text3);letter-spacing:.06em;padding:8px 0 2px">母系</div>
       <div class="form-section">
-        <label class="form-label">母系タグ</label>
-        <input id="inp-mtags" class="form-input" type="text" placeholder="例: FOX,U6I">
+        <label class="form-label">母系原文</label>
+        <input id="inp-mraw" class="form-input text-mono" type="text"
+               placeholder="例: FOX×U6I（母方の血統原文）"
+               oninput="_parentAutoExtract('mat')">
+      </div>
+      <div class="form-section" id="mtag-section" style="display:none">
+        <label class="form-label">母系タグ <span class="badge badge-green">自動抽出・編集可</span></label>
+        <div id="mtag-preview" class="tag-row"></div>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <input id="inp-mtag-add" class="form-input" type="text" placeholder="タグ追加" style="flex:1">
+          <button class="btn btn-sm" onclick="_parentAddTag('mat')">追加</button>
+        </div>
       </div>
 
       <div class="form-section">
@@ -284,7 +313,9 @@ Pages.parentNew = function () {
 };
 
 window._parentSelectedSex = '♂';
-window._parentTags = [];
+window._parentTags  = [];
+window._parentPTags = [];
+window._parentMTags = [];
 
 function _parentSexToggle(sex) {
   window._parentSelectedSex = sex;
@@ -296,38 +327,62 @@ function _parentSexToggle(sex) {
   _parentCalcReadyDate();
 }
 
-async function _parentAutoExtract() {
-  const raw = document.getElementById('inp-raw').value.trim();
-  if (!raw) { document.getElementById('tag-section').style.display = 'none'; return; }
+// type: 'blood' | 'pat' | 'mat'
+async function _parentAutoExtract(type) {
+  const idMap  = { blood: 'inp-raw',  pat: 'inp-praw',  mat: 'inp-mraw' };
+  const secMap = { blood: 'tag-section', pat: 'ptag-section', mat: 'mtag-section' };
+  const raw    = document.getElementById(idMap[type])?.value?.trim();
+  const sec    = document.getElementById(secMap[type]);
+  if (!raw) { if (sec) sec.style.display = 'none'; return; }
+
+  let tags = [];
   try {
     const res = await API.phase2.extractTags(raw);
-    window._parentTags = res.tags || [];
+    tags = res.tags || [];
   } catch(e) {
-    window._parentTags = _clientExtractTags2(raw);
+    tags = _clientExtractTags2(raw);
   }
-  _parentRenderTags();
-  document.getElementById('tag-section').style.display = '';
+
+  if (type === 'blood') { window._parentTags  = tags; _parentRenderTags('blood'); }
+  if (type === 'pat')   { window._parentPTags = tags; _parentRenderTags('pat'); }
+  if (type === 'mat')   { window._parentMTags = tags; _parentRenderTags('mat'); }
+  if (sec) sec.style.display = '';
 }
 
-function _parentRenderTags() {
-  const el = document.getElementById('tag-preview');
-  if (!el) return;
-  el.innerHTML = (window._parentTags || []).map((t,i) =>
-    `<span class="tag tag-gold tag-removable" onclick="_parentRemoveTag(${i})">${t} ✕</span>`
-  ).join('');
+// type: 'blood' | 'pat' | 'mat'
+function _parentRenderTags(type) {
+  const elMap  = { blood: 'tag-preview', pat: 'ptag-preview', mat: 'mtag-preview' };
+  const tagsMap= { blood: '_parentTags',  pat: '_parentPTags', mat: '_parentMTags' };
+  if (type) {
+    const el = document.getElementById(elMap[type]);
+    if (!el) return;
+    const tags = window[tagsMap[type]] || [];
+    el.innerHTML = tags.map((t,i) =>
+      `<span class="tag tag-gold tag-removable" onclick="_parentRemoveTag(${i},'${type}')">${t} ✕</span>`
+    ).join('');
+  } else {
+    // 後方互換: 引数なし → blood
+    _parentRenderTags('blood');
+  }
 }
 
-function _parentRemoveTag(i) {
-  window._parentTags.splice(i, 1);
-  _parentRenderTags();
+function _parentRemoveTag(i, type) {
+  type = type || 'blood';
+  const key = type === 'blood' ? '_parentTags' : type === 'pat' ? '_parentPTags' : '_parentMTags';
+  if (window[key]) { window[key].splice(i, 1); _parentRenderTags(type); }
 }
 
-function _parentAddTag() {
-  const v = document.getElementById('inp-tag-add').value.trim().toUpperCase();
-  if (!v || window._parentTags.includes(v)) return;
-  window._parentTags.push(v);
-  _parentRenderTags();
-  document.getElementById('inp-tag-add').value = '';
+
+function _parentAddTag(type) {
+  type = type || 'blood';
+  const inpId  = type === 'blood' ? 'inp-tag-add' : type === 'pat' ? 'inp-ptag-add' : 'inp-mtag-add';
+  const key    = type === 'blood' ? '_parentTags'  : type === 'pat' ? '_parentPTags' : '_parentMTags';
+  const v      = document.getElementById(inpId)?.value.trim().toUpperCase();
+  if (!v || (window[key] || []).includes(v)) return;
+  if (!window[key]) window[key] = [];
+  window[key].push(v);
+  _parentRenderTags(type);
+  document.getElementById(inpId).value = '';
 }
 
 function _parentCalcReadyDate() {
@@ -351,9 +406,6 @@ async function _parentSave() {
   const sex  = window._parentSelectedSex;
   if (!size) { UI.toast('サイズを入力してください'); return; }
 
-  const pTagsRaw = document.getElementById('inp-ptags').value.trim();
-  const mTagsRaw = document.getElementById('inp-mtags').value.trim();
-
   const payload = {
     sex,
     size_mm:               size,
@@ -361,9 +413,11 @@ async function _parentSave() {
     father_parent_size_mm: document.getElementById('inp-fsize').value.trim(),
     mother_parent_size_mm: document.getElementById('inp-msize').value.trim(),
     bloodline_raw:         document.getElementById('inp-raw').value.trim(),
-    bloodline_tags:        JSON.stringify(window._parentTags || []),
-    paternal_tags:         pTagsRaw ? JSON.stringify(pTagsRaw.split(',').map(t=>t.trim())) : '[]',
-    maternal_tags:         mTagsRaw ? JSON.stringify(mTagsRaw.split(',').map(t=>t.trim())) : '[]',
+    bloodline_tags:        JSON.stringify(window._parentTags  || []),
+    paternal_raw:          document.getElementById('inp-praw')?.value.trim() || '',
+    paternal_tags:         JSON.stringify(window._parentPTags || []),
+    maternal_raw:          document.getElementById('inp-mraw')?.value.trim() || '',
+    maternal_tags:         JSON.stringify(window._parentMTags || []),
     eclosion_date:         document.getElementById('inp-eclosion').value,
     feeding_start_date:    document.getElementById('inp-feeding').value,
     source:                document.getElementById('inp-source').value.trim(),
@@ -372,7 +426,7 @@ async function _parentSave() {
   try {
     UI.loading(true);
     const res = await API.phase2.createParent(payload);
-    await Store.refreshDB();
+    await syncAll(true);
     UI.toast(`${res.parent_display_id} を登録しました`);
     routeTo('parent-list');
   } catch(e) {
@@ -405,7 +459,7 @@ async function _parentSaveFeeding(parId) {
     UI.loading(true);
     UI.closeModal();
     await API.phase2.updateParent({ par_id: parId, feeding_start_date: date });
-    await Store.refreshDB();
+    await syncAll(true);
     UI.toast('後食開始日を設定しました');
     routeTo('parent-detail', parId);
   } catch(e) {
@@ -459,7 +513,7 @@ async function _parentSaveStatus(parId) {
     UI.loading(true);
     UI.closeModal();
     await API.phase2.updateParent({ par_id: parId, status });
-    await Store.refreshDB();
+    await syncAll(true);
     UI.toast('ステータスを変更しました');
     routeTo('parent-detail', parId);
   } catch(e) {

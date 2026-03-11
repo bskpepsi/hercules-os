@@ -313,12 +313,26 @@ function _renderDetail(ind, main) {
             ${_infoRow('容器',       ind.current_container || '—')}
             ${_infoRow('マット',     ind.current_mat  || '—')}
             ${_infoRow('保管場所',   ind.storage_location || '—')}
-            ${ind.head_width_mm  ? _infoRow('頭幅',   ind.head_width_mm + 'mm') : ''}
-            ${ind.pupa_length_mm ? _infoRow('蛹全長', ind.pupa_length_mm + 'mm') : ''}
-            ${ind.adult_size_mm  ? _infoRow('成虫サイズ', ind.adult_size_mm + 'mm') : ''}
           </div>
         </div>
       </div>
+
+      <!-- 形態・成長データ -->
+      ${(ind.head_width_mm || ind.prepupa_weight_g || ind.pupa_length_mm || ind.adult_size_mm || ind.horn_length_mm) ? `
+      <div class="accordion" id="acc-morph">
+        <div class="acc-hdr" onclick="_toggleAcc('acc-morph')">
+          形態・成長データ <span class="acc-arrow">▼</span>
+        </div>
+        <div class="acc-body open">
+          <div class="info-list">
+            ${ind.head_width_mm     ? _infoRow('頭幅',     ind.head_width_mm     + ' mm') : ''}
+            ${ind.prepupa_weight_g  ? _infoRow('前蛹体重', ind.prepupa_weight_g  + ' g')  : ''}
+            ${ind.pupa_length_mm    ? _infoRow('蛹サイズ', ind.pupa_length_mm    + ' mm') : ''}
+            ${ind.adult_size_mm     ? _infoRow('成虫サイズ',ind.adult_size_mm    + ' mm') : ''}
+            ${ind.horn_length_mm    ? _infoRow('胸角長',   ind.horn_length_mm    + ' mm') : ''}
+          </div>
+        </div>
+      </div>` : ''}
 
       <!-- 血統・種親 -->
       <div class="accordion" id="acc-blood">
@@ -358,6 +372,26 @@ function _renderDetail(ind, main) {
       ${ind.note_private ? `<div class="card">
         <div class="card-title">🔒 内部メモ</div>
         <div style="font-size:.85rem;color:var(--text2)">${ind.note_private}</div>
+      </div>` : ''}
+
+      <!-- 種親昇格 -->
+      ${ind.eclosion_date && !ind.promoted_par_id ? `
+      <button class="btn btn-gold btn-full"
+        onclick="Pages._indPromoteModal('${ind.ind_id}')">
+        🌟 種親に昇格する
+      </button>` : ''}
+      ${ind.promoted_par_id ? `
+      <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;
+        background:rgba(200,168,75,.1);border:1px solid rgba(200,168,75,.3);
+        border-radius:10px;font-size:.82rem">
+        <span style="font-size:1.1rem">👑</span>
+        <div>
+          <div style="font-weight:700;color:var(--gold)">種親昇格済み</div>
+          <div style="color:var(--text3);font-size:.72rem">
+            種親ID: <span style="cursor:pointer;color:var(--blue)"
+              onclick="routeTo('parent-detail',{id:'${ind.promoted_par_id}'})">${ind.promoted_par_id}</span>
+          </div>
+        </div>
       </div>` : ''}
 
       <!-- ステータス変更 -->
@@ -477,6 +511,68 @@ Pages._indFlagSave = async function (id) {
   } catch(e) {}
 };
 
+// ── 種親昇格モーダル ─────────────────────────────────────────────
+Pages._indPromoteModal = function (indId) {
+  const ind = Store.getIndividual(indId);
+  if (!ind) { UI.toast('個体情報が見つかりません', 'error'); return; }
+
+  const sexLabel  = ind.sex       || '未設定';
+  const sizeLabel = ind.adult_size_mm ? ind.adult_size_mm + ' mm' : '未入力';
+  const eclosion  = ind.eclosion_date || '—';
+  const today     = new Date().toISOString().split('T')[0];
+
+  _showModal('🌟 種親に昇格', `
+    <div class="form-section">
+      <div style="background:rgba(200,168,75,.1);border:1px solid rgba(200,168,75,.25);
+        border-radius:10px;padding:12px 14px;margin-bottom:14px">
+        <div style="font-size:.78rem;color:var(--text3);margin-bottom:6px">引き継ぐ個体情報</div>
+        <div style="display:grid;grid-template-columns:auto 1fr;gap:3px 12px;font-size:.83rem">
+          <span style="color:var(--text3)">個体ID</span><span style="font-weight:600">${ind.display_id}</span>
+          <span style="color:var(--text3)">性別</span><span style="font-weight:600">${sexLabel}</span>
+          <span style="color:var(--text3)">成虫サイズ</span><span style="font-weight:600">${sizeLabel}</span>
+          <span style="color:var(--text3)">羽化日</span><span style="font-weight:600">${eclosion}</span>
+        </div>
+      </div>
+
+      <div style="font-size:.78rem;color:var(--text3);margin-bottom:4px">種親IDは自動採番されます（${ind.sex === '♂' ? 'M年-英字' : 'F年-連番'}）</div>
+
+      ${UI.field('後食開始日（任意）',
+        `<input type="date" id="prm-feeding" class="input" value="">`)}
+      ${UI.field('表示名（任意・空白なら自動）',
+        `<input type="text" id="prm-name" class="input" placeholder="例: M26-A（空白=自動採番の値）">`)}
+
+      <div class="modal-footer">
+        <button class="btn btn-ghost" style="flex:1" type="button" onclick="_closeModal()">キャンセル</button>
+        <button class="btn btn-gold" style="flex:2" type="button"
+          onclick="Pages._indPromoteExec('${indId}')">👑 種親に昇格する</button>
+      </div>
+    </div>`);
+};
+
+Pages._indPromoteExec = async function (indId) {
+  const feeding = (document.getElementById('prm-feeding')?.value || '').replace(/-/g, '/');
+  const name    =  document.getElementById('prm-name')?.value?.trim() || '';
+  _closeModal();
+  try {
+    const res = await apiCall(
+      () => API.individual.promoteToParent({
+        ind_id:              indId,
+        feeding_start_date:  feeding || '',
+        display_name:        name    || '',
+      }),
+      '種親に昇格しました 🌟'
+    );
+    // キャッシュ更新
+    Store.patchDBItem('individuals', 'ind_id', indId, {
+      parent_flag:     true,
+      promoted_par_id: res.par_id,
+    });
+    // 種親データをリロードしてから種親詳細へ
+    await syncAll(true);
+    routeTo('parent-detail', { id: res.par_id });
+  } catch(e) {}
+};
+
 // ════════════════════════════════════════════════════════════════
 // 個体新規登録 / 編集
 // ════════════════════════════════════════════════════════════════
@@ -546,6 +642,16 @@ Pages.individualNew = function (params = {}) {
           v('mother_par_id')))}
 
         ${isEdit ? '' : UI.field('元ロットID（任意）', UI.input('lot_id', 'text', params.lotId || '', 'LOT-xxxxx'))}
+
+        <div class="form-title">形態・成長データ</div>
+        <div class="form-row-2">
+          ${UI.field('頭幅 (mm)', UI.input('head_width_mm', 'number', v('head_width_mm'), '例: 14.5'))}
+          ${UI.field('前蛹体重 (g)', UI.input('prepupa_weight_g', 'number', v('prepupa_weight_g'), '例: 45.2'))}
+        </div>
+        <div class="form-row-2">
+          ${UI.field('蛹サイズ (mm)', UI.input('pupa_length_mm', 'number', v('pupa_length_mm'), '例: 90.0'))}
+          ${UI.field('胸角長 (mm)', UI.input('horn_length_mm', 'number', v('horn_length_mm'), '例: 65.0'))}
+        </div>
 
         <div class="form-title">メモ</div>
         ${UI.field('内部メモ（非公開）', UI.textarea('note_private', v('note_private'), 2, '飼育メモ・観察記録'))}

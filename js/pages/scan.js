@@ -1,17 +1,15 @@
 // ════════════════════════════════════════════════════════════════
-// scan.js — QRスキャン + 差分入力画面
+// scan.js — QRスキャン + 差分入力 + 体重測定画面  v2
 //
-// 【画面フロー】
-//   qr-scan  → QR入力（テキスト/カメラ）→ resolveQR → qr-diff   （差分入力モード）
-//   qr-scan  → QR入力（テキスト/カメラ）→ resolveQR → weight-mode（体重測定モード）
-//   qr-diff  → 差分入力 → updateLotFields / updateIndFields / updateSetFields
-//   weight-mode → 体重入力 → createGrowthRecord
+// 【3モード】
+//   確認モード  : QR → 個体/ロット/産卵セット詳細画面を直接開く
+//   差分入力    : QR → 未入力項目を補完して保存
+//   体重測定    : QR → 体重入力 → 保存（最短3タップ）
 //
-// 【将来拡張ポイント】
-//   - カメラ読み取り: jsQR ライブラリを使った <video>+<canvas> 実装に差し替え可能
-//     _startCameraScanner() が拡張ポイント
-//   - 手書き丸認識: Gemini Vision API に画像を渡して性別丸を認識する
-//     _analyzeHandwriting() が拡張ポイント
+// 【QR読み取り方法】
+//   ① カメラ読み取り（jsQR / inversionAttempts:'attemptBoth' / 3フレームに1回スキャン）
+//   ② 画像ファイル読み取り（スマホ保存画像・スクリーンショット対応）
+//   ③ テキスト手入力 / ペースト
 // ════════════════════════════════════════════════════════════════
 
 // ════════════════════════════════════════════════════════════════
@@ -19,158 +17,154 @@
 // ════════════════════════════════════════════════════════════════
 Pages.qrScan = function (params = {}) {
   const main = document.getElementById('main');
-  // モード管理: 'diff' | 'weight'
-  let _scanMode = params.mode || 'weight'; // デフォルトを体重測定モードに
+  // モード: 'view' | 'diff' | 'weight'
+  let _scanMode = params.mode === 'weight' ? 'weight' : params.mode === 'diff' ? 'diff' : 'view';
 
-  main.innerHTML = `
-    ${UI.header('📷 QRスキャン', { back: true })}
-    <div class="page-body">
+  function _modeStyle(m) {
+    if (m === _scanMode) {
+      const bg = m==='weight' ? 'var(--green)' : m==='diff' ? 'var(--blue)' : 'var(--gold)';
+      return `background:${bg};color:#fff;font-weight:700;`;
+    }
+    return 'color:var(--text3);background:transparent;';
+  }
+  function _modeDesc() {
+    if (_scanMode === 'weight') return '⚖️ QR → 体重入力 → 保存（最短3タップ）';
+    if (_scanMode === 'diff')   return '📝 QR → 未入力項目を補完する';
+    return '🔍 QR → 個体・ロット・産卵セットの詳細を開く';
+  }
 
-      <!-- モード切り替えタブ -->
-      <div style="display:flex;background:var(--surface2);border-radius:var(--radius-sm);padding:3px;gap:3px">
-        <button id="mode-diff" class="btn btn-sm"
-          style="flex:1;${_scanMode==='diff'?'background:var(--surface);color:var(--text);':'color:var(--text3);'}"
-          onclick="Pages._qrSwitchMode('diff')">
-          📝 差分入力モード
-        </button>
-        <button id="mode-weight" class="btn btn-sm"
-          style="flex:1;${_scanMode==='weight'?'background:var(--green2);color:#fff;':'color:var(--text3);'}"
-          onclick="Pages._qrSwitchMode('weight')">
-          ⚖️ 体重測定モード
-        </button>
-      </div>
-      <!-- モード説明 -->
-      <div id="mode-desc" style="font-size:.72rem;color:var(--text3);padding:0 2px;margin-top:-4px">
-        ${_scanMode === 'weight'
-          ? '⚖️ QRスキャン → 体重入力 → 保存の最短3タップモード'
-          : '📝 QRスキャン → 未入力項目を補完するモード'}
-      </div>
+  function render() {
+    main.innerHTML = `
+      ${UI.header('📷 QRスキャン', { back: true })}
+      <div class="page-body">
 
-      <!-- カメラ読取エリア（将来実装プレースホルダー） -->
-      <div class="card" id="camera-card" style="display:none">
-        <div class="card-title" style="color:var(--blue)">📸 カメラで読み取り</div>
-        <div style="position:relative;width:100%;background:#000;border-radius:var(--radius);overflow:hidden">
-          <video id="qr-video" autoplay playsinline
-            style="width:100%;display:block;max-height:240px;object-fit:cover"></video>
-          <canvas id="qr-canvas" style="display:none"></canvas>
-          <!-- スキャン枠 -->
-          <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none">
-            <div style="width:180px;height:180px;border:2px solid var(--green);border-radius:8px;
-              box-shadow:0 0 0 9999px rgba(0,0,0,0.45)"></div>
+        <!-- 3モードタブ -->
+        <div style="display:flex;background:var(--surface2);border-radius:10px;padding:3px;gap:3px">
+          <button style="flex:1;border:none;padding:7px 4px;border-radius:8px;cursor:pointer;font-size:.75rem;${_modeStyle('view')}"
+            onclick="Pages._qrSwitchMode('view')">🔍 確認</button>
+          <button style="flex:1;border:none;padding:7px 4px;border-radius:8px;cursor:pointer;font-size:.75rem;${_modeStyle('diff')}"
+            onclick="Pages._qrSwitchMode('diff')">📝 差分</button>
+          <button style="flex:1;border:none;padding:7px 4px;border-radius:8px;cursor:pointer;font-size:.75rem;${_modeStyle('weight')}"
+            onclick="Pages._qrSwitchMode('weight')">⚖️ 体重</button>
+        </div>
+        <div style="font-size:.72rem;color:var(--text3);padding:2px 4px;margin-top:-2px">${_modeDesc()}</div>
+
+        <!-- カメラエリア -->
+        <div class="card" id="camera-card" style="display:none;padding:0;overflow:hidden">
+          <div style="position:relative;width:100%;background:#000">
+            <video id="qr-video" autoplay playsinline muted
+              style="width:100%;display:block;max-height:260px;object-fit:cover"></video>
+            <canvas id="qr-canvas" style="display:none"></canvas>
+            <!-- スキャン枠 -->
+            <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none">
+              <div id="scan-frame" style="width:200px;height:200px;border:3px solid var(--green);border-radius:8px;box-shadow:0 0 0 9999px rgba(0,0,0,0.5)"></div>
+            </div>
+            <!-- スキャン中アニメ -->
+            <div id="scan-line" style="position:absolute;left:calc(50% - 100px);top:calc(50% - 100px);width:200px;height:3px;background:var(--green);opacity:.8;animation:scanLine 2s infinite linear"></div>
+          </div>
+          <div style="display:flex;gap:8px;padding:8px">
+            <button class="btn btn-ghost" style="flex:1" onclick="Pages._qrStopCamera()">✕ 閉じる</button>
+            <div id="scan-status" style="flex:2;display:flex;align-items:center;justify-content:center;font-size:.78rem;color:var(--green)">スキャン中…</div>
           </div>
         </div>
-        <button class="btn btn-ghost btn-full" style="margin-top:8px" onclick="Pages._qrStopCamera()">
-          ✕ カメラを閉じる
-        </button>
-      </div>
 
-      <!-- メイン入力エリア -->
-      <div class="card">
-        <div class="card-title">QRコードを読み取る</div>
+        <!-- 入力カード -->
+        <div class="card">
+          <!-- カメラボタン -->
+          <button class="btn btn-ghost btn-full" id="camera-btn" onclick="Pages._qrStartCamera()"
+            style="margin-bottom:10px;border:2px solid var(--green);background:rgba(45,122,82,.08);font-size:.95rem;padding:14px;border-radius:12px">
+            <span style="font-size:1.4rem;margin-right:8px">📷</span>カメラで読み取る
+          </button>
 
-        <!-- カメラ起動ボタン（将来実装） -->
-        <button class="btn btn-ghost btn-full" id="camera-btn" onclick="Pages._qrStartCamera()"
-          style="margin-bottom:12px;border:2px solid var(--green2);background:rgba(45,122,82,.08);
-                 font-size:1rem;padding:14px;border-radius:12px">
-          <span style="font-size:1.4rem;margin-right:8px">📷</span>
-          カメラで読み取る
-        </button>
+          <!-- 画像ファイル読み取り -->
+          <label style="display:flex;align-items:center;justify-content:center;gap:8px;padding:10px;border:2px dashed var(--border2);border-radius:10px;cursor:pointer;margin-bottom:10px;font-size:.85rem;color:var(--text3)">
+            <span style="font-size:1.2rem">🖼️</span>QR画像を選択して読み取る
+            <input type="file" accept="image/*" style="display:none" onchange="Pages._qrReadFromImage(this)">
+          </label>
 
-        <div style="display:flex;align-items:center;gap:8px;margin:8px 0">
-          <div style="flex:1;height:1px;background:var(--border2)"></div>
-          <span style="font-size:.75rem;color:var(--text3)">または</span>
-          <div style="flex:1;height:1px;background:var(--border2)"></div>
+          <div style="display:flex;align-items:center;gap:8px;margin:6px 0">
+            <div style="flex:1;height:1px;background:var(--border2)"></div>
+            <span style="font-size:.72rem;color:var(--text3)">またはテキストで入力</span>
+            <div style="flex:1;height:1px;background:var(--border2)"></div>
+          </div>
+
+          <div class="field" style="margin-bottom:10px">
+            <label class="field-label">QRコードの内容を貼り付け</label>
+            <textarea id="qr-input" class="input" rows="3"
+              placeholder="例:
+LOT:LOT-XXXXXXXX
+IND:IND-XXXXXXXX
+SET:SET-XXXXXXXX"
+              style="font-family:var(--font-mono);font-size:.88rem"
+              oninput="Pages._qrPreviewInput(this.value)"></textarea>
+            <div id="qr-preview" style="font-size:.72rem;margin-top:4px"></div>
+          </div>
+
+          <button class="btn btn-gold btn-full" id="qr-resolve-btn" onclick="Pages._qrResolve()">
+            🔍 読み取り・確認
+          </button>
+          <div id="qr-error" style="margin-top:8px;font-size:.8rem;color:var(--red)"></div>
         </div>
 
-        <!-- テキスト入力（メイン実装） -->
-        <div class="field" style="margin-bottom:12px">
-          <label class="field-label">QRコードの内容を貼り付け / 手入力</label>
-          <textarea id="qr-input" class="input" rows="3"
-            placeholder="例:&#10;LOT:LOT-XXXXXXXX&#10;IND:IND-XXXXXXXX&#10;SET:SET-XXXXXXXX"
-            style="font-family:var(--font-mono);font-size:.88rem;letter-spacing:.02em"
-            oninput="Pages._qrPreviewInput(this.value)"></textarea>
-          <div id="qr-preview" style="font-size:.72rem;margin-top:4px"></div>
-        </div>
-
-        <button class="btn btn-gold btn-full" id="qr-resolve-btn"
-          onclick="Pages._qrResolve()">
-          🔍 読み取り・確認
-        </button>
-        <div id="qr-error" style="margin-top:8px;font-size:.8rem;color:var(--red)"></div>
-      </div>
-
-      <!-- 最近スキャン履歴（localStorage） -->
-      <div id="scan-history-card"></div>
-
-      <!-- ラベル種別ガイド -->
-      <div class="card" style="border-color:rgba(91,168,232,.15)">
-        <div class="card-title" style="color:var(--blue)">🏷️ ラベルQRフォーマット</div>
-        <div style="display:flex;flex-direction:column;gap:8px;font-size:.8rem">
-          ${[
-            ['LOT:LOT-xxxxx', '① 卵管理ラベル', 'var(--amber)', '孵化日・頭数を補完'],
-            ['LOT:LOT-xxxxx', '② 複数頭飼育ラベル', 'var(--blue)', '性別区分・サイズ区分を補完'],
-            ['IND:IND-xxxxx', '③ 個別飼育ラベル', 'var(--green)', '性別を補完'],
-            ['SET:SET-xxxxx', '④ 産卵セットラベル', 'var(--gold)', '採卵情報を確認'],
-          ].map(([code, label, color, hint]) => `
-            <div style="display:flex;align-items:flex-start;gap:10px;padding:6px 0;border-bottom:1px solid var(--border)">
-              <code style="font-family:var(--font-mono);font-size:.72rem;color:${color};
-                background:var(--bg3);padding:2px 6px;border-radius:4px;flex-shrink:0">${code}</code>
-              <div>
-                <div style="color:var(--text2);font-weight:600">${label}</div>
-                <div style="color:var(--text3);font-size:.72rem">${hint}</div>
-              </div>
+        <!-- スキャン方法ガイド -->
+        <div class="card">
+          <div class="card-title">ラベルのQRコード内容</div>
+          <div style="font-size:.75rem;color:var(--text3);line-height:1.8">
+            ${[
+              ['IND:IND-xxxxx', '個体ラベル', 'var(--green)'],
+              ['LOT:LOT-xxxxx', 'ロットラベル', 'var(--amber)'],
+              ['SET:SET-xxxxx', '産卵セットラベル', 'var(--gold)'],
+            ].map(([code,label,col])=>`<div style="display:flex;gap:8px;padding:3px 0">
+              <span style="font-family:var(--font-mono);color:${col};min-width:140px">${code}</span>
+              <span>${label}</span>
             </div>`).join('')}
+          </div>
         </div>
-      </div>
-    </div>`;
 
-  // 履歴表示
-  Pages._qrRenderHistory();
+        <div id="scan-history-card"></div>
+      </div>`;
 
-  // params から自動実行（他画面からの遷移用）
-  if (params.qr_text) {
-    document.getElementById('qr-input').value = params.qr_text;
-    Pages._qrResolve();
+    // CSSアニメーション注入
+    if (!document.getElementById('scan-anim-style')) {
+      const st = document.createElement('style');
+      st.id = 'scan-anim-style';
+      st.textContent = '@keyframes scanLine{0%{top:calc(50% - 100px)}50%{top:calc(50% + 97px)}100%{top:calc(50% - 100px)}}';
+      document.head.appendChild(st);
+    }
+
+    setTimeout(() => Pages._qrRenderHistory(), 50);
+  }
+
+  Pages._qrSwitchMode = (m) => { _scanMode = m; render(); };
+  render();
+
+  // 起動直後カメラ自動起動（モード問わず）
+  if (params.autoCamera) {
+    setTimeout(() => Pages._qrStartCamera(), 300);
   }
 };
 
-// ── モード切り替え ───────────────────────────────────────────────
-Pages._qrSwitchMode = function (mode) {
-  const diffBtn   = document.getElementById('mode-diff');
-  const weightBtn = document.getElementById('mode-weight');
-  const descEl    = document.getElementById('mode-desc');
-  if (!diffBtn || !weightBtn) return;
 
-  if (mode === 'weight') {
-    diffBtn.style.background   = '';
-    diffBtn.style.color        = 'var(--text3)';
-    weightBtn.style.background = 'var(--green2)';
-    weightBtn.style.color      = '#fff';
-    if (descEl) descEl.textContent = '⚖️ QRスキャン → 体重入力 → 保存の最短3タップモード';
-  } else {
-    diffBtn.style.background   = 'var(--surface)';
-    diffBtn.style.color        = 'var(--text)';
-    weightBtn.style.background = '';
-    weightBtn.style.color      = 'var(--text3)';
-    if (descEl) descEl.textContent = '📝 QRスキャン → 未入力項目を補完するモード';
-  }
-};
+// ════════════════════════════════════════════════════════════════
+// 差分入力画面 (qr-diff)
+// ════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════
+// QR スキャン ヘルパー群
+// ════════════════════════════════════════════════════════════════
 
-// ── QR入力のリアルタイムプレビュー ───────────────────────────
+// ── QRテキストのプレビュー ─────────────────────────────────────
 Pages._qrPreviewInput = function (val) {
   const el = document.getElementById('qr-preview');
   if (!el) return;
-  const v = val.trim();
-  if (!v) { el.innerHTML = ''; return; }
-  const prefix = v.split(':')[0]?.toUpperCase();
+  const v = (val || '').trim();
   const labels = { LOT: '🟡 ロット', IND: '🟢 個体', SET: '🟠 産卵セット' };
-  const lbl = labels[prefix];
-  el.innerHTML = lbl
-    ? `<span style="color:var(--green)">${lbl} として解析します</span>`
-    : `<span style="color:var(--red)">⚠️ フォーマット不正（LOT: / IND: / SET: で始まる必要があります）</span>`;
+  const type = v.startsWith('LOT:') ? 'LOT' : v.startsWith('IND:') ? 'IND' : v.startsWith('SET:') ? 'SET' : null;
+  el.innerHTML = type
+    ? `<span style="color:var(--green)">${labels[type]} : ${v.split(':')[1]}</span>`
+    : v ? `<span style="color:var(--red)">⚠️ フォーマット不正（LOT: / IND: / SET: で始まる必要があります）</span>` : '';
 };
 
-// ── QR解析実行 ────────────────────────────────────────────────
+// ── QR解析・モード別遷移 ─────────────────────────────────────
 Pages._qrResolve = async function () {
   const qrText = document.getElementById('qr-input')?.value?.trim();
   const errEl  = document.getElementById('qr-error');
@@ -181,34 +175,50 @@ Pages._qrResolve = async function () {
 
   try {
     const res = await API.scan.resolve(qrText);
-    // 履歴に保存
     Pages._qrSaveHistory(qrText, res);
-    // モードに応じて遷移先を変更
-    const mode = document.getElementById('mode-weight')?.style?.background?.includes('green')
-      || document.querySelector('#mode-weight.btn-primary') ? 'weight' : 'diff';
-    // モードボタンの選択状態を見て判定（より確実な方法）
-    const weightBtn = document.getElementById('mode-weight');
-    const isWeight  = weightBtn && weightBtn.style.background && weightBtn.style.background.includes('var(--green2)');
-    if (isWeight) {
+
+    // 選択中モードをボタンのfontWeightで判定
+    const btns = document.querySelectorAll('[onclick*="_qrSwitchMode"]');
+    let mode = 'view';
+    btns.forEach(b => {
+      if (b.style.fontWeight === '700' || b.style.background.includes('var(--green)')) mode = 'weight';
+      else if (b.style.fontWeight === '700' || b.style.background.includes('var(--blue)')) mode = 'diff';
+    });
+    // より確実な判定: 選択中ボタンのonclick属性から取得
+    const activeBtn = Array.from(document.querySelectorAll('button')).find(b =>
+      b.style.fontWeight === '700' && b.onclick && b.getAttribute('onclick')?.includes('_qrSwitchMode')
+    );
+    if (activeBtn) {
+      const m = activeBtn.getAttribute('onclick')?.match(/'(view|diff|weight)'/);
+      if (m) mode = m[1];
+    }
+
+    if (mode === 'weight') {
       routeTo('weight-mode', { resolve_result: res, qr_text: qrText });
-    } else {
+    } else if (mode === 'diff') {
       routeTo('qr-diff', { resolve_result: res, qr_text: qrText });
+    } else {
+      // 確認モード: 直接詳細画面へ
+      const eid = res.entity?.ind_id || res.entity?.lot_id || res.entity?.set_id;
+      if (res.entity_type === 'IND' && eid)      routeTo('ind-detail',     { id: eid });
+      else if (res.entity_type === 'LOT' && eid) routeTo('lot-detail',     { id: eid });
+      else if (res.entity_type === 'SET' && eid) routeTo('pairing-detail', { id: eid });
+      else routeTo('qr-diff', { resolve_result: res, qr_text: qrText });
     }
   } catch (e) {
-    if (errEl) errEl.textContent = '❌ ' + (e.message || '解析に失敗しました。QRコードを確認してください。');
+    if (errEl) errEl.textContent = '❌ ' + (e.message || '解析に失敗しました');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '🔍 読み取り・確認'; }
   }
 };
 
-// ── スキャン履歴（sessionStorage） ───────────────────────────
+// ── スキャン履歴 ──────────────────────────────────────────────
 Pages._qrSaveHistory = function (qrText, res) {
   try {
-    const key  = 'qr_scan_history';
-    const hist = JSON.parse(sessionStorage.getItem(key) || '[]');
-    hist.unshift({ qr_text: qrText, entity_type: res.entity_type, label_type: res.label_type,
+    const hist = JSON.parse(sessionStorage.getItem('qr_scan_history') || '[]');
+    hist.unshift({ qr_text: qrText, entity_type: res.entity_type,
       display_id: res.entity?.display_id || '', scanned_at: new Date().toLocaleTimeString('ja-JP') });
-    sessionStorage.setItem(key, JSON.stringify(hist.slice(0, 5)));
+    sessionStorage.setItem('qr_scan_history', JSON.stringify(hist.slice(0, 5)));
   } catch(e) {}
 };
 
@@ -218,90 +228,94 @@ Pages._qrRenderHistory = function () {
   try {
     const hist = JSON.parse(sessionStorage.getItem('qr_scan_history') || '[]');
     if (!hist.length) return;
-    el.innerHTML = `
-      <div class="card">
-        <div class="card-title">🕑 直近のスキャン</div>
-        ${hist.map(h => `
-          <div onclick="Pages._qrRescanFromHistory('${h.qr_text}')"
-            style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer">
-            <span style="font-size:.72rem;color:var(--text3);min-width:50px">${h.scanned_at}</span>
-            <span style="font-family:var(--font-mono);font-size:.78rem;color:var(--gold);flex:1">${h.display_id || h.qr_text}</span>
-            <span style="font-size:.7rem;color:var(--blue)">再スキャン →</span>
-          </div>`).join('')}
-      </div>`;
+    el.innerHTML = `<div class="card">
+      <div class="card-title">🕑 直近のスキャン</div>
+      ${hist.map(h => `
+        <div onclick="Pages._qrRescanFromHistory('${h.qr_text}')"
+          style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer">
+          <span style="font-size:.72rem;color:var(--text3);min-width:50px">${h.scanned_at}</span>
+          <span style="font-family:var(--font-mono);font-size:.78rem;color:var(--gold);flex:1">${h.display_id || h.qr_text}</span>
+          <span style="font-size:.7rem;color:var(--blue)">再スキャン →</span>
+        </div>`).join('')}
+    </div>`;
   } catch(e) {}
 };
 
 Pages._qrRescanFromHistory = function (qrText) {
-  document.getElementById('qr-input').value = qrText;
+  const inp = document.getElementById('qr-input');
+  if (inp) { inp.value = qrText; Pages._qrPreviewInput(qrText); }
   Pages._qrResolve();
 };
 
-// ── カメラ読み取り（将来実装プレースホルダー） ─────────────────
+// ── カメラスキャン ────────────────────────────────────────────
 Pages._qrStartCamera = async function () {
-  // jsQRが読み込まれているか確認
+  // jsQR確認（index.htmlで静的ロード済みのはずだが念のため）
   if (typeof jsQR === 'undefined') {
-    // jsQRを動的ロード
-    await new Promise((resolve, reject) => {
-      const s = document.createElement('script');
-      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js';
-      s.onload  = resolve;
-      s.onerror = reject;
-      document.head.appendChild(s);
-    }).catch(() => {
-      UI.toast('カメラライブラリの読み込みに失敗しました', 'error');
-      return;
-    });
+    UI.toast('QRライブラリ未ロード。ページを再読み込みしてください', 'error');
+    return;
   }
+  const card = document.getElementById('camera-card');
+  if (!card) return;
 
   try {
+    // 高解像度でリクエスト（Android最適化）
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
+      video: {
+        facingMode: { ideal: 'environment' },
+        width:  { ideal: 1920, min: 640 },
+        height: { ideal: 1080, min: 480 },
+        focusMode: 'continuous',
+      }
     });
     const video = document.getElementById('qr-video');
-    const card  = document.getElementById('camera-card');
-    if (!video || !card) return;
+    if (!video) { stream.getTracks().forEach(t=>t.stop()); return; }
 
     video.srcObject = stream;
     card.style.display = 'block';
-    document.getElementById('camera-btn').textContent = '📷 スキャン中...';
+    const btn = document.getElementById('camera-btn');
+    if (btn) btn.textContent = '📷 スキャン中...';
 
-    // スキャンループ開始
+    video.addEventListener('loadedmetadata', () => { video.play(); }, { once: true });
     Pages._qrScanLoop(video);
   } catch (e) {
-    if (e.name === 'NotAllowedError') {
-      UI.toast('カメラのアクセスを許可してください', 'error', 4000);
-    } else {
-      UI.toast('カメラを起動できません: ' + e.message, 'error');
-    }
+    const msg = e.name === 'NotAllowedError'
+      ? 'カメラへのアクセスを許可してください（アドレスバー左の🔒→カメラ→許可）'
+      : e.name === 'NotFoundError' ? 'カメラが見つかりません' : 'カメラ起動失敗: ' + e.message;
+    UI.toast(msg, 'error', 5000);
   }
 };
 
-Pages._qrScanLoop = async function (video) {
+Pages._qrScanLoop = function (video) {
   const canvas = document.getElementById('qr-canvas');
-  if (!canvas || !video.srcObject) return;
+  if (!canvas) return;
   const ctx = canvas.getContext('2d');
+  let frameCount = 0;
 
   const scan = () => {
-    if (!video.srcObject) return; // カメラ停止済みなら終了
-    if (video.readyState === video.HAVE_ENOUGH_DATA) {
+    if (!video.srcObject) return;
+    frameCount++;
+    // 毎フレームではなく3フレームに1回スキャン（負荷軽減）
+    if (frameCount % 3 !== 0) { requestAnimationFrame(scan); return; }
+
+    if (video.readyState >= video.HAVE_ENOUGH_DATA && video.videoWidth > 0) {
       canvas.width  = video.videoWidth;
       canvas.height = video.videoHeight;
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      ctx.drawImage(video, 0, 0);
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+      // inversionAttemptsを'attemptBoth'にして白地・黒地両対応
       const code = jsQR(imageData.data, imageData.width, imageData.height, {
-        inversionAttempts: 'dontInvert',
+        inversionAttempts: 'attemptBoth',
       });
-      if (code) {
-        // QRコードを検出
+
+      if (code && code.data) {
         Pages._qrStopCamera();
         const input = document.getElementById('qr-input');
-        if (input) input.value = code.data;
-        Pages._qrPreviewInput(code.data);
-        // バイブレーション（対応端末）
-        if (navigator.vibrate) navigator.vibrate(100);
-        // 自動的に解析実行
-        Pages._qrResolve();
+        if (input) { input.value = code.data; Pages._qrPreviewInput(code.data); }
+        if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+        const status = document.getElementById('scan-status');
+        if (status) { status.textContent = '✅ 読み取り成功！'; status.style.color = 'var(--green)'; }
+        setTimeout(() => Pages._qrResolve(), 200);
         return;
       }
     }
@@ -312,14 +326,48 @@ Pages._qrScanLoop = async function (video) {
 
 Pages._qrStopCamera = function () {
   const video = document.getElementById('qr-video');
-  if (video?.srcObject) { video.srcObject.getTracks().forEach(t => t.stop()); }
-  document.getElementById('camera-card').style.display = 'none';
+  if (video?.srcObject) { video.srcObject.getTracks().forEach(t => t.stop()); video.srcObject = null; }
+  const card = document.getElementById('camera-card');
+  if (card) card.style.display = 'none';
+  const btn = document.getElementById('camera-btn');
+  if (btn) btn.textContent = '📷 カメラで読み取る';
 };
 
+// ── 画像ファイルからQR読み取り ────────────────────────────────
+Pages._qrReadFromImage = function (input) {
+  const file = input?.files?.[0];
+  if (!file) return;
+  if (typeof jsQR === 'undefined') { UI.toast('QRライブラリ未ロード', 'error'); return; }
 
-// ════════════════════════════════════════════════════════════════
-// 差分入力画面 (qr-diff)
-// ════════════════════════════════════════════════════════════════
+  const reader = new FileReader();
+  reader.onload = function (e) {
+    const img = new Image();
+    img.onload = function () {
+      const canvas = document.createElement('canvas');
+      canvas.width  = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = jsQR(imageData.data, imageData.width, imageData.height, {
+        inversionAttempts: 'attemptBoth',
+      });
+      if (code && code.data) {
+        const qrInput = document.getElementById('qr-input');
+        if (qrInput) { qrInput.value = code.data; Pages._qrPreviewInput(code.data); }
+        UI.toast('QRコードを読み取りました', 'success');
+        setTimeout(() => Pages._qrResolve(), 300);
+      } else {
+        UI.toast('QRコードが見つかりませんでした。鮮明な画像を使用してください', 'error', 4000);
+      }
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+  // inputをリセット（同じ画像を再選択できるように）
+  input.value = '';
+};
+
 Pages.qrDiff = function (params = {}) {
   const res = params.resolve_result;
   if (!res) { routeTo('qr-scan'); return; }

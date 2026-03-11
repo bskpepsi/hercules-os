@@ -1,92 +1,143 @@
 // ════════════════════════════════════════════════════════════════
-// dashboard.js
-// 役割: アプリ起動時のホーム画面。
-//       飼育全体のKPI・候補個体・最近の作業予定を一目で把握できる。
-//       各セクションからワンタップで詳細画面へ遷移できることを優先する。
+// dashboard.js  v3 — 司令塔ダッシュボード
+// ブロック構成:
+//   1. 今日の最優先タスク
+//   2. クイックアクション
+//   3. 種親・ペアリング状況
+//   4. 産卵セット状況
+//   5. 有望個体エリア
+//   6. ライン・血統分析サマリー
 // ════════════════════════════════════════════════════════════════
-
 'use strict';
 
 Pages.dashboard = async function () {
   const main = document.getElementById('main');
-
-  // まずキャッシュで即時表示
   _renderDashboard(main);
-
-  // バックグラウンドで最新データ取得（GAS URLが設定済みの場合）
   const gasUrl = Store.getSetting('gas_url') || CONFIG.GAS_URL;
   if (gasUrl) {
     try {
       await syncAll(true);
-      // ★修正: syncAll完了時点でdashboard以外の画面に遷移していたら描画しない
       if (Store.getPage() !== 'dashboard') return;
       _renderDashboard(main);
-    } catch (e) { /* 失敗してもキャッシュ表示を維持 */ }
+    } catch (e) {}
   }
 };
 
 function _renderDashboard(main) {
-  const inds   = Store.getDB('individuals') || [];
-  const lots   = Store.getDB('lots')        || [];
-  const lines  = Store.getDB('lines')       || [];
+  const inds     = Store.getDB('individuals') || [];
+  const lots     = Store.getDB('lots')        || [];
+  const lines    = Store.getDB('lines')       || [];
+  const parents  = Store.getDB('parents')     || [];
+  const pairings = Store.getDB('pairings')    || [];
 
-  const alive  = inds.filter(i => i.status === 'alive');
-  const actLot = lots.filter(l => l.status === 'active');
-  const guinCands = alive.filter(i => String(i.guinness_flag) === 'true');
-  const parCands  = alive.filter(i => String(i.parent_flag)   === 'true');
-  const g200Cands = alive.filter(i => String(i.g200_flag)     === 'true');
+  const alive    = inds.filter(i => i.status === 'alive');
+  const actLot   = lots.filter(l => l.status === 'active');
+  const today    = new Date(); today.setHours(0,0,0,0);
 
-  // 最重量3頭
-  const topByWeight = [...alive]
-    .filter(i => i.latest_weight_g)
-    .sort((a,b) => +b.latest_weight_g - +a.latest_weight_g)
-    .slice(0, 3);
+  // ────────────────────────────────────────────────
+  // 1. 今日のタスク計算
+  // ────────────────────────────────────────────────
+  const exchDays   = parseInt(Store.getSetting('pairing_set_exchange_days') || '7', 10);
+  const activePairs= pairings.filter(p => p.status === 'active' && (p.set_start || p.pairing_start));
 
-  // ステージ別集計
-  const stageCounts = {};
-  alive.forEach(i => {
-    const s = i.current_stage || 'unknown';
-    stageCounts[s] = (stageCounts[s] || 0) + 1;
-  });
-
-  // マット交換推奨（最終交換から60日以上経過したロット）
-  const today = new Date(); today.setHours(0,0,0,0);
-  const exchangeDue = actLot.filter(l => {
-    if (!l.mat_changed_at) return false;
-    const parts = l.mat_changed_at.split('/');
-    if (parts.length < 3) return false;
-    const last = new Date(+parts[0], +parts[1]-1, +parts[2]);
-    const days = Math.floor((today - last) / 86400000);
-    return days >= 60;
-  });
-
-  // 産卵セット交換リマインド（set_startがなければpairing_startで代替）
-  const pairings    = Store.getDB('pairings') || [];
-  const exchDays    = parseInt(Store.getSetting('pairing_set_exchange_days') || '7', 10);
-  const activePairs = pairings.filter(p => p.status === 'active' && (p.set_start || p.pairing_start));
-
-  function _pairExchangeDue(pair) {
-    const base  = pair.set_start || pair.pairing_start;
-    const parts = String(base).split(/[\/\-]/);
-    if (parts.length < 3) return null;
-    const d = new Date(+parts[0], +parts[1]-1, +parts[2]);
+  function _pairDue(p) {
+    const base = p.set_start || p.pairing_start;
+    const pts  = String(base).split(/[\/\-]/);
+    if (pts.length < 3) return null;
+    const d = new Date(+pts[0], +pts[1]-1, +pts[2]);
     d.setDate(d.getDate() + exchDays);
     return d;
   }
 
-  const setExchangeOverdue  = [];
-  const setExchangeToday    = [];
-  const setExchangeTomorrow = [];
+  const tasks = { red: [], yellow: [], green: [] };
+
+  // 産卵セット交換
   activePairs.forEach(p => {
-    const due = _pairExchangeDue(p);
+    const due  = _pairDue(p);
     if (!due) return;
     const diff = Math.floor((due - today) / 86400000);
     const label = p.set_name || p.display_id;
-    if (diff < 0)        setExchangeOverdue.push({ label, diff: Math.abs(diff) });
-    else if (diff === 0) setExchangeToday.push({ label });
-    else if (diff === 1) setExchangeTomorrow.push({ label });
+    if (diff < 0)   tasks.red.push({ icon:'🥚', text:`${label} セット交換 ${Math.abs(diff)}日超過`, fn:`routeTo('pairing-detail',{id:'${p.set_id}'})` });
+    else if(diff===0) tasks.red.push({ icon:'🔔', text:`${label} 今日セット交換日`, fn:`routeTo('pairing-detail',{id:'${p.set_id}'})` });
+    else if(diff<=2)  tasks.yellow.push({ icon:'📅', text:`${label} セット交換まで${diff}日`, fn:`routeTo('pairing-detail',{id:'${p.set_id}'})` });
   });
-  const hasSetReminder = setExchangeOverdue.length || setExchangeToday.length || setExchangeTomorrow.length;
+
+  // 種親ペアリング可能判定
+  const maleWait   = parseInt(Store.getSetting('male_pairing_wait_days')   || '14', 10);
+  const femaleWait = parseInt(Store.getSetting('female_pairing_wait_days') || '14', 10);
+  parents.filter(p => p.status === 'active' && p.feeding_start_date).forEach(p => {
+    const wait  = p.sex === '♂' ? maleWait : femaleWait;
+    const fpts  = String(p.feeding_start_date).split(/[\/\-]/);
+    if (fpts.length < 3) return;
+    const readyDate = new Date(+fpts[0], +fpts[1]-1, +fpts[2]);
+    readyDate.setDate(readyDate.getDate() + wait);
+    const diff = Math.floor((readyDate - today) / 86400000);
+    if (diff <= 0)  tasks.green.push({ icon:'💕', text:`${p.display_name} ペアリング可能`, fn:`routeTo('parent-detail',{id:'${p.par_id}'})` });
+    else if(diff<=7) tasks.yellow.push({ icon:'⏳', text:`${p.display_name} ペアリングまで${diff}日`, fn:`routeTo('parent-detail',{id:'${p.par_id}'})` });
+  });
+
+  // 150g超え個体（有望）
+  const over150 = alive.filter(i => +i.latest_weight_g >= 150);
+  if (over150.length) tasks.green.push({ icon:'🏆', text:`150g超え ${over150.length}頭`, fn:"routeTo('ind-list')" });
+
+  // ────────────────────────────────────────────────
+  // 3. 種親・ペアリング状況
+  // ────────────────────────────────────────────────
+  const activeParents = parents.filter(p => p.status === 'active');
+  const males   = activeParents.filter(p => p.sex === '♂');
+  const females = activeParents.filter(p => p.sex === '♀');
+
+  function _parentReadyDiff(p) {
+    if (!p.feeding_start_date) return null;
+    const wait = p.sex === '♂' ? maleWait : femaleWait;
+    const pts  = String(p.feeding_start_date).split(/[\/\-]/);
+    if (pts.length < 3) return null;
+    const d = new Date(+pts[0], +pts[1]-1, +pts[2]);
+    d.setDate(d.getDate() + wait);
+    return Math.floor((d - today) / 86400000);
+  }
+
+  const readyToday = activeParents.filter(p => { const d = _parentReadyDiff(p); return d !== null && d <= 0; });
+  const readySoon  = activeParents.filter(p => { const d = _parentReadyDiff(p); return d !== null && d > 0 && d <= 7; });
+  const noFeeding  = activeParents.filter(p => !p.feeding_start_date);
+
+  // ────────────────────────────────────────────────
+  // 4. 産卵セット ライン別集計
+  // ────────────────────────────────────────────────
+  const lineMap = {};
+  lines.forEach(l => { lineMap[l.line_id] = l.display_id || l.line_id; });
+
+  const pairByLine = {};
+  activePairs.forEach(p => {
+    const key = p.line_id || p.display_id;
+    if (!pairByLine[key]) pairByLine[key] = { label: lineMap[key] || p.set_name || p.display_id, eggs: 0, hatch: 0, pairs: [] };
+    pairByLine[key].eggs  += parseInt(p.total_eggs  || 0, 10);
+    pairByLine[key].hatch += parseInt(p.total_hatch || 0, 10);
+    pairByLine[key].pairs.push(p);
+  });
+
+  // ────────────────────────────────────────────────
+  // 5. 有望個体
+  // ────────────────────────────────────────────────
+  const withWeight = alive.filter(i => i.latest_weight_g);
+  const topWeight  = [...withWeight].sort((a,b) => +b.latest_weight_g - +a.latest_weight_g).slice(0,5);
+  const over170    = alive.filter(i => +i.latest_weight_g >= 170);
+
+  // ────────────────────────────────────────────────
+  // 6. ライン分析
+  // ────────────────────────────────────────────────
+  const lineStats = {};
+  lines.forEach(l => { lineStats[l.line_id] = { label: l.display_id, weights: [], alive: 0, dead: 0 }; });
+  inds.forEach(i => {
+    if (!lineStats[i.line_id]) return;
+    if (i.status === 'alive') { lineStats[i.line_id].alive++; if (i.latest_weight_g) lineStats[i.line_id].weights.push(+i.latest_weight_g); }
+    if (i.status === 'dead')   lineStats[i.line_id].dead++;
+  });
+  const lineRank = Object.values(lineStats)
+    .filter(s => s.weights.length > 0)
+    .map(s => ({ ...s, avg: Math.round(s.weights.reduce((a,b)=>a+b,0)/s.weights.length*10)/10 }))
+    .sort((a,b) => b.avg - a.avg)
+    .slice(0, 3);
 
   const gasUrl = Store.getSetting('gas_url') || CONFIG.GAS_URL;
 
@@ -97,193 +148,188 @@ function _renderDashboard(main) {
       ${!gasUrl ? `<div class="card" style="border-color:rgba(224,144,64,.4);background:rgba(224,144,64,.07)">
         <div style="font-size:.85rem;color:var(--amber)">
           ⚠️ GAS URLが未設定です。
-          <span style="cursor:pointer;text-decoration:underline;color:var(--blue)"
-            onclick="routeTo('settings')">設定画面へ</span>
-        </div>
-      </div>` : ''}
+          <span style="color:var(--blue);cursor:pointer" onclick="routeTo('settings')">設定画面へ</span>
+        </div></div>` : ''}
 
-      <!-- KPI -->
-      <div class="kpi-grid">
-        <div class="kpi-card" onclick="routeTo('ind-list')">
-          <div class="kpi-value">${alive.length}</div>
-          <div class="kpi-label">飼育個体数</div>
-          <div class="kpi-sub">♂${alive.filter(i=>i.sex==='♂').length} / ♀${alive.filter(i=>i.sex==='♀').length}</div>
-        </div>
-        <div class="kpi-card" onclick="routeTo('lot-list')">
-          <div class="kpi-value">${actLot.length}</div>
-          <div class="kpi-label">管理中ロット</div>
-          <div class="kpi-sub">総頭数 ${actLot.reduce((s,l)=>s+(+l.count||0),0)}頭</div>
-        </div>
-        <div class="kpi-card" onclick="routeTo('ind-list')">
-          <div class="kpi-value">${guinCands.length}</div>
-          <div class="kpi-label">ギネス候補 🏆</div>
-          <div class="kpi-sub">${lines.length}ライン</div>
-        </div>
-        <div class="kpi-card">
-          <div class="kpi-value">${topByWeight.length ? topByWeight[0].latest_weight_g+'g' : '—'}</div>
-          <div class="kpi-label">最重量</div>
-          <div class="kpi-sub">${topByWeight.length ? topByWeight[0].display_id : '—'}</div>
-        </div>
-      </div>
-
-      <!-- ステージ別内訳 -->
-      <div class="card">
-        <div class="card-title">ステージ別内訳</div>
-        <div style="display:flex;flex-wrap:wrap;gap:6px">
-          ${STAGE_LIST.map(s => {
-            const n = stageCounts[s.code] || 0;
-            if (!n) return '';
-            return `<div style="background:${s.color}18;border:1px solid ${s.color}44;border-radius:6px;
-              padding:6px 10px;cursor:pointer;text-align:center"
-              onclick="routeTo('ind-list',{stage:'${s.code}'})">
-              <div style="font-size:.7rem;color:${s.color};font-weight:600">${s.label}</div>
-              <div style="font-size:1.1rem;font-weight:700;color:var(--text)">${n}</div>
-            </div>`;
-          }).join('')}
-          ${Object.keys(stageCounts).length === 0 ? `<span style="color:var(--text3);font-size:.82rem">個体がいません</span>` : ''}
-        </div>
-      </div>
-
-      <!-- 重要候補個体 -->
-      ${(guinCands.length || parCands.length || g200Cands.length) ? `
-      <div class="card">
-        <div class="card-title">⭐ 重要候補個体</div>
-        ${guinCands.length ? `
-          <div class="sec-hdr"><span class="sec-title">🏆 ギネス候補 (${guinCands.length}頭)</span></div>
-          ${guinCands.slice(0,3).map(_miniIndCard).join('')}
-          ${guinCands.length > 3 ? `<div class="sec-more" onclick="routeTo('ind-list')">+${guinCands.length-3}頭を見る</div>` : ''}
-        ` : ''}
-        ${parCands.length ? `
-          <div class="sec-hdr" style="margin-top:10px"><span class="sec-title">👑 種親候補 (${parCands.length}頭)</span></div>
-          ${parCands.slice(0,3).map(_miniIndCard).join('')}
-        ` : ''}
-        ${g200Cands.length ? `
-          <div class="sec-hdr" style="margin-top:10px"><span class="sec-title">💪 200g候補 (${g200Cands.length}頭)</span></div>
-          ${g200Cands.slice(0,3).map(_miniIndCard).join('')}
-        ` : ''}
-      </div>` : ''}
-
-      <!-- 体重トップ3 -->
-      ${topByWeight.length ? `
-      <div class="card">
-        <div class="card-title">🥇 体重トップ3</div>
-        ${topByWeight.map((ind, i) => {
-          const age = Store.calcAge(ind.hatch_date);
-          return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;
-            border-bottom:1px solid var(--border);cursor:pointer"
-            onclick="routeTo('ind-detail',{id:'${ind.ind_id}'})">
-            <span style="font-size:1.2rem;min-width:28px">${'🥇🥈🥉'[i]}</span>
-            <div style="flex:1">
-              <div style="font-family:var(--font-mono);font-size:.82rem;color:var(--gold)">${ind.display_id}</div>
-              <div style="font-size:.72rem;color:var(--text3)">${age ? age.days+' / '+age.stageGuess : '—'}</div>
-            </div>
-            <div style="font-size:1.2rem;font-weight:700;color:var(--green)">${ind.latest_weight_g}g</div>
-          </div>`;
-        }).join('')}
-      </div>` : ''}
-
-      <!-- 作業予定（マット交換推奨） -->
-      ${exchangeDue.length ? `
-      <div class="card" style="border-color:rgba(224,144,64,.3)">
-        <div class="card-title" style="color:var(--amber)">🔔 マット交換推奨 (${exchangeDue.length}ロット)</div>
-        ${exchangeDue.slice(0,4).map(lot => {
-          const parts = lot.mat_changed_at.split('/');
-          const last  = new Date(+parts[0], +parts[1]-1, +parts[2]);
-          const days  = Math.floor((today - last) / 86400000);
-          return `<div style="display:flex;align-items:center;gap:8px;padding:7px 0;
-            border-bottom:1px solid var(--border);cursor:pointer"
-            onclick="routeTo('lot-detail',{id:'${lot.lot_id}'})">
-            <span style="color:var(--amber)">⚠️</span>
-            <div style="flex:1">
-              <div style="font-family:var(--font-mono);font-size:.8rem">${lot.display_id}</div>
-              <div style="font-size:.7rem;color:var(--text3)">${stageLabel(lot.stage)} / ${lot.count}頭</div>
-            </div>
-            <div style="font-size:.75rem;color:var(--amber)">${days}日経過</div>
-          </div>`;
-        }).join('')}
-        ${exchangeDue.length > 4 ? `<div class="sec-more" onclick="routeTo('lot-list')">+${exchangeDue.length-4}件を見る</div>` : ''}
-      </div>` : ''}
-
-      <!-- 産卵セット交換リマインド -->
-      ${hasSetReminder ? `
+      <!-- ① 今日の最優先タスク -->
+      ${(tasks.red.length || tasks.yellow.length || tasks.green.length) ? `
       <div class="card" style="border-color:rgba(231,76,60,.3)">
-        <div class="card-title" style="color:var(--red)">🥚 産卵セット交換リマインド</div>
-        ${setExchangeOverdue.map(s => `
-          <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer"
-            onclick="routeTo('pairing-list')">
-            <span style="color:var(--red)">⚠️</span>
-            <div style="flex:1">
-              <div style="font-size:.82rem;font-weight:600">${s.label}</div>
-              <div style="font-size:.7rem;color:var(--text3)">交換期限超過</div>
-            </div>
-            <div style="font-size:.75rem;color:var(--red);font-weight:700">${s.diff}日超過</div>
+        <div class="card-title">📋 今日のタスク</div>
+        ${tasks.red.map(t => `
+          <div onclick="${t.fn}" style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer">
+            <span style="font-size:1.1rem">${t.icon}</span>
+            <span style="flex:1;font-size:.83rem;font-weight:600;color:var(--red)">${t.text}</span>
+            <span style="color:var(--text3)">›</span>
           </div>`).join('')}
-        ${setExchangeToday.map(s => `
-          <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer"
-            onclick="routeTo('pairing-list')">
-            <span style="color:var(--red)">🔔</span>
-            <div style="flex:1">
-              <div style="font-size:.82rem;font-weight:600">${s.label}</div>
-              <div style="font-size:.7rem;color:var(--text3)">今日が交換予定日</div>
-            </div>
-            <div style="font-size:.75rem;color:var(--red);font-weight:700">今日</div>
+        ${tasks.yellow.map(t => `
+          <div onclick="${t.fn}" style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer">
+            <span style="font-size:1.1rem">${t.icon}</span>
+            <span style="flex:1;font-size:.83rem;color:var(--amber)">${t.text}</span>
+            <span style="color:var(--text3)">›</span>
           </div>`).join('')}
-        ${setExchangeTomorrow.map(s => `
-          <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer"
-            onclick="routeTo('pairing-list')">
-            <span style="color:var(--amber)">📅</span>
-            <div style="flex:1">
-              <div style="font-size:.82rem;font-weight:600">${s.label}</div>
-              <div style="font-size:.7rem;color:var(--text3)">明日が交換予定日</div>
+        ${tasks.green.map(t => `
+          <div onclick="${t.fn}" style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer">
+            <span style="font-size:1.1rem">${t.icon}</span>
+            <span style="flex:1;font-size:.83rem;color:var(--green)">${t.text}</span>
+            <span style="color:var(--text3)">›</span>
+          </div>`).join('')}
+      </div>` : `<div class="card" style="border-color:rgba(45,122,82,.25)">
+        <div style="text-align:center;padding:8px 0;font-size:.85rem;color:var(--green)">✅ 今日の緊急タスクはありません</div>
+      </div>`}
+
+      <!-- ② クイックアクション -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <button onclick="routeTo('qr-scan',{mode:'weight'})" style="padding:16px 8px;border:none;border-radius:14px;background:linear-gradient(135deg,rgba(45,122,82,.9),rgba(76,175,120,.8));color:#fff;cursor:pointer;text-align:center;box-shadow:0 3px 12px rgba(45,122,82,.3)">
+          <div style="font-size:1.6rem;margin-bottom:3px">⚖️</div>
+          <div style="font-weight:700;font-size:.88rem">体重測定</div>
+        </button>
+        <button onclick="routeTo('qr-scan')" style="padding:16px 8px;border:none;border-radius:14px;background:linear-gradient(135deg,rgba(33,97,172,.9),rgba(84,153,199,.8));color:#fff;cursor:pointer;text-align:center;box-shadow:0 3px 12px rgba(33,97,172,.3)">
+          <div style="font-size:1.6rem;margin-bottom:3px">📷</div>
+          <div style="font-weight:700;font-size:.88rem">QRスキャン</div>
+        </button>
+        <button onclick="routeTo('pairing-list')" style="padding:16px 8px;border:none;border-radius:14px;background:linear-gradient(135deg,rgba(155,89,182,.85),rgba(187,143,206,.8));color:#fff;cursor:pointer;text-align:center;box-shadow:0 3px 12px rgba(155,89,182,.3)">
+          <div style="font-size:1.6rem;margin-bottom:3px">🥚</div>
+          <div style="font-weight:700;font-size:.88rem">採卵記録</div>
+        </button>
+        <button onclick="routeTo('label-gen')" style="padding:16px 8px;border:none;border-radius:14px;background:linear-gradient(135deg,rgba(202,164,48,.85),rgba(212,181,100,.8));color:#fff;cursor:pointer;text-align:center;box-shadow:0 3px 12px rgba(202,164,48,.3)">
+          <div style="font-size:1.6rem;margin-bottom:3px">🏷️</div>
+          <div style="font-weight:700;font-size:.88rem">ラベル発行</div>
+        </button>
+      </div>
+
+      <!-- KPIバー -->
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
+        ${[
+          { val: alive.length, sub: `♂${alive.filter(i=>i.sex==='♂').length}/♀${alive.filter(i=>i.sex==='♀').length}`, label:'飼育個体数', fn:"routeTo('ind-list')" },
+          { val: actLot.length, sub:`総頭数 ${actLot.reduce((s,l)=>s+(+l.count||0),0)}頭`, label:'管理中ロット', fn:"routeTo('lot-list')" },
+          { val: alive.filter(i=>String(i.guinness_flag)==='true').length, sub:`${lines.length}ライン`, label:'ギネス候補🏆', fn:"routeTo('ind-list')" },
+          { val: topWeight[0] ? topWeight[0].latest_weight_g+'g' : '—', sub: topWeight[0] ? topWeight[0].display_id : '—', label:'最高体重', fn:"routeTo('ind-list')" },
+        ].map(k=>`<div class="kpi-card" onclick="${k.fn}" style="cursor:pointer">
+          <div class="kpi-value">${k.val}</div>
+          <div style="font-size:.6rem;color:var(--text3);margin-bottom:1px">${k.sub}</div>
+          <div class="kpi-label">${k.label}</div>
+        </div>`).join('')}
+      </div>
+
+      <!-- ③ 種親・ペアリング状況 -->
+      <div class="card">
+        <div class="card-title" style="display:flex;justify-content:space-between">
+          <span>🦋 種親・ペアリング状況</span>
+          <span style="font-size:.72rem;font-weight:400;color:var(--text3)">♂${males.length} / ♀${females.length}</span>
+        </div>
+        ${readyToday.length ? `
+          <div style="margin-bottom:8px">
+            <div style="font-size:.72rem;color:var(--green);font-weight:700;margin-bottom:4px">✅ ペアリング可能（今日〜）</div>
+            ${readyToday.map(p=>`
+              <div onclick="routeTo('parent-detail',{id:'${p.par_id}'})" style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;border-bottom:1px solid var(--border)">
+                <span style="font-size:.85rem">${p.sex}</span>
+                <span style="flex:1;font-size:.82rem;font-weight:600">${p.display_name}${p.size_mm?' '+p.size_mm+'mm':''}</span>
+                <span style="font-size:.7rem;color:var(--green)">可能 ›</span>
+              </div>`).join('')}
+          </div>` : ''}
+        ${readySoon.length ? `
+          <div style="margin-bottom:8px">
+            <div style="font-size:.72rem;color:var(--amber);font-weight:700;margin-bottom:4px">⏳ 7日以内にペアリング可能</div>
+            ${readySoon.map(p=>{ const d=_parentReadyDiff(p); return `
+              <div onclick="routeTo('parent-detail',{id:'${p.par_id}'})" style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;border-bottom:1px solid var(--border)">
+                <span style="font-size:.85rem">${p.sex}</span>
+                <span style="flex:1;font-size:.82rem">${p.display_name}${p.size_mm?' '+p.size_mm+'mm':''}</span>
+                <span style="font-size:.7rem;color:var(--amber)">あと${d}日 ›</span>
+              </div>`;}).join('')}
+          </div>` : ''}
+        ${noFeeding.length ? `
+          <div>
+            <div style="font-size:.72rem;color:var(--text3);font-weight:700;margin-bottom:4px">⚠️ 後食開始日未設定 (${noFeeding.length}頭)</div>
+            ${noFeeding.slice(0,3).map(p=>`
+              <div onclick="routeTo('parent-detail',{id:'${p.par_id}'})" style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;border-bottom:1px solid var(--border)">
+                <span style="font-size:.85rem">${p.sex}</span>
+                <span style="flex:1;font-size:.82rem;color:var(--text2)">${p.display_name}${p.size_mm?' '+p.size_mm+'mm':''}</span>
+                <span style="font-size:.7rem;color:var(--blue)">設定 ›</span>
+              </div>`).join('')}
+            ${noFeeding.length>3?`<div style="font-size:.72rem;color:var(--text3);padding:4px 0">+${noFeeding.length-3}頭</div>`:''}
+          </div>` : ''}
+        ${!readyToday.length && !readySoon.length && !noFeeding.length ? `<div style="font-size:.82rem;color:var(--text3);padding:8px 0">種親データがありません</div>` : ''}
+        <button class="btn btn-ghost btn-sm" style="margin-top:8px;width:100%" onclick="routeTo('parent-list')">種親一覧を見る →</button>
+      </div>
+
+      <!-- ④ 産卵セット状況 -->
+      <div class="card">
+        <div class="card-title" style="display:flex;justify-content:space-between">
+          <span>🥚 産卵セット状況</span>
+          <span style="font-size:.72rem;font-weight:400;color:var(--text3)">${activePairs.length}セット進行中</span>
+        </div>
+        ${Object.keys(pairByLine).length ? Object.values(pairByLine).map(ls => {
+          const rate = ls.eggs > 0 ? Math.round(ls.hatch/ls.eggs*1000)/10 : null;
+          // 交換リマインド
+          let exchTag = '';
+          ls.pairs.forEach(p => {
+            const due = _pairDue(p);
+            if (!due) return;
+            const diff = Math.floor((due - today) / 86400000);
+            if (diff < 0)   exchTag = `<span style="font-size:.65rem;color:var(--red);font-weight:700">期限超過${Math.abs(diff)}日</span>`;
+            else if(diff===0) exchTag = `<span style="font-size:.65rem;color:var(--red);font-weight:700">今日交換</span>`;
+            else if(diff===1) exchTag = `<span style="font-size:.65rem;color:var(--amber);font-weight:700">明日交換</span>`;
+            else if(diff<=3)  exchTag = `<span style="font-size:.65rem;color:var(--amber)">交換まで${diff}日</span>`;
+          });
+          return `<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer" onclick="routeTo('pairing-list')">
+            <div>
+              <div style="font-size:.83rem;font-weight:600">${ls.label}</div>
+              <div style="font-size:.72rem;color:var(--text3);margin-top:1px">採卵${ls.eggs}個 / 孵化${ls.hatch}頭 ${rate!==null?'/ 孵化率'+rate+'%':''}</div>
             </div>
-            <div style="font-size:.75rem;color:var(--amber);font-weight:700">明日</div>
+            ${exchTag}
+          </div>`;
+        }).join('') : `<div style="font-size:.82rem;color:var(--text3);padding:8px 0">進行中の産卵セットはありません</div>`}
+        ${activePairs.length > 0 ? `<button class="btn btn-ghost btn-sm" style="margin-top:8px;width:100%" onclick="routeTo('pairing-list')">産卵セット一覧を見る →</button>` : ''}
+      </div>
+
+      <!-- ⑤ 有望個体エリア -->
+      ${topWeight.length ? `
+      <div class="card">
+        <div class="card-title" style="display:flex;justify-content:space-between">
+          <span>🏆 有望個体</span>
+          <span style="font-size:.72rem;font-weight:400;color:var(--text3)">${withWeight.length}頭計測済み</span>
+        </div>
+        ${over170.length ? `<div style="background:rgba(202,164,48,.1);border:1px solid rgba(202,164,48,.3);border-radius:8px;padding:8px 12px;margin-bottom:8px;font-size:.82rem;color:var(--gold);font-weight:700">🏅 170g超え ${over170.length}頭</div>` : ''}
+        ${over150.length ? `<div style="font-size:.75rem;color:var(--green);margin-bottom:6px">150g超え ${over150.length}頭</div>` : ''}
+        ${topWeight.map((ind,i) => {
+          const ageObj = Store.calcAge(ind.hatch_date);
+          return `<div onclick="routeTo('ind-detail',{id:'${ind.ind_id}'})" style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer">
+            <span style="font-size:.78rem;color:var(--text3);min-width:18px">${i+1}</span>
+            <div style="flex:1">
+              <div style="font-family:var(--font-mono);font-size:.8rem;color:var(--gold)">${ind.display_id}</div>
+              <div style="font-size:.7rem;color:var(--text3)">${ind.sex||'?'} ${ageObj?ageObj.days+'日':'—'} ${ind.current_stage||''}</div>
+            </div>
+            <div style="font-size:1rem;font-weight:700;color:${+ind.latest_weight_g>=170?'var(--gold)':+ind.latest_weight_g>=150?'var(--green)':'var(--text1)'}">${ind.latest_weight_g}g</div>
+          </div>`;
+        }).join('')}
+        <button class="btn btn-ghost btn-sm" style="margin-top:8px;width:100%" onclick="routeTo('ind-list')">個体一覧を見る →</button>
+      </div>` : ''}
+
+      <!-- ⑥ ライン分析サマリー -->
+      ${lineRank.length ? `
+      <div class="card">
+        <div class="card-title">📊 ライン平均体重 TOP${lineRank.length}</div>
+        ${lineRank.map((ls,i) => `
+          <div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border)">
+            <span style="font-size:.78rem;color:var(--text3);min-width:18px">${i+1}</span>
+            <div style="flex:1">
+              <div style="font-size:.83rem;font-weight:600">${ls.label}</div>
+              <div style="font-size:.7rem;color:var(--text3)">${ls.alive}頭飼育中 / 計測${ls.weights.length}頭</div>
+            </div>
+            <div style="font-size:1rem;font-weight:700;color:var(--green)">${ls.avg}g</div>
           </div>`).join('')}
       </div>` : ''}
 
-      <!-- QRスキャン大ボタン（1タップアクセス） -->
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:4px">
-        <button onclick="routeTo('qr-scan',{mode:'weight'})" style="
-          padding:18px 10px; border:none; border-radius:14px;
-          background:linear-gradient(135deg,rgba(45,122,82,.9),rgba(76,175,120,.8));
-          color:#fff; cursor:pointer; text-align:center;
-          box-shadow:0 3px 12px rgba(45,122,82,.35);">
-          <div style="font-size:1.8rem;margin-bottom:4px">⚖️</div>
-          <div style="font-weight:700;font-size:.9rem">体重測定</div>
-          <div style="font-size:.68rem;opacity:.85;margin-top:2px">QR → 入力 → 保存</div>
-        </button>
-        <button onclick="routeTo('qr-scan')" style="
-          padding:18px 10px; border:none; border-radius:14px;
-          background:linear-gradient(135deg,rgba(91,168,232,.85),rgba(60,130,200,.75));
-          color:#fff; cursor:pointer; text-align:center;
-          box-shadow:0 3px 12px rgba(91,168,232,.3);">
-          <div style="font-size:1.8rem;margin-bottom:4px">📷</div>
-          <div style="font-weight:700;font-size:.9rem">QRスキャン</div>
-          <div style="font-size:.68rem;opacity:.85;margin-top:2px">差分入力モード</div>
-        </button>
+      <div style="text-align:center;padding:12px 0;font-size:.72rem;color:var(--text3)">
+        HerculesOS v1.0.0 — Phase 2
       </div>
-
-      <!-- クイックアクション -->
-      <div class="card">
-        <div class="card-title">クイックアクション</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-          <button class="btn btn-ghost" onclick="routeTo('label-gen')">🏷️ ラベル発行</button>
-          <button class="btn btn-ghost" onclick="routeTo('ind-new')">➕ 個体登録</button>
-          <button class="btn btn-ghost" onclick="routeTo('lot-list')">🥚 ロット管理</button>
-          <button class="btn btn-ghost" onclick="syncAll()">🔄 データ同期</button>
-        </div>
-      </div>
-
-      <div style="text-align:center;font-size:.68rem;color:var(--text3);padding:8px 0">
-        HerculesOS v${CONFIG.APP_VERSION} — Phase ${CONFIG.PHASE}
-      </div>
-
     </div>`;
 }
 
 function _dashHeader() {
-  const now = new Date();
-  const greet = now.getHours() < 12 ? 'おはようございます' :
-                now.getHours() < 18 ? 'こんにちは' : 'おつかれさまです';
+  const now    = new Date();
+  const greet  = now.getHours() < 12 ? 'おはようございます' :
+                 now.getHours() < 18 ? 'こんにちは' : 'おつかれさまです';
   return `<header class="page-header" style="justify-content:space-between">
     <div style="font-size:.85rem;color:var(--text2)">${greet}</div>
     <div style="font-family:var(--font-mono);font-size:.75rem;color:var(--gold)">HerculesOS</div>
@@ -291,21 +337,4 @@ function _dashHeader() {
   </header>`;
 }
 
-function _miniIndCard(ind) {
-  const age = Store.calcAge(ind.hatch_date);
-  return `<div style="display:flex;align-items:center;gap:8px;padding:7px 0;
-    border-bottom:1px solid var(--border);cursor:pointer"
-    onclick="routeTo('ind-detail',{id:'${ind.ind_id}'})">
-    <span>${ind.sex || '?'}</span>
-    <div style="flex:1">
-      <div style="font-family:var(--font-mono);font-size:.8rem;color:var(--gold)">${ind.display_id}</div>
-      <div style="font-size:.7rem;color:var(--text3)">${age ? age.days : '—'}</div>
-    </div>
-    <div style="font-size:1rem;font-weight:700;color:var(--green)">
-      ${ind.latest_weight_g ? ind.latest_weight_g+'g' : '—'}
-    </div>
-  </div>`;
-}
-
-// ページ登録
 PAGES['dashboard'] = () => Pages.dashboard();
