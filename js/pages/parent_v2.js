@@ -682,3 +682,13 @@ function _clientExtractTags2(raw) {
 function _parseTags2(json) {
   try { return JSON.parse(json) || []; } catch(e) { return []; }
 }
+
+// ════════════════════════════════════════════════════════════════
+// PAGES登録 — parent.js の旧ルーティングを parent_v2 で上書き
+// parent_v2.js は parent.js より後に読み込まれるため、
+// ここで登録することで確実に v2 の関数が使われる
+// ════════════════════════════════════════════════════════════════
+PAGES['parent-list']      = () => Pages.parentList();
+PAGES['parent-new']       = () => Pages.parentNew(Store.getParams());
+PAGES['parent-detail']    = () => Pages.parentDetail(Store.getParams().id);
+PAGES['parent-dashboard'] = () => Pages.parentDashboard();

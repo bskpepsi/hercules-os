@@ -237,3 +237,10 @@ Pages.bloodlineDetail = function (bloodlineId) {
 function _parseTags(json) {
   try { return JSON.parse(json) || []; } catch(e) { return []; }
 }
+
+// ════════════════════════════════════════════════════════════════
+// PAGES登録 — bloodline.js の旧ルーティングを bloodline_v2 で上書き
+// ════════════════════════════════════════════════════════════════
+PAGES['bloodline-list']   = () => Pages.bloodlineList();
+PAGES['bloodline-new']    = () => Pages.bloodlineNew(Store.getParams());
+PAGES['bloodline-detail'] = () => Pages.bloodlineDetail(Store.getParams().id);
