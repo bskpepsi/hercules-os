@@ -137,7 +137,9 @@ function _renderLotDetail(lot, main) {
   if (lot.stage === 'T2B') stageNote = '<span style="color:var(--blue);font-size:.75rem"> T2②（純T2）</span>';
 
   main.innerHTML = `
-    ${UI.header(lot.display_id, {})}
+    ${UI.header(lot.display_id, {
+      action: { fn: `_lotQuickActions('${lot.lot_id}')`, icon: '…' }
+    })}
     <div class="page-body">
 
       <!-- ヘッダーカード -->
@@ -455,5 +457,16 @@ Pages._lotSave = async function () {
 // ページ登録
 Pages.lotNew = Pages.lotNew;
 PAGES['lot-list']   = () => Pages.lotList();
+
+// ── ロット詳細クイックアクション ─────────────────────────────────
+function _lotQuickActions(lotId) {
+  UI.actionSheet([
+    { label: '⚖️ 体重測定（QRスキャン）', fn: () => routeTo('qr-scan', { mode: 'weight' }) },
+    { label: '📷 QRスキャン（差分入力）', fn: () => routeTo('qr-scan') },
+    { label: '🏷️ ラベル発行', fn: () => routeTo('label-gen', { targetType: 'LOT', targetId: lotId }) },
+    { label: '📋 成長記録を追加', fn: () => routeTo('growth-rec', { target_type: 'LOT', target_id: lotId }) },
+  ]);
+}
+
 PAGES['lot-detail'] = () => Pages.lotDetail(Store.getParams().id);
 PAGES['lot-new']    = () => Pages.lotNew(Store.getParams());

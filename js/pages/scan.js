@@ -20,7 +20,7 @@
 Pages.qrScan = function (params = {}) {
   const main = document.getElementById('main');
   // モード管理: 'diff' | 'weight'
-  let _scanMode = params.mode || 'diff';
+  let _scanMode = params.mode || 'weight'; // デフォルトを体重測定モードに
 
   main.innerHTML = `
     ${UI.header('📷 QRスキャン', { back: true })}
@@ -70,10 +70,10 @@ Pages.qrScan = function (params = {}) {
 
         <!-- カメラ起動ボタン（将来実装） -->
         <button class="btn btn-ghost btn-full" id="camera-btn" onclick="Pages._qrStartCamera()"
-          style="margin-bottom:12px;border:2px dashed var(--border2)">
-          <span style="font-size:1.3rem;margin-right:6px">📷</span>
+          style="margin-bottom:12px;border:2px solid var(--green2);background:rgba(45,122,82,.08);
+                 font-size:1rem;padding:14px;border-radius:12px">
+          <span style="font-size:1.4rem;margin-right:8px">📷</span>
           カメラで読み取る
-          <span style="font-size:.72rem;color:var(--text3);margin-left:6px">(準備中)</span>
         </button>
 
         <div style="display:flex;align-items:center;gap:8px;margin:8px 0">
@@ -239,16 +239,75 @@ Pages._qrRescanFromHistory = function (qrText) {
 
 // ── カメラ読み取り（将来実装プレースホルダー） ─────────────────
 Pages._qrStartCamera = async function () {
-  // 将来: jsQR + getUserMedia で実装
-  // 現在はフォールバックのトースト表示
-  UI.toast('カメラ読み取りは準備中です。テキスト貼り付けをご利用ください。', 'info', 3500);
-  /* 将来実装サンプル:
-  const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-  const video  = document.getElementById('qr-video');
-  video.srcObject = stream;
-  document.getElementById('camera-card').style.display = 'block';
-  Pages._qrScanLoop(video);
-  */
+  // jsQRが読み込まれているか確認
+  if (typeof jsQR === 'undefined') {
+    // jsQRを動的ロード
+    await new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js';
+      s.onload  = resolve;
+      s.onerror = reject;
+      document.head.appendChild(s);
+    }).catch(() => {
+      UI.toast('カメラライブラリの読み込みに失敗しました', 'error');
+      return;
+    });
+  }
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
+    });
+    const video = document.getElementById('qr-video');
+    const card  = document.getElementById('camera-card');
+    if (!video || !card) return;
+
+    video.srcObject = stream;
+    card.style.display = 'block';
+    document.getElementById('camera-btn').textContent = '📷 スキャン中...';
+
+    // スキャンループ開始
+    Pages._qrScanLoop(video);
+  } catch (e) {
+    if (e.name === 'NotAllowedError') {
+      UI.toast('カメラのアクセスを許可してください', 'error', 4000);
+    } else {
+      UI.toast('カメラを起動できません: ' + e.message, 'error');
+    }
+  }
+};
+
+Pages._qrScanLoop = async function (video) {
+  const canvas = document.getElementById('qr-canvas');
+  if (!canvas || !video.srcObject) return;
+  const ctx = canvas.getContext('2d');
+
+  const scan = () => {
+    if (!video.srcObject) return; // カメラ停止済みなら終了
+    if (video.readyState === video.HAVE_ENOUGH_DATA) {
+      canvas.width  = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = jsQR(imageData.data, imageData.width, imageData.height, {
+        inversionAttempts: 'dontInvert',
+      });
+      if (code) {
+        // QRコードを検出
+        Pages._qrStopCamera();
+        const input = document.getElementById('qr-input');
+        if (input) input.value = code.data;
+        Pages._qrPreviewInput(code.data);
+        // バイブレーション（対応端末）
+        if (navigator.vibrate) navigator.vibrate(100);
+        // 自動的に解析実行
+        Pages._qrResolve();
+        return;
+      }
+    }
+    requestAnimationFrame(scan);
+  };
+  requestAnimationFrame(scan);
 };
 
 Pages._qrStopCamera = function () {

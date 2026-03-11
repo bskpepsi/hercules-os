@@ -174,14 +174,36 @@ function _renderDashboard(main) {
         ${exchangeDue.length > 4 ? `<div class="sec-more" onclick="routeTo('lot-list')">+${exchangeDue.length-4}件を見る</div>` : ''}
       </div>` : ''}
 
+      <!-- QRスキャン大ボタン（1タップアクセス） -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:4px">
+        <button onclick="routeTo('qr-scan',{mode:'weight'})" style="
+          padding:18px 10px; border:none; border-radius:14px;
+          background:linear-gradient(135deg,rgba(45,122,82,.9),rgba(76,175,120,.8));
+          color:#fff; cursor:pointer; text-align:center;
+          box-shadow:0 3px 12px rgba(45,122,82,.35);">
+          <div style="font-size:1.8rem;margin-bottom:4px">⚖️</div>
+          <div style="font-weight:700;font-size:.9rem">体重測定</div>
+          <div style="font-size:.68rem;opacity:.85;margin-top:2px">QR → 入力 → 保存</div>
+        </button>
+        <button onclick="routeTo('qr-scan')" style="
+          padding:18px 10px; border:none; border-radius:14px;
+          background:linear-gradient(135deg,rgba(91,168,232,.85),rgba(60,130,200,.75));
+          color:#fff; cursor:pointer; text-align:center;
+          box-shadow:0 3px 12px rgba(91,168,232,.3);">
+          <div style="font-size:1.8rem;margin-bottom:4px">📷</div>
+          <div style="font-weight:700;font-size:.9rem">QRスキャン</div>
+          <div style="font-size:.68rem;opacity:.85;margin-top:2px">差分入力モード</div>
+        </button>
+      </div>
+
       <!-- クイックアクション -->
       <div class="card">
         <div class="card-title">クイックアクション</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-          <button class="btn btn-primary" onclick="routeTo('growth-rec')">📷 体重記録</button>
-          <button class="btn btn-ghost"   onclick="routeTo('ind-new')">➕ 個体登録</button>
-          <button class="btn btn-ghost"   onclick="routeTo('lot-list')">🥚 ロット管理</button>
-          <button class="btn btn-ghost"   onclick="syncAll()">🔄 データ同期</button>
+          <button class="btn btn-ghost" onclick="routeTo('label-gen')">🏷️ ラベル発行</button>
+          <button class="btn btn-ghost" onclick="routeTo('ind-new')">➕ 個体登録</button>
+          <button class="btn btn-ghost" onclick="routeTo('lot-list')">🥚 ロット管理</button>
+          <button class="btn btn-ghost" onclick="syncAll()">🔄 データ同期</button>
         </div>
       </div>
 

@@ -91,9 +91,18 @@ function bindNav() {
 
 function renderNav() {
   const cur = Store.getPage();
+  // QR系ページ → QRタブをアクティブに
+  const qrPages     = ['qr-scan','qr-diff','weight-mode'];
+  const managePages = ['lot-list','line-list','parent-list','bloodline-list','pairing-list',
+                       'line-new','lot-new','parent-new','bloodline-new','pairing-new',
+                       'lot-detail','line-detail','parent-detail','bloodline-detail','pairing-detail',
+                       'label-gen'];
   document.querySelectorAll('.nav-tab').forEach(el => {
-    el.classList.toggle('active', el.dataset.nav === cur ||
-      (el.dataset.nav === 'manage' && ['lot-list','line-list','parent-list','bloodline-list','pairing-list'].includes(cur))
+    const nav = el.dataset.nav;
+    el.classList.toggle('active',
+      nav === cur ||
+      (nav === 'qr-scan'  && qrPages.includes(cur)) ||
+      (nav === 'manage'   && managePages.includes(cur))
     );
   });
 }
@@ -355,3 +364,62 @@ async function apiCall(fn, successMsg, opts = {}) {
     Store.setLoading(false);
   }
 }
+
+// ════════════════════════════════════════════════════════════════
+// Phase2 UI拡張 — modal / actionSheet / detailRow など
+// ════════════════════════════════════════════════════════════════
+
+// UIオブジェクトに追加
+Object.assign(UI, {
+
+  // ── モーダル ────────────────────────────────────────────────
+  modal(html) {
+    let wrap = document.getElementById('modal-wrap');
+    if (!wrap) {
+      wrap = document.createElement('div');
+      wrap.id = 'modal-wrap';
+      document.body.appendChild(wrap);
+    }
+    wrap.innerHTML = `
+      <div class="modal-overlay" onclick="UI.closeModal()"></div>
+      <div class="modal">${html}</div>`;
+    wrap.style.display = 'block';
+    document.body.style.overflow = 'hidden';
+  },
+
+  closeModal() {
+    const wrap = document.getElementById('modal-wrap');
+    if (wrap) { wrap.style.display = 'none'; wrap.innerHTML = ''; }
+    document.body.style.overflow = '';
+  },
+
+  // ── アクションシート ─────────────────────────────────────────
+  actionSheet(items) {
+    const btns = items.map(item =>
+      `<button class="action-sheet-btn" onclick="UI.closeModal();(${item.fn.toString()})()">${item.label}</button>`
+    ).join('');
+    UI.modal(`
+      <div class="action-sheet">
+        ${btns}
+        <button class="action-sheet-btn action-sheet-cancel" onclick="UI.closeModal()">キャンセル</button>
+      </div>`);
+  },
+
+  // ── 詳細行 ──────────────────────────────────────────────────
+  detailRow(label, value) {
+    return `<div class="detail-row">
+      <span class="detail-label">${label}</span>
+      <span class="detail-value">${value ?? '—'}</span>
+    </div>`;
+  },
+});
+
+// Phase2 ルート追加
+Object.assign(PAGES, {
+  'pairing-history': () => Pages.pairingHistory(Store.getParams().id),
+  'line-analysis':   () => Pages.lineAnalysis(),
+  'mother-ranking':  () => Pages.motherRanking(),
+  'heatmap':         () => Pages.bloodlineHeatmap(),
+  'parent-dashboard':() => Pages.parentDashboard(),
+});
+

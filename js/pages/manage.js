@@ -84,10 +84,29 @@ Pages.manage = function () {
           <button class="btn btn-ghost" onclick="routeTo('bloodline-new')">＋ 血統登録</button>
           <button class="btn btn-ghost" onclick="routeTo('pairing-new')">＋ 産卵セット</button>
           <button class="btn btn-ghost" onclick="routeTo('ind-new')">＋ 個体登録</button>
+          <button class="btn btn-ghost" onclick="routeTo('label-gen')"
+            style="grid-column:span 2;border-color:rgba(200,168,75,.4);color:var(--gold)">
+            🏷️ ラベル発行・QRコード生成
+          </button>
         </div>
       </div>
 
     </div>`;
+
+  // Phase2: 分析セクションをDOMに後追加
+  const pb = main.querySelector('.page-body');
+  if (pb) {
+    pb.insertAdjacentHTML('beforeend', `
+      <div class="card" style="margin-top:8px">
+        <div class="card-title">📊 分析・ランキング</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <button class="btn btn-ghost" onclick="routeTo('parent-dashboard')">🌡️ 種親ダッシュボード</button>
+          <button class="btn btn-ghost" onclick="routeTo('line-analysis')">📈 ライン分析</button>
+          <button class="btn btn-ghost" onclick="routeTo('mother-ranking')">♀ 母系ランキング</button>
+          <button class="btn btn-ghost" onclick="routeTo('heatmap')">🗺️ 血統ヒートマップ</button>
+        </div>
+      </div>`);
+  }
 };
 
 // ════════════════════════════════════════════════════════════════

@@ -9,22 +9,27 @@
   <meta name="theme-color" content="#0d1a0d">
   <title>HerculesOS</title>
   <link rel="stylesheet" href="css/styles.css">
-  <!-- QRコード生成ライブラリ（ラベル印刷用） -->
+
+  <!-- qrcode.js (ラベル用QRコード生成) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-  <!-- グラフライブラリ（体重推移グラフ用） -->
+  <!-- Chart.js (体重推移グラフ) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <!-- jsQR (カメラQRスキャン用) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js"></script>
 </head>
 <body>
 
 <div id="app">
-  <!-- メインコンテンツ（各ページがここに動的表示される） -->
+
+  <!-- ════ メインコンテンツ ════ -->
   <main id="main">
+    <!-- 各ページがここに動的レンダリングされる -->
     <div class="spinner-wrap" style="padding-top:40px">
       <div class="spinner"></div>
     </div>
   </main>
 
-  <!-- ボトムナビ（5タブ） -->
+  <!-- ════ ボトムナビ ════ -->
   <nav class="bottom-nav">
     <button class="nav-tab" data-nav="dashboard">
       <span class="nav-icon">🏠</span>
@@ -32,7 +37,7 @@
     </button>
     <button class="nav-tab" data-nav="qr-scan">
       <span class="nav-icon">📷</span>
-      <span>スキャン</span>
+      <span>QR</span>
     </button>
     <button class="nav-tab" data-nav="ind-list">
       <span class="nav-icon">🐛</span>
@@ -47,24 +52,23 @@
       <span>設定</span>
     </button>
   </nav>
-</div>
 
-<!-- ローディング画面 -->
+</div><!-- /#app -->
+
+<!-- ════ ローディングオーバーレイ ════ -->
 <div id="loading-overlay">
   <div class="spinner" style="width:48px;height:48px;border-width:4px"></div>
 </div>
 
-<!-- トースト通知 -->
+<!-- ════ トースト ════ -->
 <div id="toast"></div>
 
-<!--
-  ★ JS読み込み順序（変更禁止）
-  config.js → api.js → store.js → app.js → pages/*.js
--->
+<!-- ════ JS 読み込み（順序厳守） ════ -->
 <script src="js/config.js"></script>
 <script src="js/api.js"></script>
 <script src="js/store.js"></script>
 <script src="js/app.js"></script>
+<!-- pages/ — 読み込み順: individual → lot → growth → dashboard → manage系 -->
 <script src="js/pages/individual.js"></script>
 <script src="js/pages/lot.js"></script>
 <script src="js/pages/growth.js"></script>
@@ -75,7 +79,11 @@
 <script src="js/pages/label.js"></script>
 <script src="js/pages/manage.js"></script>
 <script src="js/pages/settings.js"></script>
-<script src="js/pages/scan.js"></script>
+    <script src="js/pages/scan.js"></script>
+    <!-- Phase2 拡張 -->
+    <script src="js/pages/bloodline_v2.js"></script>
+    <script src="js/pages/parent_v2.js"></script>
+    <script src="js/pages/analysis.js"></script>
 
 </body>
 </html>
