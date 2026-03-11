@@ -88,19 +88,29 @@ function _exchangeBadgeHtml(pair) {
 Pages.pairingDetail = async function (setId) {
   const main = document.getElementById('main');
   let pair = (Store.getDB('pairings') || []).find(p => p.set_id === setId);
-  if (pair) _renderPairDetail(pair, null, main);
+
+  // キャッシュがある場合は空配列で即時表示（nullを渡さない＝読み込み中にならない）
+  if (pair) _renderPairDetail(pair, [], main);
   else      main.innerHTML = UI.header('産卵セット', { back: true }) + UI.spinner();
 
   try {
-    const [pairRes, eggRes] = await Promise.allSettled([
-      API.pairing.get(setId),
-      API.pairing.getEggRecords({ set_id: setId }),
-    ]);
-    if (Store.getPage() !== 'pairing-detail') return; // 画面離脱ガード
-    if (pairRes.status === 'fulfilled') pair = pairRes.value.pairing;
-    // eggRes失敗時は空配列にフォールバック（旧データはcollect_datesから表示）
-    const eggs = eggRes.status === 'fulfilled' ? (eggRes.value.egg_records || []) : [];
-    _renderPairDetail(pair, eggs, main);
+    // 産卵セット本体を先に取得して表示を更新
+    const pairRes = await API.pairing.get(setId);
+    if (Store.getPage() !== 'pairing-detail') return;
+    pair = pairRes.pairing;
+    _renderPairDetail(pair, [], main); // 最新データで再描画（採卵履歴はローディング）
+
+    // 採卵履歴を取得して追加描画
+    try {
+      const eggRes = await API.pairing.getEggRecords({ set_id: setId });
+      if (Store.getPage() !== 'pairing-detail') return;
+      const eggs = eggRes.egg_records || [];
+      _renderPairDetail(pair, eggs, main);
+    } catch (eggErr) {
+      // getEggRecords未デプロイ・エラー時は空配列のまま表示継続（collect_datesフォールバック）
+      if (Store.getPage() !== 'pairing-detail') return;
+      _renderPairDetail(pair, [], main);
+    }
   } catch (e) {
     if (!pair) main.innerHTML = UI.header('エラー', { back: true }) +
       `<div class="page-body">${UI.empty('取得失敗: ' + e.message)}</div>`;
@@ -366,6 +376,7 @@ Pages._pairSave = async function (editId) {
     if (editId) {
       data.set_id = editId;
       await apiCall(() => API.pairing.update(data), '更新しました');
+      await syncAll(true);
       routeTo('pairing-detail', { id: editId });
     } else {
       const res = await apiCall(() => API.pairing.create(data), '産卵セットを登録しました');

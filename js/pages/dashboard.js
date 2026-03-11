@@ -60,14 +60,14 @@ function _renderDashboard(main) {
     return days >= 60;
   });
 
-  // 産卵セット交換リマインド
-  const pairings      = Store.getDB('pairings') || [];
-  const activePairs   = pairings.filter(p => p.status === 'active' && p.set_start);
-  const exchDays      = parseInt(Store.getSetting('pairing_set_exchange_days') || '7', 10);
-  const tomorrow      = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
+  // 産卵セット交換リマインド（set_startがなければpairing_startで代替）
+  const pairings    = Store.getDB('pairings') || [];
+  const exchDays    = parseInt(Store.getSetting('pairing_set_exchange_days') || '7', 10);
+  const activePairs = pairings.filter(p => p.status === 'active' && (p.set_start || p.pairing_start));
 
   function _pairExchangeDue(pair) {
-    const parts = String(pair.set_start).split(/[\/\-]/);
+    const base  = pair.set_start || pair.pairing_start;
+    const parts = String(base).split(/[\/\-]/);
     if (parts.length < 3) return null;
     const d = new Date(+parts[0], +parts[1]-1, +parts[2]);
     d.setDate(d.getDate() + exchDays);
@@ -82,7 +82,7 @@ function _renderDashboard(main) {
     if (!due) return;
     const diff = Math.floor((due - today) / 86400000);
     const label = p.set_name || p.display_id;
-    if (diff < 0)   setExchangeOverdue.push({ label, diff: Math.abs(diff) });
+    if (diff < 0)        setExchangeOverdue.push({ label, diff: Math.abs(diff) });
     else if (diff === 0) setExchangeToday.push({ label });
     else if (diff === 1) setExchangeTomorrow.push({ label });
   });
