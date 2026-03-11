@@ -184,6 +184,25 @@ function _renderSettings(main) {
         </button>
       </div>
 
+      <!-- Phase2: 後食・ペアリング設定 -->
+      <div class="card">
+        <div class="card-title">🍽️ 後食・ペアリング設定</div>
+        <div class="form-group">
+          <label class="form-label">♂後食待機日数（日）</label>
+          <input id="set-male-wait" class="form-input" type="number" min="1" max="90"
+                 value="${Store.getSetting('male_pairing_wait_days') || '14'}">
+          <label class="form-label" style="margin-top:12px">♀後食待機日数（日）</label>
+          <input id="set-female-wait" class="form-input" type="number" min="1" max="90"
+                 value="${Store.getSetting('female_pairing_wait_days') || '14'}">
+          <label class="form-label" style="margin-top:12px">♂ペアリング間隔最小日数（日）</label>
+          <input id="set-pairing-interval" class="form-input" type="number" min="1" max="60"
+                 value="${Store.getSetting('male_pairing_interval_min_days') || '7'}">
+          <div class="form-hint">この日数未満でペアリングすると警告が表示されます</div>
+          <button class="btn btn-primary btn-full" style="margin-top:12px"
+                  onclick="Pages._savePairingSettings()">後食・ペアリング設定を保存</button>
+        </div>
+      </div>
+
       <!-- バックアップ管理 -->
       <div class="card" style="border-color:rgba(200,168,75,.25)">
         <div class="card-title" style="color:var(--gold)">🗄️ バックアップ管理</div>
@@ -506,3 +525,27 @@ Pages._bkLoadHistory = async function () {
 };
 
 PAGES['settings'] = () => Pages.settings();
+
+// ── Phase2: 後食・ペアリング設定保存 ────────────────────────────
+Pages._savePairingSettings = async function () {
+  const maleWait     = document.getElementById('set-male-wait')?.value;
+  const femaleWait   = document.getElementById('set-female-wait')?.value;
+  const intervalMin  = document.getElementById('set-pairing-interval')?.value;
+  if (!maleWait || !femaleWait || !intervalMin) {
+    UI.toast('すべての値を入力してください'); return;
+  }
+  try {
+    UI.loading(true);
+    await API.system.updateSetting('male_pairing_wait_days',    maleWait);
+    await API.system.updateSetting('female_pairing_wait_days',  femaleWait);
+    await API.system.updateSetting('male_pairing_interval_min_days', intervalMin);
+    Store.setSetting('male_pairing_wait_days',    maleWait);
+    Store.setSetting('female_pairing_wait_days',  femaleWait);
+    Store.setSetting('male_pairing_interval_min_days', intervalMin);
+    UI.toast('設定を保存しました');
+  } catch(e) {
+    UI.toast('エラー: ' + e.message, 'error');
+  } finally {
+    UI.loading(false);
+  }
+};
