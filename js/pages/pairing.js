@@ -239,6 +239,12 @@ function _eggHistoryHtml(eggRecords, pair) {
           <span style="color:var(--text3)">孵化数</span><span style="font-weight:500">${h}頭</span>
           ${rec.note ? `<span style="color:var(--text3)">メモ</span><span style="color:var(--text2)">${rec.note}</span>` : ''}
         </div>
+        <div style="display:flex;gap:6px;margin-top:8px">
+          <button class="btn btn-ghost btn-sm" style="flex:1;font-size:.75rem"
+            onclick="Pages._pairEditOneEgg('${rec.egg_record_id}','${pair.set_id}')">✏️ 編集</button>
+          <button class="btn btn-ghost btn-sm" style="flex:1;font-size:.75rem;color:var(--red)"
+            onclick="Pages._pairDeleteEgg('${rec.egg_record_id}','${pair.set_id}')">🗑 削除</button>
+        </div>
       </div>`;
     }).join('');
     return `<div class="card">${title}<span>採卵履歴</span><span style="font-size:.72rem;font-weight:400;color:var(--text3)">${sorted.length}回 / 計${sumEggs}個 / 孵化${sumHatch}頭</span></div>${cards}</div>`;
@@ -264,7 +270,8 @@ function _eggHistoryHtml(eggRecords, pair) {
 // … メニュー
 Pages._pairMenu = function (setId) {
   UI.actionSheet([
-    { label: '✏️ 編集', fn: () => routeTo('pairing-new', { editId: setId }) },
+    { label: '✏️ セット情報を編集', fn: () => routeTo('pairing-new', { editId: setId }) },
+    { label: '📝 採卵履歴を編集',   fn: () => Pages._pairEditEggModal(setId) },
   ]);
 };
 
@@ -303,6 +310,108 @@ Pages._pairSaveEgg = async function (setId) {
     );
     Pages.pairingDetail(setId);
   } catch(e) {}
+};
+
+
+// ── 採卵履歴 1件編集モーダル ────────────────────────────────────
+Pages._pairEditOneEgg = function (eggRecordId, setId) {
+  // ローカルキャッシュから該当レコードを探す（なければAPIから取得済みDOMから読む）
+  // 簡易実装：モーダルに既存値を渡せるよう setId + eggRecordId をAPIで取得
+  const today = new Date().toISOString().split('T')[0];
+  _showModal('採卵履歴を編集', `
+    <div class="form-section">
+      <div style="font-size:.75rem;color:var(--text3);margin-bottom:8px">記録ID: ${eggRecordId}</div>
+      ${UI.field('今回のセット日', `<input type="date" id="edit-egg-set-date" class="input" value="${today}">`)}
+      ${UI.field('採卵日',         `<input type="date" id="edit-egg-date"     class="input" value="${today}">`)}
+      <div class="form-row-2">
+        ${UI.field('採卵数',     `<input type="number" id="edit-egg-count"   class="input" min="0" value="0">`)}
+        ${UI.field('孵化確認数', `<input type="number" id="edit-hatch-count" class="input" min="0" value="0">`)}
+      </div>
+      ${UI.field('メモ', `<input type="text" id="edit-egg-note" class="input">`)}
+      <div class="modal-footer">
+        <button class="btn btn-ghost" style="flex:1" onclick="_closeModal()">キャンセル</button>
+        <button class="btn btn-primary" style="flex:2"
+          onclick="Pages._pairSaveEditEgg('${eggRecordId}','${setId}')">保存</button>
+      </div>
+    </div>`);
+
+  // API から値を取得してモーダルに反映
+  API.pairing.getEggRecords({ set_id: setId }).then(res => {
+    const rec = (res.egg_records || []).find(r => r.egg_record_id === eggRecordId);
+    if (!rec) return;
+    const toInput = d => d ? String(d).replace(/\//g, '-') : '';
+    const el = (id) => document.getElementById(id);
+    if (el('edit-egg-set-date')) el('edit-egg-set-date').value = toInput(rec.round_set_date);
+    if (el('edit-egg-date'))     el('edit-egg-date').value     = toInput(rec.collect_date);
+    if (el('edit-egg-count'))    el('edit-egg-count').value    = rec.egg_count   || 0;
+    if (el('edit-hatch-count'))  el('edit-hatch-count').value  = rec.hatch_count || 0;
+    if (el('edit-egg-note'))     el('edit-egg-note').value     = rec.note        || '';
+  }).catch(() => {});
+};
+
+Pages._pairSaveEditEgg = async function (eggRecordId, setId) {
+  const setDate  = (document.getElementById('edit-egg-set-date')?.value || '').replace(/-/g,'/');
+  const date     = (document.getElementById('edit-egg-date')?.value     || '').replace(/-/g,'/');
+  const eggs     = +document.getElementById('edit-egg-count')?.value    || 0;
+  const hatch    = +document.getElementById('edit-hatch-count')?.value  || 0;
+  const note     = document.getElementById('edit-egg-note')?.value      || '';
+  if (!date) { UI.toast('採卵日を入力してください', 'error'); return; }
+  _closeModal();
+  try {
+    await apiCall(
+      () => API.pairing.updateEgg({
+        egg_record_id: eggRecordId,
+        round_set_date: setDate,
+        collect_date: date,
+        egg_count: eggs,
+        hatch_count: hatch,
+        note,
+      }),
+      '採卵記録を更新しました'
+    );
+    Pages.pairingDetail(setId);
+  } catch(e) {}
+};
+
+// ── 採卵履歴 1件削除 ────────────────────────────────────────────
+Pages._pairDeleteEgg = async function (eggRecordId, setId) {
+  if (!UI.confirm('この採卵記録を削除しますか？')) return;
+  try {
+    await apiCall(
+      () => API.pairing.deleteEgg({ egg_record_id: eggRecordId }),
+      '採卵記録を削除しました'
+    );
+    Pages.pairingDetail(setId);
+  } catch(e) {}
+};
+
+// ── 採卵履歴一覧編集モーダル（メニューから） ────────────────────
+Pages._pairEditEggModal = async function (setId) {
+  try {
+    const res = await API.pairing.getEggRecords({ set_id: setId });
+    const records = (res.egg_records || []).sort(
+      (a,b) => String(a.collect_date).localeCompare(String(b.collect_date))
+    );
+    if (!records.length) { UI.toast('採卵記録がありません', 'error'); return; }
+    const listHtml = records.map((rec, i) => `
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border)">
+        <div>
+          <div style="font-size:.85rem;font-weight:600">${i+1}回目: ${rec.collect_date||'—'}</div>
+          <div style="font-size:.75rem;color:var(--text3)">採卵${rec.egg_count||0}個 / 孵化${rec.hatch_count||0}頭</div>
+        </div>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-ghost btn-sm" style="font-size:.75rem"
+            onclick="_closeModal();Pages._pairEditOneEgg('${rec.egg_record_id}','${setId}')">✏️</button>
+          <button class="btn btn-ghost btn-sm" style="font-size:.75rem;color:var(--red)"
+            onclick="_closeModal();Pages._pairDeleteEgg('${rec.egg_record_id}','${setId}')">🗑</button>
+        </div>
+      </div>`).join('');
+    _showModal('採卵履歴を編集', `
+      <div style="max-height:60vh;overflow-y:auto">${listHtml}</div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" style="flex:1" onclick="_closeModal()">閉じる</button>
+      </div>`);
+  } catch(e) { UI.toast('取得失敗: ' + e.message, 'error'); }
 };
 
 Pages._pairComplete = async function (id) {

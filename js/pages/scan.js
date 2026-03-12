@@ -1148,3 +1148,259 @@ Pages._wmToggleExtra = function (btn) {
   body.style.display  = isOpen ? 'none' : 'block';
   if (arrow) arrow.style.transform = isOpen ? '' : 'rotate(180deg)';
 };
+
+
+// ════════════════════════════════════════════════════════════════
+// T1交換 QR連続処理モード
+// qr-scan-t1 ページ
+// フロー: QRスキャン → ロット情報表示 → 分割数入力 → 保存 → ラベル → 次へ
+// ════════════════════════════════════════════════════════════════
+
+Pages.qrScanT1 = function () {
+  const main = document.getElementById('main');
+  let _processing = false;
+  let _lastLot    = null;
+
+  function _render(lotInfo, phase) {
+    // phase: 'scan' | 'split' | 'done'
+    main.innerHTML = `
+      ${UI.header('T1交換 連続処理', { back: true })}
+      <div class="page-body">
+
+        <!-- 進捗インジケーター -->
+        <div style="display:flex;gap:4px;margin-bottom:12px">
+          ${['スキャン','分割入力','完了'].map((s,i) => {
+            const active = (i===0&&phase==='scan')||(i===1&&phase==='split')||(i===2&&phase==='done');
+            return `<div style="flex:1;padding:6px;text-align:center;border-radius:8px;font-size:.75rem;
+              background:${active?'var(--green)':'var(--bg2)'};color:${active?'#fff':'var(--text3)'}">${s}</div>`;
+          }).join('')}
+        </div>
+
+        ${phase === 'scan' ? _scanPhase() : ''}
+        ${phase === 'split' && lotInfo ? _splitPhase(lotInfo) : ''}
+        ${phase === 'done'  && lotInfo ? _donePhase(lotInfo)  : ''}
+
+      </div>`;
+
+    if (phase === 'scan') _bindScanEvents();
+  }
+
+  function _scanPhase() {
+    return `
+      <div class="card card-gold" style="text-align:center;padding:20px">
+        <div style="font-size:2rem;margin-bottom:8px">📷</div>
+        <div style="font-weight:700;margin-bottom:4px">QRコードをスキャン</div>
+        <div style="font-size:.8rem;color:var(--text3)">ロットQRコードを読み込んでください</div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <input id="t1-qr-input" class="input" placeholder="QR入力 / 手動入力" style="flex:1">
+        <button class="btn btn-primary" onclick="Pages._t1ResolveQR()">確認</button>
+      </div>
+      <button class="btn btn-ghost btn-full" style="margin-top:8px"
+        onclick="Pages._t1StartCamera()">📷 カメラで読み取り</button>`;
+  }
+
+  function _splitPhase(lot) {
+    const count = parseInt(lot.count, 10) || 1;
+    const half  = Math.floor(count / 2);
+    return `
+      <div class="card" style="background:var(--bg2)">
+        <div style="font-family:var(--font-mono);font-size:1.1rem;font-weight:700;color:var(--gold)">${lot.display_id}</div>
+        <div style="font-size:.85rem;color:var(--text3);margin-top:4px">
+          ${lot.stage || 'T0'} / ${count}頭 / ${lot.container_size||'—'}
+        </div>
+      </div>
+
+      <div style="margin-top:12px">
+        <div style="font-size:.85rem;font-weight:600;margin-bottom:8px">分割数を入力してください（合計 ≤ ${count}頭）</div>
+        <div id="t1-split-rows">
+          <div class="split-row" style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+            <span style="font-family:var(--font-mono);color:var(--gold);min-width:30px">-A</span>
+            <input type="number" class="input t1-split-count" min="1" max="${count}" value="${half}"
+              oninput="Pages._t1UpdateTotal(${count})">
+            <span style="font-size:.8rem;color:var(--text3)">頭</span>
+          </div>
+          <div class="split-row" style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+            <span style="font-family:var(--font-mono);color:var(--gold);min-width:30px">-B</span>
+            <input type="number" class="input t1-split-count" min="1" max="${count}" value="${count-half}"
+              oninput="Pages._t1UpdateTotal(${count})">
+            <span style="font-size:.8rem;color:var(--text3)">頭</span>
+          </div>
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="Pages._t1AddSplitRow(${count})">＋ ロット追加</button>
+        <div id="t1-split-total" style="font-size:.82rem;color:var(--amber);margin-top:6px">
+          合計: ${count}頭 / 最大${count}頭
+        </div>
+      </div>
+
+      <div style="margin-top:12px">
+        <div style="font-size:.85rem;font-weight:600;margin-bottom:6px">容器サイズ</div>
+        <div style="display:flex;gap:6px">
+          ${['1.1L','2.7L','4.8L','10L'].map(s =>
+            `<button class="pill ${s===lot.container_size?'active':''}" id="t1-container-${s.replace('.','_')}"
+              onclick="Pages._t1SelectContainer('${s}')">${s}</button>`
+          ).join('')}
+        </div>
+        <input type="hidden" id="t1-selected-container" value="${lot.container_size||'2.7L'}">
+      </div>
+
+      <div style="display:flex;gap:8px;margin-top:16px">
+        <button class="btn btn-ghost" style="flex:1" onclick="Pages.qrScanT1()">← 戻る</button>
+        <button class="btn btn-primary" style="flex:2"
+          onclick="Pages._t1ExecSplit('${lot.lot_id}',${count})">✅ 分割実行</button>
+      </div>`;
+  }
+
+  function _donePhase(result) {
+    const newLots = result.new_lots || [];
+    return `
+      <div class="card" style="text-align:center;padding:16px;border-color:var(--green)">
+        <div style="font-size:2rem">✅</div>
+        <div style="font-weight:700;margin-top:8px">${newLots.length}ロットに分割しました</div>
+      </div>
+
+      <div style="margin-top:8px">
+        ${newLots.map(l => `
+          <div class="card" style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px">
+            <div>
+              <div style="font-family:var(--font-mono);font-weight:700;color:var(--gold)">${l.display_id}</div>
+              <div style="font-size:.8rem;color:var(--text3)">${l.count}頭 / T1</div>
+            </div>
+            <button class="btn btn-ghost btn-sm"
+              onclick="Pages._t1GenerateLabel('${l.lot_id}','${l.display_id}')">🏷 ラベル</button>
+          </div>`).join('')}
+      </div>
+
+      <div style="display:flex;gap:8px;margin-top:16px">
+        <button class="btn btn-ghost" style="flex:1"
+          onclick="routeTo('lot-list')">ロット一覧</button>
+        <button class="btn btn-primary" style="flex:2"
+          onclick="Pages.qrScanT1()">📷 次のQRへ</button>
+      </div>`;
+  }
+
+  function _bindScanEvents() {
+    const inp = document.getElementById('t1-qr-input');
+    if (inp) inp.addEventListener('keydown', e => {
+      if (e.key === 'Enter') Pages._t1ResolveQR();
+    });
+  }
+
+  // 最初のフェーズで描画
+  _render(null, 'scan');
+  // メソッドをPageに露出（クロージャー外からも再描画できるよう）
+  Pages._t1RenderSplit = (lot)  => _render(lot,    'split');
+  Pages._t1RenderDone  = (res)  => _render(res,    'done');
+};
+
+// ── T1: QR解決 ────────────────────────────────────────────────
+Pages._t1ResolveQR = async function () {
+  const val = (document.getElementById('t1-qr-input')?.value || '').trim();
+  if (!val) { UI.toast('QRを入力してください', 'error'); return; }
+
+  try {
+    UI.loading(true);
+    // lot_id または display_id で検索
+    const lots = Store.getDB('lots') || [];
+    let lot = lots.find(l => l.lot_id === val || l.display_id === val);
+
+    if (!lot) {
+      // Storeにない場合はAPI経由
+      const res = await API.lot.get({ lot_id: val });
+      lot = res.lot;
+    }
+    if (!lot) { UI.toast('ロットが見つかりません: ' + val, 'error'); return; }
+    if (lot.status === 'dissolved') { UI.toast('このロットは分割済みです', 'error'); return; }
+
+    Pages._t1RenderSplit(lot);
+  } catch(e) {
+    UI.toast('エラー: ' + e.message, 'error');
+  } finally {
+    UI.loading(false);
+  }
+};
+
+// ── T1: 合計更新 ──────────────────────────────────────────────
+Pages._t1UpdateTotal = function (max) {
+  const inputs = document.querySelectorAll('.t1-split-count');
+  const total  = Array.from(inputs).reduce((s,i) => s + (+i.value||0), 0);
+  const el     = document.getElementById('t1-split-total');
+  if (el) {
+    el.textContent = `合計: ${total}頭 / 最大${max}頭`;
+    el.style.color = total > max ? 'var(--red)' : 'var(--text3)';
+  }
+};
+
+// ── T1: 行追加 ────────────────────────────────────────────────
+Pages._t1AddSplitRow = function (max) {
+  const rows   = document.getElementById('t1-split-rows');
+  if (!rows) return;
+  const count  = rows.querySelectorAll('.split-row').length;
+  const suffix = String.fromCharCode(65 + count);
+  rows.insertAdjacentHTML('beforeend', `
+    <div class="split-row" style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+      <span style="font-family:var(--font-mono);color:var(--gold);min-width:30px">-${suffix}</span>
+      <input type="number" class="input t1-split-count" min="1" max="${max}" value="1"
+        oninput="Pages._t1UpdateTotal(${max})">
+      <span style="font-size:.8rem;color:var(--text3)">頭</span>
+    </div>`);
+  Pages._t1UpdateTotal(max);
+};
+
+// ── T1: 容器選択 ──────────────────────────────────────────────
+Pages._t1SelectContainer = function (size) {
+  document.querySelectorAll('[id^="t1-container-"]').forEach(b => b.classList.remove('active'));
+  const btn = document.getElementById('t1-container-' + size.replace('.','_'));
+  if (btn) btn.classList.add('active');
+  const inp = document.getElementById('t1-selected-container');
+  if (inp) inp.value = size;
+};
+
+// ── T1: 分割実行 ──────────────────────────────────────────────
+Pages._t1ExecSplit = async function (lotId, maxCount) {
+  const inputs    = document.querySelectorAll('.t1-split-count');
+  const counts    = Array.from(inputs).map(i => +i.value||0).filter(n => n > 0);
+  const total     = counts.reduce((s,n) => s+n, 0);
+  const container = document.getElementById('t1-selected-container')?.value || '2.7L';
+
+  if (!counts.length) { UI.toast('分割数を入力してください', 'error'); return; }
+  if (total > maxCount) { UI.toast(`合計(${total})が元ロット頭数(${maxCount})を超えています`, 'error'); return; }
+
+  try {
+    UI.loading(true);
+    const res = await API.lot.split({
+      lot_id:        lotId,
+      split_counts:  counts,
+      stage:         'T1',
+      container_size: container,
+    });
+    await syncAll(true);
+    Pages._t1RenderDone(res);
+  } catch(e) {
+    UI.toast('分割失敗: ' + e.message, 'error');
+  } finally {
+    UI.loading(false);
+  }
+};
+
+// ── T1: ラベル発行 ────────────────────────────────────────────
+Pages._t1GenerateLabel = async function (lotId, displayId) {
+  try {
+    UI.loading(true);
+    await API.label.generate('LOT', lotId, 'larva');
+    UI.toast(`${displayId} のラベルを発行しました`);
+  } catch(e) {
+    UI.toast('ラベル発行失敗: ' + e.message, 'error');
+  } finally {
+    UI.loading(false);
+  }
+};
+
+// ── T1: カメラスキャン ────────────────────────────────────────
+Pages._t1StartCamera = async function () {
+  // 既存の_qrStartCameraロジックを流用してT1モードで動作
+  routeTo('qr-scan', { mode: 't1' });
+};
+
+// ルーティング登録
+PAGES['qr-scan-t1'] = () => Pages.qrScanT1();

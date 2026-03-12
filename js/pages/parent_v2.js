@@ -8,62 +8,147 @@
 
 // ── 種親一覧 ────────────────────────────────────────────────────
 Pages.parentList = function () {
-  const main    = document.getElementById('main');
-  const parents = Store.getDB('parents') || [];
-  const active  = parents.filter(p => p.status === 'active');
-  const retired = parents.filter(p => p.status !== 'active');
+  const main = document.getElementById('main');
+  if (!main) return;
 
-  const males   = active.filter(p => p.sex === '♂');
-  const females = active.filter(p => p.sex === '♀');
+  // ヘッダーを先に描画して真っ黒を防止
+  main.innerHTML = UI.header('種親管理', { action: { fn: "routeTo('parent-new')", icon: '+' } })
+    + '<div class="page-body" id="parent-list-body">' + UI.spinner() + '</div>';
 
-  main.innerHTML = `
-    ${UI.header('種親管理', { action: { fn: "routeTo('parent-new')", icon: '+' } })}
-    <div class="page-body">
+  try {
+    const parents = Store.getDB('parents') || [];
+    const active  = parents.filter(p => p && p.status === 'active');
+    const retired = parents.filter(p => p && p.status !== 'active');
+    const males   = active.filter(p => p.sex === '♂');
+    const females = active.filter(p => p.sex === '♀');
 
+    function safeCard(p) {
+      try { return _parentCard(p); }
+      catch(e) {
+        console.warn('_parentCard error:', e, p);
+        const pid = (p && (p.parent_display_id || p.par_id)) || '?';
+        return `<div class="card" style="color:var(--red);font-size:.8rem">⚠️ ${pid} 表示エラー</div>`;
+      }
+    }
+
+    const body = `
       <div class="section-title">♂ 種雄（${males.length}頭）</div>
-      ${males.length
-        ? males.map(_parentCard).join('')
-        : UI.empty('種雄が未登録です')}
+      ${males.length ? males.map(safeCard).join('') : UI.empty('種雄が未登録です')}
 
       <div class="section-title" style="margin-top:20px">♀ 種雌（${females.length}頭）</div>
-      ${females.length
-        ? females.map(_parentCard).join('')
-        : UI.empty('種雌が未登録です')}
+      ${females.length ? females.map(safeCard).join('') : UI.empty('種雌が未登録です')}
 
       ${retired.length ? `
-        <div class="section-title" style="margin-top:20px;color:var(--text-muted)">
+        <div class="section-title" style="margin-top:20px;color:var(--text3)">
           引退・売却済（${retired.length}頭）
         </div>
-        ${retired.map(_parentCard).join('')}
-      ` : ''}
-    </div>`;
+        ${retired.map(safeCard).join('')}
+      ` : ''}`;
+
+    const bodyEl = document.getElementById('parent-list-body');
+    if (bodyEl) bodyEl.innerHTML = body;
+    else main.innerHTML = UI.header('種親管理', { action: { fn: "routeTo('parent-new')", icon: '+' } })
+      + '<div class="page-body">' + body + '</div>';
+
+  } catch (e) {
+    console.error('parentList error:', e);
+    const bodyEl = document.getElementById('parent-list-body');
+    const errHtml = UI.empty('読み込みエラー: ' + e.message);
+    if (bodyEl) bodyEl.innerHTML = errHtml;
+  }
 };
 
 function _parentCard(p) {
-  const pid    = p.parent_display_id || p.display_name || p.par_id;
-  const ready  = p.pairing_ready_date;
-  const today  = new Date(); today.setHours(0,0,0,0);
-  let badge = '';
+  const pid   = p.parent_display_id || p.display_name || p.par_id;
+  const today = new Date(); today.setHours(0,0,0,0);
+
+  // ── ①ステータスバッジ ──
+  const STATUS_LABEL = {
+    active:   { label: '現役',  color: 'var(--green)' },
+    retired:  { label: '引退',  color: 'var(--text3)' },
+    dead:     { label: '死亡',  color: 'var(--red)'   },
+    sold:     { label: '譲渡',  color: 'var(--amber)'  },
+    reserved: { label: '予約',  color: 'var(--blue)'  },
+  };
+  const st = STATUS_LABEL[p.status] || { label: p.status || '—', color: 'var(--text3)' };
+  const statusBadge = `<span style="font-size:.7rem;padding:2px 7px;border-radius:20px;background:rgba(0,0,0,.25);color:${st.color};border:1px solid ${st.color}">${st.label}</span>`;
+
+  // ── 交配可バッジ ──
+  let pairingBadge = '';
+  const ready = p.pairing_ready_date;
   if (ready) {
     const diff = Math.floor((new Date(ready) - today) / 86400000);
-    if (diff <= 0)      badge = '<span class="badge badge-green">交配可</span>';
-    else if (diff <= 7) badge = `<span class="badge badge-amber">あと${diff}日</span>`;
+    if (diff <= 0)       pairingBadge = '<span class="badge badge-green">交配可</span>';
+    else if (diff <= 7)  pairingBadge = `<span class="badge badge-amber">あと${diff}日</span>`;
+    else if (diff <= 14) pairingBadge = `<span class="badge badge-gray">あと${diff}日</span>`;
   } else if (p.feeding_start_date) {
-    badge = '<span class="badge badge-gray">後食中</span>';
+    pairingBadge = '<span class="badge badge-gray">後食中</span>';
   }
 
+  // ── ②サイズ ──
+  const sizeLine = p.size_mm ? `<div style="font-size:1.15rem;font-weight:700;color:var(--green)">${p.size_mm}mm</div>` : '';
+
+  // ── ③親サイズ ──
+  let parentSizeLine = '';
+  if (p.father_parent_size_mm || p.mother_parent_size_mm) {
+    const fSize = p.father_parent_size_mm || '?';
+    const mSize = p.mother_parent_size_mm || '?';
+    parentSizeLine = `<div style="font-size:.8rem;color:var(--text3)">親: ${fSize}×${mSize}</div>`;
+  }
+
+  // ── ④血統タグ ──
   const tags = _parseTags(p.bloodline_tags);
+  const pTags = _parseTags(p.paternal_tags);
+  const allTags = [...new Set([...tags, ...pTags])].slice(0, 6);
+  const tagRow = allTags.length
+    ? `<div class="tag-row" style="margin:4px 0">${allTags.map(t=>`<span class="tag tag-gold">${t}</span>`).join('')}</div>`
+    : '';
+
+  // ── ⑤日付情報 ──
+  const fmt = d => d ? String(d).replace(/-/g, '/') : null;
+  const dateLines = [];
+  if (p.eclosion_date)       dateLines.push(`羽化: ${fmt(p.eclosion_date)}`);
+  if (p.feeding_start_date)  dateLines.push(`後食: ${fmt(p.feeding_start_date)}`);
+  if (p.pairing_ready_date)  dateLines.push(`交配可: ${fmt(p.pairing_ready_date)}`);
+  const dateLine = dateLines.length
+    ? `<div style="font-size:.75rem;color:var(--text3);line-height:1.7;margin-top:4px">${dateLines.join('　')}</div>`
+    : '';
+
+  // ── ⑥ペアリング統計 ──
+  const stats = Store.getPairingStats(p.par_id);
+  let statsLine = '';
+  if (stats.total > 0) {
+    const lastFmt = fmt(stats.lastDate) || '—';
+    statsLine = `<div style="font-size:.75rem;color:var(--text3);margin-top:2px">交配回数: ${stats.total}　最終: ${lastFmt}</div>`;
+  }
 
   return `
-    <div class="card card-row" onclick="routeTo('parent-detail','${p.par_id}')">
-      <div class="card-main">
-        <div class="card-title">${pid} ${p.sex} ${badge}</div>
-        <div class="card-sub">${p.size_mm ? p.size_mm + 'mm' : '—'}</div>
-        ${tags.length
-          ? `<div class="tag-row">${tags.map(t=>`<span class="tag tag-gold">${t}</span>`).join('')}</div>`
-          : ''}
+    <div class="card" onclick="routeTo('parent-detail','${p.par_id}')"
+         style="padding:12px 14px;cursor:pointer">
+
+      <!-- 1段目: ID + 性別 + ステータス + 交配可バッジ -->
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+        <span style="font-family:var(--font-mono);font-weight:700;font-size:.95rem;color:var(--gold)">${pid}</span>
+        <span style="font-size:1.1rem">${p.sex || ''}</span>
+        ${statusBadge}
+        ${pairingBadge}
       </div>
-      <span class="card-arrow">›</span>
+
+      <!-- 2段目: サイズ -->
+      ${sizeLine}
+
+      <!-- 3段目: 親サイズ -->
+      ${parentSizeLine}
+
+      <!-- 4段目: 血統タグ -->
+      ${tagRow}
+
+      <!-- 5段目: 日付 -->
+      ${dateLine}
+
+      <!-- 6段目: ペアリング統計 -->
+      ${statsLine}
+
     </div>`;
 }
 
@@ -71,8 +156,11 @@ function _parentCard(p) {
 Pages.parentDetail = async function (parId) {
   const main    = document.getElementById('main');
   const parents = Store.getDB('parents') || [];
-  const p       = parents.find(x => x.par_id === parId);
-  if (!p) { main.innerHTML = UI.header('種親詳細',{back:true}) + UI.empty('見つかりません'); return; }
+  // par_id または parent_display_id のどちらで渡されても対応
+  const p = parents.find(x => x.par_id === parId)
+         || parents.find(x => x.parent_display_id === parId)
+         || parents.find(x => x.display_name === parId);
+  if (!p) { main.innerHTML = UI.header('種親詳細',{back:true}) + UI.empty('見つかりません (id=' + parId + ')'); return; }
 
   const pid    = p.parent_display_id || p.display_name;
   const tags   = _parseTags(p.bloodline_tags);
@@ -219,12 +307,6 @@ Pages.parentNew = function () {
         <label class="form-label">サイズ(mm)</label>
         <input id="inp-size" class="form-input" type="number" step="0.1"
                placeholder="例: 174.5">
-      </div>
-
-      <div class="form-section">
-        <label class="form-label">体重(g)</label>
-        <input id="inp-weight" class="form-input" type="number" step="0.1"
-               placeholder="例: 32.5">
       </div>
 
       <div class="form-section">
@@ -409,7 +491,6 @@ async function _parentSave() {
   const payload = {
     sex,
     size_mm:               size,
-    weight_g:              document.getElementById('inp-weight').value.trim(),
     father_parent_size_mm: document.getElementById('inp-fsize').value.trim(),
     mother_parent_size_mm: document.getElementById('inp-msize').value.trim(),
     bloodline_raw:         document.getElementById('inp-raw').value.trim(),

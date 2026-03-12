@@ -178,6 +178,11 @@ function _renderLotDetail(lot, main) {
           分割
         </button>
       </div>
+      ${(lot.stage === 'T0' || lot.stage === 'T1') ? `
+      <button class="btn btn-secondary btn-full" style="margin-top:4px"
+        onclick="routeTo('qr-scan-t1')">
+        🔄 T1交換 連続処理モード
+      </button>` : ''}
 
       <!-- 基本情報 -->
       <div class="card">
