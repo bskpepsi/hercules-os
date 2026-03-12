@@ -74,12 +74,13 @@ const API = (() => {
 
   // ── 個体 ──────────────────────────────────────────────────────
   const individual = {
-    create: (d)  => call('createIndividual', d),
-    list:   (f)  => call('getIndividuals',   f || {}),
-    get:    (id) => call('getIndividual',    { ind_id: id }),
-    update: (d)  => call('updateIndividual', d),
+    create:          (d)  => call('createIndividual', d),
+    list:            (f)  => call('getIndividuals',   f || {}),
+    get:             (id) => call('getIndividual',    { ind_id: id }),
+    update:          (d)  => call('updateIndividual', d),
+    promoteToParent: (d)  => call('promoteToParent',  d),
     // 論理削除: new_status='dead'|'sold'|'reserved', reason=任意
-    changeStatus: (id, newStatus, reason) =>
+    changeStatus:    (id, newStatus, reason) =>
       call('deleteIndividual', { ind_id: id, new_status: newStatus, reason }),
   };
 
@@ -209,6 +210,8 @@ const API = (() => {
     createBloodline:  (d)        => call('createBloodlineV2', d),
     // 種親V2
     createParent:     (d)        => call('createParentV2', d),
+    sellIndividual:   (d)        => call('sellIndividual', d),
+    analyzeLineStats: (d)        => call('analyzeLineStats', d),
     updateParent:     (d)        => call('updateParentV2', d),
     getPairingReady:  ()         => call('getPairingReadyStatus', {}),
     // ペアリング履歴
