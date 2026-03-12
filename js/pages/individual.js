@@ -59,6 +59,9 @@ Pages.individualList = function () {
         <div class="filter-bar" id="sex-filter">
           ${_sexFilters(filters.sex)}
         </div>
+        <div class="filter-bar" id="status-filter">
+          ${_statusFilters(filters.statusFilter || '')}
+        </div>
         <div class="sec-hdr">
           <span class="sec-title" id="ind-count">${total}頭</span>
           <span class="sec-more" onclick="Pages._indStatusModal()">
@@ -84,7 +87,14 @@ Pages.individualList = function () {
     document.getElementById('stage-filter').addEventListener('click', e => {
       const p = e.target.closest('.pill');
       if (!p) return;
-      filters.stage = p.dataset.val === filters.stage ? '' : p.dataset.val;
+      const sv = p.dataset.val;
+      if (sv === 'larva') {
+        filters.stage = filters.stage === 'larva' ? '' : 'larva';
+        filters._larvaGroup = filters.stage === 'larva';
+      } else {
+        filters.stage = sv === filters.stage ? '' : sv;
+        filters._larvaGroup = false;
+      }
       render();
     });
 
@@ -95,6 +105,21 @@ Pages.individualList = function () {
       filters.sex = p.dataset.val === filters.sex ? '' : p.dataset.val;
       render();
     });
+
+    // ステータスフィルタ
+    document.getElementById('status-filter').addEventListener('click', e => {
+      const p = e.target.closest('.pill');
+      if (!p) return;
+      const val = p.dataset.val;
+      filters.statusFilter = val === filters.statusFilter ? '' : val;
+      // statusFilterに応じてfilters.statusを変更
+      if (!val)           filters.status = 'alive';
+      else if (val === 'active') filters.status = 'alive';
+      else if (val === 'sold')   filters.status = 'sold';
+      else if (val === 'dead')   filters.status = 'dead';
+      else if (val === 'parent') filters.status = 'parent';
+      render();
+    });
   }
 
   render();
@@ -103,15 +128,29 @@ Pages.individualList = function () {
 function _stageFilters(active) {
   const stages = [
     { val:'', label:'全て' },
-    { val:'T1',  label:'T1' },
-    { val:'T2A', label:'T2①' },
-    { val:'T2B', label:'T2②' },
-    { val:'T3',  label:'T3' },
+    { val:'larva',   label:'幼虫' },   // T1/T2/T3まとめ
+    { val:'T1',      label:'T1' },
+    { val:'T2A',     label:'T2①' },
+    { val:'T2B',     label:'T2②' },
+    { val:'T3',      label:'T3' },
     { val:'PREPUPA', label:'前蛹' },
     { val:'PUPA',    label:'蛹' },
     { val:'ADULT',   label:'成虫' },
   ];
   return stages.map(s =>
+    `<button class="pill ${s.val === active ? 'active' : ''}" data-val="${s.val}">${s.label}</button>`
+  ).join('');
+}
+
+function _statusFilters(active) {
+  const statuses = [
+    { val:'',       label:'全状態' },
+    { val:'active', label:'飼育中' },
+    { val:'sold',   label:'販売済' },
+    { val:'dead',   label:'死亡' },
+    { val:'parent', label:'種親' },
+  ];
+  return statuses.map(s =>
     `<button class="pill ${s.val === active ? 'active' : ''}" data-val="${s.val}">${s.label}</button>`
   ).join('');
 }
@@ -374,6 +413,50 @@ function _renderDetail(ind, main) {
         <div style="font-size:.85rem;color:var(--text2)">${ind.note_private}</div>
       </div>` : ''}
 
+      <!-- 追加日付フィールド -->
+      ${(ind.prepupa_date || ind.pupa_check_date || ind.artificial_cell_date) ? `
+      <div class="accordion" id="acc-dates">
+        <div class="acc-hdr" onclick="_toggleAcc('acc-dates')">
+          発育日程 <span class="acc-arrow">▼</span>
+        </div>
+        <div class="acc-body">
+          <div class="info-list">
+            ${ind.prepupa_date          ? _infoRow('前蛹確認日',    ind.prepupa_date) : ''}
+            ${ind.pupa_check_date       ? _infoRow('蛹確認日',      ind.pupa_check_date) : ''}
+            ${ind.artificial_cell_date  ? _infoRow('人工蛹室移行日', ind.artificial_cell_date) : ''}
+          </div>
+        </div>
+      </div>` : ''}
+
+      <!-- 不全情報 -->
+      ${String(ind.is_defective) === 'true' ? `
+      <div class="card" style="border-color:rgba(231,76,60,.4);background:rgba(231,76,60,.05)">
+        <div class="card-title" style="color:var(--red)">⚠️ 不全記録</div>
+        <div class="info-list">
+          ${_infoRow('発生ステージ', ind.defect_stage || '—')}
+          ${_infoRow('不全種別',    _defectTypeLabel(ind.defect_type))}
+          ${ind.defect_note ? _infoRow('メモ', ind.defect_note) : ''}
+        </div>
+      </div>` : ''}
+
+      <!-- 販売情報 -->
+      ${ind.status === 'sold' ? `
+      <div class="card" style="border-color:rgba(52,152,219,.4)">
+        <div class="card-title" style="color:var(--blue)">💰 販売済み</div>
+        <div class="info-list">
+          ${_infoRow('販売日',      ind.sold_date   || '—')}
+          ${_infoRow('販売時体重',  ind.sold_weight ? ind.sold_weight+'g' : '—')}
+          ${_infoRow('販売時ステージ', ind.sold_stage || '—')}
+          ${ind.sold_reason ? _infoRow('理由', ind.sold_reason) : ''}
+        </div>
+      </div>` : ''}
+
+      <!-- 最大体重 -->
+      ${ind.max_weight_g ? `
+      <div style="text-align:center;padding:6px;font-size:.8rem;color:var(--text3)">
+        最大体重記録: <strong>${ind.max_weight_g}g</strong>
+      </div>` : ''}
+
       <!-- 種親昇格 -->
       ${ind.eclosion_date && !ind.promoted_par_id ? `
       <button class="btn btn-gold btn-full"
@@ -411,6 +494,18 @@ function _renderDetail(ind, main) {
   if (records.filter(r => r.weight_g).length >= 2) {
     setTimeout(() => _drawWeightChart(ind.ind_id, records), 100);
   }
+}
+
+function _defectTypeLabel(type) {
+  const map = {
+    pupa_fail:     '蛹化失敗',
+    eclosion_fail: '羽化失敗',
+    horn_deform:   '角変形',
+    elytra_open:   '上翅開き',
+    size_defect:   'サイズ不全',
+    unknown:       '不明',
+  };
+  return map[type] || type || '—';
 }
 
 function _infoRow(key, val) {

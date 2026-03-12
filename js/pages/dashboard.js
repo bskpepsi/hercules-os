@@ -80,6 +80,23 @@ function _renderDashboard(main) {
   const over150 = alive.filter(i => +i.latest_weight_g >= 150);
   if (over150.length) tasks.green.push({ icon:'🏆', text:`150g超え ${over150.length}頭`, fn:"routeTo('ind-list')" });
 
+  // ── カテゴリ別集計 ──
+  // 採卵・セット交換: red+yellowのうち産卵セット関連
+  const catEgg     = [...tasks.red, ...tasks.yellow].filter(t => t.fn.includes('pairing'));
+  // ペアリング: green+yellowのうち種親ペアリング関連
+  const catPairing = [...tasks.green, ...tasks.yellow].filter(t => t.fn.includes('parent'));
+  // 注意: redタスク全体（超過・緊急）
+  const catAlert   = tasks.red.filter(t => !t.fn.includes('pairing') || true);
+  // マット交換: 個体のマット交換時期（日齢から推定）
+  const matDays = parseInt(Store.getSetting('mat_change_interval_days') || '60', 10);
+  const matDue  = alive.filter(i => {
+    if (!i.hatch_date) return false;
+    const age = Store.calcAge(i.hatch_date);
+    if (!age) return false;
+    // 最終成長記録からの経過日数（簡易判定）
+    return age.days > 0 && age.days % matDays < 7; // 交換時期±7日以内
+  });
+
   // ────────────────────────────────────────────────
   // 3. 種親・ペアリング状況
   // ────────────────────────────────────────────────
@@ -151,31 +168,46 @@ function _renderDashboard(main) {
           <span style="color:var(--blue);cursor:pointer" onclick="routeTo('settings')">設定画面へ</span>
         </div></div>` : ''}
 
-      <!-- ① 今日の最優先タスク -->
-      ${(tasks.red.length || tasks.yellow.length || tasks.green.length) ? `
+      <!-- ① 今日のタスク（カテゴリ表示） -->
       <div class="card" style="border-color:rgba(231,76,60,.3)">
         <div class="card-title">📋 今日のタスク</div>
-        ${tasks.red.map(t => `
-          <div onclick="${t.fn}" style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer">
-            <span style="font-size:1.1rem">${t.icon}</span>
-            <span style="flex:1;font-size:.83rem;font-weight:600;color:var(--red)">${t.text}</span>
-            <span style="color:var(--text3)">›</span>
-          </div>`).join('')}
-        ${tasks.yellow.map(t => `
-          <div onclick="${t.fn}" style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer">
-            <span style="font-size:1.1rem">${t.icon}</span>
-            <span style="flex:1;font-size:.83rem;color:var(--amber)">${t.text}</span>
-            <span style="color:var(--text3)">›</span>
-          </div>`).join('')}
-        ${tasks.green.map(t => `
-          <div onclick="${t.fn}" style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer">
-            <span style="font-size:1.1rem">${t.icon}</span>
-            <span style="flex:1;font-size:.83rem;color:var(--green)">${t.text}</span>
-            <span style="color:var(--text3)">›</span>
-          </div>`).join('')}
-      </div>` : `<div class="card" style="border-color:rgba(45,122,82,.25)">
-        <div style="text-align:center;padding:8px 0;font-size:.85rem;color:var(--green)">✅ 今日の緊急タスクはありません</div>
-      </div>`}
+        ${(catEgg.length || catPairing.length || matDue.length || catAlert.length) ? `
+          <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
+            ${catEgg.length ? `
+            <div onclick="routeTo('pairing-list')" style="display:flex;justify-content:space-between;align-items:center;padding:12px;background:rgba(231,76,60,.1);border-radius:8px;cursor:pointer">
+              <div style="display:flex;align-items:center;gap:8px">
+                <span style="font-size:1.3rem">🥚</span>
+                <span style="font-weight:600">採卵・セット交換</span>
+              </div>
+              <span style="font-size:1.4rem;font-weight:700;color:var(--red)">${catEgg.length}件</span>
+            </div>` : ''}
+            ${catPairing.length ? `
+            <div onclick="routeTo('parent-list')" style="display:flex;justify-content:space-between;align-items:center;padding:12px;background:rgba(255,193,7,.1);border-radius:8px;cursor:pointer">
+              <div style="display:flex;align-items:center;gap:8px">
+                <span style="font-size:1.3rem">💕</span>
+                <span style="font-weight:600">ペアリング</span>
+              </div>
+              <span style="font-size:1.4rem;font-weight:700;color:var(--amber)">${catPairing.length}件</span>
+            </div>` : ''}
+            ${matDue.length ? `
+            <div onclick="routeTo('ind-list')" style="display:flex;justify-content:space-between;align-items:center;padding:12px;background:rgba(52,152,219,.1);border-radius:8px;cursor:pointer">
+              <div style="display:flex;align-items:center;gap:8px">
+                <span style="font-size:1.3rem">🌱</span>
+                <span style="font-weight:600">マット交換</span>
+              </div>
+              <span style="font-size:1.4rem;font-weight:700;color:var(--blue)">${matDue.length}頭</span>
+            </div>` : ''}
+            ${catAlert.length ? `
+            <div onclick="routeTo('pairing-list')" style="display:flex;justify-content:space-between;align-items:center;padding:12px;background:rgba(231,76,60,.15);border-radius:8px;cursor:pointer;border:1px solid rgba(231,76,60,.3)">
+              <div style="display:flex;align-items:center;gap:8px">
+                <span style="font-size:1.3rem">⚠️</span>
+                <span style="font-weight:600">注意</span>
+              </div>
+              <span style="font-size:1.4rem;font-weight:700;color:var(--red)">${catAlert.length}件</span>
+            </div>` : ''}
+          </div>
+        ` : `<div style="text-align:center;padding:12px;color:var(--green);font-size:.9rem">✅ 今日のタスクはありません</div>`}
+      </div>
 
       <!-- ② クイックアクション -->
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
