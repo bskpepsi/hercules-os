@@ -31,12 +31,13 @@ const Store = (() => {
 
   // ── DB（ローカルキャッシュ） ────────────────────────────────────
   let _db = {
-    individuals: [],
-    lots:        [],
-    lines:       [],
-    parents:     [],
-    bloodlines:  [],
-    pairings:    [],
+    individuals:       [],
+    lots:              [],
+    lines:             [],
+    parents:           [],
+    bloodlines:        [],
+    pairings:          [],
+    pairing_histories: [],
     growthMap:   {},  // target_id → records[]
     settings:    {},
     labelHistory:{},  // target_id → labels[]
@@ -289,9 +290,22 @@ const Store = (() => {
     if (filters.line_id)  list = list.filter(i => i.line_id       === filters.line_id);
     if (filters.lot_id)       list = list.filter(i => i.lot_id        === filters.lot_id || i.origin_lot_id === filters.lot_id);
     if (filters.bloodline_id) list = list.filter(i => i.bloodline_id  === filters.bloodline_id);
-    if (filters.stage)        list = list.filter(i => i.current_stage === filters.stage);
+    if (filters.stage) {
+      if (filters._larvaGroup || filters.stage === 'larva') {
+        // 幼虫ステージをまとめてフィルタ
+        const larvaStages = ['T0','T1','T2A','T2B','T3','EGG'];
+        list = list.filter(i => larvaStages.includes(i.current_stage));
+      } else {
+        list = list.filter(i => i.current_stage === filters.stage);
+      }
+    }
     if (filters.sex)      list = list.filter(i => i.sex           === filters.sex);
-    if (filters.status)   list = list.filter(i => i.status        === filters.status);
+    // statusフィルター（sold/dead/parent/active対応）
+    if (filters.statusFilter === 'sold')   list = list.filter(i => i.status === 'sold');
+    else if (filters.statusFilter === 'dead')   list = list.filter(i => i.status === 'dead');
+    else if (filters.statusFilter === 'parent') list = list.filter(i => String(i.parent_flag) === 'true');
+    else if (filters.statusFilter === 'active') list = list.filter(i => i.status === 'active');
+    else if (filters.status)   list = list.filter(i => i.status   === filters.status);
     // status省略時は死亡のみ除外（_all相当）。alive指定時は飼育中のみ。
     if (filters.guinness) list = list.filter(i => String(i.guinness_flag) === 'true');
     if (filters.q) {
@@ -302,6 +316,26 @@ const Store = (() => {
       );
     }
     return list;
+  }
+
+  // ── ペアリング統計（par_idごとのサマリー） ────────────────────
+  function getPairingStats(parId) {
+    if (!parId) return { total: 0, lastDate: null };
+    try {
+      const histories = (_db.pairing_histories || []).filter(
+        h => h && (h.male_parent_id === parId || h.female_parent_id === parId)
+      );
+      if (!histories.length) return { total: 0, lastDate: null };
+      const sorted = [...histories].sort(
+        (a, b) => new Date(b.pairing_date) - new Date(a.pairing_date)
+      );
+      return {
+        total:    sorted.length,
+        lastDate: sorted[0].pairing_date || null,
+      };
+    } catch(e) {
+      return { total: 0, lastDate: null };
+    }
   }
 
   function filterLots(filters = {}) {
@@ -338,5 +372,6 @@ const Store = (() => {
     setDraft, getDraft, clearDraft,
     // フィルタ
     filterIndividuals, filterLots,
+    getPairingStats,
   };
 })();
