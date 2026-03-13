@@ -171,12 +171,22 @@ function _renderPairDetail(pair, eggRecords, main) {
       <div class="card">
         <div class="card-title">セット情報</div>
         <div class="info-list">
-          ${_prow('♂親', f
-            ? `<span style="cursor:pointer;color:var(--blue)" onclick="routeTo('parent-detail',{id:'${f.par_id}'})">${f.display_name}${f.size_mm?' '+f.size_mm+'mm':''}</span>`
-            : (pair.father_par_id||'—'))}
-          ${_prow('♀親', m
-            ? `<span style="cursor:pointer;color:var(--blue)" onclick="routeTo('parent-detail',{id:'${m.par_id}'})">${m.display_name}${m.size_mm?' '+m.size_mm+'mm':''}</span>`
-            : (pair.mother_par_id||'—'))}
+          ${_prow('<span style="color:var(--male)">♂親</span>', f ? (() => {
+            const fBld = f.bloodline_id ? (Store.getDB('bloodlines')||[]).find(b=>b.bloodline_id===f.bloodline_id) : null;
+            const fBldStr = fBld ? (fBld.abbreviation||fBld.bloodline_name||'') : '';
+            return `<span style="cursor:pointer;color:var(--male)" onclick="routeTo('parent-detail',{id:'${f.par_id}'})">
+              ${f.display_name}${f.size_mm?' <strong>'+f.size_mm+'mm</strong>':''}
+              ${fBldStr?'<span style="color:var(--text3);font-size:.78rem"> / '+fBldStr+'</span>':''}
+            </span>`;
+          })() : (pair.father_par_id||'—'))}
+          ${_prow('<span style="color:var(--female)">♀親</span>', m ? (() => {
+            const mBld = m.bloodline_id ? (Store.getDB('bloodlines')||[]).find(b=>b.bloodline_id===m.bloodline_id) : null;
+            const mBldStr = mBld ? (mBld.abbreviation||mBld.bloodline_name||'') : '';
+            return `<span style="cursor:pointer;color:var(--female)" onclick="routeTo('parent-detail',{id:'${m.par_id}'})">
+              ${m.display_name}${m.size_mm?' <strong>'+m.size_mm+'mm</strong>':''}
+              ${mBldStr?'<span style="color:var(--text3);font-size:.78rem"> / '+mBldStr+'</span>':''}
+            </span>`;
+          })() : (pair.mother_par_id||'—'))}
           ${bld ? _prow('血統', bld.abbreviation||bld.bloodline_name) : ''}
           ${_prow('ペアリング日', pair.pairing_start || '—')}
           ${_prow('セット開始',   pair.set_start    || '—')}
@@ -186,6 +196,10 @@ function _renderPairDetail(pair, eggRecords, main) {
           ${pair.note      ? _prow('メモ',       pair.note)        : ''}
         </div>
       </div>
+
+      <!-- ③ QRラベルボタン -->
+      <button class="btn btn-ghost btn-full" style="margin-top:0"
+        onclick="Pages._pairShowLabel('${pair.set_id}')">🏷 QR/ラベル発行</button>
 
       <!-- 採卵履歴 -->
       ${eggHtml}
@@ -268,13 +282,32 @@ function _eggHistoryHtml(eggRecords, pair) {
 }
 
 // … メニュー
+// グローバル経由でclosure問題を完全回避
+window._pairMenuEdit = function(sid) { routeTo('pairing-new', { editId: sid }); };
+window._pairMenuEgg  = function(sid) { Pages._pairEditEggModal(sid); };
+window._pairMenuLabel= function(sid) { Pages._pairShowLabel(sid); };
+
 Pages._pairMenu = function (setId) {
-  // fn.toString()でクロージャが失われるため、IDを文字列として直接埋め込む
   const sid = String(setId);
   UI.actionSheet([
-    { label: '✏️ セット情報を編集', fn: new Function(`routeTo('pairing-new', { editId: '${sid}' })`) },
-    { label: '📝 採卵履歴を編集',   fn: new Function(`Pages._pairEditEggModal('${sid}')`) },
+    { label: '✏️ セット情報を編集', fn: function(){ _pairMenuEdit(sid); } },
+    { label: '📝 採卵履歴を編集',   fn: function(){ _pairMenuEgg(sid); } },
+    { label: '🏷 ラベル/QR発行',    fn: function(){ _pairMenuLabel(sid); } },
   ]);
+};
+
+// ③ QRラベル表示
+Pages._pairShowLabel = async function (setId) {
+  try {
+    const res = await API.label.generate('SET', setId, 'pairing');
+    if (res && res.drive_url) {
+      window.open(res.drive_url, '_blank');
+    } else {
+      UI.toast('ラベルを発行しました');
+    }
+  } catch(e) {
+    UI.toast('ラベル発行失敗: ' + e.message, 'error');
+  }
 };
 
 // ── 採卵記録モーダル ────────────────────────────────────────────
