@@ -26,19 +26,9 @@ Pages.parentList = function () {
       try { return _parentCard(p); }
       catch(e) {
         const pid = (p && (p.parent_display_id || p.par_id)) || '?';
-        // 実エラーを画面に表示（デバッグ用）
-        console.error('[_parentCard]', pid, e.message, e);
-        console.error('[_parentCard] p全体:', JSON.stringify(p));
-        const stats = (() => { try { return Store.getPairingStats(p && p.par_id); } catch(e2){ return 'getPairingStats threw: '+e2.message; } })();
-        console.error('[_parentCard] pairingStats:', stats);
+        console.error('[_parentCard]', pid, e.message, e, p);
         return `<div class="card" style="border:1px solid var(--red);padding:12px">
           <div style="color:var(--red);font-weight:700">${pid} — エラー: ${e.message}</div>
-          <div style="font-size:.72rem;color:var(--text3);margin-top:4px">
-            bloodline_tags型: ${typeof p?.bloodline_tags} / 値: ${JSON.stringify(p?.bloodline_tags)?.slice(0,40)}<br>
-            pairingStats: ${JSON.stringify(stats)}<br>
-            feeding_start_date: ${p?.feeding_start_date}<br>
-            eclosion_date: ${p?.eclosion_date}
-          </div>
         </div>`;
       }
     }
@@ -243,7 +233,7 @@ Pages.parentDetail = async function (parIdParam) {
 
       <div style="display:flex;flex-direction:column;gap:10px;margin-top:16px">
         <button class="btn btn-primary" onclick="_parentSetFeeding('${parId}')">
-          🍽️ 後食開始日を設定
+          🍽️ ${p.feeding_start_date ? '後食開始日を変更' : '後食開始日を設定'}
         </button>
         ${p.sex === '♂' ? `
         <button class="btn btn-secondary" onclick="routeTo('pairing-history','${parId}')">
@@ -535,16 +525,27 @@ async function _parentSave() {
 
 // 後食設定モーダル
 function _parentSetFeeding(parId) {
+  const parents = Store.getDB('parents') || [];
+  const p = parents.find(x => x.par_id === parId)
+         || parents.find(x => x.parent_display_id === parId)
+         || parents.find(x => x.display_name === parId);
+  // 既存値を YYYY-MM-DD 形式に変換
+  const existing = p && p.feeding_start_date
+    ? String(p.feeding_start_date).replace(/\//g, '-') : '';
   const today = new Date().toISOString().split('T')[0];
+  const initVal = existing || today;
+  const title = (p && p.feeding_start_date) ? '🍽️ 後食開始日を変更' : '🍽️ 後食開始日を設定';
+
   UI.modal(`
-    <div class="modal-title">🍽️ 後食開始日を設定</div>
+    <div class="modal-title">${title}</div>
     <div class="form-section">
       <label class="form-label">後食開始日</label>
-      <input id="modal-feeding" class="form-input" type="date" value="${today}">
+      <input id="modal-feeding" class="form-input" type="date" value="${initVal}"
+             style="width:100%;padding:10px;font-size:1rem">
     </div>
     <div class="modal-footer">
-      <button class="btn btn-secondary" onclick="UI.closeModal()">キャンセル</button>
-      <button class="btn btn-primary" onclick="_parentSaveFeeding('${parId}')">保存</button>
+      <button class="btn btn-ghost" style="flex:1" onclick="UI.closeModal()">キャンセル</button>
+      <button class="btn btn-primary" style="flex:2" onclick="_parentSaveFeeding('${parId}')">保存</button>
     </div>
   `);
 }
