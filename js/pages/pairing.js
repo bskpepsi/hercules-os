@@ -87,33 +87,33 @@ function _exchangeBadgeHtml(pair) {
 // ── 産卵セット詳細 ───────────────────────────────────────────────
 Pages.pairingDetail = async function (setId) {
   const main = document.getElementById('main');
-  let pair = (Store.getDB('pairings') || []).find(p => p.set_id === setId);
 
-  // キャッシュがある場合は空配列で即時表示（nullを渡さない＝読み込み中にならない）
-  if (pair) _renderPairDetail(pair, [], main);
-  else      main.innerHTML = UI.header('産卵セット', { back: true }) + UI.spinner();
+  // キャッシュがあれば即時表示（ちらつき防止）
+  const cached = (Store.getDB('pairings') || []).find(p => p.set_id === setId);
+  if (cached) _renderPairDetail(cached, null, main);
+  else        main.innerHTML = UI.header('産卵セット', { back: true }) + UI.spinner();
 
   try {
-    // 産卵セット本体を先に取得して表示を更新
-    const pairRes = await API.pairing.get(setId);
+    // getPairingWithEggs で1回のAPI呼び出しでセット情報＋採卵履歴を同時取得
+    const res = await API.pairing.getWithEggs({ set_id: setId });
     if (Store.getPage() !== 'pairing-detail') return;
-    pair = pairRes.pairing;
-    _renderPairDetail(pair, [], main); // 最新データで再描画（採卵履歴はローディング）
-
-    // 採卵履歴を取得して追加描画
-    try {
-      const eggRes = await API.pairing.getEggRecords({ set_id: setId });
-      if (Store.getPage() !== 'pairing-detail') return;
-      const eggs = eggRes.egg_records || [];
-      _renderPairDetail(pair, eggs, main);
-    } catch (eggErr) {
-      // getEggRecords未デプロイ・エラー時は空配列のまま表示継続（collect_datesフォールバック）
-      if (Store.getPage() !== 'pairing-detail') return;
-      _renderPairDetail(pair, [], main);
-    }
+    _renderPairDetail(res.pairing, res.egg_records || [], main);
   } catch (e) {
-    if (!pair) main.innerHTML = UI.header('エラー', { back: true }) +
-      `<div class="page-body">${UI.empty('取得失敗: ' + e.message)}</div>`;
+    // getPairingWithEggs 未デプロイ時のフォールバック（旧2回呼び出し）
+    try {
+      const pairRes = await API.pairing.get(setId);
+      if (Store.getPage() !== 'pairing-detail') return;
+      const pair = pairRes.pairing;
+      _renderPairDetail(pair, [], main);
+      try {
+        const eggRes = await API.pairing.getEggRecords({ set_id: setId });
+        if (Store.getPage() !== 'pairing-detail') return;
+        _renderPairDetail(pair, eggRes.egg_records || [], main);
+      } catch (_) { /* 採卵履歴が取れなくても続行 */ }
+    } catch (e2) {
+      if (!cached) main.innerHTML = UI.header('エラー', { back: true }) +
+        `<div class="page-body">${UI.empty('取得失敗: ' + e2.message)}</div>`;
+    }
   }
 };
 
