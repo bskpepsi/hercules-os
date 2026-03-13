@@ -114,6 +114,7 @@ const API = (() => {
     list:      (f) => call('getPairings',   f || {}),
     get:       (id)=> call('getPairing',    { set_id: id }),
     update:    (d) => call('updatePairing', d),
+    getWithEggs:   (d) => call('getPairingWithEggs', d),
     addEgg:        (d) => call('addEggRecord',    d),
     getEggRecords: (d) => call('getEggRecords',  d),
     updateEgg:     (d) => call('updateEggRecord', d),
