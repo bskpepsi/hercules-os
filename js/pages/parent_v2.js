@@ -131,7 +131,7 @@ function _parentCard(p) {
       <!-- 1段目: ID + 性別 + ステータス + 交配可バッジ -->
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
         <span style="font-family:var(--font-mono);font-weight:700;font-size:.95rem;color:var(--gold)">${pid}</span>
-        <span style="font-size:1.1rem">${p.sex || ''}</span>
+        <span style="font-size:1.1rem;color:${p.sex==='♂'?'var(--male)':'var(--female)'}">${p.sex || ''}</span>
         ${statusBadge}
         ${pairingBadge}
       </div>
@@ -188,7 +188,7 @@ Pages.parentDetail = async function (parIdParam) {
     <div class="page-body">
 
       <div class="detail-card">
-        <div class="detail-title">${pid} ${p.sex}</div>
+        <div class="detail-title">${pid} <span style="color:${p.sex==='♂'?'var(--male)':'var(--female)'}">${p.sex}</span></div>
         ${pairingBadge ? `<div style="margin:8px 0">${pairingBadge}</div>` : ''}
 
         ${UI.detailRow('サイズ', p.size_mm ? p.size_mm + 'mm' : '未計測')}
@@ -232,9 +232,10 @@ Pages.parentDetail = async function (parIdParam) {
       </div>` : ''}
 
       <div style="display:flex;flex-direction:column;gap:10px;margin-top:16px">
+        ${!p.feeding_start_date ? `
         <button class="btn btn-primary" onclick="_parentSetFeeding('${parId}')">
-          🍽️ ${p.feeding_start_date ? '後食開始日を変更' : '後食開始日を設定'}
-        </button>
+          🍽️ 後食開始日を設定
+        </button>` : ''}
         ${p.sex === '♂' ? `
         <button class="btn btn-secondary" onclick="routeTo('pairing-history','${parId}')">
           📋 ペアリング履歴を見る
