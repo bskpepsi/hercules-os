@@ -11,31 +11,43 @@
 // ロット一覧
 // ════════════════════════════════════════════════════════════════
 Pages.lotList = function () {
-  const main = document.getElementById('main');
-  let filters = { status: 'active', stage: '', line_id: '' };
+  const main   = document.getElementById('main');
+  const params = Store.getParams() || {};
+  // ライン詳細から来た場合は固定フィルタ（ライン限定モード）
+  const fixedLineId = params.line_id || '';
+  const fixedLine   = fixedLineId ? Store.getLine(fixedLineId) : null;
+  const isLineLimited = !!fixedLineId;
+
+  let filters = { status: 'active', stage: '', line_id: fixedLineId };
 
   function render() {
     const lots  = Store.filterLots(filters);
     const lines = Store.getDB('lines') || [];
+    const title = isLineLimited
+      ? (fixedLine ? fixedLine.display_id + ' のロット' : 'ロット一覧')
+      : 'ロット一覧';
+    const headerOpts = isLineLimited
+      ? { back: true, action: { fn: "routeTo('lot-new',{lineId:'" + fixedLineId + "'})", icon: '＋' } }
+      : { action: { fn: "routeTo('lot-new')", icon: '＋' } };
 
     main.innerHTML = `
-      ${UI.header('ロット一覧', { action: { fn: "routeTo('lot-new')", icon: '＋' } })}
+      ${UI.header(title, headerOpts)}
       <div class="page-body">
         <div class="filter-bar" id="lot-stage-filter">
           ${_lotStageFilters(filters.stage)}
         </div>
-        <div class="filter-bar" id="lot-line-filter">
+        ${!isLineLimited ? `<div class="filter-bar" id="lot-line-filter">
           <button class="pill ${!filters.line_id ? 'active' : ''}" data-val="">ライン全て</button>
           ${lines.slice(0,8).map(l =>
-            `<button class="pill ${l.line_id === filters.line_id ? 'active' : ''}" data-val="${l.line_id}">${l.display_id}</button>`
+            '<button class="pill ' + (l.line_id === filters.line_id ? 'active' : '') + '" data-val="' + l.line_id + '">' + l.display_id + '</button>'
           ).join('')}
-        </div>
+        </div>` : ''}
         <div class="sec-hdr">
           <span class="sec-title">${lots.length}ロット</span>
           <span class="sec-more" onclick="Pages._lotShowDissolved()">分割済も表示</span>
         </div>
         <div id="lot-list-body">
-          ${lots.length ? lots.map(_lotCardHTML).join('') : UI.empty('ロットがありません', 'ラインから産卵セット経由で登録できます')}
+          ${lots.length ? lots.map(_lotCardHTML).join('') : UI.empty('ロットがありません', isLineLimited ? 'このラインにロットがありません' : 'ラインから産卵セット経由で登録できます')}
         </div>
       </div>`;
 
@@ -44,11 +56,14 @@ Pages.lotList = function () {
       filters.stage = p.dataset.val === filters.stage ? '' : p.dataset.val;
       render();
     });
-    document.getElementById('lot-line-filter').addEventListener('click', e => {
-      const p = e.target.closest('.pill'); if (!p) return;
-      filters.line_id = p.dataset.val === filters.line_id ? '' : p.dataset.val;
-      render();
-    });
+    if (!isLineLimited) {
+      const lineFilter = document.getElementById('lot-line-filter');
+      if (lineFilter) lineFilter.addEventListener('click', e => {
+        const p = e.target.closest('.pill'); if (!p) return;
+        filters.line_id = p.dataset.val === filters.line_id ? '' : p.dataset.val;
+        render();
+      });
+    }
   }
 
   render();
@@ -163,19 +178,15 @@ function _renderLotDetail(lot, main) {
         </div>` : '<div style="color:var(--amber);font-size:.8rem">⚠️ 孵化日未設定</div>'}
       </div>
 
-      <!-- アクションボタン（3タップ優先） -->
+      <!-- アクションボタン -->
       <div style="display:flex;gap:8px">
         <button class="btn btn-primary" style="flex:1"
           onclick="routeTo('growth-rec',{targetType:'LOT',targetId:'${lot.lot_id}',displayId:'${lot.display_id}'})">
           📷 記録
         </button>
-        <button class="btn btn-gold" style="flex:1"
-          onclick="Pages._showIndividualizeModal('${lot.lot_id}',${lot.count})">
-          個体化
-        </button>
-        <button class="btn btn-ghost" style="flex:1"
-          onclick="Pages._showSplitModal('${lot.lot_id}',${lot.count})">
-          分割
+        <button class="btn btn-secondary" style="flex:2"
+          onclick="Pages._showSplitModal('${lot.lot_id}',${lot.count},'${lot.stage||'T1'}','${lot.line_id}','${lot.hatch_date||''}','${lot.display_id}')">
+          ✂️ ロット分割
         </button>
       </div>
       ${(lot.stage === 'T0' || lot.stage === 'T1') ? `
@@ -225,135 +236,138 @@ function _renderLotDetail(lot, main) {
 }
 
 // ════════════════════════════════════════════════════════════════
-// ロット分割モーダル
+// ロット分割 — カード形式詳細入力UI
 // ════════════════════════════════════════════════════════════════
-Pages._showSplitModal = function (lotId, totalCount) {
+
+// 分割カードの状態
+let _splitCards = [];
+let _splitContext = {};
+
+Pages._showSplitModal = function (lotId, totalCount, stage, lineId, hatchDate, displayId) {
+  _splitContext = { lotId, totalCount: +totalCount, stage, lineId, hatchDate, displayId };
+
+  // 初期2カード
+  _splitCards = [
+    { count: Math.floor(totalCount/2), container:'', mat:'', size_category:'', sex_hint:'', note:'' },
+    { count: totalCount - Math.floor(totalCount/2), container:'', mat:'', size_category:'', sex_hint:'', note:'' },
+  ];
+  _renderSplitModal();
+};
+
+function _renderSplitModal() {
+  const { lotId, totalCount, stage, hatchDate, displayId } = _splitContext;
+  const usedCount = _splitCards.reduce((s,c) => s + (c.count||0), 0);
+  const remaining = totalCount - usedCount;
+  const totalOk   = remaining === 0;
+
+  const cardHtml = _splitCards.map((c, i) => {
+    const suffix = String.fromCharCode(65 + i);
+    const isOne  = (c.count === 1);
+    return `<div style="border:1px solid ${isOne?'var(--green)':'var(--border)'};border-radius:8px;padding:10px;margin-bottom:8px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <span style="font-family:var(--font-mono);font-weight:700;color:var(--gold);font-size:1rem">-${suffix}</span>
+        ${isOne ? '<span style="font-size:.7rem;padding:2px 8px;background:var(--green);color:#fff;border-radius:20px">自動個体化</span>' : ''}
+        <button style="margin-left:auto;color:var(--red);background:none;border:none;font-size:1rem;cursor:pointer"
+          onclick="_splitCards.splice(${i},1);_renderSplitModal()">×</button>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        <div>
+          <div style="font-size:.72rem;color:var(--text3);margin-bottom:2px">頭数 *</div>
+          <input type="number" class="input" min="1" value="${c.count||1}" style="width:100%"
+            onchange="_splitCards[${i}].count=Math.max(1,+this.value||1);_renderSplitModal()">
+        </div>
+        <div>
+          <div style="font-size:.72rem;color:var(--text3);margin-bottom:2px">容器</div>
+          <select class="input" style="width:100%" onchange="_splitCards[${i}].container=this.value">
+            ${['','1.8L','2.7L','4.8L（個別）','10L'].map(s=>`<option value="${s}" ${c.container===s?'selected':''}>${s||'選択…'}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <div style="font-size:.72rem;color:var(--text3);margin-bottom:2px">マット</div>
+          <select class="input" style="width:100%" onchange="_splitCards[${i}].mat=this.value">
+            ${['','T0','T1','T2A','T2B','T3'].map(s=>`<option value="${s}" ${c.mat===s?'selected':''}>${s||'選択…'}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <div style="font-size:.72rem;color:var(--text3);margin-bottom:2px">サイズ区分</div>
+          <select class="input" style="width:100%" onchange="_splitCards[${i}].size_category=this.value">
+            ${['','大','中','小'].map(s=>`<option value="${s}" ${c.size_category===s?'selected':''}>${s||'未分類'}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <div style="font-size:.72rem;color:var(--text3);margin-bottom:2px">雌雄</div>
+          <select class="input" style="width:100%" onchange="_splitCards[${i}].sex_hint=this.value">
+            ${['','♂','♀','不明'].map(s=>`<option value="${s}" ${c.sex_hint===s?'selected':''}>${s||'未判別'}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <div style="font-size:.72rem;color:var(--text3);margin-bottom:2px">メモ</div>
+          <input type="text" class="input" value="${c.note||''}" style="width:100%"
+            oninput="_splitCards[${i}].note=this.value">
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
   _showModal('ロット分割', `
-    <div class="form-section">
-      <p style="font-size:.85rem;color:var(--text2);margin-bottom:4px">
-        ${totalCount}頭を分割します。<br>各ロットの頭数を入力してください（合計≦${totalCount}頭）
-      </p>
-      <div id="split-rows">
-        ${_splitRow('A', Math.floor(totalCount/2))}
-        ${_splitRow('B', totalCount - Math.floor(totalCount/2))}
-      </div>
-      <button class="btn btn-ghost btn-sm" onclick="Pages._addSplitRow()">＋ ロット追加</button>
-      <div id="split-total" style="font-size:.82rem;color:var(--text3);margin-top:4px"></div>
-      <div class="modal-footer">
-        <button class="btn btn-ghost" style="flex:1" onclick="_closeModal()">キャンセル</button>
-        <button class="btn btn-primary" style="flex:2" onclick="Pages._execSplit('${lotId}',${totalCount})">
-          分割実行
-        </button>
-      </div>
+    <div style="font-size:.82rem;color:var(--text3);margin-bottom:8px">
+      元ロット: ${displayId} / ${totalCount}頭 / ${stage}
+    </div>
+    <div style="font-size:.85rem;font-weight:700;color:${totalOk?'var(--green)':'var(--amber)'};margin-bottom:8px">
+      割当: ${usedCount}頭 / 残り: ${remaining}頭 ${totalOk?'✅':''}
+    </div>
+    <div style="max-height:50vh;overflow-y:auto" id="split-cards-wrap">${cardHtml}</div>
+    <button class="btn btn-ghost btn-full" style="margin-top:4px"
+      onclick="_splitCards.push({count:1,container:'',mat:'',size_category:'',sex_hint:'',note:''});_renderSplitModal()">
+      ＋ 分割先を追加
+    </button>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" style="flex:1" onclick="_closeModal()">キャンセル</button>
+      <button class="btn btn-primary" style="flex:2"
+        onclick="Pages._execSplit('${lotId}',${totalCount})"
+        ${totalOk?'':'disabled style="opacity:.5"'}>
+        分割実行
+      </button>
     </div>`);
-  _updateSplitTotal(totalCount);
-};
-
-function _splitRow(suffix, count) {
-  return `<div class="split-row" style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-    <span style="font-family:var(--font-mono);color:var(--gold);min-width:28px">-${suffix}</span>
-    <input type="number" class="input split-count" min="1" value="${count}" style="flex:1"
-      oninput="Pages._updateSplitTotal2()">
-    <span style="font-size:.8rem;color:var(--text3)">頭</span>
-  </div>`;
-}
-
-Pages._addSplitRow = function () {
-  const rows   = document.getElementById('split-rows');
-  const suffix = String.fromCharCode(65 + rows.querySelectorAll('.split-row').length);
-  rows.insertAdjacentHTML('beforeend', _splitRow(suffix, 1));
-};
-
-Pages._updateSplitTotal2 = function () {
-  const inputs = document.querySelectorAll('.split-count');
-  const total  = Array.from(inputs).reduce((s, i) => s + (+i.value || 0), 0);
-  const el = document.getElementById('split-total');
-  if (el) el.textContent = `合計: ${total}頭`;
-};
-
-function _updateSplitTotal(max) {
-  const inputs = document.querySelectorAll('.split-count');
-  const total  = Array.from(inputs).reduce((s, i) => s + (+i.value || 0), 0);
-  const el = document.getElementById('split-total');
-  if (el) el.textContent = `合計: ${total}頭 / 最大${max}頭`;
 }
 
 Pages._execSplit = async function (lotId, maxCount) {
-  const inputs  = document.querySelectorAll('.split-count');
-  const counts  = Array.from(inputs).map(i => +i.value || 0).filter(n => n > 0);
-  const total   = counts.reduce((s, n) => s + n, 0);
-  if (!counts.length) { UI.toast('分割数を入力してください', 'error'); return; }
-  if (total > maxCount) { UI.toast(`合計(${total})が元ロット頭数(${maxCount})を超えています`, 'error'); return; }
-  if (!UI.confirm(`${counts.join('頭 / ')}頭 に分割します。よろしいですか？`)) return;
+  const counts  = _splitCards.map(c => c.count||0);
+  const details = _splitCards.map(c => ({
+    container_size: c.container || '',
+    mat_type:       c.mat       || '',
+    size_category:  c.size_category || '',
+    sex_hint:       c.sex_hint  || '',
+    note:           c.note      || '',
+  }));
+  const total = counts.reduce((s,n) => s+n, 0);
+
+  if (!counts.length) { UI.toast('分割先を入力してください', 'error'); return; }
+  if (total > maxCount) { UI.toast('合計(' + total + ')が元ロット頭数(' + maxCount + ')を超えています', 'error'); return; }
+  if (total !== maxCount) { UI.toast('合計(' + total + ')と元ロット(' + maxCount + '頭)が一致していません', 'error'); return; }
 
   _closeModal();
   try {
     const res = await apiCall(
-      () => API.lot.split({ lot_id: lotId, split_counts: counts }),
-      `${counts.length}ロットに分割しました`
+      () => API.lot.split({ lot_id: lotId, split_counts: counts, split_details: details }),
+      counts.length + 'ロットに分割しました'
     );
     await syncAll(true);
-    routeTo('lot-list');
-  } catch (e) {}
-};
 
-// ════════════════════════════════════════════════════════════════
-// ロット→個体化モーダル
-// ════════════════════════════════════════════════════════════════
-Pages._showIndividualizeModal = function (lotId, totalCount) {
-  _showModal('個体化', `
-    <div class="form-section">
-      <p style="font-size:.85rem;color:var(--text2)">
-        ロットから個体を取り出して管理します。<br>現在: ${totalCount}頭
-      </p>
-      ${UI.field('個体化する頭数', `<input type="number" id="ind-count" class="input" min="1" max="${totalCount}" value="1">`)}
-      ${UI.field('ステージ', UI.select('ind-stage', [
-        { code:'T1',  label:'T1' },
-        { code:'T2A', label:'T2①（モルト入り）' },
-        { code:'T2B', label:'T2②（純T2）' },
-        { code:'T3',  label:'T3' },
-      ], 'T1'))}
-      ${UI.field('容器サイズ', UI.select('ind-container',
-        CONTAINER_SIZES.map(s => ({ code:s, label:s })), '4.8L（個別）'))}
-      ${UI.field('性別（任意）', UI.select('ind-sex', [
-        { code:'', label:'未判定' },
-        { code:'♂', label:'♂' },
-        { code:'♀', label:'♀' },
-      ], ''))}
-      ${UI.field('メモ', `<input type="text" id="ind-note" class="input" placeholder="任意のメモ">`)}
-      <div class="modal-footer">
-        <button class="btn btn-ghost" style="flex:1" onclick="_closeModal()">キャンセル</button>
-        <button class="btn btn-gold" style="flex:2" onclick="Pages._execIndividualize('${lotId}')">
-          個体化実行
-        </button>
-      </div>
-    </div>`);
-};
-
-Pages._execIndividualize = async function (lotId) {
-  const count     = +document.getElementById('ind-count').value || 0;
-  const stage     = document.querySelector('[name="ind-stage"]')?.value || document.getElementById('ind-stage')?.value || 'T1';
-  const container = document.querySelector('[name="ind-container"]')?.value || '';
-  const sex       = document.querySelector('[name="ind-sex"]')?.value || '';
-  const note      = document.getElementById('ind-note')?.value || '';
-
-  if (!count || count < 1) { UI.toast('頭数を入力してください', 'error'); return; }
-
-  _closeModal();
-  try {
-    const res = await apiCall(
-      () => API.lot.individualize({ lot_id: lotId, count, stage, container_size: container, sex, note }),
-      `${count}頭を個体化しました`
-    );
-    await syncAll(true);
-    // 最初の個体詳細へ移動
-    if (res.individuals && res.individuals.length === 1) {
-      routeTo('ind-detail', { id: res.individuals[0].ind_id });
-    } else {
-      routeTo('ind-list');
+    // 自動個体化された個体がある場合は通知
+    if (res && res.auto_individuals && res.auto_individuals.length) {
+      const names = res.auto_individuals.map(i => i.display_id).join(', ');
+      UI.toast('自動個体化: ' + names, 'success');
     }
+
+    // 分割後はライン詳細 or ロット一覧へ
+    const ctx = _splitContext;
+    if (ctx.lineId) routeTo('line-detail', { id: ctx.lineId });
+    else routeTo('lot-list');
   } catch (e) {}
 };
+
+// 個体化は分割時の1頭自動個体化で対応。単体モーダルは廃止。
 
 // ステージ変更
 Pages._lotEditStage = function (lotId, currentStage) {
@@ -423,7 +437,7 @@ Pages.lotNew = function (params = {}) {
           params.lineId || ''), true)}
         <div class="form-row-2">
           ${UI.field('ステージ', UI.select('stage', [
-            { code:'EGG', label:'卵' }, { code:'T0', label:'T0' }, { code:'T1', label:'T1' },
+            { code:'T0', label:'T0' }, { code:'T1', label:'T1' },
             { code:'T2A', label:'T2①' }, { code:'T2B', label:'T2②' }, { code:'T3', label:'T3' },
           ], 'T0'), true)}
           ${UI.field('頭数', UI.input('count', 'number', '10', '頭数'))}
@@ -438,6 +452,19 @@ Pages.lotNew = function (params = {}) {
         ${UI.field('モルト', `<label style="display:flex;align-items:center;gap:8px">
           <input type="checkbox" name="has_malt"> モルト入り
         </label>`)}
+        <!-- T0ロット専用：産卵セット紐づけ・ロット化数 -->
+        <div id="t0-extra-fields">
+          ${UI.field('産卵セット（任意）',
+            UI.select('pairing_set_id',
+              [{ code:'', label:'— 未選択 —' },
+               ...(Store.getDB('pairings')||[]).map(p => ({
+                 code: p.set_id,
+                 label: p.display_id + (p.set_name ? ' / ' + p.set_name : '')
+               }))],
+              params.pairingSetId || '')
+          )}
+          ${UI.field('ロット化数（有精卵数）', UI.input('lot_created_count', 'number', '', '採卵数のうちロット化した数'))}
+        </div>
         ${UI.field('メモ', UI.input('note', 'text', '', '任意のメモ'))}
         <div style="display:flex;gap:10px;margin-top:4px">
           <button type="button" class="btn btn-ghost" style="flex:1" onclick="Store.back()">戻る</button>
@@ -453,6 +480,8 @@ Pages._lotSave = async function () {
   if (!data.line_id) { UI.toast('ラインを選択してください', 'error'); return; }
   if (data.hatch_date) data.hatch_date = data.hatch_date.replace(/-/g, '/');
   data.count = +data.count || 1;
+  if (data.lot_created_count !== undefined && data.lot_created_count !== '')
+    data.lot_created_count = +data.lot_created_count;
   try {
     const res = await apiCall(() => API.lot.create(data), 'ロットを登録しました');
     await syncAll(true);

@@ -208,74 +208,129 @@ Pages.lineDetail = async function (lineId) {
 };
 
 function _renderLineDetail(line, main) {
-  const f   = Store.getParent(line.father_par_id);
-  const m   = Store.getParent(line.mother_par_id);
-  const bld = Store.getBloodline(line.bloodline_id);
+  const f    = Store.getParent(line.father_par_id);
+  const m    = Store.getParent(line.mother_par_id);
+  const bld  = Store.getBloodline(line.bloodline_id);
   const blds = Store.getDB('bloodlines') || [];
   const fBld = f && f.bloodline_id ? blds.find(b=>b.bloodline_id===f.bloodline_id) : null;
   const mBld = m && m.bloodline_id ? blds.find(b=>b.bloodline_id===m.bloodline_id) : null;
-  // このラインに属する個体・ロット
-  const inds = Store.getIndividualsByLine(line.line_id).filter(i => i.status !== 'dead');
-  const lots = (Store.getDB('lots') || []).filter(l => l.line_id === line.line_id && l.status === 'active');
 
-  // ⑦ 親情報ヘルパー（血統付き）
+  // このラインに属する個体・ロット（全状態）
+  const allLots  = (Store.getDB('lots') || []).filter(l => l.line_id === line.line_id);
+  const activeLots = allLots.filter(l => l.status === 'active');
+  const allInds  = Store.getIndividualsByLine(line.line_id);
+  const aliveInds = allInds.filter(i => i.status !== 'dead');
+
+  // 産卵セット紐づき（このラインの line_id を持つセット）
+  const pairings = (Store.getDB('pairings') || []).filter(p => p.line_id === line.line_id);
+
+  // 親情報ヘルパー
   function _parentInfo(p, pBld, sexColor) {
-    if (!p) return '—';
+    if (!p) return '<span style="color:var(--text3)">—（未設定）</span>';
     const bldStr = pBld ? (pBld.abbreviation || pBld.bloodline_name || '') : '';
-    return `<span style="cursor:pointer;color:${sexColor}"
-      onclick="routeTo('parent-detail',{id:'${p.par_id}'})">
-      ${p.display_name}${p.size_mm ? ' <strong>'+p.size_mm+'mm</strong>' : ''}
-      ${bldStr ? '<span style="color:var(--text3);font-size:.78rem"> / '+bldStr+'</span>' : ''}
-    </span>`;
+    const sizeStr = p.size_mm ? ' <strong>' + p.size_mm + 'mm</strong>' : '';
+    return '<span style="cursor:pointer;color:' + sexColor + '" onclick="routeTo(\x27parent-detail\x27,{id:\x27' + p.par_id + '\x27})">'
+      + p.display_name + sizeStr
+      + (bldStr ? '<span style="color:var(--text3);font-size:.78rem"> / ' + bldStr + '</span>' : '')
+      + '</span>';
   }
 
+  // 血統ステータス表示
+  const bldStatusMap = { confirmed:'✅ 確定', temporary:'⚠️ 暫定', unknown:'❓ 不明' };
+  const bldStatus = bldStatusMap[line.bloodline_status] || line.bloodline_status || '—';
+
   main.innerHTML = `
-    ${UI.header(line.display_id, { back: true })}
+    ${UI.header(line.display_id + ' 詳細', { back: true, action: { fn: "routeTo('line-new',{editId:'${line.line_id}'})", icon: '✏️' } })}
     <div class="page-body">
 
-      <div class="card card-gold">
-        <div style="font-family:var(--font-mono);font-size:.85rem;color:var(--gold);margin-bottom:6px">
-          ${line.display_id}
+      <!-- サマリーカード -->
+      <div class="card card-gold" style="padding:14px">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between">
+          <div>
+            <div style="font-family:var(--font-mono);font-size:1.1rem;font-weight:700;color:var(--gold)">${line.display_id}</div>
+            <div style="font-size:.82rem;color:var(--text2);margin-top:2px">
+              ${line.line_name || ''}
+              ${line.locality ? '&nbsp;·&nbsp;' + line.locality : ''}
+              ${line.generation ? '&nbsp;·&nbsp;' + line.generation : ''}
+            </div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-size:.65rem;color:var(--text3)">孵化年</div>
+            <div style="font-weight:700">${line.hatch_year || '—'}</div>
+          </div>
         </div>
-        <div style="font-size:1rem;font-weight:700;margin-bottom:8px">
-          ${line.line_name || '（名称未設定）'}
-          ${line.locality   ? '<span style="font-size:.78rem;color:var(--text3);margin-left:8px">'+line.locality+'</span>' : ''}
-          ${line.generation ? '<span style="font-size:.78rem;color:var(--text3);margin-left:4px">'+line.generation+'</span>' : ''}
-        </div>
-        <div style="display:flex;gap:10px;flex-wrap:wrap">
-          <div><div style="font-size:.62rem;color:var(--text3)">孵化年</div>
-            <div style="font-weight:700">${line.hatch_year || '—'}</div></div>
-          <div><div style="font-size:.62rem;color:var(--text3)">個体数</div>
-            <div style="font-weight:700;color:var(--green)">${inds.length}頭</div></div>
-          <div><div style="font-size:.62rem;color:var(--text3)">ロット数</div>
-            <div style="font-weight:700;color:var(--blue)">${lots.length}</div></div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:12px">
+          <div style="text-align:center;background:var(--surface2);border-radius:6px;padding:6px 2px">
+            <div style="font-size:.62rem;color:var(--text3)">活ロット</div>
+            <div style="font-weight:700;font-size:1rem;color:var(--blue)">${activeLots.length}</div>
+          </div>
+          <div style="text-align:center;background:var(--surface2);border-radius:6px;padding:6px 2px">
+            <div style="font-size:.62rem;color:var(--text3)">全ロット</div>
+            <div style="font-weight:700;font-size:1rem">${allLots.length}</div>
+          </div>
+          <div style="text-align:center;background:var(--surface2);border-radius:6px;padding:6px 2px">
+            <div style="font-size:.62rem;color:var(--text3)">生存個体</div>
+            <div style="font-weight:700;font-size:1rem;color:var(--green)">${aliveInds.length}頭</div>
+          </div>
+          <div style="text-align:center;background:var(--surface2);border-radius:6px;padding:6px 2px">
+            <div style="font-size:.62rem;color:var(--text3)">産卵セット</div>
+            <div style="font-weight:700;font-size:1rem;color:var(--amber)">${pairings.length}</div>
+          </div>
         </div>
       </div>
 
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn btn-ghost" style="flex:1"
-          onclick="routeTo('line-new',{editId:'${line.line_id}'})">✏️ 編集</button>
-        <button class="btn btn-primary" style="flex:1"
-          onclick="routeTo('ind-list',{line_id:'${line.line_id}'})">個体一覧</button>
-        <button class="btn btn-ghost" style="flex:1"
-          onclick="routeTo('lot-list',{line_id:'${line.line_id}'})">ロット一覧</button>
+      <!-- 主要アクションボタン -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <button class="btn btn-primary"
+          onclick="routeTo('lot-list',{line_id:'${line.line_id}'})">
+          📦 ロット一覧 (${activeLots.length})
+        </button>
+        <button class="btn btn-secondary"
+          onclick="routeTo('ind-list',{line_id:'${line.line_id}'})">
+          🐛 個体一覧 (${aliveInds.length})
+        </button>
+        <button class="btn btn-gold btn-full" style="grid-column:1/-1"
+          onclick="routeTo('lot-new',{lineId:'${line.line_id}'})">
+          ＋ このラインにロットを作成
+        </button>
       </div>
-      <!-- ⑨ ラインからロット作成 -->
-      <button class="btn btn-secondary btn-full"
-        onclick="routeTo('lot-new',{lineId:'${line.line_id}'})">＋ このラインにロットを作成</button>
 
+      <!-- 産卵セット紐づき -->
+      ${pairings.length ? `
       <div class="card">
-        <div class="card-title">ライン情報</div>
+        <div class="card-title">🥚 産卵セット (${pairings.length}件)</div>
+        ${pairings.map(p => `
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">
+            <span style="font-family:var(--font-mono);font-size:.82rem;color:var(--blue);cursor:pointer"
+              onclick="routeTo('pairing-detail',{id:'${p.set_id}'})">
+              ${p.display_id}
+            </span>
+            <span style="font-size:.78rem;color:var(--text3)">${p.pairing_start || '—'}</span>
+            <span style="font-size:.78rem">${p.total_eggs ? p.total_eggs + '卵' : ''}</span>
+          </div>`).join('')}
+      </div>` : ''}
+
+      <!-- 親情報 -->
+      <div class="card">
+        <div class="card-title">親情報</div>
         <div class="info-list">
-          ${bld ? _lnRow('血統',
-              `<span style="cursor:pointer;color:var(--blue)"
-                onclick="routeTo('bloodline-detail',{id:'${bld.bloodline_id}'})">${bld.bloodline_name}</span>
-               ${UI.bloodlineBadge(line.bloodline_status)}`) : ''}
           ${_lnRow('<span style="color:var(--male)">♂親</span>', _parentInfo(f, fBld, 'var(--male)'))}
           ${_lnRow('<span style="color:var(--female)">♀親</span>', _parentInfo(m, mBld, 'var(--female)'))}
+        </div>
+      </div>
+
+      <!-- 血統・ライン情報 -->
+      <div class="card">
+        <div class="card-title">血統・ライン情報</div>
+        <div class="info-list">
+          ${bld ? _lnRow('血統',
+              '<span style="cursor:pointer;color:var(--blue)" onclick="routeTo(\x27bloodline-detail\x27,{id:\x27' + bld.bloodline_id + '\x27})">' + bld.bloodline_name + '</span> ' + UI.bloodlineBadge(line.bloodline_status)) : ''}
+          ${_lnRow('血統ステータス', bldStatus)}
+          ${line.locality   ? _lnRow('産地',   line.locality)   : ''}
+          ${line.generation ? _lnRow('累代',   line.generation) : ''}
           ${line.characteristics ? _lnRow('特徴', line.characteristics) : ''}
           ${line.hypothesis_tags ? _lnRow('仮説タグ', line.hypothesis_tags) : ''}
-          ${line.note_private    ? _lnRow('内部メモ', line.note_private) : ''}
+          ${line.note_private    ? _lnRow('内部メモ', line.note_private)   : ''}
         </div>
       </div>
 

@@ -531,6 +531,10 @@ Pages._pairSave = async function (editId) {
     } else {
       const res = await apiCall(() => API.pairing.create(data), '産卵セットを登録しました');
       await syncAll(true);
+      // ライン自動生成の通知
+      if (res.auto_line) {
+        UI.toast('ライン ' + res.auto_line.display_id + ' を自動作成しました', 'success');
+      }
       routeTo('pairing-detail', { id: res.set_id });
     }
   } catch(e) {}
