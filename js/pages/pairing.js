@@ -269,9 +269,11 @@ function _eggHistoryHtml(eggRecords, pair) {
 
 // … メニュー
 Pages._pairMenu = function (setId) {
+  // fn.toString()でクロージャが失われるため、IDを文字列として直接埋め込む
+  const sid = String(setId);
   UI.actionSheet([
-    { label: '✏️ セット情報を編集', fn: () => routeTo('pairing-new', { editId: setId }) },
-    { label: '📝 採卵履歴を編集',   fn: () => Pages._pairEditEggModal(setId) },
+    { label: '✏️ セット情報を編集', fn: new Function(`routeTo('pairing-new', { editId: '${sid}' })`) },
+    { label: '📝 採卵履歴を編集',   fn: new Function(`Pages._pairEditEggModal('${sid}')`) },
   ]);
 };
 
@@ -314,39 +316,45 @@ Pages._pairSaveEgg = async function (setId) {
 
 
 // ── 採卵履歴 1件編集モーダル ────────────────────────────────────
-Pages._pairEditOneEgg = function (eggRecordId, setId) {
-  // ローカルキャッシュから該当レコードを探す（なければAPIから取得済みDOMから読む）
-  // 簡易実装：モーダルに既存値を渡せるよう setId + eggRecordId をAPIで取得
-  const today = new Date().toISOString().split('T')[0];
+Pages._pairEditOneEgg = async function (eggRecordId, setId) {
+  // ① まず既存データを取得してからモーダルを開く
+  let rec = null;
+  try {
+    UI.loading(true);
+    const res = await API.pairing.getEggRecords({ set_id: setId });
+    rec = (res.egg_records || []).find(r => r.egg_record_id === eggRecordId) || null;
+  } catch(e) {
+    UI.toast('記録の取得に失敗しました: ' + e.message, 'error');
+    return;
+  } finally {
+    UI.loading(false);
+  }
+
+  if (!rec) { UI.toast('記録が見つかりません', 'error'); return; }
+
+  // ② 取得したデータで初期値を設定してモーダルを開く
+  const toInput = d => d ? String(d).replace(/\//g, '-') : '';
+  const setDate  = toInput(rec.round_set_date);
+  const eggDate  = toInput(rec.collect_date);
+  const eggCount = rec.egg_count   !== undefined ? rec.egg_count   : 0;
+  const hatchCnt = rec.hatch_count !== undefined ? rec.hatch_count : 0;
+  const note     = rec.note || '';
+
   _showModal('採卵履歴を編集', `
     <div class="form-section">
-      <div style="font-size:.75rem;color:var(--text3);margin-bottom:8px">記録ID: ${eggRecordId}</div>
-      ${UI.field('今回のセット日', `<input type="date" id="edit-egg-set-date" class="input" value="${today}">`)}
-      ${UI.field('採卵日',         `<input type="date" id="edit-egg-date"     class="input" value="${today}">`)}
+      ${UI.field('今回のセット日', `<input type="date" id="edit-egg-set-date" class="input" value="${setDate}">`)}
+      ${UI.field('採卵日',         `<input type="date" id="edit-egg-date"     class="input" value="${eggDate}">`)}
       <div class="form-row-2">
-        ${UI.field('採卵数',     `<input type="number" id="edit-egg-count"   class="input" min="0" value="0">`)}
-        ${UI.field('孵化確認数', `<input type="number" id="edit-hatch-count" class="input" min="0" value="0">`)}
+        ${UI.field('採卵数',     `<input type="number" id="edit-egg-count"   class="input" min="0" value="${eggCount}">`)}
+        ${UI.field('孵化確認数', `<input type="number" id="edit-hatch-count" class="input" min="0" value="${hatchCnt}">`)}
       </div>
-      ${UI.field('メモ', `<input type="text" id="edit-egg-note" class="input">`)}
+      ${UI.field('メモ', `<input type="text" id="edit-egg-note" class="input" value="${note}">`)}
       <div class="modal-footer">
         <button class="btn btn-ghost" style="flex:1" onclick="_closeModal()">キャンセル</button>
         <button class="btn btn-primary" style="flex:2"
           onclick="Pages._pairSaveEditEgg('${eggRecordId}','${setId}')">保存</button>
       </div>
     </div>`);
-
-  // API から値を取得してモーダルに反映
-  API.pairing.getEggRecords({ set_id: setId }).then(res => {
-    const rec = (res.egg_records || []).find(r => r.egg_record_id === eggRecordId);
-    if (!rec) return;
-    const toInput = d => d ? String(d).replace(/\//g, '-') : '';
-    const el = (id) => document.getElementById(id);
-    if (el('edit-egg-set-date')) el('edit-egg-set-date').value = toInput(rec.round_set_date);
-    if (el('edit-egg-date'))     el('edit-egg-date').value     = toInput(rec.collect_date);
-    if (el('edit-egg-count'))    el('edit-egg-count').value    = rec.egg_count   || 0;
-    if (el('edit-hatch-count'))  el('edit-hatch-count').value  = rec.hatch_count || 0;
-    if (el('edit-egg-note'))     el('edit-egg-note').value     = rec.note        || '';
-  }).catch(() => {});
 };
 
 Pages._pairSaveEditEgg = async function (eggRecordId, setId) {

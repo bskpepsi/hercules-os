@@ -320,17 +320,22 @@ const Store = (() => {
 
   // ── ペアリング統計（par_idごとのサマリー） ────────────────────
   function getPairingStats(parId) {
-    const histories = (_db.pairing_histories || []).filter(
-      h => h.male_parent_id === parId || h.female_parent_id === parId
-    );
-    if (!histories.length) return { total: 0, lastDate: null };
-    const sorted = [...histories].sort(
-      (a, b) => new Date(b.pairing_date) - new Date(a.pairing_date)
-    );
-    return {
-      total:    sorted.length,
-      lastDate: sorted[0].pairing_date || null,
-    };
+    if (!parId) return { total: 0, lastDate: null };
+    try {
+      const histories = (_db.pairing_histories || []).filter(
+        h => h && (h.male_parent_id === parId || h.female_parent_id === parId)
+      );
+      if (!histories.length) return { total: 0, lastDate: null };
+      const sorted = [...histories].sort(
+        (a, b) => new Date(b.pairing_date) - new Date(a.pairing_date)
+      );
+      return {
+        total:    sorted.length,
+        lastDate: sorted[0].pairing_date || null,
+      };
+    } catch(e) {
+      return { total: 0, lastDate: null };
+    }
   }
 
   function filterLots(filters = {}) {

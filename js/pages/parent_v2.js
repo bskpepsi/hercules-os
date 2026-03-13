@@ -153,8 +153,12 @@ function _parentCard(p) {
 }
 
 // ── 種親詳細 ────────────────────────────────────────────────────
-Pages.parentDetail = async function (parId) {
+Pages.parentDetail = async function (parIdParam) {
   const main    = document.getElementById('main');
+  // routeTo から文字列で渡された場合の防御（routeTo修正で解決済みだが念のため）
+  const parId = typeof parIdParam === 'string' ? parIdParam
+              : (parIdParam && parIdParam.id ? parIdParam.id : null);
+  if (!parId) { main.innerHTML = UI.header('種親詳細',{back:true}) + UI.empty('IDが指定されていません'); return; }
   const parents = Store.getDB('parents') || [];
   // par_id または parent_display_id のどちらで渡されても対応
   const p = parents.find(x => x.par_id === parId)

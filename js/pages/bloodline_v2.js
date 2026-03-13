@@ -25,22 +25,52 @@ Pages.bloodlineList = function () {
 };
 
 function _bldCard(b) {
-  const tags = _parseTags(b.bloodline_tags);
+  const tags  = _parseTags(b.bloodline_tags);
+  const pTags = _parseTags(b.paternal_tags);
+  const mTags = _parseTags(b.maternal_tags);
+  const allTags = [...new Set([...tags])].slice(0, 6);
   const isUnknown = b.bloodline_id === 'BLD-UNKNOWN';
+
+  // 紐づく種親数・ライン数を集計
+  const parents  = Store.getDB('parents') || [];
+  const lines    = Store.getDB('lines')   || [];
+  const parCount  = parents.filter(p => p.bloodline_id === b.bloodline_id).length;
+  const lineCount = lines.filter(l => l.bloodline_id === b.bloodline_id).length;
+
+  // ステータス
+  const statusLabel = isUnknown ? '不明' : (b.bloodline_status === 'confirmed' ? '確定' : '無血統');
+  const statusColor = isUnknown ? 'var(--amber)'
+                    : b.bloodline_status === 'confirmed' ? 'var(--green)' : 'var(--text3)';
+
+  // 父系・母系サマリ
+  const pSummary = b.paternal_raw  || (pTags.length ? pTags.join(' ') : null);
+  const mSummary = b.maternal_raw  || (mTags.length ? mTags.join(' ') : null);
+
   return `
-    <div class="card card-row" onclick="routeTo('bloodline-detail','${b.bloodline_id}')">
-      <div class="card-main">
-        <div class="card-title">${b.bloodline_name || '名称未設定'}
-          ${isUnknown ? '<span class="badge badge-gray">不明</span>' : ''}
-        </div>
-        ${b.bloodline_raw
-          ? `<div class="card-sub text-mono">${b.bloodline_raw}</div>`
-          : ''}
-        ${tags.length
-          ? `<div class="tag-row">${tags.map(t => `<span class="tag tag-gold">${t}</span>`).join('')}</div>`
-          : ''}
+    <div class="card" style="padding:12px 14px;cursor:pointer"
+      onclick="routeTo('bloodline-detail','${b.bloodline_id}')">
+
+      <!-- 1行目: 血統名 + ステータス -->
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+        <span style="font-size:1rem;font-weight:700;color:var(--gold)">${b.bloodline_name || '名称未設定'}</span>
+        <span style="font-size:.68rem;padding:1px 7px;border-radius:20px;border:1px solid ${statusColor};color:${statusColor}">${statusLabel}</span>
       </div>
-      <span class="card-arrow">›</span>
+
+      <!-- 2行目: 血統タグ -->
+      ${allTags.length ? `<div class="tag-row" style="margin-bottom:6px">${allTags.map(t=>`<span class="tag tag-gold">${t}</span>`).join('')}</div>` : ''}
+
+      <!-- 3行目: 父系・母系サマリ -->
+      ${(pSummary||mSummary) ? `<div style="font-size:.75rem;color:var(--text3);line-height:1.6">
+        ${pSummary ? `<span>父系: <span style="color:var(--text2)">${pSummary.length > 25 ? pSummary.slice(0,25)+'…' : pSummary}</span></span>` : ''}
+        ${mSummary ? `<span style="margin-left:10px">母系: <span style="color:var(--text2)">${mSummary.length > 25 ? mSummary.slice(0,25)+'…' : mSummary}</span></span>` : ''}
+      </div>` : ''}
+
+      <!-- 4行目: 種親数・ライン数 -->
+      <div style="display:flex;gap:14px;margin-top:6px;font-size:.75rem;color:var(--text3)">
+        <span>種親 <strong style="color:var(--text2)">${parCount}</strong></span>
+        <span>ライン <strong style="color:var(--text2)">${lineCount}</strong></span>
+        <span style="margin-left:auto;color:var(--text3)">›</span>
+      </div>
     </div>`;
 }
 
@@ -195,11 +225,15 @@ async function _bldSave() {
   }
 }
 
-Pages.bloodlineDetail = function (bloodlineId) {
+Pages.bloodlineDetail = function (bloodlineIdParam) {
   const main = document.getElementById('main');
+  // getParams() が文字列で渡された場合の防御
+  const bloodlineId = typeof bloodlineIdParam === 'string' ? bloodlineIdParam
+                    : (bloodlineIdParam && bloodlineIdParam.id ? bloodlineIdParam.id : null);
+  if (!bloodlineId) { main.innerHTML = UI.header('血統詳細', {back:true}) + UI.empty('IDが指定されていません'); return; }
   const all  = Store.getDB('bloodlines') || [];
   const b    = all.find(x => x.bloodline_id === bloodlineId);
-  if (!b) { main.innerHTML = UI.header('血統詳細', {back:true}) + UI.empty('見つかりません'); return; }
+  if (!b) { main.innerHTML = UI.header('血統詳細', {back:true}) + UI.empty('見つかりません (id=' + bloodlineId + ')'); return; }
 
   const tags  = _parseTags(b.bloodline_tags);
   const pTags = _parseTags(b.paternal_tags);

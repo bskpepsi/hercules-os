@@ -137,26 +137,49 @@ Pages.lineList = function () {
 function _lineCardHTML(line) {
   const f = Store.getParent(line.father_par_id);
   const m = Store.getParent(line.mother_par_id);
-  return `<div class="ind-card" onclick="routeTo('line-detail',{id:'${line.line_id}'})">
-    <div style="text-align:center;min-width:42px">
-      <div style="font-size:1.2rem">🔗</div>
-      <div style="font-size:.62rem;color:var(--text3)">${line.hatch_year||'—'}</div>
+  // ラインコードを主役に（例: A1、B3）
+  const lineCode = line.line_code || line.display_id || '?';
+  const year     = line.hatch_year || '—';
+  // 血統ステータスの色
+  const bldStatus = line.bloodline_status;
+  const bldColor  = bldStatus === 'confirmed' ? 'var(--green)'
+                  : bldStatus === 'unknown'   ? 'var(--amber)' : 'var(--text3)';
+  const bldLabel  = bldStatus === 'confirmed' ? '確定'
+                  : bldStatus === 'unknown'   ? '不明' : '無血統';
+  // 血統名
+  const bldName = (function(){
+    if (line.bloodline_id && line.bloodline_id !== 'BLD-UNKNOWN') {
+      const bld = (Store.getDB('bloodlines')||[]).find(b => b.bloodline_id === line.bloodline_id);
+      if (bld && bld.abbreviation) return bld.abbreviation;
+      if (bld && bld.bloodline_name) return bld.bloodline_name;
+    }
+    return line.line_name || null;
+  })();
+
+  return `<div class="card" style="padding:12px 14px;cursor:pointer;display:flex;align-items:center;gap:14px"
+    onclick="routeTo('line-detail',{id:'${line.line_id}'})">
+
+    <!-- 左：ラインコード主役 -->
+    <div style="min-width:52px;text-align:center">
+      <div style="font-family:var(--font-mono);font-size:1.35rem;font-weight:800;color:var(--gold);line-height:1">${lineCode}</div>
+      <div style="font-size:.72rem;color:var(--text3);margin-top:3px">${year}</div>
     </div>
-    <div class="ind-card-body">
-      <div class="ind-card-row">
-        <span class="ind-card-id">${line.display_id}</span>
-        ${UI.bloodlineBadge(line.bloodline_status)}
+
+    <!-- 中：補助情報 -->
+    <div style="flex:1;min-width:0">
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+        <span style="font-size:.72rem;padding:1px 7px;border-radius:20px;border:1px solid ${bldColor};color:${bldColor}">${bldLabel}</span>
+        ${bldName ? `<span style="font-size:.8rem;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${bldName}</span>` : ''}
       </div>
-      <div style="font-size:.75rem;color:var(--text2)">
-        ${line.line_name || ''}
-        ${line.locality ? ' / ' + line.locality : ''}
-        ${line.generation ? ' ' + line.generation : ''}
+      <div style="font-size:.75rem;color:var(--text3);margin-top:4px">
+        ${line.locality || ''}${(line.locality && line.generation) ? ' / ' : ''}${line.generation || ''}
       </div>
-      <div style="font-size:.7rem;color:var(--text3);margin-top:2px">
-        ${f ? '♂ '+f.display_name : ''}${m ? ' × ♀ '+m.display_name : ''}
-      </div>
+      ${(f || m) ? `<div style="font-size:.7rem;color:var(--text3);margin-top:2px">
+        ${f ? '♂ '+f.display_name : ''}${(f&&m)?' × ':''}${m ? '♀ '+m.display_name : ''}
+      </div>` : ''}
     </div>
-    <div style="color:var(--text3);font-size:1.2rem">›</div>
+
+    <div style="color:var(--text3);font-size:1.1rem">›</div>
   </div>`;
 }
 

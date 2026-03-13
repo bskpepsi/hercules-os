@@ -49,6 +49,8 @@ const PAGES = {
 };
 
 function routeTo(pageId, params = {}) {
+  // 文字列で渡された場合は { id: '...' } に正規化（後方互換）
+  if (typeof params === 'string') params = { id: params };
   if (params && Object.keys(params).length) Store.navigate(pageId, params);
   else Store.navigate(pageId);
 
