@@ -25,9 +25,21 @@ Pages.parentList = function () {
     function safeCard(p) {
       try { return _parentCard(p); }
       catch(e) {
-        console.warn('_parentCard error:', e, p);
         const pid = (p && (p.parent_display_id || p.par_id)) || '?';
-        return `<div class="card" style="color:var(--red);font-size:.8rem">⚠️ ${pid} 表示エラー</div>`;
+        // 実エラーを画面に表示（デバッグ用）
+        console.error('[_parentCard]', pid, e.message, e);
+        console.error('[_parentCard] p全体:', JSON.stringify(p));
+        const stats = (() => { try { return Store.getPairingStats(p && p.par_id); } catch(e2){ return 'getPairingStats threw: '+e2.message; } })();
+        console.error('[_parentCard] pairingStats:', stats);
+        return `<div class="card" style="border:1px solid var(--red);padding:12px">
+          <div style="color:var(--red);font-weight:700">${pid} — エラー: ${e.message}</div>
+          <div style="font-size:.72rem;color:var(--text3);margin-top:4px">
+            bloodline_tags型: ${typeof p?.bloodline_tags} / 値: ${JSON.stringify(p?.bloodline_tags)?.slice(0,40)}<br>
+            pairingStats: ${JSON.stringify(stats)}<br>
+            feeding_start_date: ${p?.feeding_start_date}<br>
+            eclosion_date: ${p?.eclosion_date}
+          </div>
+        </div>`;
       }
     }
 
