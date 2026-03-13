@@ -13,6 +13,25 @@ document.addEventListener('DOMContentLoaded', () => {
   bindNav();
   bindGlobalEvents();
   renderNav();
+
+  // ④ URLハッシュからページ復元（リロード対応）
+  const hash = location.hash.slice(1); // '#page=pairing-detail&id=SET-...'
+  if (hash) {
+    try {
+      const hashParams = Object.fromEntries(new URLSearchParams(hash));
+      const page = hashParams.page;
+      if (page && PAGES[page]) {
+        delete hashParams.page;
+        const params = Object.keys(hashParams).length ? hashParams : {};
+        Store.navigate(page, params);
+        PAGES[page]();
+        renderNav();
+        syncIfNeeded();
+        return;
+      }
+    } catch(e) { /* ハッシュ解析失敗時は通常起動 */ }
+  }
+
   routeTo(Store.getPage());
   syncIfNeeded();
 });
@@ -53,6 +72,11 @@ function routeTo(pageId, params = {}) {
   if (typeof params === 'string') params = { id: params };
   if (params && Object.keys(params).length) Store.navigate(pageId, params);
   else Store.navigate(pageId);
+
+  // ④ URLハッシュ更新（リロード時に復元できるよう）
+  const hashParts = { page: pageId, ...(params || {}) };
+  const hashStr = new URLSearchParams(hashParts).toString();
+  history.replaceState(null, '', '#' + hashStr);
 
   const main = document.getElementById('main');
   if (!main) return;
