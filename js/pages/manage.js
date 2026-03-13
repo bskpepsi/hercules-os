@@ -211,12 +211,26 @@ function _renderLineDetail(line, main) {
   const f   = Store.getParent(line.father_par_id);
   const m   = Store.getParent(line.mother_par_id);
   const bld = Store.getBloodline(line.bloodline_id);
+  const blds = Store.getDB('bloodlines') || [];
+  const fBld = f && f.bloodline_id ? blds.find(b=>b.bloodline_id===f.bloodline_id) : null;
+  const mBld = m && m.bloodline_id ? blds.find(b=>b.bloodline_id===m.bloodline_id) : null;
   // このラインに属する個体・ロット
   const inds = Store.getIndividualsByLine(line.line_id).filter(i => i.status !== 'dead');
   const lots = (Store.getDB('lots') || []).filter(l => l.line_id === line.line_id && l.status === 'active');
 
+  // ⑦ 親情報ヘルパー（血統付き）
+  function _parentInfo(p, pBld, sexColor) {
+    if (!p) return '—';
+    const bldStr = pBld ? (pBld.abbreviation || pBld.bloodline_name || '') : '';
+    return `<span style="cursor:pointer;color:${sexColor}"
+      onclick="routeTo('parent-detail',{id:'${p.par_id}'})">
+      ${p.display_name}${p.size_mm ? ' <strong>'+p.size_mm+'mm</strong>' : ''}
+      ${bldStr ? '<span style="color:var(--text3);font-size:.78rem"> / '+bldStr+'</span>' : ''}
+    </span>`;
+  }
+
   main.innerHTML = `
-    ${UI.header(line.display_id, {})}
+    ${UI.header(line.display_id, { back: true })}
     <div class="page-body">
 
       <div class="card card-gold">
@@ -238,7 +252,7 @@ function _renderLineDetail(line, main) {
         </div>
       </div>
 
-      <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn btn-ghost" style="flex:1"
           onclick="routeTo('line-new',{editId:'${line.line_id}'})">✏️ 編集</button>
         <button class="btn btn-primary" style="flex:1"
@@ -246,6 +260,9 @@ function _renderLineDetail(line, main) {
         <button class="btn btn-ghost" style="flex:1"
           onclick="routeTo('lot-list',{line_id:'${line.line_id}'})">ロット一覧</button>
       </div>
+      <!-- ⑨ ラインからロット作成 -->
+      <button class="btn btn-secondary btn-full"
+        onclick="routeTo('lot-new',{lineId:'${line.line_id}'})">＋ このラインにロットを作成</button>
 
       <div class="card">
         <div class="card-title">ライン情報</div>
@@ -254,14 +271,8 @@ function _renderLineDetail(line, main) {
               `<span style="cursor:pointer;color:var(--blue)"
                 onclick="routeTo('bloodline-detail',{id:'${bld.bloodline_id}'})">${bld.bloodline_name}</span>
                ${UI.bloodlineBadge(line.bloodline_status)}`) : ''}
-          ${_lnRow('♂親', f
-            ? `<span style="cursor:pointer;color:var(--blue)"
-                onclick="routeTo('parent-detail',{id:'${f.par_id}'})">${f.display_name}${f.size_mm?' '+f.size_mm+'mm':''}</span>`
-            : (line.father_par_id || '—'))}
-          ${_lnRow('♀親', m
-            ? `<span style="cursor:pointer;color:var(--blue)"
-                onclick="routeTo('parent-detail',{id:'${m.par_id}'})">${m.display_name}${m.size_mm?' '+m.size_mm+'mm':''}</span>`
-            : (line.mother_par_id || '—'))}
+          ${_lnRow('<span style="color:var(--male)">♂親</span>', _parentInfo(f, fBld, 'var(--male)'))}
+          ${_lnRow('<span style="color:var(--female)">♀親</span>', _parentInfo(m, mBld, 'var(--female)'))}
           ${line.characteristics ? _lnRow('特徴', line.characteristics) : ''}
           ${line.hypothesis_tags ? _lnRow('仮説タグ', line.hypothesis_tags) : ''}
           ${line.note_private    ? _lnRow('内部メモ', line.note_private) : ''}
