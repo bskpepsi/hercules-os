@@ -180,7 +180,22 @@ function _renderSettings(main) {
           既存シートがある場合はスキップされます。
         </div>
         <button class="btn btn-danger btn-full" onclick="Pages._setInit()">
-          スプレッドシート初期化（init）
+          🗂️ スプレッドシート初期化（init）
+        </button>
+      </div>
+
+      <!-- 開発用：全データリセット -->
+      <div class="card" style="border:2px solid var(--red,#e05050)">
+        <div class="card-title" style="color:var(--red,#e05050)">⚠️ 開発・検証用</div>
+        <div style="font-size:.82rem;color:var(--text2);margin-bottom:10px">
+          ヘッダー行と設定は残し、全データ行だけを削除します。<br>
+          テスト運用中のみ使用してください。
+        </div>
+        <div style="font-size:.75rem;color:var(--text3);margin-bottom:10px">
+          対象：ライン / ロット / 個体 / 種親 / 血統 / 産卵セット / 採卵記録 / 成長記録 / ラベル履歴 他
+        </div>
+        <button class="btn btn-danger btn-full" onclick="Pages._devReset()">
+          🗑️ 全データリセット（テスト用）
         </button>
       </div>
 
@@ -411,6 +426,44 @@ Pages._setInit = async function () {
     const res = await apiCall(() => API.system.init(), '初期化が完了しました！');
     UI.toast(`シート作成: ${res.created?.length || 0}件 / スキップ: ${res.skipped?.length || 0}件`, 'success', 5000);
   } catch (e) {}
+// ── 開発用：全データリセット ────────────────────────────────────
+Pages._devReset = async function () {
+  const confirmed = window.confirm(
+    '⚠️ 全データリセット（テスト用）\n\n' +
+    '本当に全データを削除しますか？\n\n' +
+    '残るもの：ヘッダー行 / 設定 / 列定義\n' +
+    '削除されるもの：ライン / ロット / 個体 / 種親 / 血統\n' +
+    '　産卵セット / 採卵記録 / 成長記録 / ラベル履歴 他\n\n' +
+    'この操作は取り消せません。'
+  );
+  if (!confirmed) return;
+
+  const confirmed2 = window.confirm('最終確認：本当に削除してよいですか？');
+  if (!confirmed2) return;
+
+  UI.toast('リセット中…', 'info', 5000);
+  try {
+    const res = await API.system.resetAllData();
+
+    // ローカルキャッシュも全クリア
+    try {
+      localStorage.removeItem('hercules_db');
+      localStorage.removeItem('hercules_last_sync');
+      Store.clearCache();
+    } catch(e) {}
+
+    const detail = (res.results || []).join('\n');
+    UI.toast('リセット完了 ✅', 'success');
+    setTimeout(() => {
+      window.alert('✅ リセット完了\n\n' + detail);
+      location.reload();
+    }, 800);
+  } catch(e) {
+    UI.toast('リセット失敗: ' + e.message, 'error');
+  }
+};
+
+
 };
 
 // ── バックアップ: 手動実行 ────────────────────────────────────────

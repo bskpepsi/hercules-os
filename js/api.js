@@ -50,6 +50,7 @@ const API = (() => {
   const system = {
     init:       ()        => call('init'),
     getAllData:  ()        => call('getAllData'),
+    resetAllData:()        => call('resetAllData'),
     getSettings:()        => call('getSettings'),
     updateSetting:(key,v) => call('updateSetting', { key, value: v }),
   };
