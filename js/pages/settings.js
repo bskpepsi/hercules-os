@@ -426,6 +426,8 @@ Pages._setInit = async function () {
     const res = await apiCall(() => API.system.init(), '初期化が完了しました！');
     UI.toast(`シート作成: ${res.created?.length || 0}件 / スキップ: ${res.skipped?.length || 0}件`, 'success', 5000);
   } catch (e) {}
+};
+
 // ── 開発用：全データリセット ────────────────────────────────────
 Pages._devReset = async function () {
   const confirmed = window.confirm(
@@ -461,9 +463,6 @@ Pages._devReset = async function () {
   } catch(e) {
     UI.toast('リセット失敗: ' + e.message, 'error');
   }
-};
-
-
 };
 
 // ── バックアップ: 手動実行 ────────────────────────────────────────
