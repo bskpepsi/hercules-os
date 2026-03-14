@@ -23,8 +23,10 @@ Pages.individualList = function () {
   const fixedLine   = fixedLineId ? Store.getLine(fixedLineId) : null;
   const isLineLimited = !!fixedLineId;
 
+  // status='_all' は全件表示、未指定時は 'alive' がデフォルト
+  const initStatus = params.status !== undefined ? params.status : 'alive';
   let filters = {
-    status:  params.status || 'alive',
+    status:  initStatus,
     q:       params.q      || '',
     stage:   params.stage  || '',
     sex:     params.sex    || '',
@@ -122,8 +124,7 @@ Pages.individualList = function () {
       if (!p) return;
       const val = p.dataset.val;
       filters.statusFilter = val === filters.statusFilter ? '' : val;
-      // statusFilterに応じてfilters.statusを変更
-      if (!val)           filters.status = 'alive';
+      if (!val)                  filters.status = 'alive';
       else if (val === 'active') filters.status = 'alive';
       else if (val === 'sold')   filters.status = 'sold';
       else if (val === 'dead')   filters.status = 'dead';
@@ -131,6 +132,13 @@ Pages.individualList = function () {
       render();
     });
   }
+
+  // ステータスモーダルからスコープ内 filters を更新できるよう登録
+  window.__indSetStatus = function(code) {
+    filters.status = code; // '_all' もそのまま渡す
+    filters.statusFilter = '';
+    render();
+  };
 
   render();
 };
@@ -177,35 +185,56 @@ function _sexFilters(active) {
 
 function _indCardHTML(ind) {
   const age     = ind._age || Store.calcAge(ind.hatch_date);
-  const verdict = ind._verdict || Store.getVerdict(ind);
-  const w       = ind.latest_weight_g ? `${ind.latest_weight_g}g` : '—';
-  const icons   = [
+  const w       = ind.latest_weight_g ? ind.latest_weight_g + 'g' : null;
+  const sz      = ind.adult_size_mm    ? ind.adult_size_mm + 'mm'  : null;
+
+  // ライン名：line_id から正引き（undefined を防ぐ）
+  const line    = ind.line_id ? Store.getLine(ind.line_id) : null;
+  const lineStr = line ? (line.line_code || line.display_id || '') : '';
+  const lineLbl = lineStr ? lineStr + 'ライン' : (ind.line_id ? '—' : '—');
+
+  const locality = ind.locality || (line ? line.locality : '') || '';
+
+  // ステータスラベル
+  const stMap = { alive:'飼育中', reserved:'予約済', sold:'販売済', dead:'死亡' };
+  const stColor= { alive:'var(--green)', reserved:'var(--blue)', sold:'var(--amber)', dead:'var(--red,#e05050)' };
+  const stLbl  = stMap[ind.status] || ind.status || '—';
+  const stClr  = stColor[ind.status] || 'var(--text3)';
+
+  // 種親・ギネスアイコン
+  const icons = [
     String(ind.guinness_flag) === 'true' ? '🏆' : '',
     String(ind.parent_flag)   === 'true' ? '👑' : '',
     String(ind.g200_flag)     === 'true' ? '💪' : '',
   ].filter(Boolean).join('');
 
-  return `<div class="ind-card" onclick="routeTo('ind-detail',{id:'${ind.ind_id}'})">
-    <div>
-      <div class="ind-card-sex">${ind.sex || '?'}</div>
-    </div>
-    <div class="ind-card-body">
-      <div class="ind-card-row">
-        <span class="ind-card-id">${ind.display_id}</span>
-        ${icons ? `<span>${icons}</span>` : ''}
-        ${UI.stageBadge(ind.current_stage)}
-      </div>
-      <div class="ind-card-row">
-        <span class="ind-card-weight">${w}</span>
-        ${verdict ? UI.verdictBadge(verdict) : ''}
-      </div>
-      <div class="ind-card-age">
-        ${age ? age.days + ' / ' + age.stageGuess : '日齢不明'}
-        ${ind.hatch_date ? '' : '<span style="color:var(--amber)"> ※孵化日未設定</span>'}
-      </div>
-    </div>
-    <div style="color:var(--text3);font-size:1.2rem">›</div>
-  </div>`;
+  // 性別色
+  const sexColor = ind.sex === '♂' ? 'var(--male,#5ba8e8)' : ind.sex === '♀' ? 'var(--female,#e87fa0)' : 'var(--text3)';
+
+  return '<div class="ind-card" onclick="routeTo(\x27ind-detail\x27,{id:\x27' + ind.ind_id + '\x27})" style="padding:10px 12px">'
+    // 【1行目】性別 + ID + ステージ
+    + '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">'
+    +   '<span style="font-weight:700;color:' + sexColor + ';font-size:.95rem">' + (ind.sex || '?') + '</span>'
+    +   '<span style="font-family:var(--font-mono);font-weight:700;font-size:.9rem;flex:1">' + ind.display_id + '</span>'
+    +   (icons ? '<span style="font-size:.82rem">' + icons + '</span>' : '')
+    +   UI.stageBadge(ind.current_stage)
+    + '</div>'
+    // 【2行目】ライン / 産地
+    + '<div style="font-size:.76rem;color:var(--text2);margin-bottom:3px">'
+    +   lineLbl + (locality ? ' / ' + locality : '')
+    + '</div>'
+    // 【3行目】日齢
+    + '<div style="font-size:.76rem;color:var(--text3);margin-bottom:3px">'
+    +   (age ? '日齢' + age.days + '日' + (age.stageGuess ? ' · ' + age.stageGuess : '') : (ind.hatch_date ? '' : '<span style="color:var(--amber)">孵化日未設定</span>'))
+    + '</div>'
+    // 【4行目】サイズ
+    + (w || sz ? '<div style="font-size:.8rem;color:var(--text2);margin-bottom:4px">' + [w,sz].filter(Boolean).join(' / ') + '</div>' : '')
+    // 【最下段】状態バッジ
+    + '<div style="display:flex;align-items:center;justify-content:space-between">'
+    +   '<span style="font-size:.72rem;font-weight:700;color:' + stClr + '">' + stLbl + '</span>'
+    +   '<span style="color:var(--text3);font-size:1rem">›</span>'
+    + '</div>'
+    + '</div>';
 }
 
 // QRスキャン（カメラ起動→QR解析は別途実装。現状はID入力）
@@ -257,12 +286,15 @@ Pages._indStatusModal = function () {
   _showModal('ステータス絞り込み', html);
 };
 
-// 修正①: status を params に乗せて再レンダリング → filters に正しく反映される
 Pages._setStatusFilter = function (code) {
   _closeModal();
-  // '_all' は status未指定扱い（filterIndividuals の status省略 = 死亡以外全て）
-  const status = code === '_all' ? '' : code;
-  routeTo('ind-list', { status });
+  // グローバルコールバック経由でスコープ内のfiltersを更新
+  if (typeof window.__indSetStatus === 'function') {
+    window.__indSetStatus(code);
+  } else {
+    // フォールバック：routeTo（ライン限定モードが外れるが許容）
+    routeTo('ind-list', { status: code });
+  }
 };
 
 // ════════════════════════════════════════════════════════════════
@@ -491,8 +523,12 @@ function _renderDetail(ind, main) {
       <div style="display:flex;gap:8px">
         <button class="btn btn-ghost btn-sm"
           onclick="Pages._indMarkDead('${ind.ind_id}')">💀 死亡</button>
-        <button class="btn btn-ghost btn-sm"
-          onclick="Pages._indMarkReserved('${ind.ind_id}')">📦 予約</button>
+        ${ind.status === 'reserved'
+          ? `<button class="btn btn-ghost btn-sm" style="color:var(--blue);border-color:var(--blue)"
+               onclick="Pages._indCancelReserved('${ind.ind_id}')">📦 予約解除</button>`
+          : `<button class="btn btn-ghost btn-sm"
+               onclick="Pages._indMarkReserved('${ind.ind_id}')">📦 予約</button>`
+        }
         <button class="btn btn-ghost btn-sm" style="margin-left:auto"
           onclick="Pages._indFlagMenu('${ind.ind_id}','${ind.guinness_flag}','${ind.parent_flag}','${ind.g200_flag}')">
           🏷 フラグ</button>
@@ -571,6 +607,14 @@ Pages._indMarkDead = async function (id) {
     await apiCall(() => API.individual.changeStatus(id, 'dead'), '死亡を記録しました');
     Store.patchDBItem('individuals', 'ind_id', id, { status: 'dead' });
     routeTo('ind-list');
+  } catch (e) {}
+};
+
+Pages._indCancelReserved = async function (id) {
+  try {
+    await apiCall(() => API.individual.changeStatus(id, 'alive'), '予約を解除しました');
+    Store.patchDBItem('individuals', 'ind_id', id, { status: 'alive' });
+    Pages.individualDetail(id);
   } catch (e) {}
 };
 
@@ -746,7 +790,7 @@ Pages.individualNew = function (params = {}) {
           parents.filter(p => p.sex === '♀').map(p => ({ code: p.par_id, label: `${p.display_name}${p.size_mm ? ' '+p.size_mm+'mm' : ''}` })),
           v('mother_par_id')))}
 
-        ${isEdit ? '' : UI.field('元ロットID（任意）', UI.input('lot_id', 'text', params.lotId || '', 'LOT-xxxxx'))}
+        <!-- 元ロットIDは分割時に自動セット。手入力フィールドは廃止 -->
 
         <div class="form-title">形態・成長データ</div>
         <div class="form-row-2">
