@@ -123,6 +123,8 @@ Pages._lotShowDissolved = function () {
 // ロット詳細
 // ════════════════════════════════════════════════════════════════
 Pages.lotDetail = async function (lotId) {
+  // params が object で渡された場合の防御
+  if (lotId && typeof lotId === 'object') lotId = lotId.id || lotId.lotId || '';
   const main = document.getElementById('main');
   if (!lotId) { main.innerHTML = UI.empty('IDが指定されていません'); return; }
 
@@ -463,4 +465,40 @@ Pages.lotNew = function (params = {}) {
         ${UI.field('メモ', UI.input('note', 'text', '', '任意のメモ'))}
         <div style="display:flex;gap:10px;margin-top:4px">
           <button type="button" class="btn btn-ghost" style="flex:1" onclick="Store.back()">戻る</button>
-          <button type="button" class="btn btn-primary" style
+          <button type="button" class="btn btn-primary" style="flex:2" onclick="Pages._lotSave()">登録</button>
+        </div>
+      </form>
+    </div>`;
+};
+
+Pages._lotSave = async function () {
+  const form = document.getElementById('lot-form');
+  const data = UI.collectForm(form);
+  if (!data.line_id) { UI.toast('ラインを選択してください', 'error'); return; }
+  if (data.hatch_date) data.hatch_date = data.hatch_date.replace(/-/g, '/');
+  data.count = +data.count || 1;
+  if (data.lot_created_count !== undefined && data.lot_created_count !== '')
+    data.lot_created_count = +data.lot_created_count;
+  try {
+    const res = await apiCall(() => API.lot.create(data), 'ロットを登録しました');
+    await syncAll(true);
+    routeTo('lot-detail', { id: res.lot_id });
+  } catch (e) {}
+};
+
+// ページ登録
+Pages.lotNew = Pages.lotNew;
+PAGES['lot-list']   = () => Pages.lotList();
+
+// ── ロット詳細クイックアクション ─────────────────────────────────
+function _lotQuickActions(lotId) {
+  UI.actionSheet([
+    { label: '⚖️ 体重測定（QRスキャン）', fn: () => routeTo('qr-scan', { mode: 'weight' }) },
+    { label: '📷 QRスキャン（差分入力）', fn: () => routeTo('qr-scan') },
+    { label: '🏷️ ラベル発行', fn: () => routeTo('label-gen', { targetType: 'LOT', targetId: lotId }) },
+    { label: '📋 成長記録を追加', fn: () => routeTo('growth-rec', { target_type: 'LOT', target_id: lotId }) },
+  ]);
+}
+
+PAGES['lot-detail'] = () => Pages.lotDetail(Store.getParams().id);
+PAGES['lot-new']    = () => Pages.lotNew(Store.getParams());
