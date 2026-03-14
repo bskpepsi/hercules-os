@@ -192,7 +192,6 @@ Pages.parentDetail = async function (parIdParam) {
         ${pairingBadge ? `<div style="margin:8px 0">${pairingBadge}</div>` : ''}
 
         ${UI.detailRow('サイズ', p.size_mm ? p.size_mm + 'mm' : '未計測')}
-        ${UI.detailRow('体重',   p.weight_g ? p.weight_g + 'g' : '—')}
         ${UI.detailRow('産地',   p.locality  || '—')}
         ${UI.detailRow('世代',   p.generation|| '—')}
         ${UI.detailRow('父親サイズ', p.father_parent_size_mm ? p.father_parent_size_mm+'mm' : '—')}
@@ -231,19 +230,12 @@ Pages.parentDetail = async function (parIdParam) {
         </div>
       </div>` : ''}
 
-      <div style="display:flex;flex-direction:column;gap:10px;margin-top:16px">
-        ${!p.feeding_start_date ? `
-        <button class="btn btn-primary" onclick="_parentSetFeeding('${parId}')">
+      ${!p.feeding_start_date ? `
+      <div style="margin-top:16px">
+        <button class="btn btn-primary btn-full" onclick="_parentSetFeeding('${parId}')">
           🍽️ 後食開始日を設定
-        </button>` : ''}
-        ${p.sex === '♂' ? `
-        <button class="btn btn-secondary" onclick="routeTo('pairing-history',{id:'${parId}'})">
-          📋 ペアリング履歴を見る
-        </button>` : ''}
-        <button class="btn btn-secondary" onclick="_parentEditStatus('${parId}','${p.status}')">
-          ステータス変更
         </button>
-      </div>
+      </div>` : ''}
     </div>`;
 
   // ♂のペアリング統計を非同期ロード
@@ -259,6 +251,10 @@ async function _loadMalePairingStats(parId) {
     if (!sec) return;
 
     const histories = (res.histories || []).slice(0, 5);
+    if (!res.total) {
+      sec.innerHTML = `<div class="section-title">ペアリング履歴</div>${UI.empty('ペアリング履歴はまだありません')}`;
+      return;
+    }
     sec.innerHTML = `
       <div class="section-title">ペアリング履歴</div>
       <div class="detail-card">
@@ -282,7 +278,11 @@ async function _loadMalePairingStats(parId) {
       </div>`;
   } catch(e) {
     const sec = document.getElementById('pairing-stats-section');
-    if (sec) sec.innerHTML = `<div class="section-title">ペアリング履歴</div>${UI.empty('読み込み失敗')}`;
+    // ペアリング履歴シートが空 or 未設定の場合は「まだありません」表示
+    const msg = (e.message && e.message.includes('NOT_FOUND')) || !e.message
+      ? 'ペアリング履歴はまだありません'
+      : '読み込み失敗: ' + e.message;
+    if (sec) sec.innerHTML = `<div class="section-title">ペアリング履歴</div>${UI.empty(msg)}`;
   }
 }
 
@@ -560,7 +560,7 @@ async function _parentSaveFeeding(parId) {
     await API.phase2.updateParent({ par_id: parId, feeding_start_date: date });
     await syncAll(true);
     UI.toast('後食開始日を設定しました');
-    routeTo('parent-detail', parId);
+    routeTo('parent-detail', {id: parId});
   } catch(e) {
     UI.toast('エラー: ' + e.message, 'error');
   } finally {
@@ -575,52 +575,11 @@ function _parentStatusLabel(s) {
 
 function _parentEditMenu(parId) {
   UI.actionSheet([
-    { label: '✏️ 情報を編集', fn: () => routeTo('parent-detail', parId) },
-    { label: '🍽️ 後食日設定', fn: () => _parentSetFeeding(parId) },
-    { label: '📋 ペアリング履歴', fn: () => routeTo('pairing-history', parId) },
-    { label: '🔄 ステータス変更', fn: () => _parentEditStatus(parId) },
+    { label: '✏️ 情報を編集',    fn: () => routeTo('parent-new', { editId: parId }) },
+    { label: '📋 ペアリング履歴', fn: () => routeTo('pairing-history', { id: parId }) },
   ]);
 }
 
-function _parentEditStatus(parId, current) {
-  const statuses = [
-    { value: 'active',   label: '活動中' },
-    { value: 'retired',  label: '引退' },
-    { value: 'dead',     label: '死亡' },
-    { value: 'sold',     label: '売却済' },
-    { value: 'reserved', label: '確保中' },
-  ];
-  UI.modal(`
-    <div class="modal-title">ステータス変更</div>
-    <div class="form-section">
-      <select id="modal-status" class="form-input">
-        ${statuses.map(s =>
-          `<option value="${s.value}" ${s.value === current ? 'selected' : ''}>${s.label}</option>`
-        ).join('')}
-      </select>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-secondary" onclick="UI.closeModal()">キャンセル</button>
-      <button class="btn btn-primary" onclick="_parentSaveStatus('${parId}')">変更</button>
-    </div>
-  `);
-}
-
-async function _parentSaveStatus(parId) {
-  const status = document.getElementById('modal-status').value;
-  try {
-    UI.loading(true);
-    UI.closeModal();
-    await API.phase2.updateParent({ par_id: parId, status });
-    await syncAll(true);
-    UI.toast('ステータスを変更しました');
-    routeTo('parent-detail', parId);
-  } catch(e) {
-    UI.toast('エラー: ' + e.message, 'error');
-  } finally {
-    UI.loading(false);
-  }
-}
 
 // ── ペアリング履歴ページ ─────────────────────────────────────
 Pages.pairingHistory = async function (parId) {

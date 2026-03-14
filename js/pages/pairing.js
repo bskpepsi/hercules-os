@@ -44,10 +44,11 @@ function _pairCardHTML(pair) {
     </div>
     <div class="ind-card-body">
       <div class="ind-card-row">
-        <span class="ind-card-id">${pair.display_id}</span>
-        ${pair.set_name ? `<span style="font-size:.72rem;color:var(--text2)">${pair.set_name}</span>` : ''}
+        ${(()=>{const ln=Store.getLine(pair.line_id);return ln?`<span style="font-family:var(--font-mono);font-weight:700;font-size:1rem;color:var(--gold);margin-right:4px">${ln.line_code||ln.display_id}</span>`:'';})()}
+        <span class="ind-card-id" style="font-size:.82rem">${pair.display_id}</span>
         ${badge}
       </div>
+      ${pair.set_name ? `<div style="font-size:.72rem;color:var(--text2);margin-bottom:2px">${pair.set_name}</div>` : ''}
       <div style="font-size:.78rem;color:var(--text2)">${f?'♂ '+f.display_name:''} × ${m?'♀ '+m.display_name:''}</div>
       <div style="font-size:.72rem;color:var(--text3);margin-top:2px">
         卵: ${pair.total_eggs||0}個 / 孵化: ${pair.total_hatch||0}頭 / 孵化率: ${rate}
@@ -121,7 +122,6 @@ Pages.pairingDetail = async function (setId) {
 function _renderPairDetail(pair, eggRecords, main) {
   const f   = Store.getParent(pair.father_par_id);
   const m   = Store.getParent(pair.mother_par_id);
-  const bld = Store.getBloodline(pair.bloodline_id);
 
   // KPI
   const totalEggs  = pair.total_eggs  || 0;
@@ -188,7 +188,6 @@ function _renderPairDetail(pair, eggRecords, main) {
               ${mBldStr?'<span style="color:var(--text3);font-size:.78rem"> / '+mBldStr+'</span>':''}
             </span>`;
           })() : (pair.mother_par_id||'—'))}
-          ${bld ? _prow('血統', bld.abbreviation||bld.bloodline_name) : ''}
           ${_prow('ペアリング日', pair.pairing_start || '—')}
           ${_prow('セット開始',   pair.set_start    || '—')}
           ${pair.set_end   ? _prow('セット終了', pair.set_end)      : ''}
@@ -258,7 +257,7 @@ function _eggHistoryHtml(eggRecords, pair) {
           <button class="btn btn-ghost btn-sm" style="flex:1;font-size:.75rem"
             onclick="Pages._pairEditOneEgg('${rec.egg_record_id}','${pair.set_id}')">✏️ 編集</button>
           <button class="btn btn-ghost btn-sm" style="flex:1;font-size:.75rem;color:var(--red)"
-            onclick="Pages._pairDeleteEgg('${rec.egg_record_id}','${pair.set_id}')">🗑 削除</button>
+style="display:none">
         </div>
       </div>`;
     }).join('');
@@ -337,7 +336,7 @@ Pages._pairSaveEgg = async function (setId) {
   const eggs    = +document.getElementById('egg-count')?.value    || 0;
   const hatch   = +document.getElementById('hatch-count')?.value  || 0;
   const note    = document.getElementById('egg-note')?.value      || '';
-  if (!date) { UI.toast('採卵日を入力してください', 'error'); return; }
+  // 採卵日は任意（空でも登録可）
   _closeModal();
   try {
     await apiCall(
@@ -397,7 +396,7 @@ Pages._pairSaveEditEgg = async function (eggRecordId, setId) {
   const eggs     = +document.getElementById('edit-egg-count')?.value    || 0;
   const hatch    = +document.getElementById('edit-hatch-count')?.value  || 0;
   const note     = document.getElementById('edit-egg-note')?.value      || '';
-  if (!date) { UI.toast('採卵日を入力してください', 'error'); return; }
+  // 採卵日は任意（空でも登録可）
   _closeModal();
   try {
     await apiCall(
@@ -415,17 +414,7 @@ Pages._pairSaveEditEgg = async function (eggRecordId, setId) {
   } catch(e) {}
 };
 
-// ── 採卵履歴 1件削除 ────────────────────────────────────────────
-Pages._pairDeleteEgg = async function (eggRecordId, setId) {
-  if (!UI.confirm('この採卵記録を削除しますか？')) return;
-  try {
-    await apiCall(
-      () => API.pairing.deleteEgg({ egg_record_id: eggRecordId }),
-      '採卵記録を削除しました'
-    );
-    Pages.pairingDetail(setId);
-  } catch(e) {}
-};
+// 採卵記録削除は右上…メニューからのみ（カード直削除は廃止）
 
 // ── 採卵履歴一覧編集モーダル（メニューから） ────────────────────
 Pages._pairEditEggModal = async function (setId) {
@@ -445,7 +434,7 @@ Pages._pairEditEggModal = async function (setId) {
           <button class="btn btn-ghost btn-sm" style="font-size:.75rem"
             onclick="_closeModal();Pages._pairEditOneEgg('${rec.egg_record_id}','${setId}')">✏️</button>
           <button class="btn btn-ghost btn-sm" style="font-size:.75rem;color:var(--red)"
-            onclick="_closeModal();Pages._pairDeleteEgg('${rec.egg_record_id}','${setId}')">🗑</button>
+style="display:none">
         </div>
       </div>`).join('');
     _showModal('採卵履歴を編集', `
@@ -474,7 +463,6 @@ Pages.pairingNew = function (params = {}) {
   const parents = Store.getDB('parents') || [];
   const males   = parents.filter(p => p.sex==='♂' && (!p.status||p.status==='active'));
   const females = parents.filter(p => p.sex==='♀' && (!p.status||p.status==='active'));
-  const blds    = Store.getDB('bloodlines') || [];
   const v       = (f, d='') => pair ? (pair[f]!==undefined ? pair[f] : d) : d;
   const today   = new Date().toISOString().split('T')[0];
 
@@ -486,8 +474,6 @@ Pages.pairingNew = function (params = {}) {
         ${UI.field('♂親（父）', UI.select('father_par_id', males.map(p=>({code:p.par_id,label:`${p.display_name}${p.size_mm?' '+p.size_mm+'mm':''}`})), v('father_par_id')), true)}
         ${UI.field('♀親（母）', UI.select('mother_par_id', females.map(p=>({code:p.par_id,label:`${p.display_name}${p.size_mm?' '+p.size_mm+'mm':''}`})), v('mother_par_id')), true)}
         ${UI.field('セット名（任意）', UI.input('set_name','text',v('set_name'),'例: 2025-A1ライン'))}
-        ${UI.field('血統', UI.select('bloodline_id', blds.map(b=>({code:b.bloodline_id,label:b.abbreviation||b.bloodline_name})), v('bloodline_id')))}
-
         <div class="form-title">日付</div>
         <div class="form-row-2">
           ${UI.field('ペアリング日', UI.input('pairing_start','date',v('pairing_start')||today), true)}

@@ -225,10 +225,12 @@ function _renderLineDetail(line, main) {
   // 産卵セット紐づき（このラインの line_id を持つセット）
   const pairings = (Store.getDB('pairings') || []).filter(p => p.line_id === line.line_id);
 
-  // 卵カウント：採卵数合計 - ロット化済み initial_count 合計
+  // 採卵数 = 産卵セットの total_eggs 合計（採卵記録の合計）
   const totalEggs    = pairings.reduce((s, p) => s + (parseInt(p.total_eggs, 10) || 0), 0);
+  // ロット化済み卵数 = ロットの initial_count 合計
   const lotInitTotal = allLots.reduce((s, l) => s + (parseInt(l.initial_count, 10) || 0), 0);
-  const eggCount     = Math.max(0, totalEggs - lotInitTotal);
+  // 未ロット卵 = 採卵数 - ロット化済み（マイナスにならないよう保護）
+  const unLotEggs    = Math.max(0, totalEggs - lotInitTotal);
 
   // 親情報ヘルパー
   function _parentInfo(p, pBld, sexColor) {
@@ -241,9 +243,6 @@ function _renderLineDetail(line, main) {
       + '</span>';
   }
 
-  // 血統ステータス表示
-  const bldStatusMap = { confirmed:'✅ 確定', temporary:'⚠️ 暫定', unknown:'❓ 不明' };
-  const bldStatus = bldStatusMap[line.bloodline_status] || line.bloodline_status || '—';
 
   main.innerHTML = `
     ${UI.header(line.display_id + ' 詳細', { back: true, action: { fn: "routeTo('line-new',{editId:'${line.line_id}'})", icon: '✏️' } })}
@@ -265,18 +264,22 @@ function _renderLineDetail(line, main) {
             <div style="font-weight:700">${line.hatch_year || '—'}</div>
           </div>
         </div>
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:12px">
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-top:12px">
           <div style="text-align:center;background:var(--surface2);border-radius:6px;padding:8px 2px">
-            <div style="font-size:.62rem;color:var(--text3)">ロット</div>
-            <div style="font-weight:700;font-size:1.1rem;color:var(--blue)">${activeLots.length}</div>
+            <div style="font-size:.6rem;color:var(--text3)">ロット</div>
+            <div style="font-weight:700;font-size:1rem;color:var(--blue)">${activeLots.length}</div>
           </div>
           <div style="text-align:center;background:var(--surface2);border-radius:6px;padding:8px 2px">
-            <div style="font-size:.62rem;color:var(--text3)">個体</div>
-            <div style="font-weight:700;font-size:1.1rem;color:var(--green)">${aliveInds.length}</div>
+            <div style="font-size:.6rem;color:var(--text3)">個体</div>
+            <div style="font-weight:700;font-size:1rem;color:var(--green)">${aliveInds.length}</div>
           </div>
           <div style="text-align:center;background:var(--surface2);border-radius:6px;padding:8px 2px">
-            <div style="font-size:.62rem;color:var(--text3)">卵</div>
-            <div style="font-weight:700;font-size:1.1rem;color:var(--amber)">${eggCount}</div>
+            <div style="font-size:.6rem;color:var(--text3)">採卵数</div>
+            <div style="font-weight:700;font-size:1rem;color:var(--amber)">${totalEggs}</div>
+          </div>
+          <div style="text-align:center;background:var(--surface2);border-radius:6px;padding:8px 2px">
+            <div style="font-size:.6rem;color:var(--text3)">未ロット卵</div>
+            <div style="font-weight:700;font-size:1rem;color:var(--text2)">${unLotEggs}</div>
           </div>
         </div>
       </div>
@@ -334,8 +337,7 @@ function _renderLineDetail(line, main) {
         <div class="card-title">血統・ライン情報</div>
         <div class="info-list">
           ${bld ? _lnRow('血統',
-              '<span style="cursor:pointer;color:var(--blue)" onclick="routeTo(\x27bloodline-detail\x27,{id:\x27' + bld.bloodline_id + '\x27})">' + bld.bloodline_name + '</span> ' + UI.bloodlineBadge(line.bloodline_status)) : ''}
-          ${_lnRow('血統ステータス', bldStatus)}
+              '<span style="cursor:pointer;color:var(--blue)" onclick="routeTo(\x27bloodline-detail\x27,{id:\x27' + bld.bloodline_id + '\x27})">' + bld.bloodline_name + '</span>') : ''}
           ${line.locality   ? _lnRow('産地',   line.locality)   : ''}
           ${line.generation ? _lnRow('累代',   line.generation) : ''}
           ${line.characteristics ? _lnRow('特徴', line.characteristics) : ''}
@@ -384,25 +386,7 @@ Pages.lineNew = function (params = {}) {
           ${UI.field('累代', UI.input('generation', 'text', v('generation'), '例: WF1 / CBF2'))}
         </div>
 
-        <div class="form-title">血統・種親</div>
-        ${UI.field('血統',
-          UI.select('bloodline_id',
-            blds.map(b => ({ code: b.bloodline_id, label: b.abbreviation || b.bloodline_name })),
-            v('bloodline_id')))}
-        ${UI.field('血統ステータス',
-          UI.select('bloodline_status', [
-            { code:'confirmed',  label:'✅ 確定' },
-            { code:'temporary',  label:'⚠️ 暫定' },
-            { code:'unknown',    label:'❓ 不明' },
-          ], v('bloodline_status', 'unknown')))}
-        ${UI.field('♂親',
-          UI.select('father_par_id',
-            males.map(p => ({ code: p.par_id, label: `${p.display_name}${p.size_mm?' '+p.size_mm+'mm':''}` })),
-            v('father_par_id')))}
-        ${UI.field('♀親',
-          UI.select('mother_par_id',
-            females.map(p => ({ code: p.par_id, label: `${p.display_name}${p.size_mm?' '+p.size_mm+'mm':''}` })),
-            v('mother_par_id')))}
+        <!-- 種親は産卵セットから自動取得のため選択不要 -->
 
         <div class="form-title">メモ</div>
         ${UI.field('特徴', UI.textarea('characteristics', v('characteristics'), 2, '例: 父175mm × 母大型系'))}
@@ -419,7 +403,8 @@ Pages.lineNew = function (params = {}) {
           <button type="button" class="btn btn-ghost" style="flex:1"
             onclick="Store.back()">戻る</button>
           <button type="button" class="btn btn-primary" style="flex:2"
-            onclick="Pages._lineSave('${isEdit ? params.editId : ''}')">
+            data-edit-id="${isEdit ? params.editId : ''}"
+            onclick="Pages._lineSave(this.dataset.editId || '')">
             ${isEdit ? '更新する' : '登録する'}
           </button>
         </div>
@@ -428,6 +413,8 @@ Pages.lineNew = function (params = {}) {
 };
 
 Pages._lineSave = async function (editId) {
+  // 'undefined' 文字列や空文字は編集なしと判断
+  if (!editId || editId === 'undefined') editId = '';
   const form = document.getElementById('line-form');
   if (!form) return;
   const data = UI.collectForm(form);
@@ -437,14 +424,16 @@ Pages._lineSave = async function (editId) {
     if (editId) {
       data.line_id = editId;
       await apiCall(() => API.line.update(data), '更新しました');
-      Store.patchDBItem('lines', 'line_id', editId, data);
+      await syncAll(true);
       routeTo('line-detail', { id: editId });
     } else {
       const res = await apiCall(() => API.line.create(data), 'ラインを登録しました');
       await syncAll(true);
       routeTo('line-detail', { id: res.line_id });
     }
-  } catch (e) {}
+  } catch (e) {
+    UI.toast('エラー: ' + (e.message || '不明'), 'error');
+  }
 };
 
 window.PAGES = window.PAGES || {};

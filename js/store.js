@@ -300,13 +300,26 @@ const Store = (() => {
       }
     }
     if (filters.sex)      list = list.filter(i => i.sex           === filters.sex);
-    // statusフィルター（sold/dead/parent/active対応）
-    if (filters.statusFilter === 'sold')   list = list.filter(i => i.status === 'sold');
-    else if (filters.statusFilter === 'dead')   list = list.filter(i => i.status === 'dead');
-    else if (filters.statusFilter === 'parent') list = list.filter(i => String(i.parent_flag) === 'true');
-    else if (filters.statusFilter === 'active') list = list.filter(i => i.status === 'active');
-    else if (filters.status)   list = list.filter(i => i.status   === filters.status);
-    // status省略時は死亡のみ除外（_all相当）。alive指定時は飼育中のみ。
+    // statusフィルター
+    // '_all' = 全件表示（フィルタなし）
+    // 空文字 = 死亡以外を表示（デフォルト）
+    // 'alive'/'sold'/'dead'/'reserved' = 該当ステータスのみ
+    if (filters.status === '_all') {
+      // 全件：フィルタなし
+    } else if (filters.status === 'alive') {
+      list = list.filter(i => i.status === 'alive');
+    } else if (filters.status === 'reserved') {
+      list = list.filter(i => i.status === 'reserved');
+    } else if (filters.status === 'sold') {
+      list = list.filter(i => i.status === 'sold');
+    } else if (filters.status === 'dead') {
+      list = list.filter(i => i.status === 'dead');
+    } else if (filters.status) {
+      list = list.filter(i => i.status === filters.status);
+    } else {
+      // status未指定：死亡以外を表示
+      list = list.filter(i => i.status !== 'dead');
+    }
     if (filters.guinness) list = list.filter(i => String(i.guinness_flag) === 'true');
     if (filters.q) {
       const q = filters.q.toLowerCase();

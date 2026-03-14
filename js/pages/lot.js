@@ -276,7 +276,7 @@ function _renderSplitModal() {
         <div>
           <div style="font-size:.72rem;color:var(--text3);margin-bottom:2px">容器</div>
           <select class="input" style="width:100%" onchange="_splitCards[${i}].container=this.value">
-            ${['','1.8L','2.7L','4.8L（個別）','10L'].map(s=>`<option value="${s}" ${c.container===s?'selected':''}>${s||'選択…'}</option>`).join('')}
+            ${['','1.8L','2.7L','4.8L'].map(s=>`<option value="${s}" ${c.container===s?'selected':''}>${s||'選択…'}</option>`).join('')}
           </select>
         </div>
         <div>
@@ -437,31 +437,23 @@ Pages.lotNew = function (params = {}) {
             { code:'T0', label:'T0' }, { code:'T1', label:'T1' },
             { code:'T2A', label:'T2①' }, { code:'T2B', label:'T2②' }, { code:'T3', label:'T3' },
           ], 'T0'), true)}
-          ${UI.field('頭数', UI.input('count', 'number', '10', '頭数'))}
+          ${UI.field('頭数', UI.input('count', 'number', '5', '頭数'))}
         </div>
         <div class="form-row-2">
           ${UI.field('孵化日', UI.input('hatch_date', 'date', ''))}
-          ${UI.field('容器', UI.select('container_size',
-            CONTAINER_SIZES.map(s => ({code:s,label:s})), '2.7L（2頭）'))}
+          ${UI.field('容器', UI.select('container_size', [
+            {code:'',    label:'— 未選択 —'},
+            {code:'1.8L', label:'1.8L'},
+            {code:'2.7L', label:'2.7L'},
+            {code:'4.8L', label:'4.8L'},
+          ], '2.7L'))}
         </div>
         ${UI.field('マット種別', UI.select('mat_type',
           MAT_TYPES.map(m => ({code:m.code, label:m.label})), 'T0'))}
         ${UI.field('モルト', `<label style="display:flex;align-items:center;gap:8px">
           <input type="checkbox" name="has_malt"> モルト入り
         </label>`)}
-        <!-- T0ロット専用：産卵セット紐づけ・ロット化数 -->
-        <div id="t0-extra-fields">
-          ${UI.field('産卵セット（任意）',
-            UI.select('pairing_set_id',
-              [{ code:'', label:'— 未選択 —' },
-               ...(Store.getDB('pairings')||[]).map(p => ({
-                 code: p.set_id,
-                 label: p.display_id + (p.set_name ? ' / ' + p.set_name : '')
-               }))],
-              params.pairingSetId || '')
-          )}
-          ${UI.field('ロット化数（有精卵数）', UI.input('lot_created_count', 'number', '', '採卵数のうちロット化した数'))}
-        </div>
+        <!-- 産卵セット紐づけ・ロット化数は削除（ラインで管理） -->
         ${UI.field('メモ', UI.input('note', 'text', '', '任意のメモ'))}
         <div style="display:flex;gap:10px;margin-top:4px">
           <button type="button" class="btn btn-ghost" style="flex:1" onclick="Store.back()">戻る</button>
@@ -477,8 +469,6 @@ Pages._lotSave = async function () {
   if (!data.line_id) { UI.toast('ラインを選択してください', 'error'); return; }
   if (data.hatch_date) data.hatch_date = data.hatch_date.replace(/-/g, '/');
   data.count = +data.count || 1;
-  if (data.lot_created_count !== undefined && data.lot_created_count !== '')
-    data.lot_created_count = +data.lot_created_count;
   try {
     const res = await apiCall(() => API.lot.create(data), 'ロットを登録しました');
     await syncAll(true);
