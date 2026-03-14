@@ -8,14 +8,54 @@
 'use strict';
 
 // ── 起動 ──────────────────────────────────────────────────────
+
+// ── ルーター ──────────────────────────────────────────────────
+// ── ID解決ヘルパー（params.id / params.lineId / params.lotId など全キーをフォールバック）
+function _pid() {
+  const p = Store.getParams();
+  return p.id || p.lineId || p.lotId || p.indId || p.parId || p.bloodlineId || p.pairingId || p.setId || '';
+}
+
+const PAGES = {
+  'dashboard':   () => Pages.dashboard(),
+  'ind-list':    () => Pages.individualList(),
+  'ind-detail':  () => Pages.individualDetail(_pid()),
+  'ind-new':     () => Pages.individualNew(Store.getParams()),
+  'growth-rec':  () => Pages.growthRecord(Store.getParams()),
+  'lot-list':    () => Pages.lotList(),
+  'lot-detail':  () => Pages.lotDetail(_pid()),
+  'lot-new':     () => Pages.lotNew(Store.getParams()),
+  'line-list':   () => Pages.lineList(),
+  'line-detail': () => Pages.lineDetail(_pid()),
+  'line-new':    () => Pages.lineNew(Store.getParams()),
+  'parent-list': () => Pages.parentList(),
+  'parent-new':  () => Pages.parentNew(Store.getParams()),
+  'parent-detail':    () => Pages.parentDetail(_pid()),
+  'bloodline-list':   () => Pages.bloodlineList(),
+  'bloodline-detail': () => Pages.bloodlineDetail(_pid()),
+  'bloodline-new':    () => Pages.bloodlineNew(Store.getParams()),
+  'pairing-list':   () => Pages.pairingList(),
+  'pairing-detail': () => Pages.pairingDetail(_pid()),
+  'pairing-new':    () => Pages.pairingNew(Store.getParams()),
+  'pairing-history':() => Pages.pairingHistory ? Pages.pairingHistory(_pid()) : Pages.pairingList(),
+  'label-gen':   () => Pages.labelGen(Store.getParams()),
+  'manage':      () => Pages.manage(),
+  'settings':    () => Pages.settings(),
+  // ── QRスキャン ───────────────────────────────────────────────
+  'qr-scan':     () => Pages.qrScan(Store.getParams()),
+  'qr-diff':     () => Pages.qrDiff(Store.getParams()),
+  'weight-mode': () => Pages.weightMode(Store.getParams()),
+};
+
+// ── 起動（PAGES定義の後に配置することでPAGES参照を保証） ────────
 document.addEventListener('DOMContentLoaded', () => {
   Store.loadFromStorage();
   bindNav();
   bindGlobalEvents();
   renderNav();
 
-  // ④ URLハッシュからページ復元（リロード対応）
-  const hash = location.hash.slice(1); // '#page=pairing-detail&id=SET-...'
+  // URLハッシュからページ復元（リロード対応）
+  const hash = location.hash.slice(1);
   if (hash) {
     try {
       const hashParams = Object.fromEntries(new URLSearchParams(hash));
@@ -36,41 +76,11 @@ document.addEventListener('DOMContentLoaded', () => {
   syncIfNeeded();
 });
 
-// ── ルーター ──────────────────────────────────────────────────
-const PAGES = {
-  'dashboard':   () => Pages.dashboard(),
-  'ind-list':    () => Pages.individualList(),
-  'ind-detail':  () => Pages.individualDetail(Store.getParams().id),
-  'ind-new':     () => Pages.individualNew(Store.getParams()),
-  'growth-rec':  () => Pages.growthRecord(Store.getParams()),
-  'lot-list':    () => Pages.lotList(),
-  'lot-detail':  () => Pages.lotDetail(Store.getParams().id),
-  'lot-new':     () => Pages.lotNew(Store.getParams()),
-  'line-list':   () => Pages.lineList(),
-  'line-detail': () => Pages.lineDetail(Store.getParams().id),
-  'line-new':    () => Pages.lineNew(Store.getParams()),
-  'parent-list': () => Pages.parentList(),
-  'parent-new':  () => Pages.parentNew(Store.getParams()),
-  'parent-detail':    () => Pages.parentDetail(Store.getParams().id),
-  'bloodline-list':   () => Pages.bloodlineList(),
-  'bloodline-detail': () => Pages.bloodlineDetail(Store.getParams().id),
-  'bloodline-new':    () => Pages.bloodlineNew(Store.getParams()),
-  'pairing-list':   () => Pages.pairingList(),
-  'pairing-detail': () => Pages.pairingDetail(Store.getParams().id),
-  'pairing-new':    () => Pages.pairingNew(Store.getParams()),
-  'label-gen':   () => Pages.labelGen(Store.getParams()),
-  'manage':      () => Pages.manage(),
-  'settings':    () => Pages.settings(),
-  // ── QRスキャン ───────────────────────────────────────────────
-  'qr-scan':     () => Pages.qrScan(Store.getParams()),
-  'qr-diff':     () => Pages.qrDiff(Store.getParams()),
-  'weight-mode': () => Pages.weightMode(Store.getParams()),
-};
-
 function routeTo(pageId, params = {}) {
   // 文字列で渡された場合は { id: '...' } に正規化（後方互換）
   if (typeof params === 'string') params = { id: params };
-  if (params && Object.keys(params).length) Store.navigate(pageId, params);
+  if (!params || typeof params !== 'object') params = {};
+  if (Object.keys(params).length) Store.navigate(pageId, params);
   else Store.navigate(pageId);
 
   // ④ URLハッシュ更新（リロード時に復元できるよう）
@@ -422,8 +432,10 @@ Object.assign(UI, {
 
   // ── アクションシート ─────────────────────────────────────────
   actionSheet(items) {
-    const btns = items.map(item =>
-      `<button class="action-sheet-btn" onclick="UI.closeModal();(${item.fn.toString()})()">${item.label}</button>`
+    // fn.toString()はクロージャを失うため、関数をグローバル一時登録してインデックスで呼ぶ
+    window.__actionCallbacks = items.map(item => item.fn);
+    const btns = items.map((item, i) =>
+      `<button class="action-sheet-btn" onclick="UI.closeModal();window.__actionCallbacks[${i}]&&window.__actionCallbacks[${i}]()">${item.label}</button>`
     ).join('');
     UI.modal(`
       <div class="action-sheet">
