@@ -146,11 +146,6 @@ function _renderLotDetail(lot, main) {
   const records = lot._growthRecords || Store.getGrowthRecords(lot.lot_id) || [];
   const maltText = String(lot.has_malt) === 'true' ? 'あり 🍄' : 'なし';
 
-  // T2①/T2②の詳細表示
-  let stageNote = '';
-  if (lot.stage === 'T2A') stageNote = '<span style="color:var(--amber);font-size:.75rem"> T2①（モルト入り）</span>';
-  if (lot.stage === 'T2B') stageNote = '<span style="color:var(--blue);font-size:.75rem"> T2②（純T2）</span>';
-
   main.innerHTML = `
     ${UI.header(lot.display_id, {
       back: true,
@@ -165,10 +160,8 @@ function _renderLotDetail(lot, main) {
           <div>
             <div style="font-family:var(--font-mono);color:var(--gold);font-size:.85rem">${lot.display_id}</div>
             <div style="margin-top:4px;display:flex;gap:6px;flex-wrap:wrap">
-              ${UI.stageBadge(lot.stage)}${stageNote}
-              <span class="badge" style="background:var(--surface2);color:var(--text2)">
-                ${lot.count}頭 / 初期${lot.initial_count}頭
-              </span>
+              ${UI.stageBadge(lot.stage)}
+              <span class="badge" style="background:var(--surface2);color:var(--text2)">${lot.count}頭</span>
             </div>
           </div>
         </div>
@@ -178,15 +171,17 @@ function _renderLotDetail(lot, main) {
         </div>` : '<div style="color:var(--amber);font-size:.8rem">⚠️ 孵化日未設定</div>'}
       </div>
 
-      <!-- アクションボタン -->
-      <div style="display:flex;gap:8px">
-        <button class="btn btn-primary" style="flex:1"
+      <!-- アクションボタン：同格2ボタン -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <button style="padding:14px 8px;border-radius:var(--radius);font-weight:700;font-size:.92rem;
+          background:var(--green);color:#fff;border:none;cursor:pointer"
           onclick="routeTo('growth-rec',{targetType:'LOT',targetId:'${lot.lot_id}',displayId:'${lot.display_id}'})">
           📷 記録
         </button>
-        <button class="btn btn-secondary" style="flex:2"
+        <button style="padding:14px 8px;border-radius:var(--radius);font-weight:700;font-size:.92rem;
+          background:var(--surface3,#3a3a4a);color:var(--text1);border:1px solid var(--border);cursor:pointer"
           onclick="Pages._showSplitModal('${lot.lot_id}',${lot.count},'${lot.stage||'T1'}','${lot.line_id}','${lot.hatch_date||''}','${lot.display_id}')">
-          ✂️ ロット分割
+          ✂️ 分割
         </button>
       </div>
       ${(lot.stage === 'T0' || lot.stage === 'T1') ? `
@@ -468,40 +463,4 @@ Pages.lotNew = function (params = {}) {
         ${UI.field('メモ', UI.input('note', 'text', '', '任意のメモ'))}
         <div style="display:flex;gap:10px;margin-top:4px">
           <button type="button" class="btn btn-ghost" style="flex:1" onclick="Store.back()">戻る</button>
-          <button type="button" class="btn btn-primary" style="flex:2" onclick="Pages._lotSave()">登録</button>
-        </div>
-      </form>
-    </div>`;
-};
-
-Pages._lotSave = async function () {
-  const form = document.getElementById('lot-form');
-  const data = UI.collectForm(form);
-  if (!data.line_id) { UI.toast('ラインを選択してください', 'error'); return; }
-  if (data.hatch_date) data.hatch_date = data.hatch_date.replace(/-/g, '/');
-  data.count = +data.count || 1;
-  if (data.lot_created_count !== undefined && data.lot_created_count !== '')
-    data.lot_created_count = +data.lot_created_count;
-  try {
-    const res = await apiCall(() => API.lot.create(data), 'ロットを登録しました');
-    await syncAll(true);
-    routeTo('lot-detail', { id: res.lot_id });
-  } catch (e) {}
-};
-
-// ページ登録
-Pages.lotNew = Pages.lotNew;
-PAGES['lot-list']   = () => Pages.lotList();
-
-// ── ロット詳細クイックアクション ─────────────────────────────────
-function _lotQuickActions(lotId) {
-  UI.actionSheet([
-    { label: '⚖️ 体重測定（QRスキャン）', fn: () => routeTo('qr-scan', { mode: 'weight' }) },
-    { label: '📷 QRスキャン（差分入力）', fn: () => routeTo('qr-scan') },
-    { label: '🏷️ ラベル発行', fn: () => routeTo('label-gen', { targetType: 'LOT', targetId: lotId }) },
-    { label: '📋 成長記録を追加', fn: () => routeTo('growth-rec', { target_type: 'LOT', target_id: lotId }) },
-  ]);
-}
-
-PAGES['lot-detail'] = () => Pages.lotDetail(Store.getParams().id);
-PAGES['lot-new']    = () => Pages.lotNew(Store.getParams());
+          <button type="button" class="btn btn-primary" style
