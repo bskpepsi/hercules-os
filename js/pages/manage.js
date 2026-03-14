@@ -216,13 +216,18 @@ function _renderLineDetail(line, main) {
   const mBld = m && m.bloodline_id ? blds.find(b=>b.bloodline_id===m.bloodline_id) : null;
 
   // このラインに属する個体・ロット（全状態）
-  const allLots  = (Store.getDB('lots') || []).filter(l => l.line_id === line.line_id);
+  const allLots    = (Store.getDB('lots') || []).filter(l => l.line_id === line.line_id);
   const activeLots = allLots.filter(l => l.status === 'active');
-  const allInds  = Store.getIndividualsByLine(line.line_id);
-  const aliveInds = allInds.filter(i => i.status !== 'dead');
+  const allInds    = Store.getIndividualsByLine(line.line_id);
+  const aliveInds  = allInds.filter(i => i.status !== 'dead');
 
   // 産卵セット紐づき（このラインの line_id を持つセット）
   const pairings = (Store.getDB('pairings') || []).filter(p => p.line_id === line.line_id);
+
+  // 卵カウント：採卵数合計 - ロット化済み initial_count 合計
+  const totalEggs    = pairings.reduce((s, p) => s + (parseInt(p.total_eggs, 10) || 0), 0);
+  const lotInitTotal = allLots.reduce((s, l) => s + (parseInt(l.initial_count, 10) || 0), 0);
+  const eggCount     = Math.max(0, totalEggs - lotInitTotal);
 
   // 親情報ヘルパー
   function _parentInfo(p, pBld, sexColor) {
@@ -259,39 +264,43 @@ function _renderLineDetail(line, main) {
             <div style="font-weight:700">${line.hatch_year || '—'}</div>
           </div>
         </div>
-        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:12px">
-          <div style="text-align:center;background:var(--surface2);border-radius:6px;padding:6px 2px">
-            <div style="font-size:.62rem;color:var(--text3)">活ロット</div>
-            <div style="font-weight:700;font-size:1rem;color:var(--blue)">${activeLots.length}</div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:12px">
+          <div style="text-align:center;background:var(--surface2);border-radius:6px;padding:8px 2px">
+            <div style="font-size:.62rem;color:var(--text3)">ロット</div>
+            <div style="font-weight:700;font-size:1.1rem;color:var(--blue)">${activeLots.length}</div>
           </div>
-          <div style="text-align:center;background:var(--surface2);border-radius:6px;padding:6px 2px">
-            <div style="font-size:.62rem;color:var(--text3)">全ロット</div>
-            <div style="font-weight:700;font-size:1rem">${allLots.length}</div>
+          <div style="text-align:center;background:var(--surface2);border-radius:6px;padding:8px 2px">
+            <div style="font-size:.62rem;color:var(--text3)">個体</div>
+            <div style="font-weight:700;font-size:1.1rem;color:var(--green)">${aliveInds.length}</div>
           </div>
-          <div style="text-align:center;background:var(--surface2);border-radius:6px;padding:6px 2px">
-            <div style="font-size:.62rem;color:var(--text3)">生存個体</div>
-            <div style="font-weight:700;font-size:1rem;color:var(--green)">${aliveInds.length}頭</div>
-          </div>
-          <div style="text-align:center;background:var(--surface2);border-radius:6px;padding:6px 2px">
-            <div style="font-size:.62rem;color:var(--text3)">産卵セット</div>
-            <div style="font-weight:700;font-size:1rem;color:var(--amber)">${pairings.length}</div>
+          <div style="text-align:center;background:var(--surface2);border-radius:6px;padding:8px 2px">
+            <div style="font-size:.62rem;color:var(--text3)">卵</div>
+            <div style="font-weight:700;font-size:1.1rem;color:var(--amber)">${eggCount}</div>
           </div>
         </div>
       </div>
 
       <!-- 主要アクションボタン -->
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-        <button class="btn btn-primary"
+        <button style="flex:1;padding:14px 8px;border-radius:var(--radius);font-weight:700;font-size:.9rem;
+          background:var(--blue);color:#fff;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:4px"
           onclick="routeTo('lot-list',{line_id:'${line.line_id}'})">
-          📦 ロット一覧 (${activeLots.length})
+          📦 ロット一覧<br><span style="font-size:1.1rem">${activeLots.length}</span>
         </button>
-        <button class="btn btn-secondary"
+        <button style="flex:1;padding:14px 8px;border-radius:var(--radius);font-weight:700;font-size:.9rem;
+          background:var(--green);color:#fff;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:4px"
           onclick="routeTo('ind-list',{line_id:'${line.line_id}'})">
-          🐛 個体一覧 (${aliveInds.length})
+          🐛 個体一覧<br><span style="font-size:1.1rem">${aliveInds.length}</span>
         </button>
-        <button class="btn btn-gold btn-full" style="grid-column:1/-1"
+        <button style="grid-column:1/2;padding:12px 8px;border-radius:var(--radius);font-weight:700;font-size:.88rem;
+          background:var(--gold);color:#1a1a1a;border:none;cursor:pointer"
           onclick="routeTo('lot-new',{lineId:'${line.line_id}'})">
-          ＋ このラインにロットを作成
+          ＋ ロット追加
+        </button>
+        <button style="grid-column:2/3;padding:12px 8px;border-radius:var(--radius);font-weight:700;font-size:.88rem;
+          background:var(--surface3,#3a3a4a);color:var(--text1);border:1px solid var(--border);cursor:pointer"
+          onclick="routeTo('ind-new',{lineId:'${line.line_id}'})">
+          ＋ 個体追加
         </button>
       </div>
 
