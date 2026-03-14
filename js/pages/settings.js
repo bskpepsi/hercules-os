@@ -194,7 +194,7 @@ function _renderSettings(main) {
         <div style="font-size:.75rem;color:var(--text3);margin-bottom:10px">
           対象：ライン / ロット / 個体 / 種親 / 血統 / 産卵セット / 採卵記録 / 成長記録 / ラベル履歴 他
         </div>
-        <button class="btn btn-danger btn-full" onclick="Pages._devReset()">
+        <button class="btn btn-danger btn-full" onclick="window.Pages._devReset ? window.Pages._devReset() : alert('関数が見つかりません。ページをリロードしてください。')">
           🗑️ 全データリセット（テスト用）
         </button>
       </div>
@@ -430,38 +430,32 @@ Pages._setInit = async function () {
 
 // ── 開発用：全データリセット ────────────────────────────────────
 Pages._devReset = async function () {
-  const confirmed = window.confirm(
-    '⚠️ 全データリセット（テスト用）\n\n' +
-    '本当に全データを削除しますか？\n\n' +
-    '残るもの：ヘッダー行 / 設定 / 列定義\n' +
-    '削除されるもの：ライン / ロット / 個体 / 種親 / 血統\n' +
-    '　産卵セット / 採卵記録 / 成長記録 / ラベル履歴 他\n\n' +
-    'この操作は取り消せません。'
-  );
-  if (!confirmed) return;
+  if (!window.confirm(
+    '⚠️ 全データリセット（テスト用）\n\n本当に全データを削除しますか？\n\n' +
+    '残るもの：ヘッダー行 / 設定\n' +
+    '削除されるもの：ライン / ロット / 個体 / 種親 / 血統 / 産卵セット / 採卵記録 / 成長記録 他\n\n' +
+    'この操作は取り消せません。')) return;
 
-  const confirmed2 = window.confirm('最終確認：本当に削除してよいですか？');
-  if (!confirmed2) return;
+  if (!window.confirm('最終確認：本当に削除してよいですか？')) return;
 
-  UI.toast('リセット中…', 'info', 5000);
+  const btn = document.querySelector('[onclick*="_devReset"]');
+  if (btn) { btn.disabled = true; btn.textContent = 'リセット中…'; }
+
   try {
     const res = await API.system.resetAllData();
-
-    // ローカルキャッシュも全クリア
+    // ローカルキャッシュクリア
     try {
-      localStorage.removeItem('hercules_db');
-      localStorage.removeItem('hercules_last_sync');
+      Object.keys(localStorage).forEach(k => {
+        if (k.startsWith('hercules')) localStorage.removeItem(k);
+      });
       Store.clearCache();
     } catch(e) {}
 
-    const detail = (res.results || []).join('\n');
-    UI.toast('リセット完了 ✅', 'success');
-    setTimeout(() => {
-      window.alert('✅ リセット完了\n\n' + detail);
-      location.reload();
-    }, 800);
+    window.alert('✅ リセット完了\n\n' + (res.results || []).join('\n'));
+    location.reload();
   } catch(e) {
-    UI.toast('リセット失敗: ' + e.message, 'error');
+    window.alert('❌ リセット失敗:\n' + e.message + '\n\nGASを再デプロイして再試行してください。');
+    if (btn) { btn.disabled = false; btn.textContent = '🗑️ 全データリセット（テスト用）'; }
   }
 };
 
