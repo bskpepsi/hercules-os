@@ -192,6 +192,7 @@ Pages._lineShowClosed = function () {
 
 // ── ライン詳細 ───────────────────────────────────────────────────
 Pages.lineDetail = async function (lineId) {
+  if (lineId && typeof lineId === 'object') lineId = lineId.id || lineId.lineId || '';
   const main = document.getElementById('main');
   let line = Store.getLine(lineId);
   if (line) _renderLineDetail(line, main);
