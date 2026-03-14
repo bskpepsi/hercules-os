@@ -16,17 +16,21 @@ const Pages = window.Pages || {};
 // ────────────────────────────────────────────────────────────────
 Pages.individualList = function () {
   const main   = document.getElementById('main');
-  const params = Store.getParams();
+  const params = Store.getParams() || {};
 
-  // 修正②: routeTo('ind-list',{stage:'T2A', status:'alive'}) を初期値に反映
+  // ライン詳細から来た場合は固定フィルタ（ライン限定モード）
+  const fixedLineId = params.line_id || '';
+  const fixedLine   = fixedLineId ? Store.getLine(fixedLineId) : null;
+  const isLineLimited = !!fixedLineId;
+
   let filters = {
-    status: params.status || 'alive',
-    q:      params.q      || '',
-    stage:  params.stage  || '',
-    sex:    params.sex    || '',
+    status:  params.status || 'alive',
+    q:       params.q      || '',
+    stage:   params.stage  || '',
+    sex:     params.sex    || '',
+    line_id: fixedLineId,
   };
 
-  // 修正①③: フィルタ変更時に一覧本体・件数・ステータスラベルを一括更新
   function _applyFilters() {
     const list = Store.filterIndividuals(filters);
     const el   = document.getElementById('ind-list-body');
@@ -45,9 +49,15 @@ Pages.individualList = function () {
   function render() {
     const list  = Store.filterIndividuals(filters);
     const total = list.length;
+    const title = isLineLimited
+      ? (fixedLine ? fixedLine.display_id + ' の個体' : '個体一覧')
+      : '個体一覧';
+    const headerOpts = isLineLimited
+      ? { back: true, action: { fn: "routeTo('ind-new',{lineId:'" + fixedLineId + "'})", icon: '＋' } }
+      : { action: { fn: "routeTo('ind-new')", icon: '＋' } };
 
     main.innerHTML = `
-      ${UI.header('個体一覧', { action: { fn: "routeTo('ind-new')", icon: '＋' } })}
+      ${UI.header(title, headerOpts)}
       <div class="page-body">
         <div class="search-bar">
           <input id="q" class="search-input" placeholder="🔍 ID・メモ・表示ID検索" value="${filters.q}">
