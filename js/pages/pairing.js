@@ -86,6 +86,7 @@ function _exchangeBadgeHtml(pair) {
 
 // ── 産卵セット詳細 ───────────────────────────────────────────────
 Pages.pairingDetail = async function (setId) {
+  if (setId && typeof setId === 'object') setId = setId.id || setId.pairingId || setId.setId || '';
   const main = document.getElementById('main');
 
   // キャッシュがあれば即時表示（ちらつき防止）
