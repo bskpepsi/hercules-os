@@ -48,7 +48,7 @@ function _bldCard(b) {
 
   return `
     <div class="card" style="padding:12px 14px;cursor:pointer"
-      onclick="routeTo('bloodline-detail','${b.bloodline_id}')">
+      onclick="routeTo('bloodline-detail',{id:'${b.bloodline_id}'})">
 
       <!-- 1行目: 血統名 + ステータス -->
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
