@@ -266,6 +266,7 @@ Pages._bldSave = async function (editId) {
   } catch (e) {}
 };
 
-PAGES['bloodline-list']   = () => Pages.bloodlineList();
-PAGES['bloodline-detail'] = () => Pages.bloodlineDetail(Store.getParams().id);
-PAGES['bloodline-new']    = () => Pages.bloodlineNew(Store.getParams());
+window.PAGES = window.PAGES || {};
+window.PAGES['bloodline-list']   = () => Pages.bloodlineList();
+window.PAGES['bloodline-detail'] = () => Pages.bloodlineDetail(Store.getParams().id);
+window.PAGES['bloodline-new']    = () => Pages.bloodlineNew(Store.getParams());

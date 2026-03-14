@@ -369,4 +369,5 @@ function _dashHeader() {
   </header>`;
 }
 
-PAGES['dashboard'] = () => Pages.dashboard();
+window.PAGES = window.PAGES || {};
+window.PAGES['dashboard'] = () => Pages.dashboard();

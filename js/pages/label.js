@@ -131,17 +131,68 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
   const canvas = document.getElementById('lbl-canvas');
   if (!canvas) return;
 
-  // GASからラベルデータ取得
+  // ── ローカルキャッシュからラベルデータを組み立て（GAS通信なし・即時）──
   let ld;
   try {
-    const res = await API.label.generate(targetType, targetId, labelType);
-    ld = res.label_data;
+    if (targetType === 'IND') {
+      const ind  = Store.getIndividual(targetId) || {};
+      const line = Store.getLine(ind.line_id)    || {};
+      const bld  = (Store.getDB('bloodlines') || []).find(b => b.bloodline_id === ind.bloodline_id) || {};
+      ld = {
+        qr_text:             `IND:${ind.ind_id || targetId}`,
+        display_id:          ind.display_id    || targetId,
+        line_code:           line.line_code    || line.display_id || '',
+        stage_label:         (typeof STAGE_LABELS !== 'undefined' && STAGE_LABELS[ind.current_stage]) || ind.current_stage || '',
+        sex:                 ind.sex           || '',
+        hatch_date:          ind.hatch_date    || '',
+        bloodline:           bld.abbreviation  || bld.bloodline_name || ind.bloodline_name || '',
+        locality:            ind.locality      || '',
+        generation:          ind.generation    || '',
+        label_type:          labelType         || 'ind_fixed',
+        resolved_label_type: 'ind_fixed',
+      };
+    } else if (targetType === 'LOT') {
+      const lot  = Store.getLot(targetId)     || {};
+      const line = Store.getLine(lot.line_id) || {};
+      const autoType = (lot.stage === 'EGG' || lot.stage === 'T0') ? 'egg_lot' : 'multi_lot';
+      ld = {
+        qr_text:             `LOT:${lot.lot_id || targetId}`,
+        display_id:          lot.display_id    || targetId,
+        line_display_id:     line.display_id   || '',
+        line_code:           line.line_code    || line.display_id || '',
+        stage_label:         (typeof STAGE_LABELS !== 'undefined' && STAGE_LABELS[lot.stage]) || lot.stage || '',
+        stage:               lot.stage         || '',
+        hatch_date:          lot.hatch_date    || '',
+        count:               lot.count         || '',
+        mat_type:            lot.mat_type      || '',
+        sex_hint:            lot.sex_hint      || '',
+        size_category:       lot.size_category || '',
+        collect_date:        lot.collect_date  || lot.hatch_date || '',
+        label_type:          labelType,
+        resolved_label_type: labelType || autoType,
+      };
+    } else if (targetType === 'SET') {
+      const set = (Store.getDB('pairings') || []).find(p => p.set_id === targetId) || {};
+      ld = {
+        qr_text:             `SET:${set.set_id || targetId}`,
+        display_id:          set.display_id    || set.set_name || targetId,
+        set_name:            set.set_name      || '',
+        father_info:         set.father_display_name || '',
+        mother_info:         set.mother_display_name || '',
+        pairing_start:       set.pairing_start || '',
+        set_start:           set.set_start     || '',
+        label_type:          'set',
+        resolved_label_type: 'set',
+      };
+    } else {
+      throw new Error('不明なターゲット種別: ' + targetType);
+    }
   } catch (e) {
-    UI.toast('ラベルデータ取得失敗: ' + e.message, 'error');
+    UI.toast('ラベルデータ生成失敗: ' + e.message, 'error');
     return;
   }
 
-  // QRコード生成（hidden div に描画してからCanvasに転写）
+    // QRコード生成（hidden div に描画してからCanvasに転写）
   const qrDiv = document.getElementById('lbl-qr');
   if (qrDiv) {
     qrDiv.innerHTML = '';
@@ -374,4 +425,4 @@ Pages._lblDownload = function () {
   UI.toast('ラベルPNGを保存しました。Phomemoアプリで印刷してください。', 'success', 4000);
 };
 
-PAGES['label-gen'] = () => Pages.labelGen(Store.getParams());
+window.PAGES['label-gen'] = () => Pages.labelGen(Store.getParams());

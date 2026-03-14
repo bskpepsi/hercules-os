@@ -447,7 +447,8 @@ Pages._lineSave = async function (editId) {
   } catch (e) {}
 };
 
-PAGES['manage']      = () => Pages.manage();
-PAGES['line-list']   = () => Pages.lineList();
-PAGES['line-detail'] = () => Pages.lineDetail(Store.getParams().id);
-PAGES['line-new']    = () => Pages.lineNew(Store.getParams());
+window.PAGES = window.PAGES || {};
+window.PAGES['manage']      = () => Pages.manage();
+window.PAGES['line-list']   = () => Pages.lineList();
+window.PAGES['line-detail'] = () => Pages.lineDetail(Store.getParams().id);
+window.PAGES['line-new']    = () => Pages.lineNew(Store.getParams());

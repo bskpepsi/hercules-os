@@ -529,7 +529,7 @@ Pages._bkLoadHistory = async function () {
   }
 };
 
-PAGES['settings'] = () => Pages.settings();
+window.PAGES['settings'] = () => Pages.settings();
 
 // ── Phase2: 後食・ペアリング設定保存 ────────────────────────────
 Pages._savePairingSettings = async function () {

@@ -16,7 +16,8 @@ function _pid() {
   return p.id || p.lineId || p.lotId || p.indId || p.parId || p.bloodlineId || p.pairingId || p.setId || '';
 }
 
-const PAGES = {
+// window.PAGES: 各ページJSから PAGES['key'] = ... で追加できるようグローバルに定義
+window.PAGES = {
   'dashboard':   () => Pages.dashboard(),
   'ind-list':    () => Pages.individualList(),
   'ind-detail':  () => Pages.individualDetail(_pid()),

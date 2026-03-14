@@ -382,4 +382,5 @@ Pages.growthRecord = function (params = {}) {
 };
 
 // ページ登録
-PAGES['growth-rec'] = () => Pages.growthRecord(Store.getParams());
+window.PAGES = window.PAGES || {};
+window.PAGES['growth-rec'] = () => Pages.growthRecord(Store.getParams());

@@ -1403,4 +1403,4 @@ Pages._t1StartCamera = async function () {
 };
 
 // ルーティング登録
-PAGES['qr-scan-t1'] = () => Pages.qrScanT1();
+window.PAGES['qr-scan-t1'] = () => Pages.qrScanT1();

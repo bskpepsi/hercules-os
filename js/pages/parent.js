@@ -149,7 +149,14 @@ function _renderParDetail(par, main) {
           ${_parInfoRow('入手日',  par.purchase_date || '—')}
           ${par.father_id ? _parInfoRow('父', par.father_id) : ''}
           ${par.mother_id ? _parInfoRow('母', par.mother_id) : ''}
-          ${par.note      ? _parInfoRow('メモ', par.note) : ''}
+          ${par.origin_type === 'bred' ? _parInfoRow('区分', '<span style="color:var(--green);font-weight:600">🌱 自家産（昇格）</span>') : ''}
+          ${par.origin_type === 'purchased' ? _parInfoRow('区分', '🛒 購入') : ''}
+          ${par.origin_individual_id
+            ? _parInfoRow('元個体',
+                `<span style="cursor:pointer;color:var(--blue)"
+                  onclick="routeTo('ind-detail',{id:'${par.origin_individual_id}'})">${par.origin_individual_id}</span>`)
+            : ''}
+          ${par.note ? _parInfoRow('メモ', par.note) : ''}
         </div>
       </div>
 
@@ -274,6 +281,8 @@ Pages._parSave = async function (editId) {
   if (!data.display_name) { UI.toast('名前を入力してください', 'error'); return; }
   if (data.eclosion_date) data.eclosion_date = data.eclosion_date.replace(/-/g, '/');
   if (data.purchase_date) data.purchase_date = data.purchase_date.replace(/-/g, '/');
+  // 手動登録は購入種親扱い
+  if (!editId && !data.origin_type) data.origin_type = 'purchased';
   try {
     if (editId) {
       data.par_id = editId;
@@ -288,6 +297,6 @@ Pages._parSave = async function (editId) {
   } catch (e) {}
 };
 
-PAGES['parent-list']   = () => Pages.parentList();
-PAGES['parent-detail'] = () => Pages.parentDetail(Store.getParams().id);
-PAGES['parent-new']    = () => Pages.parentNew(Store.getParams());
+window.PAGES['parent-list']   = () => Pages.parentList();
+window.PAGES['parent-detail'] = () => Pages.parentDetail(Store.getParams().id);
+window.PAGES['parent-new']    = () => Pages.parentNew(Store.getParams());

@@ -488,7 +488,8 @@ Pages._lotSave = async function () {
 
 // ページ登録
 Pages.lotNew = Pages.lotNew;
-PAGES['lot-list']   = () => Pages.lotList();
+window.PAGES = window.PAGES || {};
+window.PAGES['lot-list']   = () => Pages.lotList();
 
 // ── ロット詳細クイックアクション ─────────────────────────────────
 function _lotQuickActions(lotId) {
@@ -500,5 +501,5 @@ function _lotQuickActions(lotId) {
   ]);
 }
 
-PAGES['lot-detail'] = () => Pages.lotDetail(Store.getParams().id);
-PAGES['lot-new']    = () => Pages.lotNew(Store.getParams());
+window.PAGES['lot-detail'] = () => Pages.lotDetail(Store.getParams().id);
+window.PAGES['lot-new']    = () => Pages.lotNew(Store.getParams());

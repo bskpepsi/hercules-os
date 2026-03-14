@@ -751,7 +751,8 @@ function _clientExtractTags(raw) {
   return Array.from(tags);
 }
 
-PAGES['parent-list']      = () => Pages.parentList();
-PAGES['parent-new']       = () => Pages.parentNew(Store.getParams());
-PAGES['parent-detail']    = () => Pages.parentDetail(Store.getParams().id);
-PAGES['parent-dashboard'] = () => Pages.parentDashboard();
+window.PAGES = window.PAGES || {};
+window.PAGES['parent-list']      = () => Pages.parentList();
+window.PAGES['parent-new']       = () => Pages.parentNew(Store.getParams());
+window.PAGES['parent-detail']    = () => Pages.parentDetail(Store.getParams().id);
+window.PAGES['parent-dashboard'] = () => Pages.parentDashboard();

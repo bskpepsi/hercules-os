@@ -275,6 +275,7 @@ function _parseTags(json) {
 // ════════════════════════════════════════════════════════════════
 // PAGES登録 — bloodline.js の旧ルーティングを bloodline_v2 で上書き
 // ════════════════════════════════════════════════════════════════
-PAGES['bloodline-list']   = () => Pages.bloodlineList();
-PAGES['bloodline-new']    = () => Pages.bloodlineNew(Store.getParams());
-PAGES['bloodline-detail'] = () => Pages.bloodlineDetail(Store.getParams().id);
+window.PAGES = window.PAGES || {};
+window.PAGES['bloodline-list']   = () => Pages.bloodlineList();
+window.PAGES['bloodline-new']    = () => Pages.bloodlineNew(Store.getParams());
+window.PAGES['bloodline-detail'] = () => Pages.bloodlineDetail(Store.getParams().id);

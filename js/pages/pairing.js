@@ -550,6 +550,7 @@ Pages._pairGoLotNew = function (directLineId, motherParId) {
   routeTo('lot-new', lineId ? { lineId } : {});
 };
 
-PAGES['pairing-list']   = () => Pages.pairingList();
-PAGES['pairing-detail'] = () => Pages.pairingDetail(Store.getParams().id);
-PAGES['pairing-new']    = () => Pages.pairingNew(Store.getParams());
+window.PAGES = window.PAGES || {};
+window.PAGES['pairing-list']   = () => Pages.pairingList();
+window.PAGES['pairing-detail'] = () => Pages.pairingDetail(Store.getParams().id);
+window.PAGES['pairing-new']    = () => Pages.pairingNew(Store.getParams());
