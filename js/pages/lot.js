@@ -360,9 +360,9 @@ Pages._execSplit = async function (lotId, maxCount) {
       UI.toast('自動個体化: ' + names, 'success');
     }
 
-    // 分割後はライン詳細 or ロット一覧へ
+    // 分割後はロット一覧へ（ライン限定モード維持）
     const ctx = _splitContext;
-    if (ctx.lineId) routeTo('line-detail', { id: ctx.lineId });
+    if (ctx.lineId) routeTo('lot-list', { line_id: ctx.lineId });
     else routeTo('lot-list');
   } catch (e) {}
 };
