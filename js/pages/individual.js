@@ -523,12 +523,7 @@ function _renderDetail(ind, main) {
       <div style="display:flex;gap:8px">
         <button class="btn btn-ghost btn-sm"
           onclick="Pages._indMarkDead('${ind.ind_id}')">💀 死亡</button>
-        ${ind.status === 'reserved'
-          ? `<button class="btn btn-ghost btn-sm" style="color:var(--blue);border-color:var(--blue)"
-               onclick="Pages._indCancelReserved('${ind.ind_id}')">📦 予約解除</button>`
-          : `<button class="btn btn-ghost btn-sm"
-               onclick="Pages._indMarkReserved('${ind.ind_id}')">📦 予約</button>`
-        }
+        <button class="btn btn-ghost btn-sm" style="${ind.status==='reserved'?'color:var(--blue);border-color:var(--blue);':''}"          onclick="Pages._indMarkReserved('${ind.ind_id}')">📦 予約${ind.status==='reserved'?' ✓':''}</button>
         <button class="btn btn-ghost btn-sm" style="margin-left:auto"
           onclick="Pages._indFlagMenu('${ind.ind_id}','${ind.guinness_flag}','${ind.parent_flag}','${ind.g200_flag}')">
           🏷 フラグ</button>
@@ -802,6 +797,13 @@ Pages.individualNew = function (params = {}) {
           ${UI.field('胸角長 (mm)', UI.input('horn_length_mm', 'number', v('horn_length_mm'), '例: 65.0'))}
         </div>
 
+        <div class="form-title">ステータス</div>
+        ${isEdit ? `<label style="display:flex;align-items:center;gap:8px;padding:10px 0;font-size:.9rem;cursor:pointer">
+          <input type="checkbox" id="chk-reserved" ${ind && ind.status==='reserved' ? 'checked' : ''}
+            style="width:18px;height:18px;cursor:pointer">
+          <span>📦 予約中（チェックを外すと飼育中に戻ります）</span>
+        </label>` : ''}
+
         <div class="form-title">メモ</div>
         ${UI.field('内部メモ（非公開）', UI.textarea('note_private', v('note_private'), 2, '飼育メモ・観察記録'))}
         ${UI.field('購入者向けコメント', UI.textarea('note_public', v('note_public'), 2, '公開可能なコメント'))}
@@ -825,6 +827,14 @@ Pages._indSave = async function (editId) {
 
   // 日付形式を YYYY/MM/DD に統一（inputのvalueは YYYY-MM-DD）
   if (data.hatch_date) data.hatch_date = data.hatch_date.replace(/-/g, '/');
+
+  // 予約チェックボックス：編集時のみ status に反映
+  if (editId) {
+    const chk = document.getElementById('chk-reserved');
+    if (chk) {
+      data.status = chk.checked ? 'reserved' : 'alive';
+    }
+  }
 
   // バリデーション
   if (!editId && !data.line_id) { UI.toast('ラインを選択してください', 'error'); return; }
