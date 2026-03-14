@@ -125,7 +125,7 @@ function _parentCard(p) {
   }
 
   return `
-    <div class="card" onclick="routeTo('parent-detail','${p.par_id}')"
+    <div class="card" onclick="routeTo('parent-detail',{id:'${p.par_id}'})"
          style="padding:12px 14px;cursor:pointer">
 
       <!-- 1段目: ID + 性別 + ステータス + 交配可バッジ -->
@@ -237,7 +237,7 @@ Pages.parentDetail = async function (parIdParam) {
           🍽️ 後食開始日を設定
         </button>` : ''}
         ${p.sex === '♂' ? `
-        <button class="btn btn-secondary" onclick="routeTo('pairing-history','${parId}')">
+        <button class="btn btn-secondary" onclick="routeTo('pairing-history',{id:'${parId}'})">
           📋 ペアリング履歴を見る
         </button>` : ''}
         <button class="btn btn-secondary" onclick="_parentEditStatus('${parId}','${p.status}')">
