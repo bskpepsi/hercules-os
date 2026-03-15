@@ -134,19 +134,31 @@ Pages.growthRecord = function (params = {}) {
             <div class="form-row-2">
               ${UI.field('容器', `<select id="gr-container" class="input">
                 <option value="">変更なし</option>
-                ${CONTAINER_SIZES.map(s => `<option value="${s}">${s}</option>`).join('')}
+                <option value="1.8L">1.8L</option>
+                <option value="2.7L">2.7L</option>
+                <option value="4.8L">4.8L</option>
               </select>`)}
               ${UI.field('交換区分', `<select id="gr-exchange" class="input">
                 <option value="">—</option>
-                ${EXCHANGE_TYPES.map(e => `<option value="${e.code}">${e.label}</option>`).join('')}
+                <option value="FULL">全交換</option>
+                <option value="PARTIAL">追加のみ</option>
               </select>`)}
             </div>
             <div class="form-row-2">
               ${UI.field('マット', `<select id="gr-mat" class="input">
                 <option value="">変更なし</option>
-                ${MAT_TYPES.map(m => `<option value="${m.code}">${m.label}</option>`).join('')}
+                <option value="T0">T0マット</option>
+                <option value="T1">T1マット</option>
+                <option value="T2">T2マット</option>
+                <option value="T3">T3マット</option>
               </select>`)}
               ${UI.field('記録日', `<input type="date" id="gr-date" class="input" value="${today}">`)}
+            </div>
+            <div style="margin-top:8px">
+              <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:10px;background:var(--surface2);border-radius:var(--radius-sm)">
+                <input type="checkbox" id="gr-malt" style="width:18px;height:18px;cursor:pointer">
+                <span style="font-size:.9rem;font-weight:600">🍄 モルト入り</span>
+              </label>
             </div>
             <div class="form-row-2">
               ${UI.field('体色', `<select id="gr-color" class="input">
@@ -322,6 +334,7 @@ Pages.growthRecord = function (params = {}) {
     const aiCmt    = document.getElementById('gr-ai-comment')?.value || '';
     const pub      = document.getElementById('gr-public')?.value || 'private';
 
+    const hasMalt  = document.getElementById('gr-malt')?.checked || false;
     const payload = {
       target_type:   type,
       target_id:     id,
@@ -330,6 +343,7 @@ Pages.growthRecord = function (params = {}) {
       head_width_mm: headW,
       container,
       mat_type:      mat,
+      has_malt:      hasMalt,
       exchange_type: exchange,
       larva_color:   color,
       larva_firmness:firm,

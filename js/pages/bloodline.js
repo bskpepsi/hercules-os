@@ -49,7 +49,7 @@ Pages.bloodlineList = function () {
 function _bldCardHTML(bld) {
   const st = Object.values(BLOODLINE_STATUS).find(s => s.code === bld.bloodline_status);
   const isSystem = bld.bloodline_id === 'BLD-UNKNOWN';
-  return `<div class="ind-card" onclick="routeTo('bloodline-detail',{id:'${bld.bloodline_id}'})">
+  return `<div class="ind-card" onclick="routeTo('bloodline-detail',{bloodlineId:'${bld.bloodline_id}'})">
     <div style="text-align:center;min-width:36px">
       <div style="font-size:1.3rem">🧬</div>
       ${st ? `<div style="font-size:.6rem;color:${st.color}">${st.label}</div>` : ''}
@@ -163,7 +163,7 @@ function _renderBldDetail(bld, main) {
         ${lines.map(l => `
           <div style="display:flex;align-items:center;padding:8px 0;
             border-bottom:1px solid var(--border);cursor:pointer"
-            onclick="routeTo('line-detail',{id:'${l.line_id}'})">
+            onclick="routeTo('line-detail',{lineId:'${l.line_id}'})">
             <div style="flex:1">
               <span style="color:var(--blue);font-family:var(--font-mono);font-size:.85rem">
                 ${l.display_id}
@@ -257,16 +257,16 @@ Pages._bldSave = async function (editId) {
       data.bloodline_id = editId;
       await apiCall(() => API.bloodline.update(data), '更新しました');
       Store.patchDBItem('bloodlines', 'bloodline_id', editId, data);
-      routeTo('bloodline-detail', { id: editId });
+      routeTo('bloodline-detail', { bloodlineId: editId });
     } else {
       const res = await apiCall(() => API.bloodline.create(data), '血統を登録しました');
       await syncAll(true);
-      routeTo('bloodline-detail', { id: res.bloodline_id });
+      routeTo('bloodline-detail', { bloodlineId: res.bloodline_id });
     }
   } catch (e) {}
 };
 
 window.PAGES = window.PAGES || {};
 window.PAGES['bloodline-list']   = () => Pages.bloodlineList();
-window.PAGES['bloodline-detail'] = () => Pages.bloodlineDetail(Store.getParams().id);
+window.PAGES['bloodline-detail'] = () => Pages.bloodlineDetail(Store.getParams().bloodlineId || Store.getParams().id);
 window.PAGES['bloodline-new']    = () => Pages.bloodlineNew(Store.getParams());

@@ -57,9 +57,9 @@ function _renderDashboard(main) {
     if (!due) return;
     const diff = Math.floor((due - today) / 86400000);
     const label = p.set_name || p.display_id;
-    if (diff < 0)   tasks.red.push({ icon:'🥚', text:`${label} セット交換 ${Math.abs(diff)}日超過`, fn:`routeTo('pairing-detail',{id:'${p.set_id}'})` });
-    else if(diff===0) tasks.red.push({ icon:'🔔', text:`${label} 今日セット交換日`, fn:`routeTo('pairing-detail',{id:'${p.set_id}'})` });
-    else if(diff<=2)  tasks.yellow.push({ icon:'📅', text:`${label} セット交換まで${diff}日`, fn:`routeTo('pairing-detail',{id:'${p.set_id}'})` });
+    if (diff < 0)   tasks.red.push({ icon:'🥚', text:`${label} セット交換 ${Math.abs(diff)}日超過`, fn:`routeTo('pairing-detail',{pairingId:'${p.set_id}'})` });
+    else if(diff===0) tasks.red.push({ icon:'🔔', text:`${label} 今日セット交換日`, fn:`routeTo('pairing-detail',{pairingId:'${p.set_id}'})` });
+    else if(diff<=2)  tasks.yellow.push({ icon:'📅', text:`${label} セット交換まで${diff}日`, fn:`routeTo('pairing-detail',{pairingId:'${p.set_id}'})` });
   });
 
   // 種親ペアリング可能判定
@@ -72,8 +72,8 @@ function _renderDashboard(main) {
     const readyDate = new Date(+fpts[0], +fpts[1]-1, +fpts[2]);
     readyDate.setDate(readyDate.getDate() + wait);
     const diff = Math.floor((readyDate - today) / 86400000);
-    if (diff <= 0)  tasks.green.push({ icon:'💕', text:`${p.display_name} ペアリング可能`, fn:`routeTo('parent-detail',{id:'${p.par_id}'})` });
-    else if(diff<=7) tasks.yellow.push({ icon:'⏳', text:`${p.display_name} ペアリングまで${diff}日`, fn:`routeTo('parent-detail',{id:'${p.par_id}'})` });
+    if (diff <= 0)  tasks.green.push({ icon:'💕', text:`${p.display_name} ペアリング可能`, fn:`routeTo('parent-detail',{parId:'${p.par_id}'})` });
+    else if(diff<=7) tasks.yellow.push({ icon:'⏳', text:`${p.display_name} ペアリングまで${diff}日`, fn:`routeTo('parent-detail',{parId:'${p.par_id}'})` });
   });
 
   // 150g超え個体（有望）
@@ -253,7 +253,7 @@ function _renderDashboard(main) {
           <div style="margin-bottom:8px">
             <div style="font-size:.72rem;color:var(--green);font-weight:700;margin-bottom:4px">✅ ペアリング可能（今日〜）</div>
             ${readyToday.map(p=>`
-              <div onclick="routeTo('parent-detail',{id:'${p.par_id}'})" style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;border-bottom:1px solid var(--border)">
+              <div onclick="routeTo('parent-detail',{parId:'${p.par_id}'})" style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;border-bottom:1px solid var(--border)">
                 <span style="font-size:.85rem">${p.sex}</span>
                 <span style="flex:1;font-size:.82rem;font-weight:600">${p.display_name}${p.size_mm?' '+p.size_mm+'mm':''}</span>
                 <span style="font-size:.7rem;color:var(--green)">可能 ›</span>
@@ -263,7 +263,7 @@ function _renderDashboard(main) {
           <div style="margin-bottom:8px">
             <div style="font-size:.72rem;color:var(--amber);font-weight:700;margin-bottom:4px">⏳ 7日以内にペアリング可能</div>
             ${readySoon.map(p=>{ const d=_parentReadyDiff(p); return `
-              <div onclick="routeTo('parent-detail',{id:'${p.par_id}'})" style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;border-bottom:1px solid var(--border)">
+              <div onclick="routeTo('parent-detail',{parId:'${p.par_id}'})" style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;border-bottom:1px solid var(--border)">
                 <span style="font-size:.85rem">${p.sex}</span>
                 <span style="flex:1;font-size:.82rem">${p.display_name}${p.size_mm?' '+p.size_mm+'mm':''}</span>
                 <span style="font-size:.7rem;color:var(--amber)">あと${d}日 ›</span>
@@ -273,7 +273,7 @@ function _renderDashboard(main) {
           <div>
             <div style="font-size:.72rem;color:var(--text3);font-weight:700;margin-bottom:4px">⚠️ 後食開始日未設定 (${noFeeding.length}頭)</div>
             ${noFeeding.slice(0,3).map(p=>`
-              <div onclick="routeTo('parent-detail',{id:'${p.par_id}'})" style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;border-bottom:1px solid var(--border)">
+              <div onclick="routeTo('parent-detail',{parId:'${p.par_id}'})" style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;border-bottom:1px solid var(--border)">
                 <span style="font-size:.85rem">${p.sex}</span>
                 <span style="flex:1;font-size:.82rem;color:var(--text2)">${p.display_name}${p.size_mm?' '+p.size_mm+'mm':''}</span>
                 <span style="font-size:.7rem;color:var(--blue)">設定 ›</span>
@@ -325,7 +325,7 @@ function _renderDashboard(main) {
         ${over150.length ? `<div style="font-size:.75rem;color:var(--green);margin-bottom:6px">150g超え ${over150.length}頭</div>` : ''}
         ${topWeight.map((ind,i) => {
           const ageObj = Store.calcAge(ind.hatch_date);
-          return `<div onclick="routeTo('ind-detail',{id:'${ind.ind_id}'})" style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer">
+          return `<div onclick="routeTo('ind-detail',{indId:'${ind.ind_id}'})" style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer">
             <span style="font-size:.78rem;color:var(--text3);min-width:18px">${i+1}</span>
             <div style="flex:1">
               <div style="font-family:var(--font-mono);font-size:.8rem;color:var(--gold)">${ind.display_id}</div>

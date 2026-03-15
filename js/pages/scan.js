@@ -200,9 +200,9 @@ Pages._qrResolve = async function () {
     } else {
       // 確認モード: 直接詳細画面へ
       const eid = res.entity?.ind_id || res.entity?.lot_id || res.entity?.set_id;
-      if (res.entity_type === 'IND' && eid)      routeTo('ind-detail',     { id: eid });
-      else if (res.entity_type === 'LOT' && eid) routeTo('lot-detail',     { id: eid });
-      else if (res.entity_type === 'SET' && eid) routeTo('pairing-detail', { id: eid });
+      if (res.entity_type === 'IND' && eid)      routeTo('ind-detail',     { indId: eid });
+      else if (res.entity_type === 'LOT' && eid) routeTo('lot-detail',     { lotId: eid });
+      else if (res.entity_type === 'SET' && eid) routeTo('pairing-detail', { pairingId: eid });
       else routeTo('qr-diff', { resolve_result: res, qr_text: qrText });
     }
   } catch (e) {
@@ -685,9 +685,9 @@ Pages._qrDiffSave = async function (entityType, entityId) {
 
     // 完了後 → 詳細画面へ遷移
     setTimeout(() => {
-      if (entityType === 'LOT')      routeTo('lot-detail',     { id: entityId });
-      else if (entityType === 'IND') routeTo('ind-detail',     { id: entityId });
-      else if (entityType === 'SET') routeTo('pairing-detail', { id: entityId });
+      if (entityType === 'LOT')      routeTo('lot-detail',     { lotId: entityId });
+      else if (entityType === 'IND') routeTo('ind-detail',     { indId: entityId });
+      else if (entityType === 'SET') routeTo('pairing-detail', { pairingId: entityId });
     }, 1000);
 
   } catch (e) {

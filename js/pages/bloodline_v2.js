@@ -48,7 +48,7 @@ function _bldCard(b) {
 
   return `
     <div class="card" style="padding:12px 14px;cursor:pointer"
-      onclick="routeTo('bloodline-detail',{id:'${b.bloodline_id}'})">
+      onclick="routeTo('bloodline-detail',{bloodlineId:'${b.bloodline_id}'})">
 
       <!-- 1行目: 血統名 + ステータス -->
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
@@ -278,4 +278,4 @@ function _parseTags(json) {
 window.PAGES = window.PAGES || {};
 window.PAGES['bloodline-list']   = () => Pages.bloodlineList();
 window.PAGES['bloodline-new']    = () => Pages.bloodlineNew(Store.getParams());
-window.PAGES['bloodline-detail'] = () => Pages.bloodlineDetail(Store.getParams().id);
+window.PAGES['bloodline-detail'] = () => Pages.bloodlineDetail(Store.getParams().bloodlineId || Store.getParams().id);

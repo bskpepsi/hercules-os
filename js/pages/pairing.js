@@ -37,7 +37,7 @@ function _pairCardHTML(pair) {
   const colMap = { active: 'var(--green)', completed: 'var(--blue)', failed: 'var(--red)' };
   const col  = colMap[pair.status] || 'var(--text3)';
   const badge = _exchangeBadgeHtml(pair);
-  return `<div class="ind-card" onclick="routeTo('pairing-detail',{id:'${pair.set_id}'})">
+  return `<div class="ind-card" onclick="routeTo('pairing-detail',{pairingId:'${pair.set_id}'})">
     <div style="text-align:center;min-width:40px">
       <div style="font-size:1.3rem">🥚</div>
       <div style="font-size:.62rem;color:${col}">${pair.status||'—'}</div>
@@ -175,7 +175,7 @@ function _renderPairDetail(pair, eggRecords, main) {
           ${_prow('<span style="color:var(--male)">♂親</span>', f ? (() => {
             const fBld = f.bloodline_id ? (Store.getDB('bloodlines')||[]).find(b=>b.bloodline_id===f.bloodline_id) : null;
             const fBldStr = fBld ? (fBld.abbreviation||fBld.bloodline_name||'') : '';
-            return `<span style="cursor:pointer;color:var(--male)" onclick="routeTo('parent-detail',{id:'${f.par_id}'})">
+            return `<span style="cursor:pointer;color:var(--male)" onclick="routeTo('parent-detail',{parId:'${f.par_id}'})">
               ${f.display_name}${f.size_mm?' <strong>'+f.size_mm+'mm</strong>':''}
               ${fBldStr?'<span style="color:var(--text3);font-size:.78rem"> / '+fBldStr+'</span>':''}
             </span>`;
@@ -183,7 +183,7 @@ function _renderPairDetail(pair, eggRecords, main) {
           ${_prow('<span style="color:var(--female)">♀親</span>', m ? (() => {
             const mBld = m.bloodline_id ? (Store.getDB('bloodlines')||[]).find(b=>b.bloodline_id===m.bloodline_id) : null;
             const mBldStr = mBld ? (mBld.abbreviation||mBld.bloodline_name||'') : '';
-            return `<span style="cursor:pointer;color:var(--female)" onclick="routeTo('parent-detail',{id:'${m.par_id}'})">
+            return `<span style="cursor:pointer;color:var(--female)" onclick="routeTo('parent-detail',{parId:'${m.par_id}'})">
               ${m.display_name}${m.size_mm?' <strong>'+m.size_mm+'mm</strong>':''}
               ${mBldStr?'<span style="color:var(--text3);font-size:.78rem"> / '+mBldStr+'</span>':''}
             </span>`;
@@ -256,8 +256,6 @@ function _eggHistoryHtml(eggRecords, pair) {
         <div style="display:flex;gap:6px;margin-top:8px">
           <button class="btn btn-ghost btn-sm" style="flex:1;font-size:.75rem"
             onclick="Pages._pairEditOneEgg('${rec.egg_record_id}','${pair.set_id}')">✏️ 編集</button>
-          <button class="btn btn-ghost btn-sm" style="flex:1;font-size:.75rem;color:var(--red)"
-style="display:none">
         </div>
       </div>`;
     }).join('');
@@ -514,7 +512,7 @@ Pages._pairSave = async function (editId) {
       data.set_id = editId;
       await apiCall(() => API.pairing.update(data), '更新しました');
       await syncAll(true);
-      routeTo('pairing-detail', { id: editId });
+      routeTo('pairing-detail', { pairingId: editId });
     } else {
       const res = await apiCall(() => API.pairing.create(data), '産卵セットを登録しました');
       await syncAll(true);
@@ -522,7 +520,7 @@ Pages._pairSave = async function (editId) {
       if (res.auto_line) {
         UI.toast('ライン ' + res.auto_line.display_id + ' を自動作成しました', 'success');
       }
-      routeTo('pairing-detail', { id: res.set_id });
+      routeTo('pairing-detail', { pairingId: res.set_id });
     }
   } catch(e) {}
 };
@@ -538,5 +536,5 @@ Pages._pairGoLotNew = function (directLineId, motherParId) {
 
 window.PAGES = window.PAGES || {};
 window.PAGES['pairing-list']   = () => Pages.pairingList();
-window.PAGES['pairing-detail'] = () => Pages.pairingDetail(Store.getParams().id);
+window.PAGES['pairing-detail'] = () => Pages.pairingDetail(Store.getParams().pairingId || Store.getParams().id);
 window.PAGES['pairing-new']    = () => Pages.pairingNew(Store.getParams());

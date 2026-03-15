@@ -102,23 +102,20 @@ const PUBLIC_LEVELS = {
 
 // ── マット種別 ──────────────────────────────────────────────────
 const MAT_TYPES = [
-  { code:'T0',  label:'T0マット' },
-  { code:'T1',  label:'T1マット' },
-  { code:'T2A', label:'T2マット（モルト入り）' },
-  { code:'T2B', label:'T2マット（純）' },
-  { code:'T3',  label:'T3マット' },
+  { code:'T0', label:'T0マット' },
+  { code:'T1', label:'T1マット' },
+  { code:'T2', label:'T2マット' },
+  { code:'T3', label:'T3マット' },
 ];
 
 // ── 容器サイズ ──────────────────────────────────────────────────
 const CONTAINER_SIZES = [
-  '1.8L', '2.7L（2頭）', '2.7L（個別）', '4.8L（個別）', '10L（個別）',
+  '1.8L', '2.7L', '4.8L',
 ];
 
 // ── マット交換区分 ──────────────────────────────────────────────
 const EXCHANGE_TYPES = [
-  { code:'FIRST',   label:'初回投入' },
   { code:'FULL',    label:'全交換' },
-  { code:'HALF',    label:'半交換' },
   { code:'PARTIAL', label:'追加のみ' },
 ];
 

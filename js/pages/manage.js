@@ -157,7 +157,7 @@ function _lineCardHTML(line) {
   })();
 
   return `<div class="card" style="padding:12px 14px;cursor:pointer;display:flex;align-items:center;gap:14px"
-    onclick="routeTo('line-detail',{id:'${line.line_id}'})">
+    onclick="routeTo('line-detail',{lineId:'${line.line_id}'})">
 
     <!-- 左：ラインコード主役 -->
     <div style="min-width:52px;text-align:center">
@@ -237,7 +237,7 @@ function _renderLineDetail(line, main) {
     if (!p) return '<span style="color:var(--text3)">—（未設定）</span>';
     const bldStr = pBld ? (pBld.abbreviation || pBld.bloodline_name || '') : '';
     const sizeStr = p.size_mm ? ' <strong>' + p.size_mm + 'mm</strong>' : '';
-    return '<span style="cursor:pointer;color:' + sexColor + '" onclick="routeTo(\x27parent-detail\x27,{id:\x27' + p.par_id + '\x27})">'
+    return '<span style="cursor:pointer;color:' + sexColor + '" onclick="routeTo(\x27parent-detail\x27,{parId:\x27' + p.par_id + '\x27})">'
       + p.display_name + sizeStr
       + (bldStr ? '<span style="color:var(--text3);font-size:.78rem"> / ' + bldStr + '</span>' : '')
       + '</span>';
@@ -315,7 +315,7 @@ function _renderLineDetail(line, main) {
         ${pairings.map(p => `
           <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">
             <span style="font-family:var(--font-mono);font-size:.82rem;color:var(--blue);cursor:pointer"
-              onclick="routeTo('pairing-detail',{id:'${p.set_id}'})">
+              onclick="routeTo('pairing-detail',{pairingId:'${p.set_id}'})">
               ${p.display_id}
             </span>
             <span style="font-size:.78rem;color:var(--text3)">${p.pairing_start || '—'}</span>
@@ -337,7 +337,7 @@ function _renderLineDetail(line, main) {
         <div class="card-title">血統・ライン情報</div>
         <div class="info-list">
           ${bld ? _lnRow('血統',
-              '<span style="cursor:pointer;color:var(--blue)" onclick="routeTo(\x27bloodline-detail\x27,{id:\x27' + bld.bloodline_id + '\x27})">' + bld.bloodline_name + '</span>') : ''}
+              '<span style="cursor:pointer;color:var(--blue)" onclick="routeTo(\x27bloodline-detail\x27,{bloodlineId:\x27' + bld.bloodline_id + '\x27})">' + bld.bloodline_name + '</span>') : ''}
           ${line.locality   ? _lnRow('産地',   line.locality)   : ''}
           ${line.generation ? _lnRow('累代',   line.generation) : ''}
           ${line.characteristics ? _lnRow('特徴', line.characteristics) : ''}
@@ -425,11 +425,11 @@ Pages._lineSave = async function (editId) {
       data.line_id = editId;
       await apiCall(() => API.line.update(data), '更新しました');
       await syncAll(true);
-      routeTo('line-detail', { id: editId });
+      routeTo('line-detail', { lineId: editId });
     } else {
       const res = await apiCall(() => API.line.create(data), 'ラインを登録しました');
       await syncAll(true);
-      routeTo('line-detail', { id: res.line_id });
+      routeTo('line-detail', { lineId: res.line_id });
     }
   } catch (e) {
     UI.toast('エラー: ' + (e.message || '不明'), 'error');
@@ -439,5 +439,5 @@ Pages._lineSave = async function (editId) {
 window.PAGES = window.PAGES || {};
 window.PAGES['manage']      = () => Pages.manage();
 window.PAGES['line-list']   = () => Pages.lineList();
-window.PAGES['line-detail'] = () => Pages.lineDetail(Store.getParams().id);
+window.PAGES['line-detail'] = () => Pages.lineDetail(Store.getParams().lineId || Store.getParams().id);
 window.PAGES['line-new']    = () => Pages.lineNew(Store.getParams());

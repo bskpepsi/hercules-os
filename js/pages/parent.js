@@ -54,7 +54,7 @@ function _parCardHTML(par) {
   const bld     = Store.getBloodline(par.bloodline_id);
   const isRetired = par.status && par.status !== 'active';
   return `<div class="ind-card ${isRetired ? 'ind-card--retired' : ''}"
-    onclick="routeTo('parent-detail',{id:'${par.par_id}'})">
+    onclick="routeTo('parent-detail',{parId:'${par.par_id}'})">
     <div style="text-align:center;min-width:36px">
       <div style="font-size:1.4rem">${par.sex === '♂' ? '♂' : '♀'}</div>
       <div style="font-size:.62rem;color:var(--text3)">${isRetired ? '引退' : '現役'}</div>
@@ -154,7 +154,7 @@ function _renderParDetail(par, main) {
           ${par.origin_individual_id
             ? _parInfoRow('元個体',
                 `<span style="cursor:pointer;color:var(--blue)"
-                  onclick="routeTo('ind-detail',{id:'${par.origin_individual_id}'})">${par.origin_individual_id}</span>`)
+                  onclick="routeTo('ind-detail',{indId:'${par.origin_individual_id}'})">${par.origin_individual_id}</span>`)
             : ''}
           ${par.note ? _parInfoRow('メモ', par.note) : ''}
         </div>
@@ -169,7 +169,7 @@ function _renderParDetail(par, main) {
         <div class="card-title">関連ライン（${lines.length}件）</div>
         ${lines.map(l => `
           <div style="display:flex;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);
-            cursor:pointer" onclick="routeTo('line-detail',{id:'${l.line_id}'})">
+            cursor:pointer" onclick="routeTo('line-detail',{lineId:'${l.line_id}'})">
             <div style="flex:1">
               <span style="color:var(--blue);font-family:var(--font-mono);font-size:.85rem">
                 ${l.display_id}
@@ -288,15 +288,15 @@ Pages._parSave = async function (editId) {
       data.par_id = editId;
       await apiCall(() => API.parent.update(data), '更新しました');
       Store.patchDBItem('parents', 'par_id', editId, data);
-      routeTo('parent-detail', { id: editId });
+      routeTo('parent-detail', { parId: editId });
     } else {
       const res = await apiCall(() => API.parent.create(data), '種親を登録しました');
       await syncAll(true);
-      routeTo('parent-detail', { id: res.par_id });
+      routeTo('parent-detail', { parId: res.par_id });
     }
   } catch (e) {}
 };
 
 window.PAGES['parent-list']   = () => Pages.parentList();
-window.PAGES['parent-detail'] = () => Pages.parentDetail(Store.getParams().id);
+window.PAGES['parent-detail'] = () => Pages.parentDetail(Store.getParams().parId || Store.getParams().id);
 window.PAGES['parent-new']    = () => Pages.parentNew(Store.getParams());

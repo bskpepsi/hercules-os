@@ -90,7 +90,7 @@ function _lotCardHTML(lot) {
   const maltIcon = String(lot.has_malt) === 'true' ? ' 🍄' : '';
   const stageLabel2 = lot.stage === 'T2A' ? 'T2①(モルト入り)' : lot.stage === 'T2B' ? 'T2②(純T2)' : stageLabel(lot.stage);
 
-  return `<div class="ind-card" onclick="routeTo('lot-detail',{id:'${lot.lot_id}'})">
+  return `<div class="ind-card" onclick="routeTo('lot-detail',{lotId:'${lot.lot_id}'})">
     <div style="min-width:42px;text-align:center">
       <div style="font-size:1.4rem">🥚</div>
       <div style="font-size:.7rem;color:var(--text3);margin-top:2px">${lot.count}頭</div>
@@ -170,7 +170,7 @@ function _renderLotDetail(lot, main) {
         ${age ? `<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:10px">
           <div style="font-size:.7rem;color:var(--text3);margin-bottom:6px">📅 現在の日齢</div>
           ${UI.ageFull(lot.hatch_date)}
-        </div>` : '<div style="color:var(--amber);font-size:.8rem">⚠️ 孵化日未設定</div>'}
+        </div>` : ''}
       </div>
 
       <!-- アクションボタン：同格2ボタン -->
@@ -187,25 +187,34 @@ function _renderLotDetail(lot, main) {
         </button>
       </div>
       ${(lot.stage === 'T0' || lot.stage === 'T1') ? `
-      <button class="btn btn-secondary btn-full" style="margin-top:4px"
+      <button style="width:100%;padding:12px;margin-top:4px;border-radius:var(--radius);
+        font-weight:700;font-size:.9rem;background:var(--surface2);color:var(--text1);
+        border:1px solid var(--border);cursor:pointer"
         onclick="routeTo('qr-scan-t1')">
-        🔄 T1交換 連続処理モード
+        🔄 マット交換 連続モード
       </button>` : ''}
 
       <!-- 基本情報 -->
       <div class="card">
         <div class="card-title">ロット情報</div>
         <div class="info-list">
-          ${_infoRow('ライン', line ? `<span onclick="routeTo('line-detail',{id:'${line.line_id}'})" style="color:var(--blue);cursor:pointer">${line.display_id}</span>` : lot.line_id)}
+          ${_infoRow('ライン', line ? `<span onclick="routeTo('line-detail',{lineId:'${line.line_id}'})" style="color:var(--blue);cursor:pointer">${line.display_id}</span>` : lot.line_id)}
           ${_infoRow('容器',       lot.container_size   || '—')}
           ${_infoRow('マット',     lot.mat_type         || '—')}
           ${_infoRow('モルト',     maltText)}
           ${_infoRow('孵化日',     lot.hatch_date       || '未設定')}
           ${_infoRow('最終交換',   lot.mat_changed_at   || '—')}
-          ${lot.parent_lot_id ? _infoRow('分割元', `<span style="color:var(--blue);cursor:pointer" onclick="routeTo('lot-detail',{id:'${lot.parent_lot_id}'})">${lot.parent_lot_id}</span>`) : ''}
+          ${lot.parent_lot_id ? _infoRow('分割元', `<span style="color:var(--blue);cursor:pointer" onclick="routeTo('lot-detail',{lotId:'${lot.parent_lot_id}'})">${lot.parent_lot_id}</span>`) : ''}
           ${lot.note ? _infoRow('メモ', lot.note) : ''}
         </div>
       </div>
+
+      <!-- 孵化日未設定時のボタン -->
+      ${!lot.hatch_date ? `
+      <button class="btn btn-full" style="background:var(--amber);color:#1a1a1a;font-weight:700"
+        onclick="Pages._lotSetHatchDate('${lot.lot_id}')">
+        📅 孵化日を設定
+      </button>` : ''}
 
       <!-- 成長記録 -->
       <div class="accordion" id="acc-lot-growth">
@@ -472,7 +481,7 @@ Pages._lotSave = async function () {
   try {
     const res = await apiCall(() => API.lot.create(data), 'ロットを登録しました');
     await syncAll(true);
-    routeTo('lot-detail', { id: res.lot_id });
+    routeTo('lot-detail', { lotId: res.lot_id });
   } catch (e) {}
 };
 
@@ -484,12 +493,93 @@ window.PAGES['lot-list']   = () => Pages.lotList();
 // ── ロット詳細クイックアクション ─────────────────────────────────
 function _lotQuickActions(lotId) {
   UI.actionSheet([
-    { label: '⚖️ 体重測定（QRスキャン）', fn: () => routeTo('qr-scan', { mode: 'weight' }) },
-    { label: '📷 QRスキャン（差分入力）', fn: () => routeTo('qr-scan') },
+    { label: '✏️ ロット情報を修正', fn: () => Pages._lotEdit(lotId) },
+    { label: '📋 成長記録を追加', fn: () => routeTo('growth-rec', { targetType: 'LOT', targetId: lotId }) },
     { label: '🏷️ ラベル発行', fn: () => routeTo('label-gen', { targetType: 'LOT', targetId: lotId }) },
-    { label: '📋 成長記録を追加', fn: () => routeTo('growth-rec', { target_type: 'LOT', target_id: lotId }) },
+    { label: '⚖️ 体重測定（QRスキャン）', fn: () => routeTo('qr-scan', { mode: 'weight' }) },
   ]);
 }
 
-window.PAGES['lot-detail'] = () => Pages.lotDetail(Store.getParams().id);
+// ── ロット情報編集モーダル ─────────────────────────────────────
+Pages._lotEdit = function (lotId) {
+  const lot = Store.getLot(lotId);
+  if (!lot) { UI.toast('ロットが見つかりません', 'error'); return; }
+  const today = new Date().toISOString().split('T')[0];
+  UI.modal(`
+    <div class="modal-title">ロット情報を修正</div>
+    <div class="form-section" style="max-height:65vh;overflow-y:auto">
+      <div class="form-row-2">
+        ${UI.field('孵化日', `<input type="date" id="le-hatch" class="input" value="${(lot.hatch_date||'').replace(/\//g,'-')}">`)}
+        ${UI.field('頭数', `<input type="number" id="le-count" class="input" value="${lot.count||''}" min="1">`)}
+      </div>
+      <div class="form-row-2">
+        ${UI.field('容器', `<select id="le-container" class="input">
+          ${['','1.8L','2.7L','4.8L'].map(s=>`<option value="${s}" ${lot.container_size===s?'selected':''}>${s||'— 未選択 —'}</option>`).join('')}
+        </select>`)}
+        ${UI.field('マット', `<select id="le-mat" class="input">
+          ${[{code:'',label:'— 未選択 —'},...MAT_TYPES].map(m=>`<option value="${m.code}" ${lot.mat_type===m.code?'selected':''}>${m.label}</option>`).join('')}
+        </select>`)}
+      </div>
+      ${UI.field('メモ', `<input type="text" id="le-note" class="input" value="${lot.note||''}" placeholder="任意のメモ">`)}
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" style="flex:1" onclick="UI.closeModal()">キャンセル</button>
+      <button class="btn btn-primary" style="flex:2" onclick="Pages._lotEditSave('${lotId}')">更新</button>
+    </div>
+  `);
+};
+
+Pages._lotEditSave = async function (lotId) {
+  const hatch     = document.getElementById('le-hatch')?.value?.replace(/-/g,'/') || '';
+  const count     = parseInt(document.getElementById('le-count')?.value || '0');
+  const container = document.getElementById('le-container')?.value || '';
+  const mat       = document.getElementById('le-mat')?.value || '';
+  const note      = document.getElementById('le-note')?.value || '';
+  try {
+    UI.loading(true);
+    UI.closeModal();
+    await API.lot.update({ lot_id: lotId, hatch_date: hatch, count, container_size: container, mat_type: mat, note });
+    await syncAll(true);
+    UI.toast('ロット情報を更新しました');
+    Pages.lotDetail({ id: lotId });
+  } catch(e) {
+    UI.toast('更新失敗: ' + e.message, 'error');
+  } finally {
+    UI.loading(false);
+  }
+};
+
+// ── 孵化日設定 ───────────────────────────────────────────────
+Pages._lotSetHatchDate = function (lotId) {
+  UI.modal(`
+    <div class="modal-title">📅 孵化日を設定</div>
+    <div class="form-section">
+      ${UI.field('孵化日', `<input type="date" id="lot-hatch-inp" class="input" value="${new Date().toISOString().split('T')[0]}">`)}
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" style="flex:1" onclick="UI.closeModal()">キャンセル</button>
+      <button class="btn btn-primary" style="flex:2" onclick="Pages._lotHatchSave('${lotId}')">設定</button>
+    </div>
+  `);
+};
+
+Pages._lotHatchSave = async function (lotId) {
+  const val = document.getElementById('lot-hatch-inp')?.value;
+  if (!val) { UI.toast('日付を選択してください'); return; }
+  const date = val.replace(/-/g, '/');
+  try {
+    UI.loading(true);
+    UI.closeModal();
+    await API.lot.update({ lot_id: lotId, hatch_date: date });
+    await syncAll(true);
+    UI.toast('孵化日を設定しました');
+    Pages.lotDetail({ id: lotId });
+  } catch(e) {
+    UI.toast('設定失敗: ' + e.message, 'error');
+  } finally {
+    UI.loading(false);
+  }
+};
+
+window.PAGES['lot-detail'] = () => Pages.lotDetail(Store.getParams().lotId || Store.getParams().id);
 window.PAGES['lot-new']    = () => Pages.lotNew(Store.getParams());

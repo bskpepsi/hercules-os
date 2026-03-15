@@ -211,7 +211,7 @@ function _indCardHTML(ind) {
   // 性別色
   const sexColor = ind.sex === '♂' ? 'var(--male,#5ba8e8)' : ind.sex === '♀' ? 'var(--female,#e87fa0)' : 'var(--text3)';
 
-  return '<div class="ind-card" onclick="routeTo(\x27ind-detail\x27,{id:\x27' + ind.ind_id + '\x27})" style="padding:10px 12px">'
+  return '<div class="ind-card" onclick="routeTo(\x27ind-detail\x27,{indId:\x27' + ind.ind_id + '\x27})" style="padding:10px 12px">'
     // 【1行目】性別 + ID + ステージ
     + '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">'
     +   '<span style="font-weight:700;color:' + sexColor + ';font-size:.95rem">' + (ind.sex || '?') + '</span>'
@@ -248,12 +248,12 @@ Pages._indQrScan = function () {
 
   // 内部ID形式ならそのまま遷移
   if (trimmed.startsWith('IND-')) {
-    routeTo('ind-detail', { id: trimmed });
+    routeTo('ind-detail', { indId: trimmed });
     return;
   }
   // QRに "IND:IND-xxxxx" 形式で埋め込まれた場合
   if (trimmed.startsWith('IND:')) {
-    routeTo('ind-detail', { id: trimmed.replace('IND:', '') });
+    routeTo('ind-detail', { indId: trimmed.replace('IND:', '') });
     return;
   }
   // 表示IDで逆引き（例: HM2025-A1-001）
@@ -263,7 +263,7 @@ Pages._indQrScan = function () {
     i.display_id?.toLowerCase() === trimmed.toLowerCase()
   );
   if (found) {
-    routeTo('ind-detail', { id: found.ind_id });
+    routeTo('ind-detail', { indId: found.ind_id });
   } else {
     UI.toast('個体が見つかりません: ' + trimmed, 'error');
   }
@@ -430,10 +430,10 @@ function _renderDetail(ind, main) {
             ${_infoRow('親♂', father ? `${father.display_name} ${father.size_mm ? father.size_mm+'mm' : ''}` : (ind.father_par_id || '—'))}
             ${_infoRow('親♀', mother ? `${mother.display_name} ${mother.size_mm ? mother.size_mm+'mm' : ''}` : (ind.mother_par_id || '—'))}
             ${line ? _infoRow('ライン',
-              `<span style="cursor:pointer;color:var(--blue)" onclick="routeTo('line-detail',{id:'${line.line_id}'})">${line.display_id} ${line.line_name ? '/ '+line.line_name : ''}</span>`
+              `<span style="cursor:pointer;color:var(--blue)" onclick="routeTo('line-detail',{lineId:'${line.line_id}'})">${line.display_id} ${line.line_name ? '/ '+line.line_name : ''}</span>`
             ) : ''}
             ${ind.origin_lot_id ? _infoRow('元ロット',
-              `<span style="cursor:pointer;color:var(--blue)" onclick="routeTo('lot-detail',{id:'${ind.origin_lot_id}'})">${ind.origin_lot_id}</span>
+              `<span style="cursor:pointer;color:var(--blue)" onclick="routeTo('lot-detail',{lotId:'${ind.origin_lot_id}'})">${ind.origin_lot_id}</span>
                <span style="font-size:.7rem;color:var(--text3)">（同腹: <span style="cursor:pointer;color:var(--blue)" onclick="routeTo('ind-list',{lotId:'${ind.origin_lot_id}'})">一覧を見る</span>）</span>`
             ) : ''}
           </div>
@@ -515,7 +515,7 @@ function _renderDetail(ind, main) {
           <div style="font-weight:700;color:var(--gold)">種親昇格済み</div>
           <div style="color:var(--text3);font-size:.72rem">
             種親ID: <span style="cursor:pointer;color:var(--blue)"
-              onclick="routeTo('parent-detail',{id:'${ind.promoted_par_id}'})">${ind.promoted_par_id}</span>
+              onclick="routeTo('parent-detail',{parId:'${ind.promoted_par_id}'})">${ind.promoted_par_id}</span>
           </div>
         </div>
       </div>` : ''}
@@ -714,7 +714,7 @@ Pages._indPromoteExec = async function (indId) {
     });
     // 種親データをリロードしてから種親詳細へ
     await syncAll(true);
-    routeTo('parent-detail', { id: res.par_id });
+    routeTo('parent-detail', { parId: res.par_id });
   } catch(e) {}
 };
 
@@ -846,11 +846,11 @@ Pages._indSave = async function (editId) {
       data.ind_id = editId;
       const res = await apiCall(() => API.individual.update(data), '更新しました');
       Store.patchDBItem('individuals', 'ind_id', editId, data);
-      routeTo('ind-detail', { id: editId });
+      routeTo('ind-detail', { indId: editId });
     } else {
       const res = await apiCall(() => API.individual.create(data), '登録しました');
       await syncAll(true); // 一覧を最新化
-      routeTo('ind-detail', { id: res.ind_id });
+      routeTo('ind-detail', { indId: res.ind_id });
     }
   } catch (e) {}
 };

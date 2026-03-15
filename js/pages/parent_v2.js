@@ -125,7 +125,7 @@ function _parentCard(p) {
   }
 
   return `
-    <div class="card" onclick="routeTo('parent-detail',{id:'${p.par_id}'})"
+    <div class="card" onclick="routeTo('parent-detail',{parId:'${p.par_id}'})"
          style="padding:12px 14px;cursor:pointer">
 
       <!-- 1段目: ID + 性別 + ステータス + 交配可バッジ -->
@@ -244,63 +244,206 @@ Pages.parentDetail = async function (parIdParam) {
   }
 };
 
-async function _loadMalePairingStats(parId) {
-  try {
-    const res  = await API.phase2.getMalePairingStats(parId);
-    const sec  = document.getElementById('pairing-stats-section');
-    if (!sec) return;
+// ── ペアリング履歴: 統合表示 ─────────────────────────────────────
+// 設計:
+//   Phase1: ローカルpairingsストアから即時描画（APIなし）
+//   Phase2: PAIRING_HISTORYをasync取得してマージ描画
+//   将来: 複数履歴・再ペアリング追加にも対応できる構造
 
-    const histories = (res.histories || []).slice(0, 5);
-    if (!res.total) {
-      sec.innerHTML = `<div class="section-title">ペアリング履歴</div>${UI.empty('ペアリング履歴はまだありません')}`;
-      return;
-    }
-    sec.innerHTML = `
-      <div class="section-title">ペアリング履歴</div>
-      <div class="detail-card">
-        <div class="stats-row">
-          <div class="stat-box"><div class="stat-num">${res.total}</div><div class="stat-label">総回数</div></div>
-          <div class="stat-box"><div class="stat-num">${res.daysSinceLast !== null ? res.daysSinceLast + '日' : '—'}</div><div class="stat-label">前回から</div></div>
-          <div class="stat-box"><div class="stat-num">${res.lastDate || '—'}</div><div class="stat-label">最終日</div></div>
-        </div>
-        ${histories.length ? `
-        <div style="margin-top:12px">
-          ${histories.map(h => `
-            <div class="history-row">
-              <span>${h.pairing_date}</span>
-              <span>${h.female_parent_id}</span>
-              ${h.interval_from_previous_pairing
-                ? `<span class="${parseInt(h.interval_from_previous_pairing) < 7 ? 'text-warn' : 'text-gray'}">間隔: ${h.interval_from_previous_pairing}日</span>`
-                : ''}
-            </div>
-          `).join('')}
-        </div>` : ''}
-      </div>`;
-  } catch(e) {
-    const sec = document.getElementById('pairing-stats-section');
-    // ペアリング履歴シートが空 or 未設定の場合は「まだありません」表示
-    const msg = (e.message && e.message.includes('NOT_FOUND')) || !e.message
-      ? 'ペアリング履歴はまだありません'
-      : '読み込み失敗: ' + e.message;
-    if (sec) sec.innerHTML = `<div class="section-title">ペアリング履歴</div>${UI.empty(msg)}`;
+// 統一履歴オブジェクトに変換
+function _normalizePairingEntry(parId, p, source) {
+  if (source === 'pairing') {
+    const partnerId = p.father_par_id === parId ? p.mother_par_id : p.father_par_id;
+    return {
+      _source:    'pairing',
+      _id:        p.set_id,
+      date:       p.pairing_start || '',
+      partner_id: partnerId,
+      line_id:    p.line_id,
+      status:     p.status,
+      memo:       p.set_name || '',
+    };
+  } else {
+    // PAIRING_HISTORY レコード
+    return {
+      _source:    'history',
+      _id:        p.pairing_history_id || p.history_id || '',
+      date:       p.pairing_date || '',
+      partner_id: p.female_parent_id || p.mother_parent_id || '',
+      line_id:    p.line_id || '',
+      status:     'recorded',
+      memo:       p.memo || '',
+    };
   }
 }
 
+function _renderPairingHistorySection(parId, entries, isLoading) {
+  const sec = document.getElementById('pairing-stats-section');
+  if (!sec) return;
+
+  if (!entries.length && !isLoading) {
+    sec.innerHTML = `
+      <div class="section-title" style="display:flex;justify-content:space-between;align-items:center">
+        ペアリング履歴
+        <button onclick="Pages._addPairingRecord('${parId}')"
+          style="font-size:.72rem;padding:4px 10px;border-radius:20px;border:1px solid var(--green);
+            background:transparent;color:var(--green);cursor:pointer">＋ 追加</button>
+      </div>
+      ${UI.empty('ペアリング履歴はまだありません')}`;
+    return;
+  }
+
+  const parents = Store.getDB('parents') || [];
+  const rows = entries.map(e => {
+    const partner = parents.find(x => x.par_id === e.partner_id);
+    const partnerName = partner
+      ? (partner.parent_display_id || partner.display_name || e.partner_id)
+      : (e.partner_id || '—');
+    const line = Store.getLine(e.line_id);
+    const lineStr = line ? `→ <span style="color:var(--gold)">${line.line_code || line.display_id}</span>` : '';
+    const srcBadge = e._source === 'history'
+      ? `<span style="font-size:.6rem;background:var(--surface2);color:var(--text3);padding:1px 5px;border-radius:8px;margin-left:4px">再ペア</span>`
+      : '';
+    const statusColor = e.status === 'active' ? 'var(--green)' : 'var(--text3)';
+    return `
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;
+        padding:8px 0;border-bottom:1px solid var(--border)">
+        <div>
+          <div style="font-size:.85rem;font-weight:600">${e.date || '—'}${srcBadge}</div>
+          <div style="font-size:.75rem;color:var(--text3);margin-top:2px">
+            相手: <strong>${partnerName}</strong> ${lineStr}
+          </div>
+          ${e.memo ? `<div style="font-size:.72rem;color:var(--text3);margin-top:1px">${e.memo}</div>` : ''}
+        </div>
+        <span style="font-size:.68rem;padding:2px 8px;border-radius:20px;
+          background:${e.status==='active'?'rgba(80,200,120,.12)':'var(--surface2)'};
+          color:${statusColor};white-space:nowrap;margin-left:6px">${e.status||'—'}</span>
+      </div>`;
+  }).join('');
+
+  const latest = entries[0]?.date || '—';
+  sec.innerHTML = `
+    <div class="section-title" style="display:flex;justify-content:space-between;align-items:center">
+      ペアリング履歴
+      <button onclick="Pages._addPairingRecord('${parId}')"
+        style="font-size:.72rem;padding:4px 10px;border-radius:20px;border:1px solid var(--green);
+          background:transparent;color:var(--green);cursor:pointer">＋ 追加</button>
+    </div>
+    <div class="detail-card">
+      <div style="display:flex;gap:20px;margin-bottom:10px">
+        <div style="text-align:center">
+          <div style="font-weight:700;font-size:1.2rem;color:var(--blue)">${entries.length}</div>
+          <div style="font-size:.7rem;color:var(--text3)">総回数</div>
+        </div>
+        <div style="text-align:center">
+          <div style="font-weight:700;font-size:1rem">${latest}</div>
+          <div style="font-size:.7rem;color:var(--text3)">最終日</div>
+        </div>
+        ${isLoading ? `<div style="font-size:.7rem;color:var(--text3);align-self:center">履歴取得中…</div>` : ''}
+      </div>
+      ${rows}
+    </div>`;
+}
+
+function _loadMalePairingStats(parId) {
+  // Phase1: ローカルpairingsストアから即時描画
+  const localPairings = (Store.getDB('pairings') || [])
+    .filter(p => p.father_par_id === parId || p.mother_par_id === parId)
+    .map(p => _normalizePairingEntry(parId, p, 'pairing'))
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+
+  _renderPairingHistorySection(parId, localPairings, true);
+
+  // Phase2: PAIRING_HISTORY を非同期取得してマージ
+  API.phase2.getPairingHistories({ male_parent_id: parId })
+    .then(res => {
+      const extraEntries = (res.histories || [])
+        .map(h => _normalizePairingEntry(parId, h, 'history'));
+      // マージ（産卵セット由来 + PAIRING_HISTORY 由来）
+      // set_id と pairing_history が重複しないよう _id で dedup
+      const existingIds = new Set(localPairings.map(e => e._id));
+      const merged = [
+        ...localPairings,
+        ...extraEntries.filter(e => !existingIds.has(e._id)),
+      ].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+      _renderPairingHistorySection(parId, merged, false);
+    })
+    .catch(() => {
+      // APIエラーはサイレント: ローカルデータのみ表示継続
+      _renderPairingHistorySection(parId, localPairings, false);
+    });
+}
+
+// ── 再ペアリング追加モーダル ─────────────────────────────────
+Pages._addPairingRecord = function (parId) {
+  const parents = Store.getDB('parents') || [];
+  const p = parents.find(x => x.par_id === parId);
+  const isMale = p?.sex === '♂';
+  const partners = parents.filter(x => x.sex === (isMale ? '♀' : '♂') && x.status !== 'dead');
+  const today = new Date().toISOString().split('T')[0];
+
+  UI.modal(`
+    <div class="modal-title">ペアリングを記録</div>
+    <div class="form-section">
+      ${UI.field('日付', `<input type="date" id="ph-date" class="input" value="${today}">`)}
+      ${UI.field('相手', `<select id="ph-partner" class="input">
+        <option value="">— 選択 —</option>
+        ${partners.map(pt => `<option value="${pt.par_id}">${pt.parent_display_id || pt.display_name}</option>`).join('')}
+      </select>`)}
+      ${UI.field('メモ', `<input type="text" id="ph-memo" class="input" placeholder="任意のメモ">`)}
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" style="flex:1" onclick="UI.closeModal()">キャンセル</button>
+      <button class="btn btn-primary" style="flex:2"
+        onclick="Pages._savePairingRecord('${parId}', '${isMale ? '♂' : '♀'}')">記録</button>
+    </div>
+  `);
+};
+
+Pages._savePairingRecord = async function (parId, sex) {
+  const date    = document.getElementById('ph-date')?.value;
+  const partner = document.getElementById('ph-partner')?.value;
+  const memo    = document.getElementById('ph-memo')?.value || '';
+  if (!date)    { UI.toast('日付を選択してください'); return; }
+  if (!partner) { UI.toast('相手を選択してください'); return; }
+  const payload = sex === '♂'
+    ? { male_parent_id: parId, female_parent_id: partner, pairing_date: date.replace(/-/g,'/'), memo }
+    : { male_parent_id: partner, female_parent_id: parId, pairing_date: date.replace(/-/g,'/'), memo };
+  try {
+    UI.loading(true);
+    UI.closeModal();
+    await API.phase2.createPairingHistory(payload);
+    UI.toast('ペアリングを記録しました');
+    _loadMalePairingStats(parId); // 再描画
+  } catch(e) {
+    UI.toast('記録失敗: ' + e.message, 'error');
+  } finally {
+    UI.loading(false);
+  }
+};
+
 // ── 種親登録（Phase2） ───────────────────────────────────────
-Pages.parentNew = function () {
-  const main = document.getElementById('main');
-  const year = String(new Date().getFullYear()).slice(-2);
+Pages.parentNew = function (params = {}) {
+  const main   = document.getElementById('main');
+  const year   = String(new Date().getFullYear()).slice(-2);
+  const editId = params.editId || '';
+  const p      = editId ? (Store.getDB('parents') || []).find(x => x.par_id === editId) : null;
+  const v      = (f, def = '') => p ? (p[f] !== undefined && p[f] !== null ? p[f] : def) : def;
+  const title  = editId ? '種親を編集' : '種親を登録';
+
+  // 初期性別
+  const initSex = v('sex', '♂');
 
   main.innerHTML = `
-    ${UI.header('種親を登録', { back: true })}
+    ${UI.header(title, { back: true })}
     <div class="page-body">
 
       <div class="form-section">
         <label class="form-label">性別</label>
         <div class="btn-group">
-          <button class="btn btn-toggle active" id="sex-male"
+          <button class="btn btn-toggle ${initSex==='♂'?'active':''}" id="sex-male"
                   onclick="_parentSexToggle('♂')">♂ 種雄</button>
-          <button class="btn btn-toggle" id="sex-female"
+          <button class="btn btn-toggle ${initSex==='♀'?'active':''}" id="sex-female"
                   onclick="_parentSexToggle('♀')">♀ 種雌</button>
         </div>
       </div>
@@ -313,18 +456,18 @@ Pages.parentNew = function () {
       <div class="form-section">
         <label class="form-label">サイズ(mm)</label>
         <input id="inp-size" class="form-input" type="number" step="0.1"
-               placeholder="例: 174.5">
+               placeholder="例: 174.5" value="${v('size_mm')}">
       </div>
 
       <div class="form-section">
         <label class="form-label">父親サイズ(mm)</label>
         <input id="inp-fsize" class="form-input" type="number" step="0.1"
-               placeholder="例: 180.0">
+               placeholder="例: 180.0" value="${v('father_parent_size_mm')}">
       </div>
       <div class="form-section">
         <label class="form-label">母親サイズ(mm)</label>
         <input id="inp-msize" class="form-input" type="number" step="0.1"
-               placeholder="例: 65.0">
+               placeholder="例: 65.0" value="${v('mother_parent_size_mm')}">
       </div>
 
       <!-- ── 血統情報 ── -->
@@ -340,7 +483,7 @@ Pages.parentNew = function () {
         <div id="tag-preview" class="tag-row"></div>
         <div style="display:flex;gap:8px;margin-top:8px">
           <input id="inp-tag-add" class="form-input" type="text" placeholder="タグ追加" style="flex:1">
-          <button class="btn btn-sm" onclick="_parentAddTag()">追加</button>
+          <button style="padding:8px 16px;background:var(--green);color:#fff;border:none;border-radius:var(--radius-sm);font-weight:700;cursor:pointer;white-space:nowrap" onclick="_parentAddTag()">＋ 追加</button>
         </div>
       </div>
 
@@ -356,7 +499,7 @@ Pages.parentNew = function () {
         <div id="ptag-preview" class="tag-row"></div>
         <div style="display:flex;gap:8px;margin-top:8px">
           <input id="inp-ptag-add" class="form-input" type="text" placeholder="タグ追加" style="flex:1">
-          <button class="btn btn-sm" onclick="_parentAddTag('pat')">追加</button>
+          <button style="padding:8px 16px;background:var(--green);color:#fff;border:none;border-radius:var(--radius-sm);font-weight:700;cursor:pointer;white-space:nowrap" onclick="_parentAddTag('pat')">＋ 追加</button>
         </div>
       </div>
 
@@ -372,32 +515,47 @@ Pages.parentNew = function () {
         <div id="mtag-preview" class="tag-row"></div>
         <div style="display:flex;gap:8px;margin-top:8px">
           <input id="inp-mtag-add" class="form-input" type="text" placeholder="タグ追加" style="flex:1">
-          <button class="btn btn-sm" onclick="_parentAddTag('mat')">追加</button>
+          <button style="padding:8px 16px;background:var(--green);color:#fff;border:none;border-radius:var(--radius-sm);font-weight:700;cursor:pointer;white-space:nowrap" onclick="_parentAddTag('mat')">＋ 追加</button>
         </div>
       </div>
 
       <div class="form-section">
         <label class="form-label">羽化日</label>
-        <input id="inp-eclosion" class="form-input" type="date">
+        <input id="inp-eclosion" class="form-input" type="date" value="${v('eclosion_date').replace(/\//g,'-')}">
       </div>
 
       <div class="form-section">
         <label class="form-label">後食開始日</label>
         <input id="inp-feeding" class="form-input" type="date"
+               value="${v('feeding_start_date').replace(/\//g,'-')}"
                oninput="_parentCalcReadyDate()">
         <div id="ready-date-preview" class="form-hint"></div>
       </div>
 
       <div class="form-section">
         <label class="form-label">入手元</label>
-        <input id="inp-source" class="form-input" type="text" placeholder="例: ヤフオク 〇〇様">
+        <input id="inp-source" class="form-input" type="text" placeholder="例: ヤフオク 〇〇様" value="${v('source')}">
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div class="form-section">
+          <label class="form-label">産地</label>
+          <input id="inp-locality" class="form-input" type="text"
+                 value="${v('locality','グアドループ産')}" placeholder="例: グアドループ産">
+        </div>
+        <div class="form-section">
+          <label class="form-label">世代</label>
+          <input id="inp-generation" class="form-input" type="text"
+                 placeholder="例: WF1 / CBF2" value="${v('generation')}">
+        </div>
       </div>
 
       <button class="btn btn-primary btn-full" style="margin-top:24px"
-              onclick="_parentSave()">💾 種親を登録</button>
+              data-edit-id="${editId}"
+              onclick="_parentSave(this.dataset.editId||'')">${editId ? '💾 種親を更新' : '💾 種親を登録'}</button>
     </div>`;
 
-  window._parentSelectedSex = '♂';
+  window._parentSelectedSex = initSex;
   window._parentTags = [];
 };
 
@@ -490,7 +648,7 @@ function _parentCalcReadyDate() {
     `ペアリング可能日: ${dateStr}（後食後${wait}日）`;
 }
 
-async function _parentSave() {
+async function _parentSave(editId = '') {
   const size = document.getElementById('inp-size').value.trim();
   const sex  = window._parentSelectedSex;
   if (!size) { UI.toast('サイズを入力してください'); return; }
@@ -509,14 +667,24 @@ async function _parentSave() {
     eclosion_date:         document.getElementById('inp-eclosion').value,
     feeding_start_date:    document.getElementById('inp-feeding').value,
     source:                document.getElementById('inp-source').value.trim(),
+    locality:              document.getElementById('inp-locality')?.value.trim() || '',
+    generation:            document.getElementById('inp-generation')?.value.trim() || '',
   };
 
   try {
     UI.loading(true);
-    const res = await API.phase2.createParent(payload);
-    await syncAll(true);
-    UI.toast(`${res.parent_display_id} を登録しました`);
-    routeTo('parent-list');
+    if (editId) {
+      payload.par_id = editId;
+      await API.phase2.updateParent(payload);
+      await syncAll(true);
+      UI.toast('種親を更新しました');
+      routeTo('parent-detail', { parId: editId });
+    } else {
+      const res = await API.phase2.createParent(payload);
+      await syncAll(true);
+      UI.toast(`${res.parent_display_id} を登録しました`);
+      routeTo('parent-list');
+    }
   } catch(e) {
     UI.toast('エラー: ' + e.message, 'error');
   } finally {
@@ -560,7 +728,7 @@ async function _parentSaveFeeding(parId) {
     await API.phase2.updateParent({ par_id: parId, feeding_start_date: date });
     await syncAll(true);
     UI.toast('後食開始日を設定しました');
-    routeTo('parent-detail', {id: parId});
+    routeTo('parent-detail', {parId: parId});
   } catch(e) {
     UI.toast('エラー: ' + e.message, 'error');
   } finally {
@@ -576,7 +744,7 @@ function _parentStatusLabel(s) {
 function _parentEditMenu(parId) {
   UI.actionSheet([
     { label: '✏️ 情報を編集',    fn: () => routeTo('parent-new', { editId: parId }) },
-    { label: '📋 ペアリング履歴', fn: () => routeTo('pairing-history', { id: parId }) },
+    { label: '📋 ペアリング履歴', fn: () => routeTo('pairing-history', { parId }) },
   ]);
 }
 
@@ -674,7 +842,7 @@ async function _phSave(maleParId) {
     });
     if (res.warning) UI.toast('⚠️ ' + res.warning, 'warn');
     else UI.toast('ペアリングを記録しました');
-    routeTo('pairing-history', maleParId);
+    routeTo('pairing-history', { parId: maleParId });
   } catch(e) {
     UI.toast('エラー: ' + e.message, 'error');
   } finally {
@@ -713,5 +881,5 @@ function _clientExtractTags(raw) {
 window.PAGES = window.PAGES || {};
 window.PAGES['parent-list']      = () => Pages.parentList();
 window.PAGES['parent-new']       = () => Pages.parentNew(Store.getParams());
-window.PAGES['parent-detail']    = () => Pages.parentDetail(Store.getParams().id);
+window.PAGES['parent-detail']    = () => Pages.parentDetail(Store.getParams().parId || Store.getParams().id);
 window.PAGES['parent-dashboard'] = () => Pages.parentDashboard();

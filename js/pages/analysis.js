@@ -36,7 +36,7 @@ Pages.lineAnalysis = async function () {
 function _lineAnalysisCard(l, rank) {
   const survivalColor = l.survival_rate >= 80 ? 'var(--green)' : l.survival_rate >= 60 ? 'var(--amber)' : 'var(--red,#e05555)';
   return `
-    <div class="card analysis-card" onclick="routeTo('line-detail',{id:'${l.line_id}'})">
+    <div class="card analysis-card" onclick="routeTo('line-detail',{lineId:'${l.line_id}'})">
       <div class="analysis-rank">#${rank}</div>
       <div class="analysis-header">
         <span class="analysis-title">${l.display_id}</span>
@@ -102,7 +102,7 @@ Pages.motherRanking = async function () {
     el.innerHTML = `
       <div class="section-title">♀ 母親別 平均体重ランキング</div>
       ${ranking.map((m, i) => `
-        <div class="card card-row" onclick="routeTo('parent-detail',{id:'${m.mother_par_id}'})">
+        <div class="card card-row" onclick="routeTo('parent-detail',{parId:'${m.mother_par_id}'})">
           <div class="rank-badge">#${i+1}</div>
           <div class="card-main">
             <div class="card-title">
@@ -285,7 +285,7 @@ Pages.parentDashboard = async function () {
       ${maleRanking && maleRanking.length ? `
         <div class="section-title" style="margin-top:20px">🏆 ♂ペアリング回数ランキング</div>
         ${maleRanking.map((m, i) => `
-          <div class="card card-row" onclick="routeTo('parent-detail',{id:'${m.par_id}'})">
+          <div class="card card-row" onclick="routeTo('parent-detail',{parId:'${m.par_id}'})">
             <div class="rank-badge">#${i+1}</div>
             <div class="card-main">
               <div class="card-title">${m.display_id}</div>
@@ -322,7 +322,7 @@ function _pairingReadyCard(p) {
   }[p.pairingStatus] || '';
 
   return `
-    <div class="card card-row" onclick="routeTo('parent-detail',{id:'${p.par_id}'})">
+    <div class="card card-row" onclick="routeTo('parent-detail',{parId:'${p.par_id}'})">
       <div class="card-main">
         <div class="card-title">${p.parent_display_id} ${p.sex}</div>
         <div class="card-sub">
