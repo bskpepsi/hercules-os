@@ -76,6 +76,29 @@ function _renderDashboard(main) {
     else if(diff<=7) tasks.yellow.push({ icon:'⏳', text:`${p.display_name} ペアリングまで${diff}日`, fn:`routeTo('parent-detail',{parId:'${p.par_id}'})` });
   });
 
+  // 再ペアリング予定
+  const todayStr = today.toISOString().split('T')[0].replace(/-/g,'/');
+  const phAll = Store.getDB('pairing_histories') || [];
+  phAll.filter(h => h.status === 'planned' && h.planned_date).forEach(h => {
+    const parts = String(h.planned_date).replace(/-/g,'/').split('/');
+    if (parts.length < 3) return;
+    const planDate = new Date(+parts[0], +parts[1]-1, +parts[2]);
+    const diff = Math.floor((planDate - today) / 86400000);
+    const male   = (Store.getDB('parents') || []).find(p => p.par_id === h.male_parent_id);
+    const female = (Store.getDB('parents') || []).find(p => p.par_id === h.female_parent_id);
+    const mName  = male   ? (male.parent_display_id   || male.display_name)   : h.male_parent_id;
+    const fName  = female ? (female.parent_display_id || female.display_name) : h.female_parent_id;
+    const label  = mName + ' × ' + fName;
+    const parId  = h.male_parent_id || '';
+    if (diff < 0) {
+      tasks.red.push({ icon:'💕', text:`${label} 再ペアリング期限超過(${Math.abs(diff)}日)`, fn:`routeTo('parent-detail',{parId:'${parId}'})` });
+    } else if (diff === 0) {
+      tasks.red.push({ icon:'💕', text:`${label} 今日再ペアリング予定`, fn:`routeTo('parent-detail',{parId:'${parId}'})` });
+    } else if (diff <= 3) {
+      tasks.yellow.push({ icon:'💕', text:`${label} 再ペアリングまで${diff}日`, fn:`routeTo('parent-detail',{parId:'${parId}'})` });
+    }
+  });
+
   // 150g超え個体（有望）
   const over150 = alive.filter(i => +i.latest_weight_g >= 150);
   if (over150.length) tasks.green.push({ icon:'🏆', text:`150g超え ${over150.length}頭`, fn:"routeTo('ind-list')" });

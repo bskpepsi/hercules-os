@@ -220,6 +220,7 @@ const API = (() => {
     getPairingReady:  ()         => call('getPairingReadyStatus', {}),
     // ペアリング履歴
     createPairingHistory: (d)    => call('createPairingHistory', d),
+    updatePairingHistory: (d)    => call('updatePairingHistory', d),
     getPairingHistories:  (d)    => call('getPairingHistories', d || {}),
     getMalePairingStats:  (mid)  => call('getMalePairingStats', { male_parent_id: mid }),
     // ラインV2

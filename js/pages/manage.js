@@ -222,15 +222,30 @@ function _renderLineDetail(line, main) {
   const allInds    = Store.getIndividualsByLine(line.line_id);
   const aliveInds  = allInds.filter(i => i.status !== 'dead');
 
-  // 産卵セット紐づき（このラインの line_id を持つセット）
-  const pairings = (Store.getDB('pairings') || []).filter(p => p.line_id === line.line_id);
+  // 産卵セット紐づき: line_id で照合（正常ケース）
+  // line_id 未設定データの後方互換フォールバック:
+  //   createPairing は現在常に line_id を自動生成するため、新規データには発生しない
+  //   旧データ（自動生成前に登録されたもの）のみフォールバック照合
+  const allPairings = Store.getDB('pairings') || [];
+  const pairings = allPairings.filter(p => {
+    if (p.line_id === line.line_id) return true;
+    // 後方互換: line_id 未設定かつ父母IDが一致する場合
+    if (!p.line_id && line.father_par_id && line.mother_par_id) {
+      return (p.father_par_id === line.father_par_id && p.mother_par_id === line.mother_par_id);
+    }
+    return false;
+  });
 
-  // 採卵数 = 産卵セットの total_eggs 合計（採卵記録の合計）
+  // 採卵数 = 産卵セットの total_eggs 合計
   const totalEggs    = pairings.reduce((s, p) => s + (parseInt(p.total_eggs, 10) || 0), 0);
-  // ロット化済み卵数 = ロットの initial_count 合計
+  // ロット化済み卵数 = ロットの initial_count 合計（個体化含む）
   const lotInitTotal = allLots.reduce((s, l) => s + (parseInt(l.initial_count, 10) || 0), 0);
-  // 未ロット卵 = 採卵数 - ロット化済み（マイナスにならないよう保護）
-  const unLotEggs    = Math.max(0, totalEggs - lotInitTotal);
+  // ダメ卵数（採卵履歴のfailed_count合計）- ローカルキャッシュにあれば使う
+  const eggRecords = Store.getDB('egg_records') || [];
+  const lineEggRecords = eggRecords.filter(r => pairings.some(p => p.set_id === r.set_id));
+  const failedTotal = lineEggRecords.reduce((s, r) => s + (parseInt(r.failed_count, 10) || 0), 0);
+  // 未ロット卵 = 採卵数 - ロット化済み - ダメ卵（マイナスにならないよう保護）
+  const unLotEggs    = Math.max(0, totalEggs - lotInitTotal - failedTotal);
 
   // 親情報ヘルパー
   function _parentInfo(p, pBld, sexColor) {
@@ -245,7 +260,7 @@ function _renderLineDetail(line, main) {
 
 
   main.innerHTML = `
-    ${UI.header(line.display_id + ' 詳細', { back: true, action: { fn: "routeTo('line-new',{editId:'${line.line_id}'})", icon: '✏️' } })}
+    ${UI.header(line.display_id + ' 詳細', { back: true, action: { fn: "routeTo('line-new',{editId:'" + line.line_id + "'})", icon: '✏️' } })}
     <div class="page-body">
 
       <!-- サマリーカード -->
@@ -336,10 +351,24 @@ function _renderLineDetail(line, main) {
       <div class="card">
         <div class="card-title">血統・ライン情報</div>
         <div class="info-list">
-          ${bld ? _lnRow('血統',
-              '<span style="cursor:pointer;color:var(--blue)" onclick="routeTo(\x27bloodline-detail\x27,{bloodlineId:\x27' + bld.bloodline_id + '\x27})">' + bld.bloodline_name + '</span>') : ''}
-          ${line.locality   ? _lnRow('産地',   line.locality)   : ''}
-          ${line.generation ? _lnRow('累代',   line.generation) : ''}
+          ${line.locality   ? _lnRow('産地', line.locality)   : ''}
+          ${line.generation ? _lnRow('累代', line.generation) : ''}
+          ${(()=>{
+            // 父母の血統タグを自動表示
+            const fTags = f ? (f.bloodline_tags ? JSON.parse(f.bloodline_tags||'[]').join(' / ') : '') : '';
+            const mTags = m ? (m.bloodline_tags ? JSON.parse(m.bloodline_tags||'[]').join(' / ') : '') : '';
+            const fRaw  = f ? (f.bloodline_raw || '') : '';
+            const mRaw  = m ? (m.bloodline_raw || '') : '';
+            let rows = '';
+            if (fRaw)  rows += _lnRow('父系血統', '<span style="font-size:.8rem;color:var(--text2)">' + fRaw.slice(0,40) + (fRaw.length>40?'…':'') + '</span>');
+            if (fTags) rows += _lnRow('父系タグ', fTags);
+            if (mRaw)  rows += _lnRow('母系血統', '<span style="font-size:.8rem;color:var(--text2)">' + mRaw.slice(0,40) + (mRaw.length>40?'…':'') + '</span>');
+            if (mTags) rows += _lnRow('母系タグ', mTags);
+            if (!fRaw && !mRaw && !fTags && !mTags && bld) {
+              rows += _lnRow('血統', '<span style="cursor:pointer;color:var(--blue)" onclick="routeTo(\'bloodline-detail\',{bloodlineId:\'' + bld.bloodline_id + '\'})">' + bld.bloodline_name + '</span>');
+            }
+            return rows;
+          })()}
           ${line.characteristics ? _lnRow('特徴', line.characteristics) : ''}
           ${line.hypothesis_tags ? _lnRow('仮説タグ', line.hypothesis_tags) : ''}
           ${line.note_private    ? _lnRow('内部メモ', line.note_private)   : ''}

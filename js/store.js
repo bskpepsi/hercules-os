@@ -135,7 +135,12 @@ const Store = (() => {
   // targetDate: 計算基準日（省略時=今日）→「現在の日齢」と「記録時点の日齢」を区別
   function calcAge(hatchDate, targetDate) {
     if (!hatchDate) return null;
-    const parts = hatchDate.split('/');
+    // DateオブジェクトやISO形式('2026-03-15')も受け付けるよう正規化
+    let hdStr = hatchDate instanceof Date
+      ? hatchDate.toISOString().split('T')[0]
+      : String(hatchDate);
+    hdStr = hdStr.replace(/-/g, '/').trim();  // '2026-03-15' → '2026/03/15'
+    const parts = hdStr.split('/');
     if (parts.length < 3) return null;
     const hatch = new Date(+parts[0], +parts[1] - 1, +parts[2]);
     const base  = targetDate ? new Date(targetDate.replace(/\//g, '-')) : new Date();
@@ -333,21 +338,42 @@ const Store = (() => {
 
   // ── ペアリング統計（par_idごとのサマリー） ────────────────────
   function getPairingStats(parId) {
-    if (!parId) return { total: 0, lastDate: null };
+    if (!parId) return { total: 0, lastDate: null, nextReadyDate: null, scheduledCount: 0 };
     try {
-      const histories = (_db.pairing_histories || []).filter(
+      const all = (_db.pairing_histories || []).filter(
         h => h && (h.male_parent_id === parId || h.female_parent_id === parId)
       );
-      if (!histories.length) return { total: 0, lastDate: null };
-      const sorted = [...histories].sort(
-        (a, b) => new Date(b.pairing_date) - new Date(a.pairing_date)
+      // 実施済み: status='done' または status未設定（旧データ互換）
+      const done = all.filter(h => !h.status || h.status === 'done');
+      // 予定: status='planned'
+      const planned = all.filter(h => h.status === 'planned');
+
+      const sorted = [...done].sort(
+        (a, b) => String(b.pairing_date||'').localeCompare(String(a.pairing_date||''))
       );
+      const lastDate = sorted.length ? (sorted[0].pairing_date || null) : null;
+
+      // 次回可能目安日: 最終ペアリング日 + 設定値(male_pairing_interval_min_days, デフォルト7日)
+      let nextReadyDate = null;
+      if (lastDate) {
+        const minDays = parseInt(_db.settings?.male_pairing_interval_min_days || '7', 10);
+        const parts = String(lastDate).replace(/-/g,'/').split('/');
+        if (parts.length >= 3) {
+          const d = new Date(+parts[0], +parts[1]-1, +parts[2]);
+          d.setDate(d.getDate() + minDays);
+          nextReadyDate = d.toISOString().split('T')[0].replace(/-/g,'/');
+        }
+      }
+
       return {
-        total:    sorted.length,
-        lastDate: sorted[0].pairing_date || null,
+        total:          sorted.length,
+        lastDate,
+        nextReadyDate,
+        scheduledCount: planned.length,
+        planned,
       };
     } catch(e) {
-      return { total: 0, lastDate: null };
+      return { total: 0, lastDate: null, nextReadyDate: null, scheduledCount: 0, planned: [] };
     }
   }
 

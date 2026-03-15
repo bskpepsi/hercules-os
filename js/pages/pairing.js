@@ -254,7 +254,7 @@ function _eggHistoryHtml(eggRecords, pair) {
           ${rec.note ? `<span style="color:var(--text3)">メモ</span><span style="color:var(--text2)">${rec.note}</span>` : ''}
         </div>
         <div style="display:flex;gap:6px;margin-top:8px">
-          <button class="btn btn-ghost btn-sm" style="flex:1;font-size:.75rem"
+          <button class="btn btn-ghost btn-sm" style="font-size:.75rem"
             onclick="Pages._pairEditOneEgg('${rec.egg_record_id}','${pair.set_id}')">✏️ 編集</button>
         </div>
       </div>`;
@@ -319,6 +319,10 @@ Pages._pairAddEggModal = function (setId) {
         ${UI.field('採卵数',     `<input type="number" id="egg-count"   class="input" min="0" value="0">`)}
         ${UI.field('孵化確認数', `<input type="number" id="hatch-count" class="input" min="0" value="0">`)}
       </div>
+      <div class="form-row-2">
+        ${UI.field('ダメになった卵数', `<input type="number" id="egg-failed" class="input" min="0" value="0" placeholder="無精卵・潰れ等">`)}
+        <div></div>
+      </div>
       ${UI.field('メモ（任意）', `<input type="text" id="egg-note" class="input" placeholder="例: 材あり・26℃">`)}
       <div style="font-size:.75rem;color:var(--text3);margin-bottom:8px">孵化確認がまだの場合は0でOK</div>
       <div class="modal-footer">
@@ -333,12 +337,13 @@ Pages._pairSaveEgg = async function (setId) {
   const date    = (document.getElementById('egg-date')?.value     || '').replace(/-/g,'/');
   const eggs    = +document.getElementById('egg-count')?.value    || 0;
   const hatch   = +document.getElementById('hatch-count')?.value  || 0;
+  const failed  = +document.getElementById('egg-failed')?.value   || 0;
   const note    = document.getElementById('egg-note')?.value      || '';
   // 採卵日は任意（空でも登録可）
   _closeModal();
   try {
     await apiCall(
-      () => API.pairing.addEgg({ set_id: setId, round_set_date: setDate, collect_date: date, egg_count: eggs, hatch_count: hatch, note }),
+      () => API.pairing.addEgg({ set_id: setId, round_set_date: setDate, collect_date: date, egg_count: eggs, hatch_count: hatch, failed_count: failed, note }),
       `採卵${eggs}個を記録しました`
     );
     Pages.pairingDetail(setId);
@@ -367,9 +372,10 @@ Pages._pairEditOneEgg = async function (eggRecordId, setId) {
   const toInput = d => d ? String(d).replace(/\//g, '-') : '';
   const setDate  = toInput(rec.round_set_date);
   const eggDate  = toInput(rec.collect_date);
-  const eggCount = rec.egg_count   !== undefined ? rec.egg_count   : 0;
-  const hatchCnt = rec.hatch_count !== undefined ? rec.hatch_count : 0;
-  const note     = rec.note || '';
+  const eggCount   = rec.egg_count    !== undefined ? rec.egg_count    : 0;
+  const hatchCnt   = rec.hatch_count  !== undefined ? rec.hatch_count  : 0;
+  const failedCnt  = rec.failed_count !== undefined ? rec.failed_count : 0;
+  const note       = rec.note || '';
 
   _showModal('採卵履歴を編集', `
     <div class="form-section">
@@ -378,6 +384,10 @@ Pages._pairEditOneEgg = async function (eggRecordId, setId) {
       <div class="form-row-2">
         ${UI.field('採卵数',     `<input type="number" id="edit-egg-count"   class="input" min="0" value="${eggCount}">`)}
         ${UI.field('孵化確認数', `<input type="number" id="edit-hatch-count" class="input" min="0" value="${hatchCnt}">`)}
+      </div>
+      <div class="form-row-2">
+        ${UI.field('ダメになった卵数', `<input type="number" id="edit-egg-failed" class="input" min="0" value="${failedCnt}" placeholder="無精卵・潰れ等">`)}
+        <div></div>
       </div>
       ${UI.field('メモ', `<input type="text" id="edit-egg-note" class="input" value="${note}">`)}
       <div class="modal-footer">
@@ -393,17 +403,19 @@ Pages._pairSaveEditEgg = async function (eggRecordId, setId) {
   const date     = (document.getElementById('edit-egg-date')?.value     || '').replace(/-/g,'/');
   const eggs     = +document.getElementById('edit-egg-count')?.value    || 0;
   const hatch    = +document.getElementById('edit-hatch-count')?.value  || 0;
+  const failed   = +document.getElementById('edit-egg-failed')?.value   || 0;
   const note     = document.getElementById('edit-egg-note')?.value      || '';
   // 採卵日は任意（空でも登録可）
   _closeModal();
   try {
     await apiCall(
       () => API.pairing.updateEgg({
-        egg_record_id: eggRecordId,
+        egg_record_id:  eggRecordId,
         round_set_date: setDate,
-        collect_date: date,
-        egg_count: eggs,
-        hatch_count: hatch,
+        collect_date:   date,
+        egg_count:      eggs,
+        hatch_count:    hatch,
+        failed_count:   failed,
         note,
       }),
       '採卵記録を更新しました'

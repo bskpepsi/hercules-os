@@ -541,7 +541,7 @@ Pages._lotEditSave = async function (lotId) {
     await API.lot.update({ lot_id: lotId, hatch_date: hatch, count, container_size: container, mat_type: mat, note });
     await syncAll(true);
     UI.toast('ロット情報を更新しました');
-    Pages.lotDetail({ id: lotId });
+    Pages.lotDetail(lotId);
   } catch(e) {
     UI.toast('更新失敗: ' + e.message, 'error');
   } finally {
@@ -573,7 +573,7 @@ Pages._lotHatchSave = async function (lotId) {
     await API.lot.update({ lot_id: lotId, hatch_date: date });
     await syncAll(true);
     UI.toast('孵化日を設定しました');
-    Pages.lotDetail({ id: lotId });
+    Pages.lotDetail(lotId);
   } catch(e) {
     UI.toast('設定失敗: ' + e.message, 'error');
   } finally {
