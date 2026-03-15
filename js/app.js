@@ -189,6 +189,7 @@ async function syncAll(silent = false) {
     Store.setDB('bloodlines',  d.bloodlines  || []);
     Store.setDB('pairings',          d.pairings          || []);
     Store.setDB('pairing_histories', d.pairing_histories || []);
+    Store.setDB('egg_records',       d.egg_records       || []);
     if (d.settings) Object.entries(d.settings).forEach(([k,v]) => Store.setSetting(k, v));
     if (!silent) UI.toast('データを同期しました', 'success');
   } catch (e) {

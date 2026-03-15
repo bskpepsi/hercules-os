@@ -141,46 +141,52 @@ Pages.lineList = function () {
 function _lineCardHTML(line) {
   const f = Store.getParent(line.father_par_id);
   const m = Store.getParent(line.mother_par_id);
-  // ラインコードを主役に（例: A1、B3）
   const lineCode = line.line_code || line.display_id || '?';
   const year     = line.hatch_year || '—';
-  // 血統ステータスの色
-  const bldStatus = line.bloodline_status;
-  const bldColor  = bldStatus === 'confirmed' ? 'var(--green)'
-                  : bldStatus === 'unknown'   ? 'var(--amber)' : 'var(--text3)';
-  const bldLabel  = bldStatus === 'confirmed' ? '確定'
-                  : bldStatus === 'unknown'   ? '不明' : '無血統';
-  // 血統名
-  const bldName = (function(){
-    if (line.bloodline_id && line.bloodline_id !== 'BLD-UNKNOWN') {
-      const bld = (Store.getDB('bloodlines')||[]).find(b => b.bloodline_id === line.bloodline_id);
-      if (bld && bld.abbreviation) return bld.abbreviation;
-      if (bld && bld.bloodline_name) return bld.bloodline_name;
-    }
-    return line.line_name || null;
-  })();
 
-  return `<div class="card" style="padding:12px 14px;cursor:pointer;display:flex;align-items:center;gap:14px"
+  // 父母の表示情報
+  const fName = f ? (f.parent_display_id || f.display_name || '') : '';
+  const mName = m ? (m.parent_display_id || m.display_name || '') : '';
+  const fSize = f && f.size_mm ? f.size_mm + 'mm' : '';
+  const mSize = m && m.size_mm ? m.size_mm + 'mm' : '';
+
+  // 血統情報: 父母の bloodline_raw を優先（なければタグ）
+  const fRaw  = f ? (f.bloodline_raw  || '') : '';
+  const mRaw  = m ? (m.bloodline_raw  || '') : '';
+  const _tags = t => { try { return (JSON.parse(t||'[]')||[]).slice(0,3).join(' '); } catch(e){ return ''; } };
+  const fTag  = f ? _tags(f.bloodline_tags) : '';
+  const mTag  = m ? _tags(m.maternal_tags  || f?.maternal_tags || '') : '';
+  // 血統表示文字列（最大40文字）
+  const bloodStr = (fRaw || fTag || mRaw || mTag)
+    ? (() => {
+        const left  = (fRaw || fTag || '?').slice(0, 20);
+        const right = (mRaw || mTag || '');
+        return right ? left + ' × ' + right.slice(0, 20) : left;
+      })()
+    : '';
+
+  return `<div class="card" style="padding:12px 14px;cursor:pointer;display:flex;align-items:flex-start;gap:12px"
     onclick="routeTo('line-detail',{lineId:'${line.line_id}'})">
 
-    <!-- 左：ラインコード主役 -->
-    <div style="min-width:52px;text-align:center">
+    <!-- 左：ラインコード＋年 -->
+    <div style="min-width:48px;text-align:center;flex-shrink:0">
       <div style="font-family:var(--font-mono);font-size:1.35rem;font-weight:800;color:var(--gold);line-height:1">${lineCode}</div>
-      <div style="font-size:.72rem;color:var(--text3);margin-top:3px">${year}</div>
+      <div style="font-size:.65rem;color:var(--text3);margin-top:3px">${year}</div>
     </div>
 
-    <!-- 中：補助情報 -->
+    <!-- 右：親情報＋血統 -->
     <div style="flex:1;min-width:0">
-      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-        <span style="font-size:.72rem;padding:1px 7px;border-radius:20px;border:1px solid ${bldColor};color:${bldColor}">${bldLabel}</span>
-        ${bldName ? `<span style="font-size:.8rem;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${bldName}</span>` : ''}
-      </div>
-      <div style="font-size:.75rem;color:var(--text3);margin-top:4px">
-        ${line.locality || ''}${(line.locality && line.generation) ? ' / ' : ''}${line.generation || ''}
-      </div>
-      ${(f || m) ? `<div style="font-size:.7rem;color:var(--text3);margin-top:2px">
-        ${f ? '♂ '+f.display_name : ''}${(f&&m)?' × ':''}${m ? '♀ '+m.display_name : ''}
-      </div>` : ''}
+      <!-- 親情報行 -->
+      ${(fName || mName) ? `
+      <div style="font-size:.8rem;margin-bottom:2px">
+        ${fName ? `<span style="color:var(--male)">♂</span> <span style="font-weight:600">${fName}</span>${fSize ? `<span style="color:var(--text3);font-size:.72rem"> ${fSize}</span>` : ''}` : ''}
+        ${(fName && mName) ? '<span style="color:var(--text3);margin:0 4px">×</span>' : ''}
+        ${mName ? `<span style="color:var(--female)">♀</span> <span style="font-weight:600">${mName}</span>${mSize ? `<span style="color:var(--text3);font-size:.72rem"> ${mSize}</span>` : ''}` : ''}
+      </div>` : '<div style="font-size:.8rem;color:var(--text3)">親情報なし</div>'}
+      <!-- 血統情報行 -->
+      ${bloodStr ? `<div style="font-size:.73rem;color:var(--text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${bloodStr}</div>` : ''}
+      <!-- 産地・累代 -->
+      ${(line.locality || line.generation) ? `<div style="font-size:.7rem;color:var(--text3);margin-top:2px">${[line.locality,line.generation].filter(Boolean).join(' / ')}</div>` : ''}
     </div>
 
     <div style="color:var(--text3);font-size:1.1rem">›</div>
@@ -198,6 +204,7 @@ Pages._lineShowClosed = function () {
 Pages.lineDetail = async function (lineId) {
   if (lineId && typeof lineId === 'object') lineId = lineId.id || lineId.lineId || '';
   const main = document.getElementById('main');
+  // キャッシュがあれば即時表示
   let line = Store.getLine(lineId);
   if (line) _renderLineDetail(line, main);
   else main.innerHTML = UI.header('ライン詳細', {}) + UI.spinner();
@@ -205,10 +212,16 @@ Pages.lineDetail = async function (lineId) {
     const res = await API.line.get(lineId);
     line = res.line;
     Store.patchDBItem('lines', 'line_id', lineId, line);
-    _renderLineDetail(line, main);
+    // ── 競合防止: API 返却時に line-detail のままか確認 ──
+    // 編集画面など他ページに遷移済みの場合は描画しない
+    if (Store.getPage() === 'line-detail') {
+      _renderLineDetail(line, main);
+    }
   } catch (e) {
-    if (!line) main.innerHTML = UI.header('エラー', {}) +
-      `<div class="page-body">${UI.empty(e.message)}</div>`;
+    if (!line && Store.getPage() === 'line-detail') {
+      main.innerHTML = UI.header('エラー', {}) +
+        `<div class="page-body">${UI.empty(e.message)}</div>`;
+    }
   }
 };
 
@@ -240,16 +253,29 @@ function _renderLineDetail(line, main) {
     return false;
   });
 
-  // 採卵数 = 産卵セットの total_eggs 合計
-  const totalEggs    = pairings.reduce((s, p) => s + (parseInt(p.total_eggs, 10) || 0), 0);
-  // ロット化済み卵数 = ロットの initial_count 合計（個体化含む）
+  // ── 採卵数集計 ──────────────────────────────────────────────
+  // 優先: egg_records（採卵履歴）の egg_count 合計
+  // フォールバック: pairings.total_eggs（GAS集計値）
+  const eggRecords     = Store.getDB('egg_records') || [];
+  const lineEggRecs    = eggRecords.filter(r => pairings.some(p => p.set_id === r.set_id));
+  const totalEggsFromRecs = lineEggRecs.reduce((s, r) => s + (parseInt(r.egg_count, 10) || 0), 0);
+  const totalEggsFromSets = pairings.reduce((s, p) => s + (parseInt(p.total_eggs, 10) || 0), 0);
+  // egg_records に実データがあればそちらを使い、なければ pairings.total_eggs を使う
+  const totalEggs = lineEggRecs.length > 0 ? totalEggsFromRecs : totalEggsFromSets;
+
+  // ロット化済み卵数 = ロットの initial_count 合計
   const lotInitTotal = allLots.reduce((s, l) => s + (parseInt(l.initial_count, 10) || 0), 0);
-  // ダメ卵数（採卵履歴のfailed_count合計）- ローカルキャッシュにあれば使う
-  const eggRecords = Store.getDB('egg_records') || [];
-  const lineEggRecords = eggRecords.filter(r => pairings.some(p => p.set_id === r.set_id));
-  const failedTotal = lineEggRecords.reduce((s, r) => s + (parseInt(r.failed_count, 10) || 0), 0);
-  // 未ロット卵 = 採卵数 - ロット化済み - ダメ卵（マイナスにならないよう保護）
-  const unLotEggs    = Math.max(0, totalEggs - lotInitTotal - failedTotal);
+
+  // 個体化済み数 = 個体数（ロット経由以外の直接個体化も含む）
+  // → aliveInds.length は既に計算済みだが、ここでは全個体を使う
+  const indTotal = allInds.length;
+
+  // ダメ卵数 = 採卵履歴の failed_count 合計
+  const failedTotal = lineEggRecs.reduce((s, r) => s + (parseInt(r.failed_count, 10) || 0), 0);
+
+  // 未ロット卵 = 採卵数 - ロット化済み - ダメ卵（マイナス防止）
+  // ※ ロット→個体化は lotInitTotal に含まれているので個体数は引かない
+  const unLotEggs = Math.max(0, totalEggs - lotInitTotal - failedTotal);
 
   // 親情報ヘルパー
   function _parentInfo(p, pBld, sexColor) {
