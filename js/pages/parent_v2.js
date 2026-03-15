@@ -172,17 +172,34 @@ function _parentCard(p) {
 
 // ── 種親詳細 ────────────────────────────────────────────────────
 Pages.parentDetail = async function (parIdParam) {
-  const main    = document.getElementById('main');
-  // routeTo から文字列で渡された場合の防御（routeTo修正で解決済みだが念のため）
-  const parId = typeof parIdParam === 'string' ? parIdParam
-              : (parIdParam && parIdParam.id ? parIdParam.id : null);
-  if (!parId) { main.innerHTML = UI.header('種親詳細',{back:true}) + UI.empty('IDが指定されていません'); return; }
-  const parents = Store.getDB('parents') || [];
-  // par_id または parent_display_id のどちらで渡されても対応
-  const p = parents.find(x => x.par_id === parId)
-         || parents.find(x => x.parent_display_id === parId)
-         || parents.find(x => x.display_name === parId);
-  if (!p) { main.innerHTML = UI.header('種親詳細',{back:true}) + UI.empty('見つかりません (id=' + parId + ')'); return; }
+  const main = document.getElementById('main');
+  if (!main) return;
+
+  try {
+    // parIdParam は string / { parId } / { id } / undefined すべてを受け付ける
+    let parId = '';
+    if (typeof parIdParam === 'string') {
+      parId = parIdParam;
+    } else if (parIdParam && typeof parIdParam === 'object') {
+      parId = parIdParam.parId || parIdParam.id || '';
+    }
+
+    if (!parId) {
+      main.innerHTML = UI.header('種親詳細', { back: true })
+        + '<div class="page-body">' + UI.empty('IDが指定されていません') + '</div>';
+      return;
+    }
+
+    const parents = Store.getDB('parents') || [];
+    const p = parents.find(x => x.par_id === parId)
+           || parents.find(x => x.parent_display_id === parId)
+           || parents.find(x => x.display_name === parId);
+
+    if (!p) {
+      main.innerHTML = UI.header('種親詳細', { back: true })
+        + '<div class="page-body">' + UI.empty('種親が見つかりません (id=' + parId + ')') + '</div>';
+      return;
+    }
 
   const pid    = p.parent_display_id || p.display_name;
   const tags   = _parseTags(p.bloodline_tags);
@@ -255,8 +272,19 @@ Pages.parentDetail = async function (parIdParam) {
 
     </div>`;
 
-  // ペアリング管理を非同期ロード（♂♀両対応）
-  _loadPairingManagement(parId);
+    // ペアリング管理を非同期ロード（♂♀両対応）
+    _loadPairingManagement(parId);
+
+  } catch (err) {
+    // レンダリング中の予期しない例外をキャッチして真っ暗を防ぐ
+    console.error('parentDetail エラー:', err);
+    if (main) {
+      main.innerHTML = UI.header('種親詳細', { back: true })
+        + '<div class="page-body">'
+        + UI.empty('表示エラー: ' + (err.message || String(err)))
+        + '</div>';
+    }
+  }
 };
 
 // ══════════════════════════════════════════════════════════════
@@ -822,6 +850,19 @@ async function _phSave(maleParId) {
 // ここで登録することで確実に v2 の関数が使われる
 // ════════════════════════════════════════════════════════════════
 // ── ユーティリティ ───────────────────────────────────────────
+
+// ステータスラベル変換
+function _parentStatusLabel(s) {
+  const map = {
+    active:   '活動中',
+    retired:  '引退',
+    dead:     '死亡',
+    sold:     '売却済',
+    reserved: '確保中',
+  };
+  return map[s] || s || '—';
+}
+
 function _parseTags(json) {
   try { return JSON.parse(json) || []; } catch(e) { return []; }
 }

@@ -84,6 +84,10 @@ Pages.manage = function () {
           <button class="btn btn-ghost" onclick="routeTo('bloodline-new')">＋ 血統登録</button>
           <button class="btn btn-ghost" onclick="routeTo('pairing-new')">＋ 産卵セット</button>
           <button class="btn btn-ghost" onclick="routeTo('ind-new')">＋ 個体登録</button>
+          <button class="btn btn-ghost" onclick="Pages._quickAddPairing()"
+            style="grid-column:span 2;border-color:rgba(80,200,120,.35);color:var(--green)">
+            💕 ペアリング履歴を追加
+          </button>
           <button class="btn btn-ghost" onclick="routeTo('label-gen')"
             style="grid-column:span 2;border-color:rgba(200,168,75,.4);color:var(--gold)">
             🏷️ ラベル発行・QRコード生成
@@ -462,6 +466,108 @@ Pages._lineSave = async function (editId) {
     }
   } catch (e) {
     UI.toast('エラー: ' + (e.message || '不明'), 'error');
+  }
+};
+
+// ── ペアリング履歴クイック追加 ────────────────────────────────
+Pages._quickAddPairing = function () {
+  const parents = Store.getDB('parents') || [];
+  const males   = parents.filter(p => p.sex === '♂' && p.status !== 'dead');
+  const females = parents.filter(p => p.sex === '♀' && p.status !== 'dead');
+  const today   = new Date().toISOString().split('T')[0];
+
+  UI.modal(`
+    <div class="modal-title" style="font-size:1rem;font-weight:700;padding-bottom:10px">
+      💕 ペアリング履歴を追加
+    </div>
+    <div class="form-section" style="max-height:60vh;overflow-y:auto">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+        ${UI.field('♂（父）', `<select id="qp-male" class="input">
+          <option value="">— 選択 —</option>
+          ${males.map(p => `<option value="${p.par_id}">${p.parent_display_id||p.display_name}</option>`).join('')}
+        </select>`, true)}
+        ${UI.field('♀（母）', `<select id="qp-female" class="input">
+          <option value="">— 選択 —</option>
+          ${females.map(p => `<option value="${p.par_id}">${p.parent_display_id||p.display_name}</option>`).join('')}
+        </select>`, true)}
+      </div>
+      ${UI.field('種別', `<select id="qp-type" class="input" onchange="Pages._qpTypeChange(this.value)">
+        <option value="done_initial">初回ペアリング（実施済み）</option>
+        <option value="done_repairing">再ペアリング（実施済み）</option>
+        <option value="planned">再ペアリング（予定）</option>
+      </select>`)}
+      <div id="qp-date-row">
+        ${UI.field('実施日', `<input type="date" id="qp-date" class="input" value="${today}">`)}
+      </div>
+      <div id="qp-planned-row" style="display:none">
+        ${UI.field('予定日', `<input type="date" id="qp-planned" class="input" value="${today}">`)}
+      </div>
+      ${UI.field('メモ（任意）', `<input type="text" id="qp-memo" class="input" placeholder="例: 2回目交配">`)}
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" style="flex:1" onclick="UI.closeModal()">キャンセル</button>
+      <button class="btn btn-primary" style="flex:2" onclick="Pages._saveQuickPairing()">保存</button>
+    </div>
+  `);
+};
+
+Pages._qpTypeChange = function (val) {
+  const dateRow    = document.getElementById('qp-date-row');
+  const plannedRow = document.getElementById('qp-planned-row');
+  if (!dateRow || !plannedRow) return;
+  if (val === 'planned') {
+    dateRow.style.display    = 'none';
+    plannedRow.style.display = '';
+  } else {
+    dateRow.style.display    = '';
+    plannedRow.style.display = 'none';
+  }
+};
+
+Pages._saveQuickPairing = async function () {
+  const maleId   = document.getElementById('qp-male')?.value;
+  const femaleId = document.getElementById('qp-female')?.value;
+  const typeVal  = document.getElementById('qp-type')?.value || 'done_initial';
+  const memo     = document.getElementById('qp-memo')?.value || '';
+
+  if (!maleId)   { UI.toast('♂を選択してください', 'error'); return; }
+  if (!femaleId) { UI.toast('♀を選択してください', 'error'); return; }
+
+  const isPlanned = typeVal === 'planned';
+  const type      = typeVal === 'done_initial' ? 'initial' : 'repairing';
+  const status    = isPlanned ? 'planned' : 'done';
+
+  let payload = {
+    type, status,
+    male_parent_id:   maleId,
+    female_parent_id: femaleId,
+    memo,
+  };
+
+  if (isPlanned) {
+    const planned = document.getElementById('qp-planned')?.value;
+    if (!planned) { UI.toast('予定日を選択してください', 'error'); return; }
+    payload.planned_date = planned.replace(/-/g, '/');
+  } else {
+    const date = document.getElementById('qp-date')?.value;
+    if (!date) { UI.toast('実施日を選択してください', 'error'); return; }
+    payload.pairing_date = date.replace(/-/g, '/');
+  }
+
+  try {
+    UI.loading(true);
+    UI.closeModal();
+    const res = await API.phase2.createPairingHistory(payload);
+    // ローカルキャッシュに即時反映
+    Store.addDBItem('pairing_histories', {
+      ...payload,
+      pairing_id: res.pairing_id || ('tmp_' + Date.now()),
+    });
+    UI.toast(isPlanned ? '再ペアリング予定を登録しました' : 'ペアリング履歴を追加しました');
+  } catch (e) {
+    UI.toast('保存失敗: ' + e.message, 'error');
+  } finally {
+    UI.loading(false);
   }
 };
 
