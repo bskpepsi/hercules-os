@@ -36,9 +36,10 @@ function _pairCardHTML(pair) {
   const rate = pair.hatch_rate ? Math.round(+pair.hatch_rate) + '%' : '—';
   const badge = _exchangeBadgeHtml(pair);
 
-  // ラインコードを取得（line_id → line.line_code）
-  const ln = Store.getLine(pair.line_id);
+  // ラインコード・年を取得
+  const ln       = Store.getLine(pair.line_id);
   const lineCode = ln ? (ln.line_code || ln.display_id || '—') : '—';
+  const year     = ln ? (ln.hatch_year || '') : '';
 
   // 親情報
   const fName = f ? (f.parent_display_id || f.display_name || '') : '';
@@ -77,33 +78,38 @@ function _pairCardHTML(pair) {
 
   const setStr = pair.set_start ? '<span>セット ' + pair.set_start + '</span>' : '';
 
-  return '<div class="card" style="padding:12px 14px;cursor:pointer;margin-bottom:8px"'
-    + ' onclick="routeTo(\'pairing-detail\',{pairingId:\'' + pair.set_id + '\'})">'
+  // SET番号・バッジ行（右カラム上部）
+  const headerRow = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">'
+    + badge
+    + '<span style="font-size:.72rem;color:var(--text3);font-family:var(--font-mono)">' + (pair.display_id||'') + '</span>'
+    + '</div>';
 
-    // 1行目: ラインコード（主役）+ SET番号
-    + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">'
-    +   '<span style="font-family:var(--font-mono);font-size:1.5rem;font-weight:800;'
-    +     'color:var(--gold);line-height:1">' + lineCode + '</span>'
-    +   '<div style="display:flex;align-items:center;gap:6px">'
-    +     badge
-    +     '<span style="font-size:.72rem;color:var(--text3);font-family:var(--font-mono)">' + (pair.display_id||'') + '</span>'
-    +     '<span style="color:var(--text3);font-size:1rem">›</span>'
-    +   '</div>'
-    + '</div>'
-
-    // 2行目: 親情報
+  // 右カラム
+  const rightCol = '<div style="flex:1;min-width:0">'
+    + headerRow
     + parentRow
-
-    // 3行目: 血統
     + bloodRow
-
-    // 4行目: 卵数・孵化数・孵化率・セット日
-    + '<div style="display:flex;gap:12px;font-size:.75rem;color:var(--text3);flex-wrap:wrap">'
+    + '<div style="display:flex;gap:10px;font-size:.75rem;color:var(--text3);flex-wrap:wrap">'
     +   '<span>卵 <b style="color:var(--amber)">' + (pair.total_eggs||0) + '</b>個</span>'
     +   '<span>孵化 <b style="color:var(--green)">' + (pair.total_hatch||0) + '</b>頭</span>'
     +   '<span>孵化率 <b>' + rate + '</b></span>'
     +   setStr
     + '</div>'
+    + '</div>';
+
+  return '<div class="card" style="padding:12px 14px;cursor:pointer;display:flex;align-items:center;gap:12px"'
+    + ' onclick="routeTo(\'pairing-detail\',{pairingId:\'' + pair.set_id + '\'})">'
+
+    // 左カラム: ラインコード＋年（ライン一覧と同じレイアウト）
+    + '<div style="min-width:48px;text-align:center;flex-shrink:0">'
+    +   '<div style="font-family:var(--font-mono);font-size:1.35rem;font-weight:800;color:var(--gold);line-height:1">' + lineCode + '</div>'
+    +   '<div style="font-size:.65rem;color:var(--text3);margin-top:3px">' + year + '</div>'
+    + '</div>'
+
+    // 右カラム
+    + rightCol
+
+    + '<div style="color:var(--text3);font-size:1.1rem;flex-shrink:0">›</div>'
 
     + '</div>';
 }

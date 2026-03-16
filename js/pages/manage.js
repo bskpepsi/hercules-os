@@ -165,7 +165,7 @@ function _lineCardHTML(line) {
       })()
     : '';
 
-  return `<div class="card" style="padding:12px 14px;cursor:pointer;display:flex;align-items:flex-start;gap:12px"
+  return `<div class="card" style="padding:12px 14px;cursor:pointer;display:flex;align-items:center;gap:12px"
     onclick="routeTo('line-detail',{lineId:'${line.line_id}'})">
 
     <!-- 左：ラインコード＋年 -->
