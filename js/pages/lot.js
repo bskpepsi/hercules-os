@@ -87,8 +87,16 @@ function _lotStageFilters(active) {
 function _lotCardHTML(lot) {
   const age  = lot._age || Store.calcAge(lot.hatch_date);
   const line = Store.getLine(lot.line_id);
-  const maltIcon = String(lot.has_malt) === 'true' ? ' 🍄' : '';
-  const stageLabel2 = lot.stage === 'T2A' ? 'T2①(モルト入り)' : lot.stage === 'T2B' ? 'T2②(純T2)' : stageLabel(lot.stage);
+  // ステージ表示: T2A/T2B は通常の T2 として表示（モルト情報は成長記録側で管理）
+  const stageDisp = stageLabel(lot.stage === 'T2A' || lot.stage === 'T2B' ? 'T2' : lot.stage);
+
+  // 最新成長記録から容器・マットを取得
+  const recs = Store.getGrowthRecords(lot.lot_id) || [];
+  const latestRec = recs.length > 0
+    ? [...recs].sort((a,b) => String(b.record_date).localeCompare(String(a.record_date)))[0]
+    : null;
+  const dispContainer = latestRec?.container || lot.container_size || '';
+  const dispMat       = latestRec?.mat_type  || lot.mat_type       || '';
 
   return `<div class="ind-card" onclick="routeTo('lot-detail',{lotId:'${lot.lot_id}'})">
     <div style="min-width:42px;text-align:center">
@@ -99,12 +107,13 @@ function _lotCardHTML(lot) {
       <div class="ind-card-row">
         <span class="ind-card-id">${lot.display_id}</span>
         <span class="badge" style="background:${stageColor(lot.stage)}22;color:${stageColor(lot.stage)};border:1px solid ${stageColor(lot.stage)}55">
-          ${stageLabel2}${maltIcon}
+          ${stageDisp}
         </span>
       </div>
       <div class="ind-card-row" style="font-size:.78rem;color:var(--text2)">
         ${line ? `ライン: ${line.display_id}` : ''}
-        ${lot.container_size ? ' / ' + lot.container_size : ''}
+        ${dispContainer ? ' / ' + dispContainer : ''}
+        ${dispMat ? ' / ' + dispMat : ''}
       </div>
       <div class="ind-card-age">
         ${age && age.totalDays > 0 ? age.days + ' / ' + age.stageGuess : '日齢不明'}
@@ -158,7 +167,16 @@ function _renderLotDetail(lot, main) {
   const age   = Store.calcAge(lot.hatch_date);
   const line  = Store.getLine(lot.line_id);
   const records = lot._growthRecords || Store.getGrowthRecords(lot.lot_id) || [];
-  const maltText = String(lot.has_malt) === 'true' ? 'あり 🍄' : 'なし';
+
+  // 最新成長記録から状態を取得（なければロットの初期値を使用）
+  const latestRec = records.length > 0
+    ? [...records].sort((a,b) => String(b.record_date).localeCompare(String(a.record_date)))[0]
+    : null;
+  const dispContainer = (latestRec?.container)  || lot.container_size || '—';
+  const dispMat       = (latestRec?.mat_type)    || lot.mat_type       || '—';
+  const dispExchange  = latestRec?.record_date   || lot.mat_changed_at  || '—';
+  const dispWeight    = latestRec?.weight_g      ? latestRec.weight_g + 'g' : null;
+  const dispStage     = (latestRec?.stage)        || lot.stage           || '—';
 
   main.innerHTML = `
     ${UI.header(lot.display_id, {
@@ -211,11 +229,11 @@ function _renderLotDetail(lot, main) {
         <div class="card-title">ロット情報</div>
         <div class="info-list">
           ${_infoRow('ライン', line ? `<span onclick="routeTo('line-detail',{lineId:'${line.line_id}'})" style="color:var(--blue);cursor:pointer">${line.display_id}</span>` : lot.line_id)}
-          ${_infoRow('容器',       lot.container_size   || '—')}
-          ${_infoRow('マット',     lot.mat_type         || '—')}
-          ${_infoRow('モルト',     maltText)}
-          ${_infoRow('孵化日',     lot.hatch_date       || '未設定')}
-          ${_infoRow('最終交換',   lot.mat_changed_at   || '—')}
+          ${dispWeight ? _infoRow('最新体重', `<span style="font-weight:700;color:var(--green)">${dispWeight}</span>`) : ''}
+          ${_infoRow('容器',     dispContainer)}
+          ${_infoRow('マット',   dispMat)}
+          ${_infoRow('孵化日',   lot.hatch_date || '未設定')}
+          ${_infoRow('最終交換', dispExchange)}
           ${lot.parent_lot_id ? _infoRow('分割元', `<span style="color:var(--blue);cursor:pointer" onclick="routeTo('lot-detail',{lotId:'${lot.parent_lot_id}'})">${lot.parent_lot_id}</span>`) : ''}
           ${lot.note ? _infoRow('メモ', lot.note) : ''}
         </div>

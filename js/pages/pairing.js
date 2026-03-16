@@ -31,35 +31,116 @@ Pages.pairingList = function () {
 };
 
 function _pairCardHTML(pair) {
-  const f   = Store.getParent(pair.father_par_id);
-  const m   = Store.getParent(pair.mother_par_id);
-  const rate = pair.hatch_rate ? pair.hatch_rate + '%' : '—';
-  const colMap = { active: 'var(--green)', completed: 'var(--blue)', failed: 'var(--red)' };
-  const col  = colMap[pair.status] || 'var(--text3)';
+  const f    = Store.getParent(pair.father_par_id);
+  const m    = Store.getParent(pair.mother_par_id);
+  const rate = pair.hatch_rate ? Math.round(+pair.hatch_rate) + '%' : '—';
   const badge = _exchangeBadgeHtml(pair);
-  return `<div class="ind-card" onclick="routeTo('pairing-detail',{pairingId:'${pair.set_id}'})">
-    <div style="text-align:center;min-width:40px">
-      <div style="font-size:1.3rem">🥚</div>
-      <div style="font-size:.62rem;color:${col}">${pair.status||'—'}</div>
-    </div>
-    <div class="ind-card-body">
-      <div class="ind-card-row">
-        ${(()=>{const ln=Store.getLine(pair.line_id);return ln?`<span style="font-family:var(--font-mono);font-weight:700;font-size:1rem;color:var(--gold);margin-right:4px">${ln.line_code||ln.display_id}</span>`:'';})()}
-        <span class="ind-card-id" style="font-size:.82rem">${pair.display_id}</span>
-        ${badge}
-      </div>
-      ${pair.set_name ? `<div style="font-size:.72rem;color:var(--text2);margin-bottom:2px">${pair.set_name}</div>` : ''}
-      <div style="font-size:.78rem;color:var(--text2)">${f?'♂ '+f.display_name:''} × ${m?'♀ '+m.display_name:''}</div>
-      <div style="font-size:.72rem;color:var(--text3);margin-top:2px">
-        卵: ${pair.total_eggs||0}個 / 孵化: ${pair.total_hatch||0}頭 / 孵化率: ${rate}
-        ${pair.set_start ? ' / セット: ' + pair.set_start : ''}
-      </div>
-    </div>
-    <div style="color:var(--text3);font-size:1.2rem">›</div>
-  </div>`;
+
+  // ラインコードを取得（line_id → line.line_code）
+  const ln = Store.getLine(pair.line_id);
+  const lineCode = ln ? (ln.line_code || ln.display_id || '—') : '—';
+
+  // 親情報
+  const fName = f ? (f.parent_display_id || f.display_name || '') : '';
+  const mName = m ? (m.parent_display_id || m.display_name || '') : '';
+  const fSize = (f && f.size_mm) ? ' ' + f.size_mm + 'mm' : '';
+  const mSize = (m && m.size_mm) ? ' ' + m.size_mm + 'mm' : '';
+
+  // 血統原文（父母から取得、20文字省略）
+  const fRaw = f ? (f.bloodline_raw || '') : '';
+  const mRaw = m ? (m.bloodline_raw || '') : '';
+  const trim20 = function(s) { return s.length > 20 ? s.slice(0, 20) + '…' : s; };
+  const bloodStr = (fRaw || mRaw)
+    ? trim20(fRaw) + (mRaw ? ' × ' + trim20(mRaw) : '')
+    : '';
+
+  // 親行HTML
+  const fHtml = fName
+    ? '<span style="color:var(--male)">♂</span> <b>' + fName + '</b>'
+      + '<span style="color:var(--text3);font-size:.72rem">' + fSize + '</span>'
+    : '';
+  const mHtml = mName
+    ? '<span style="color:var(--female)">♀</span> <b>' + mName + '</b>'
+      + '<span style="color:var(--text3);font-size:.72rem">' + mSize + '</span>'
+    : '';
+  const parentRow = (fHtml || mHtml)
+    ? '<div style="font-size:.8rem;margin-bottom:3px">'
+      + fHtml
+      + ((fHtml && mHtml) ? '<span style="color:var(--text3);margin:0 4px">×</span>' : '')
+      + mHtml
+      + '</div>'
+    : '';
+
+  const bloodRow = bloodStr
+    ? '<div style="font-size:.73rem;color:var(--text3);margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + bloodStr + '</div>'
+    : '';
+
+  const setStr = pair.set_start ? '<span>セット ' + pair.set_start + '</span>' : '';
+
+  return '<div class="card" style="padding:12px 14px;cursor:pointer;margin-bottom:8px"'
+    + ' onclick="routeTo(\'pairing-detail\',{pairingId:\'' + pair.set_id + '\'})">'
+
+    // 1行目: ラインコード（主役）+ SET番号
+    + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">'
+    +   '<span style="font-family:var(--font-mono);font-size:1.5rem;font-weight:800;'
+    +     'color:var(--gold);line-height:1">' + lineCode + '</span>'
+    +   '<div style="display:flex;align-items:center;gap:6px">'
+    +     badge
+    +     '<span style="font-size:.72rem;color:var(--text3);font-family:var(--font-mono)">' + (pair.display_id||'') + '</span>'
+    +     '<span style="color:var(--text3);font-size:1rem">›</span>'
+    +   '</div>'
+    + '</div>'
+
+    // 2行目: 親情報
+    + parentRow
+
+    // 3行目: 血統
+    + bloodRow
+
+    // 4行目: 卵数・孵化数・孵化率・セット日
+    + '<div style="display:flex;gap:12px;font-size:.75rem;color:var(--text3);flex-wrap:wrap">'
+    +   '<span>卵 <b style="color:var(--amber)">' + (pair.total_eggs||0) + '</b>個</span>'
+    +   '<span>孵化 <b style="color:var(--green)">' + (pair.total_hatch||0) + '</b>頭</span>'
+    +   '<span>孵化率 <b>' + rate + '</b></span>'
+    +   setStr
+    + '</div>'
+
+    + '</div>';
 }
 
-// ── セット交換リマインド 共通ヘルパー ───────────────────────────
+// ════════════════════════════════════════════════════════════════
+// pairing.js  ―  産卵セット管理  v2
+// 改善: 採卵履歴カード形式・KPI・交換リマインド・ペアリング日名称
+// ════════════════════════════════════════════════════════════════
+'use strict';
+
+// ── 産卵セット一覧 ───────────────────────────────────────────────
+Pages.pairingList = function () {
+  const main = document.getElementById('main');
+  let statusFilter = 'active';
+
+  function render() {
+    const all  = Store.getDB('pairings') || [];
+    const list = statusFilter ? all.filter(p => p.status === statusFilter) : all;
+    main.innerHTML = `
+      ${UI.header('産卵セット', { action: { fn: "routeTo('pairing-new')", icon: '＋' } })}
+      <div class="page-body">
+        <div class="filter-bar">
+          <button class="pill ${statusFilter==='active'    ? 'active' : ''}" onclick="Pages._pairSetStatus('active')">進行中</button>
+          <button class="pill ${statusFilter==='completed' ? 'active' : ''}" onclick="Pages._pairSetStatus('completed')">完了</button>
+          <button class="pill ${statusFilter==='failed'    ? 'active' : ''}" onclick="Pages._pairSetStatus('failed')">失敗</button>
+          <button class="pill ${!statusFilter              ? 'active' : ''}" onclick="Pages._pairSetStatus('')">全て</button>
+        </div>
+        <div class="sec-hdr"><span class="sec-title">${list.length}セット</span></div>
+        ${list.length ? list.map(_pairCardHTML).join('') : UI.empty('産卵セットがありません', '右上の＋から登録できます')}
+      </div>`;
+  }
+
+  Pages._pairSetStatus = (s) => { statusFilter = s; render(); };
+  render();
+};
+
+
 function _calcExchangeDue(pair) {
   if (!pair.set_start || pair.status !== 'active') return null;
   const days  = parseInt(Store.getSetting('pairing_set_exchange_days') || '7', 10);
@@ -294,18 +375,9 @@ Pages._pairMenu = function (setId) {
   ]);
 };
 
-// ③ QRラベル表示
-Pages._pairShowLabel = async function (setId) {
-  try {
-    const res = await API.label.generate('SET', setId, 'pairing');
-    if (res && res.drive_url) {
-      window.open(res.drive_url, '_blank');
-    } else {
-      UI.toast('ラベルを発行しました');
-    }
-  } catch(e) {
-    UI.toast('ラベル発行失敗: ' + e.message, 'error');
-  }
+// ③ QRラベル表示 → ラベル生成画面に遷移（Canvasプレビュー + ダウンロード）
+Pages._pairShowLabel = function (setId) {
+  routeTo('label-gen', { targetType: 'SET', targetId: setId });
 };
 
 // ── 採卵記録モーダル ────────────────────────────────────────────

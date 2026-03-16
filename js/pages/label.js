@@ -8,6 +8,9 @@
 'use strict';
 
 // ラベルサイズ（Phomemo M220 標準: 50×30mm を 200dpi 換算）
+// 現在生成中のラベル情報（_lblDownload で使用）
+window._currentLabel = { displayId: '', fileName: '', dataUrl: '' };
+
 const LABEL_W = 394;  // px (50mm)
 const LABEL_H = 236;  // px (30mm)
 
@@ -98,6 +101,54 @@ Pages.labelGen = function (params = {}) {
             : `<div style="color:var(--text3);font-size:.85rem;text-align:center;padding:20px">
                  対象を選択するとプレビューが表示されます
                </div>`}
+        </div>
+
+        <!-- ラベル発行後アクションバー -->
+        <div id="lbl-action-bar" style="display:none;margin-top:8px">
+          <div style="background:rgba(45,122,82,.10);border:1px solid rgba(45,122,82,.35);
+            border-radius:var(--radius);padding:14px 16px;">
+
+            <!-- 発行成功タイトル -->
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+              <span style="font-size:1.3rem">✅</span>
+              <span style="font-size:.95rem;font-weight:700;color:var(--green)">ラベルを生成しました</span>
+            </div>
+
+            <!-- ファイル情報 -->
+            <div style="background:var(--surface2);border-radius:8px;padding:10px 12px;margin-bottom:12px">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+                <span style="font-size:.72rem;color:var(--text3)">ファイル名</span>
+                <span style="font-size:.72rem;background:var(--surface3,#3a3a4a);
+                  color:var(--blue);padding:1px 6px;border-radius:6px">PNG</span>
+              </div>
+              <div id="lbl-filename" style="font-size:.85rem;font-weight:600;color:var(--text1);
+                word-break:break-all;">—</div>
+              <div style="font-size:.7rem;color:var(--text3);margin-top:4px">
+                📱 このデバイスのダウンロードフォルダに保存されます
+              </div>
+            </div>
+
+            <!-- アクションボタン -->
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+              <button class="btn btn-primary" onclick="Pages._lblDownload()"
+                style="font-size:.92rem;padding:13px;font-weight:700">
+                📥 ダウンロード
+              </button>
+              <button class="btn btn-ghost" onclick="Pages._lblPrint()"
+                style="font-size:.92rem;padding:13px">
+                🖨 印刷プレビュー
+              </button>
+            </div>
+            <button class="btn btn-ghost" style="width:100%;font-size:.8rem;padding:8px"
+              onclick="Pages._lblGenerate('${targetType}','${targetId}','${labelType}')">
+              🔄 再生成
+            </button>
+
+            <div style="font-size:.7rem;color:var(--text3);margin-top:10px;line-height:1.6;
+              padding-top:8px;border-top:1px solid var(--border)">
+              💡 印刷手順: ダウンロード → Phomemoアプリ「写真印刷」→ 50×30mm で印刷
+            </div>
+          </div>
         </div>
 
         <!-- Phomemo手順 -->
@@ -211,7 +262,33 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
   }
 
   // Canvas描画（100ms後にQRが確実に描画されてから）
-  setTimeout(() => _drawLabel(canvas, ld, qrDiv), 150);
+  // displayId を保持（ダウンロード時のファイル名に使用）
+  const capturedDisplayId = ld.display_id || targetId;
+  const capturedFileName  = capturedDisplayId.replace(/[^a-zA-Z0-9_\-]/g, '_') + '_label.png';
+
+  setTimeout(() => {
+    _drawLabel(canvas, ld, qrDiv);
+
+    setTimeout(() => {
+      // dataURL を確定してモジュール変数に保存
+      window._currentLabel = {
+        displayId: capturedDisplayId,
+        fileName:  capturedFileName,
+        dataUrl:   canvas.toDataURL('image/png'),
+      };
+
+      // アクションバーを更新して表示
+      const bar = document.getElementById('lbl-action-bar');
+      if (bar) {
+        // ファイル名表示を更新
+        const fnEl = document.getElementById('lbl-filename');
+        if (fnEl) fnEl.textContent = capturedFileName;
+        bar.style.display = 'block';
+      }
+      const dlBtn = document.getElementById('lbl-dl-btn');
+      if (dlBtn) dlBtn.style.display = '';
+    }, 200);
+  }, 150);
 };
 
 function _drawLabel(canvas, ld, qrDiv) {
@@ -416,13 +493,38 @@ function _truncate(str, max) {
 
 // ダウンロード
 Pages._lblDownload = function () {
-  const canvas = document.getElementById('lbl-canvas');
-  if (!canvas) return;
+  const label = window._currentLabel || {};
+  // dataURL はキャッシュ済みのものを優先、なければCanvasから再取得
+  const dataUrl = label.dataUrl || (() => {
+    const c = document.getElementById('lbl-canvas');
+    return c ? c.toDataURL('image/png') : null;
+  })();
+  if (!dataUrl) { UI.toast('ラベルデータがありません。先に「ラベル生成」を押してください。', 'error'); return; }
+  const fileName = label.fileName || ('label_' + Date.now() + '.png');
   const a = document.createElement('a');
-  a.href     = canvas.toDataURL('image/png');
-  a.download = 'label_' + Date.now() + '.png';
+  a.href     = dataUrl;
+  a.download = fileName;
   a.click();
-  UI.toast('ラベルPNGを保存しました。Phomemoアプリで印刷してください。', 'success', 4000);
+  UI.toast('📥 ' + fileName + ' をダウンロードしました', 'success', 4000);
+};
+
+Pages._lblPrint = function () {
+  const label = window._currentLabel || {};
+  const dataUrl = label.dataUrl || (() => {
+    const c = document.getElementById('lbl-canvas');
+    return c ? c.toDataURL('image/png') : null;
+  })();
+  if (!dataUrl) { UI.toast('ラベルデータがありません。先に「ラベル生成」を押してください。', 'error'); return; }
+  const win = window.open('', '_blank');
+  if (!win) { UI.toast('ポップアップをブロックされました。ダウンロードをご利用ください。', 'error'); return; }
+  win.document.write(
+    '<html><head><title>ラベル印刷</title>'
+    + '<style>body{margin:0;display:flex;justify-content:center;align-items:center;min-height:100vh;background:#fff}'
+    + 'img{max-width:100%;image-rendering:pixelated}'
+    + '@media print{body{margin:0}img{width:50mm;height:30mm}}</style></head>'
+    + '<body><img src="' + dataUrl + '" onload="window.print()"></body></html>'
+  );
+  win.document.close();
 };
 
 window.PAGES['label-gen'] = () => Pages.labelGen(Store.getParams());

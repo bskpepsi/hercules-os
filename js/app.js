@@ -360,10 +360,12 @@ const UI = {
   },
 
   // ── 体重推移 HTML テーブル ──────────────────────────────────
-  weightTable(records) {
+  weightTable(records, opts = {}) {
     const wts = records.filter(r => r.weight_g && +r.weight_g > 0)
       .sort((a,b) => a.record_date.localeCompare(b.record_date));
     if (!wts.length) return UI.empty('体重記録なし');
+
+    const showEdit = opts.showEdit !== false; // デフォルトtrue
 
     const rows = wts.map((r, i) => {
       const prev  = i > 0 ? +wts[i-1].weight_g : null;
@@ -371,19 +373,32 @@ const UI = {
       const dStr  = delta !== null
         ? `<span class="delta ${delta>=0?'pos':'neg'}">${delta>=0?'+':''}${delta.toFixed(1)}</span>`
         : '—';
-      // 記録時点の日齢と現在の日齢を区別して表示
-      const recAge = r.age_days ? Store.formatRecordAge(r.age_days) : '';
+      const recAge  = r.age_days ? Store.formatRecordAge(r.age_days) : '';
+      const contStr = r.container  || '';
+      const exchStr = r.exchange_type === 'FULL' ? '全交換'
+                    : r.exchange_type === 'PARTIAL' ? '追加' : '';
+      const matStr  = r.mat_type || '';
+      const editBtn = showEdit && r.record_id
+        ? `<button style="font-size:.65rem;padding:2px 6px;border:1px solid var(--border);
+            border-radius:10px;background:transparent;color:var(--text3);cursor:pointer;white-space:nowrap"
+            onclick="Pages._grEditRecord('${r.record_id}')">✏️</button>`
+        : '';
       return `<tr>
-        <td>${r.record_date}</td>
-        <td><b>${r.weight_g}g</b></td>
+        <td style="white-space:nowrap">${r.record_date}</td>
+        <td style="white-space:nowrap"><b>${r.weight_g}g</b></td>
         <td>${dStr}</td>
         <td>${UI.stageBadge(r.stage)}</td>
-        <td class="td-age">${recAge}</td>
+        <td style="font-size:.72rem;color:var(--text3);white-space:nowrap">${[contStr,matStr,exchStr].filter(Boolean).join('/')}</td>
+        <td class="td-age" style="white-space:nowrap">${recAge}</td>
+        ${showEdit ? `<td>${editBtn}</td>` : ''}
       </tr>`;
     }).join('');
 
-    return `<table class="data-table">
-      <thead><tr><th>日付</th><th>体重</th><th>増減</th><th>ステージ</th><th>日齢</th></tr></thead>
+    return `<table class="data-table" style="font-size:.8rem">
+      <thead><tr>
+        <th>日付</th><th>体重</th><th>増減</th><th>ステージ</th>
+        <th>容器/マット</th><th>日齢</th>${showEdit ? '<th></th>' : ''}
+      </tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
   },
@@ -468,3 +483,4 @@ Object.assign(PAGES, {
   'heatmap':         () => Pages.bloodlineHeatmap(),
   'parent-dashboard':() => Pages.parentDashboard(),
 });
+

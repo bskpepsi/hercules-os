@@ -425,6 +425,110 @@ Pages.growthRecord = function (params = {}) {
   render();
 };
 
+// ── 成長記録編集モーダル ─────────────────────────────────────────
+Pages._grEditRecord = async function (recordId) {
+  // 全ターゲットのgrowthMapからrecordIdで検索
+  let rec = null;
+  const gm = Store.getDB('growthMap') || {};
+  for (const recs of Object.values(gm)) {
+    const found = (recs || []).find(r => r.record_id === recordId);
+    if (found) { rec = found; break; }
+  }
+
+  const initDate    = rec ? String(rec.record_date || '').replace(/\//g, '-') : '';
+  const initWeight  = rec ? (rec.weight_g  || '') : '';
+  const initStage   = rec ? (rec.stage     || '') : '';
+  const initCont    = rec ? (rec.container || '') : '';
+  const initMat     = rec ? (rec.mat_type  || '') : '';
+  const initExch    = rec ? (rec.exchange_type || '') : '';
+  const initNote    = rec ? (rec.note_private  || '') : '';
+
+  const STAGE_OPTS = ['T0','T1','T2','T3','PREPUPA','PUPA','ADULT']
+    .map(s => `<option value="${s}" ${initStage===s?'selected':''}>${s}</option>`).join('');
+
+  UI.modal(`
+    <div class="modal-title">成長記録を編集</div>
+    <div class="form-section" style="max-height:60vh;overflow-y:auto">
+      ${UI.field('記録日', `<input type="date" id="gre-date" class="input" value="${initDate}">`)}
+      ${UI.field('体重(g)', `<input type="number" id="gre-weight" class="input" step="0.1" value="${initWeight}" placeholder="例: 45.2">`)}
+      <div class="form-row-2">
+        ${UI.field('ステージ', `<select id="gre-stage" class="input">${STAGE_OPTS}</select>`)}
+        ${UI.field('容器', `<select id="gre-cont" class="input">
+          <option value="">—</option>
+          <option value="1.8L" ${initCont==='1.8L'?'selected':''}>1.8L</option>
+          <option value="2.7L" ${initCont==='2.7L'?'selected':''}>2.7L</option>
+          <option value="4.8L" ${initCont==='4.8L'?'selected':''}>4.8L</option>
+        </select>`)}
+      </div>
+      <div class="form-row-2">
+        ${UI.field('マット', `<select id="gre-mat" class="input">
+          <option value="">—</option>
+          <option value="T0" ${initMat==='T0'?'selected':''}>T0</option>
+          <option value="T1" ${initMat==='T1'?'selected':''}>T1</option>
+          <option value="T2" ${initMat==='T2'?'selected':''}>T2</option>
+          <option value="T3" ${initMat==='T3'?'selected':''}>T3</option>
+        </select>`)}
+        ${UI.field('交換区分', `<select id="gre-exch" class="input">
+          <option value="">—</option>
+          <option value="FULL"    ${initExch==='FULL'?'selected':''}>全交換</option>
+          <option value="PARTIAL" ${initExch==='PARTIAL'?'selected':''}>追加のみ</option>
+        </select>`)}
+      </div>
+      ${UI.field('メモ', `<input type="text" id="gre-note" class="input" value="${initNote}" placeholder="任意">`)}
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" style="flex:1" onclick="UI.closeModal()">キャンセル</button>
+      <button class="btn btn-primary" style="flex:2" onclick="Pages._grSaveEdit('${recordId}')">更新</button>
+    </div>
+  `);
+};
+
+Pages._grSaveEdit = async function (recordId) {
+  const date   = (document.getElementById('gre-date')?.value   || '').replace(/-/g, '/');
+  const weight = document.getElementById('gre-weight')?.value   || '';
+  const stage  = document.getElementById('gre-stage')?.value    || '';
+  const cont   = document.getElementById('gre-cont')?.value     || '';
+  const mat    = document.getElementById('gre-mat')?.value      || '';
+  const exch   = document.getElementById('gre-exch')?.value     || '';
+  const note   = document.getElementById('gre-note')?.value     || '';
+
+  if (!weight) { UI.toast('体重を入力してください', 'error'); return; }
+
+  const payload = {
+    record_id:     recordId,
+    record_date:   date,
+    weight_g:      weight,
+    stage,
+    container:     cont,
+    mat_type:      mat,
+    exchange_type: exch,
+    note_private:  note,
+  };
+
+  try {
+    UI.loading(true);
+    UI.closeModal();
+    await apiCall(() => API.growth.update(payload), '成長記録を更新しました');
+    // キャッシュを更新
+    const gm = Store.getDB('growthMap') || {};
+    for (const [tid, recs] of Object.entries(gm)) {
+      const idx = (recs || []).findIndex(r => r.record_id === recordId);
+      if (idx >= 0) {
+        Object.assign(recs[idx], payload);
+        Store.setGrowthRecords(tid, recs);
+        // 履歴表示を再描画
+        const histEl = document.getElementById('gr-history');
+        if (histEl) histEl.innerHTML = UI.weightTable(recs);
+        break;
+      }
+    }
+  } catch (e) {
+    UI.toast('更新失敗: ' + e.message, 'error');
+  } finally {
+    UI.loading(false);
+  }
+};
+
 // ページ登録
 window.PAGES = window.PAGES || {};
 window.PAGES['growth-rec'] = () => Pages.growthRecord(Store.getParams());
