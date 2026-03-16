@@ -203,30 +203,44 @@ Pages._lineShowClosed = function () {
 // ── ライン詳細 ───────────────────────────────────────────────────
 Pages.lineDetail = async function (lineId) {
   if (lineId && typeof lineId === 'object') lineId = lineId.id || lineId.lineId || '';
+  console.log('[lineDetail] start lineId=', lineId, 'page=', Store.getPage());
   const main = document.getElementById('main');
   // キャッシュがあれば即時表示
   let line = Store.getLine(lineId);
+  console.log('[lineDetail] cache hit=', !!line);
   if (line) _renderLineDetail(line, main);
   else main.innerHTML = UI.header('ライン詳細', {}) + UI.spinner();
   try {
     const res = await API.line.get(lineId);
     line = res.line;
+    console.log('[lineDetail] api returned line_id=', line && line.line_id, 'page=', Store.getPage());
     Store.patchDBItem('lines', 'line_id', lineId, line);
-    // ── 競合防止: API 返却時に line-detail のままか確認 ──
-    // 編集画面など他ページに遷移済みの場合は描画しない
     if (Store.getPage() === 'line-detail') {
       _renderLineDetail(line, main);
+    } else {
+      console.warn('[lineDetail] render SKIPPED page changed to:', Store.getPage());
     }
   } catch (e) {
+    console.error('[lineDetail] ERROR:', e);
     if (!line && Store.getPage() === 'line-detail') {
-      main.innerHTML = UI.header('エラー', {}) +
-        `<div class="page-body">${UI.empty(e.message)}</div>`;
+      main.innerHTML = UI.header('エラー', {back:true}) +
+        `<div class="page-body">${UI.empty('取得失敗: ' + e.message)}</div>`;
     }
   }
 };
 
+// ── 親情報ヘルパー（_renderLineDetail から使用）────────────────
+function _parentInfo(p, pBld, sexColor) {
+  if (!p) return '<span style="color:var(--text3)">—（未設定）</span>';
+  const bldStr  = pBld ? (pBld.abbreviation || pBld.bloodline_name || '') : '';
+  const sizeStr = p.size_mm ? ' <strong>' + p.size_mm + 'mm</strong>' : '';
+  return '<span style="cursor:pointer;color:' + sexColor + '" onclick="routeTo(\x27parent-detail\x27,{parId:\x27' + p.par_id + '\x27})">' 
+    + (p.parent_display_id || p.display_name) + sizeStr
+    + (bldStr ? '<span style="color:var(--text3);font-size:.78rem"> / ' + bldStr + '</span>' : '')
+    + '</span>';
+}
+
 function _renderLineDetail(line, main) {
-  try {
   const f    = Store.getParent(line.father_par_id);
   const m    = Store.getParent(line.mother_par_id);
   const bld  = Store.getBloodline(line.bloodline_id);
@@ -287,18 +301,8 @@ function _renderLineDetail(line, main) {
   // ⑦ ロット内減耗 = SUM(lots.attrition_total)（dissolved含む全ロット）
   const attritionTotal  = allLots.reduce((s, l) => s + (parseInt(l.attrition_total, 10) || 0), 0);
 
-  // 親情報ヘルパー
-  function _parentInfo(p, pBld, sexColor) {
-    if (!p) return '<span style="color:var(--text3)">—（未設定）</span>';
-    const bldStr = pBld ? (pBld.abbreviation || pBld.bloodline_name || '') : '';
-    const sizeStr = p.size_mm ? ' <strong>' + p.size_mm + 'mm</strong>' : '';
-    return '<span style="cursor:pointer;color:' + sexColor + '" onclick="routeTo(\x27parent-detail\x27,{parId:\x27' + p.par_id + '\x27})">'
-      + p.display_name + sizeStr
-      + (bldStr ? '<span style="color:var(--text3);font-size:.78rem"> / ' + bldStr + '</span>' : '')
-      + '</span>';
-  }
-
-
+  
+  try {
   main.innerHTML = `
     ${UI.header(line.display_id + ' 詳細', { back: true, action: { fn: "routeTo('line-new',{editId:'" + line.line_id + "'})", icon: '✏️' } })}
     <div class="page-body">
@@ -450,9 +454,13 @@ function _renderLineDetail(line, main) {
 
     </div>`;
   } catch(e) {
-    console.error('_renderLineDetail error:', e);
-    main.innerHTML = UI.header(line.display_id + ' 詳細', {back:true})
-      + '<div class="page-body">' + UI.empty('表示エラー: ' + e.message) + '</div>';
+    console.error('[_renderLineDetail] CRASH at render:', e, e.stack);
+    main.innerHTML = UI.header((line && line.display_id) || 'ライン詳細', {back:true})
+      + '<div class="page-body">'
+      + UI.empty('表示エラー: ' + e.message)
+      + '<div style="font-size:.7rem;color:var(--text3);margin-top:8px;word-break:break-all">'
+      + String(e.stack||'').slice(0,200) + '</div>'
+      + '</div>';
   }
 }
 
