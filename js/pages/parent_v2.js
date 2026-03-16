@@ -889,6 +889,177 @@ function _clientExtractTags(raw) {
   return Array.from(tags);
 }
 
+// ════════════════════════════════════════════════════════════════
+// 種親登録 / 編集フォーム（v2: createParentV2 対応）
+// ════════════════════════════════════════════════════════════════
+Pages.parentNew = function (params = {}) {
+  const main   = document.getElementById('main');
+  const isEdit = !!params.editId;
+  const par    = isEdit ? Store.getParent(params.editId) : null;
+  const v = (f, d = '') => par ? (par[f] !== undefined && par[f] !== null ? par[f] : d) : (params[f] || d);
+
+  // 性別初期値（一覧からの遷移で sex が渡されることがある）
+  const initSex = v('sex', params.sex || '♂');
+
+  main.innerHTML = `
+    ${UI.header(isEdit ? '種親を編集' : '種親を登録', { back: true })}
+    <div class="page-body">
+      <div class="form-section">
+
+        <!-- 性別 -->
+        <div class="field-label">性別</div>
+        <div style="display:flex;gap:8px;margin-bottom:16px" id="par-sex-wrap">
+          <button type="button" id="sex-btn-male"
+            class="btn ${initSex === '♂' ? 'btn-primary' : 'btn-ghost'}"
+            style="flex:1;font-size:.95rem"
+            onclick="Pages._parSetSex('♂')">♂ 種雄</button>
+          <button type="button" id="sex-btn-female"
+            class="btn ${initSex === '♀' ? 'btn-primary' : 'btn-ghost'}"
+            style="flex:1;font-size:.95rem"
+            onclick="Pages._parSetSex('♀')">♀ 種雌</button>
+        </div>
+        <input type="hidden" id="par-sex" value="${initSex}">
+
+        <!-- 種親ID（自動採番表示） -->
+        <div class="field-label">種親ID（自動採番）</div>
+        <div style="background:var(--surface2);border-radius:var(--radius-sm);padding:12px 14px;
+          font-family:var(--font-mono);color:var(--amber);font-size:.9rem;margin-bottom:16px">
+          ${isEdit ? (v('parent_display_id') || v('display_name')) : (initSex === '♂' ? 'M26-?' : 'F26-?')}　（登録時に自動決定）
+        </div>
+
+        <!-- サイズ -->
+        <div class="field-label">サイズ(mm)</div>
+        <input type="number" id="par-size" class="input" step="0.1" value="${v('size_mm')}" placeholder="例: 174.5">
+
+        <!-- 父親サイズ・母親サイズ -->
+        <div class="form-row-2" style="margin-top:12px">
+          ${UI.field('父親サイズ(mm)', `<input type="number" id="par-f-size" class="input" step="0.1"
+            value="${v('father_parent_size_mm')}" placeholder="例: 180.0">`)}
+          ${UI.field('母親サイズ(mm)', `<input type="number" id="par-m-size" class="input" step="0.1"
+            value="${v('mother_parent_size_mm')}" placeholder="例: 65.0">`)}
+        </div>
+
+        <!-- 全体血統 -->
+        <div style="margin-top:4px">
+          <div class="field-label" style="margin-top:12px;margin-bottom:2px;font-size:.72rem;color:var(--text3)">全体血統</div>
+          ${UI.field('血統原文（ヤフオク等の表記）', `<input type="text" id="par-bld-raw" class="input"
+            value="${v('bloodline_raw')}" placeholder="例: LS175xNo120.U71U6I-FF.FOX-FOX">`)}
+        </div>
+
+        <!-- 父系 -->
+        <div>
+          <div class="field-label" style="margin-top:12px;margin-bottom:2px;font-size:.72rem;color:var(--text3)">父系</div>
+          ${UI.field('父系原文', `<input type="text" id="par-pat-raw" class="input"
+            value="${v('paternal_raw')}" placeholder="例: LS175×No120（父方の血統原文）">`)}
+        </div>
+
+        <!-- 母系 -->
+        <div>
+          <div class="field-label" style="margin-top:12px;margin-bottom:2px;font-size:.72rem;color:var(--text3)">母系</div>
+          ${UI.field('母系原文', `<input type="text" id="par-mat-raw" class="input"
+            value="${v('maternal_raw')}" placeholder="例: FOX×U6I（母方の血統原文）">`)}
+        </div>
+
+        <!-- 日付 -->
+        <div class="form-row-2" style="margin-top:4px">
+          ${UI.field('羽化日', `<input type="date" id="par-eclosion" class="input"
+            value="${v('eclosion_date','').replace(/\//g,'-')}">`)}
+          ${UI.field('後食開始日', `<input type="date" id="par-feeding" class="input"
+            value="${v('feeding_start_date','').replace(/\//g,'-')}">`)}
+        </div>
+
+        <!-- 産地・世代 -->
+        <div class="form-row-2" style="margin-top:4px">
+          ${UI.field('産地', `<input type="text" id="par-locality" class="input"
+            value="${v('locality','Guadeloupe')}" placeholder="例: Guadeloupe">`)}
+          ${UI.field('世代', `<input type="text" id="par-gen" class="input"
+            value="${v('generation')}" placeholder="例: CBF2">`)}
+        </div>
+
+        <!-- 入手情報 -->
+        ${UI.field('入手元', `<input type="text" id="par-source" class="input"
+          value="${v('source')}" placeholder="例: ヤフオク〇〇様">`)}
+
+        ${isEdit ? `
+        <div class="field-label" style="margin-top:12px">ステータス</div>
+        <select id="par-status" class="input">
+          <option value="active"  ${v('status','active') === 'active'  ? 'selected' : ''}>現役</option>
+          <option value="retired" ${v('status') === 'retired' ? 'selected' : ''}>引退</option>
+          <option value="dead"    ${v('status') === 'dead'    ? 'selected' : ''}>死亡</option>
+        </select>` : ''}
+
+        <!-- メモ -->
+        ${UI.field('メモ', `<textarea id="par-note" class="input" rows="2">${v('note')}</textarea>`)}
+
+        <!-- ボタン -->
+        <div style="display:flex;gap:10px;margin-top:16px">
+          <button type="button" class="btn btn-ghost" style="flex:1" onclick="Store.back()">戻る</button>
+          <button type="button" class="btn btn-primary" style="flex:2"
+            onclick="Pages._parV2Save('${isEdit ? params.editId : ''}')">
+            ${isEdit ? '更新する' : '登録する'}
+          </button>
+        </div>
+
+      </div>
+    </div>`;
+};
+
+// 性別ボタン切り替え
+Pages._parSetSex = function (sex) {
+  document.getElementById('par-sex').value = sex;
+  const btnM = document.getElementById('sex-btn-male');
+  const btnF = document.getElementById('sex-btn-female');
+  if (btnM && btnF) {
+    btnM.className = 'btn ' + (sex === '♂' ? 'btn-primary' : 'btn-ghost');
+    btnF.className = 'btn ' + (sex === '♀' ? 'btn-primary' : 'btn-ghost');
+  }
+};
+
+// 種親登録・更新保存（createParentV2 を呼ぶ）
+Pages._parV2Save = async function (editId) {
+  const sex = document.getElementById('par-sex')?.value || '♂';
+  if (!sex) { UI.toast('性別を選択してください', 'error'); return; }
+
+  const toDate = el => {
+    const v = document.getElementById(el)?.value || '';
+    return v ? v.replace(/-/g, '/') : '';
+  };
+
+  const data = {
+    sex,
+    size_mm:               document.getElementById('par-size')?.value    || '',
+    father_parent_size_mm: document.getElementById('par-f-size')?.value  || '',
+    mother_parent_size_mm: document.getElementById('par-m-size')?.value  || '',
+    bloodline_raw:         document.getElementById('par-bld-raw')?.value  || '',
+    paternal_raw:          document.getElementById('par-pat-raw')?.value  || '',
+    maternal_raw:          document.getElementById('par-mat-raw')?.value  || '',
+    eclosion_date:         toDate('par-eclosion'),
+    feeding_start_date:    toDate('par-feeding'),
+    locality:              document.getElementById('par-locality')?.value || 'Guadeloupe',
+    generation:            document.getElementById('par-gen')?.value      || '',
+    source:                document.getElementById('par-source')?.value   || '',
+    note:                  document.getElementById('par-note')?.value     || '',
+  };
+
+  if (editId) {
+    data.par_id = editId;
+    const status = document.getElementById('par-status')?.value;
+    if (status) data.status = status;
+  }
+
+  try {
+    if (editId) {
+      await apiCall(() => API.phase2.updateParent(data), '更新しました');
+      Store.patchDBItem('parents', 'par_id', editId, data);
+      routeTo('parent-detail', { parId: editId });
+    } else {
+      const res = await apiCall(() => API.phase2.createParent(data), '種親を登録しました');
+      await syncAll(true);
+      routeTo('parent-detail', { parId: res.par_id });
+    }
+  } catch (e) {}
+};
+
 window.PAGES = window.PAGES || {};
 window.PAGES['parent-list']      = () => Pages.parentList();
 window.PAGES['parent-new']       = () => Pages.parentNew(Store.getParams());
