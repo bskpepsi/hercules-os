@@ -312,13 +312,18 @@ Pages.individualDetail = async function (indId) {
 
   try {
     const res = await API.individual.get(indId);
+    // 競合防止: API返却時に ind-detail にいるか・同じIDか確認
+    if (Store.getPage() !== 'ind-detail') return;
+    if (Store.getParams().indId !== indId && Store.getParams().id !== indId) return;
     ind = res.individual;
     // キャッシュ更新
     Store.patchDBItem('individuals', 'ind_id', indId, ind);
     if (ind._growthRecords) Store.setGrowthRecords(indId, ind._growthRecords);
     _renderDetail(ind, main);
   } catch (e) {
-    if (!ind) main.innerHTML = UI.header('エラー', {}) + `<div class="page-body">${UI.empty('取得失敗: ' + e.message)}</div>`;
+    if (!ind && Store.getPage() === 'ind-detail') {
+      main.innerHTML = UI.header('エラー', {back:true}) + `<div class="page-body">${UI.empty('取得失敗: ' + e.message)}</div>`;
+    }
   }
 };
 

@@ -234,7 +234,8 @@ function _renderLineDetail(line, main) {
   const mBld = m && m.bloodline_id ? blds.find(b=>b.bloodline_id===m.bloodline_id) : null;
 
   // このラインに属する個体・ロット（全状態）
-  const allLots    = (Store.getDB('lots') || []).filter(l => l.line_id === line.line_id);
+  // status='all' で dissolved/individualized も含めて取得
+  const allLots    = Store.filterLots({ line_id: line.line_id, status: 'all' });
   const activeLots = allLots.filter(l => l.status === 'active');
   const allInds    = Store.getIndividualsByLine(line.line_id);
   const aliveInds  = allInds.filter(i => i.status !== 'dead');
@@ -414,36 +415,36 @@ function _renderLineDetail(line, main) {
         </div>
       </div>
 
-      <!-- 詳細集計（展開表示） -->
-      ${(rottenEggs > 0 || attritionTotal > 0 || directInds.length > 0) ? `
+      <!-- 詳細集計（常時表示） -->
       <div class="card" style="padding:10px 14px">
         <div style="font-size:.72rem;font-weight:700;color:var(--text3);letter-spacing:.06em;margin-bottom:8px">詳細集計</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:.78rem">
-          ${rottenEggs > 0 ? `
+        <div style="font-size:.78rem">
+          <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border)">
+            <span style="color:var(--text3)">採卵数</span>
+            <span style="font-weight:600">${totalEggs}個</span>
+          </div>
           <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border)">
             <span style="color:var(--text3)">腐卵数</span>
-            <span style="color:var(--red);font-weight:600">${rottenEggs}個</span>
+            <span style="color:${rottenEggs>0?'var(--red)':'var(--text3)'};font-weight:600">${rottenEggs > 0 ? rottenEggs+'個' : '—'}</span>
           </div>
           <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border)">
             <span style="color:var(--text3)">ロット化累計</span>
             <span style="font-weight:600">${lotInitTotal}個</span>
-          </div>` : ''}
-          ${attritionTotal > 0 ? `
+          </div>
           <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border)">
-            <span style="color:var(--text3)">ロット内減耗</span>
-            <span style="color:var(--amber);font-weight:600">${attritionTotal}頭</span>
+            <span style="color:var(--text3)">直接個体化</span>
+            <span style="color:${directInds.length>0?'var(--blue)':'var(--text3)'};font-weight:600">${directInds.length > 0 ? directInds.length+'頭' : '—'}</span>
           </div>
           <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border)">
             <span style="color:var(--text3)">現在ロット内頭数</span>
             <span style="font-weight:600">${lotCurrentTotal}頭</span>
-          </div>` : ''}
-          ${directInds.length > 0 ? `
+          </div>
           <div style="display:flex;justify-content:space-between;padding:4px 0">
-            <span style="color:var(--text3)">直接個体化</span>
-            <span style="font-weight:600">${directInds.length}頭</span>
-          </div>` : ''}
+            <span style="color:var(--text3)">ロット内減耗</span>
+            <span style="color:${attritionTotal>0?'var(--amber)':'var(--text3)'};font-weight:600">${attritionTotal > 0 ? attritionTotal+'頭' : '—'}</span>
+          </div>
         </div>
-      </div>` : ''}
+      </div>
 
     </div>`;
 }

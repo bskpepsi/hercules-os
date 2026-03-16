@@ -1100,8 +1100,9 @@ Pages._wmShowComplete = function (entityType, entityId, weight) {
   const body = main?.querySelector('.page-body');
   if (!body) return;
 
-  // 詳細ルートを解決
-  const detailRoute = entityType === 'IND' ? 'ind-detail' : 'lot-detail';
+  // 詳細ルートを解決（専用params名を使用）
+  const detailRoute  = entityType === 'IND' ? 'ind-detail' : 'lot-detail';
+  const detailParam  = entityType === 'IND' ? 'indId'      : 'lotId';
 
   // 完了バナーをページ先頭に挿入
   const banner = document.createElement('div');
@@ -1127,7 +1128,7 @@ Pages._wmShowComplete = function (entityType, entityId, weight) {
           📷 次をスキャン
         </button>
         <button class="btn btn-primary" style="flex:1;padding:12px"
-          onclick="routeTo('${detailRoute}',{id:'${entityId}'})">
+          onclick="routeTo('${detailRoute}',{[detailParam]:'${entityId}'})">
           詳細を見る
         </button>
       </div>

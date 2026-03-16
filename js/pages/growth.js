@@ -411,6 +411,18 @@ Pages.growthRecord = function (params = {}) {
       if (type === 'IND') {
         Store.patchDBItem('individuals', 'ind_id', id, { latest_weight_g: weight, current_stage: stage });
       }
+      // ロットのカウント・ステージをキャッシュ更新（after_count入力時）
+      if (type === 'LOT') {
+        const lotUpdates = {};
+        if (stage) lotUpdates.stage = stage;
+        if (payload.after_count !== undefined) {
+          lotUpdates.count = payload.after_count;
+          if (payload.after_count === 0) lotUpdates.status = 'individualized';
+        }
+        if (Object.keys(lotUpdates).length) {
+          Store.patchDBItem('lots', 'lot_id', id, lotUpdates);
+        }
+      }
       // フォームリセット
       document.getElementById('gr-weight').value = '';
       _photoB64 = null;

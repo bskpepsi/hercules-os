@@ -530,10 +530,15 @@ function _loadPairingManagement(parId) {
         return db.localeCompare(da);
       });
       window.__pairingMgmtCache = finalMerged;
-      _renderPairingManagement(parId, finalMerged, false);
+      // 競合防止: API返却時に同じ種親詳細ページにいるか確認
+      if (Store.getPage() === 'parent-detail' && document.getElementById('pairing-stats-section')) {
+        _renderPairingManagement(parId, finalMerged, false);
+      }
     })
     .catch(() => {
-      _renderPairingManagement(parId, merged, false);
+      if (Store.getPage() === 'parent-detail' && document.getElementById('pairing-stats-section')) {
+        _renderPairingManagement(parId, merged, false);
+      }
     });
 }
 

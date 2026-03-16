@@ -383,8 +383,12 @@ const Store = (() => {
     let list = [..._db.lots];
     if (filters.line_id) list = list.filter(l => l.line_id === filters.line_id);
     if (filters.stage)   list = list.filter(l => l.stage   === filters.stage);
-    if (filters.status)  list = list.filter(l => l.status  === filters.status);
-    else                 list = list.filter(l => l.status  === 'active');
+    // status:'all' → 全ステータス取得（dissolved/individualized を含む）
+    // status未指定  → active のみ
+    // status指定    → そのステータスのみ
+    if (filters.status !== 'all') {
+      list = list.filter(l => l.status === (filters.status || 'active'));
+    }
     return list;
   }
 

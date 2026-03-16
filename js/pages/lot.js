@@ -155,11 +155,16 @@ Pages.lotDetail = async function (lotId) {
 
   try {
     const res = await API.lot.get(lotId);
+    // 競合防止: API返却時に lot-detail にいるか・同じIDか確認
+    if (Store.getPage() !== 'lot-detail') return;
+    if (Store.getParams().lotId !== lotId && Store.getParams().id !== lotId) return;
     lot = res.lot;
     _renderLotDetail(lot, main);
   } catch (e) {
-    if (!lot) main.innerHTML = UI.header('エラー', {}) +
-      `<div class="page-body">${UI.empty('取得失敗: ' + e.message)}</div>`;
+    if (!lot && Store.getPage() === 'lot-detail') {
+      main.innerHTML = UI.header('エラー', {back:true}) +
+        `<div class="page-body">${UI.empty('取得失敗: ' + e.message)}</div>`;
+    }
   }
 };
 
@@ -192,7 +197,7 @@ function _renderLotDetail(lot, main) {
           <div>
             <div style="font-family:var(--font-mono);color:var(--gold);font-size:.85rem">${lot.display_id}</div>
             <div style="margin-top:4px;display:flex;gap:6px;flex-wrap:wrap">
-              ${UI.stageBadge(lot.stage)}
+              ${UI.stageBadge(dispStage !== '—' ? dispStage : lot.stage)}
               <span class="badge" style="background:var(--surface2);color:var(--text2)">${lot.count}頭</span>
             </div>
           </div>
@@ -230,6 +235,7 @@ function _renderLotDetail(lot, main) {
         <div class="info-list">
           ${_infoRow('ライン', line ? `<span onclick="routeTo('line-detail',{lineId:'${line.line_id}'})" style="color:var(--blue);cursor:pointer">${line.display_id}</span>` : lot.line_id)}
           ${dispWeight ? _infoRow('最新体重', `<span style="font-weight:700;color:var(--green)">${dispWeight}</span>`) : ''}
+          ${_infoRow('現在ステージ', dispStage !== '—' ? dispStage : (lot.stage || '—'))}
           ${_infoRow('容器',     dispContainer)}
           ${_infoRow('マット',   dispMat)}
           ${_infoRow('孵化日',   lot.hatch_date || '未設定')}
