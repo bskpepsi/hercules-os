@@ -203,26 +203,21 @@ Pages._lineShowClosed = function () {
 // ── ライン詳細 ───────────────────────────────────────────────────
 Pages.lineDetail = async function (lineId) {
   if (lineId && typeof lineId === 'object') lineId = lineId.id || lineId.lineId || '';
-  console.log('[lineDetail] start lineId=', lineId, 'page=', Store.getPage());
   const main = document.getElementById('main');
   // キャッシュがあれば即時表示
   let line = Store.getLine(lineId);
-  console.log('[lineDetail] cache hit=', !!line);
   if (line) _renderLineDetail(line, main);
   else main.innerHTML = UI.header('ライン詳細', {}) + UI.spinner();
   try {
     const res = await API.line.get(lineId);
     line = res.line;
-    console.log('[lineDetail] api returned line_id=', line && line.line_id, 'page=', Store.getPage());
     Store.patchDBItem('lines', 'line_id', lineId, line);
     if (Store.getPage() === 'line-detail') {
       _renderLineDetail(line, main);
     } else {
-      console.warn('[lineDetail] render SKIPPED page changed to:', Store.getPage());
     }
   } catch (e) {
-    console.error('[lineDetail] ERROR:', e);
-    if (!line && Store.getPage() === 'line-detail') {
+    if (Store.getPage() === 'line-detail') {
       main.innerHTML = UI.header('エラー', {back:true}) +
         `<div class="page-body">${UI.empty('取得失敗: ' + e.message)}</div>`;
     }
@@ -241,6 +236,7 @@ function _parentInfo(p, pBld, sexColor) {
 }
 
 function _renderLineDetail(line, main) {
+  try {
   const f    = Store.getParent(line.father_par_id);
   const m    = Store.getParent(line.mother_par_id);
   const bld  = Store.getBloodline(line.bloodline_id);
@@ -302,8 +298,7 @@ function _renderLineDetail(line, main) {
   const attritionTotal  = allLots.reduce((s, l) => s + (parseInt(l.attrition_total, 10) || 0), 0);
 
   
-  try {
-  main.innerHTML = `
+    main.innerHTML = `
     ${UI.header(line.display_id + ' 詳細', { back: true, action: { fn: "routeTo('line-new',{editId:'" + line.line_id + "'})", icon: '✏️' } })}
     <div class="page-body">
 
@@ -454,13 +449,8 @@ function _renderLineDetail(line, main) {
 
     </div>`;
   } catch(e) {
-    console.error('[_renderLineDetail] CRASH at render:', e, e.stack);
     main.innerHTML = UI.header((line && line.display_id) || 'ライン詳細', {back:true})
-      + '<div class="page-body">'
-      + UI.empty('表示エラー: ' + e.message)
-      + '<div style="font-size:.7rem;color:var(--text3);margin-top:8px;word-break:break-all">'
-      + String(e.stack||'').slice(0,200) + '</div>'
-      + '</div>';
+      + '<div class="page-body">' + UI.empty('表示エラー: ' + e.message) + '</div>';
   }
 }
 

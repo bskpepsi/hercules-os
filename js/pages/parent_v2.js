@@ -515,7 +515,12 @@ function _loadPairingManagement(parId) {
   _renderPairingManagement(parId, merged, true);
 
   // ② PAIRING_HISTORY を非同期取得してマージ
-  API.phase2.getPairingHistories({ male_parent_id: parId })
+  // 性別に応じてクエリキーを切り替え（♀の場合は female_parent_id で取得）
+  const _curPar  = (Store.getDB('parents') || []).find(p => p.par_id === parId);
+  const _isFemale = _curPar?.sex === '♀';
+  const _phParam  = _isFemale ? { female_parent_id: parId } : { male_parent_id: parId };
+
+  API.phase2.getPairingHistories(_phParam)
     .then(res => {
       const apiEntries  = res.histories || [];
       const apiIds      = new Set(apiEntries.map(e => e.pairing_id));
