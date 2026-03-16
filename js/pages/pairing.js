@@ -37,7 +37,17 @@ function _pairCardHTML(pair) {
   const badge = _exchangeBadgeHtml(pair);
 
   // ラインコード・年を取得
-  const ln       = Store.getLine(pair.line_id);
+  // pair.line_id が空の場合は父母IDからラインを逆引き
+  let ln = Store.getLine(pair.line_id);
+  if (!ln && (pair.father_par_id || pair.mother_par_id)) {
+    const allLines = Store.getDB('lines') || [];
+    ln = allLines.find(l =>
+      l.father_par_id === pair.father_par_id &&
+      l.mother_par_id === pair.mother_par_id
+    ) || allLines.find(l =>
+      l.father_par_id === pair.father_par_id
+    ) || null;
+  }
   const lineCode = ln ? (ln.line_code || ln.display_id || '—') : '—';
   const year     = ln ? (ln.hatch_year || '') : '';
 
