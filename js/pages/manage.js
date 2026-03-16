@@ -253,29 +253,37 @@ function _renderLineDetail(line, main) {
     return false;
   });
 
-  // ── 採卵数集計 ──────────────────────────────────────────────
-  // 優先: egg_records（採卵履歴）の egg_count 合計
-  // フォールバック: pairings.total_eggs（GAS集計値）
-  const eggRecords     = Store.getDB('egg_records') || [];
-  const lineEggRecs    = eggRecords.filter(r => pairings.some(p => p.set_id === r.set_id));
-  const totalEggsFromRecs = lineEggRecs.reduce((s, r) => s + (parseInt(r.egg_count, 10) || 0), 0);
-  const totalEggsFromSets = pairings.reduce((s, p) => s + (parseInt(p.total_eggs, 10) || 0), 0);
-  // egg_records に実データがあればそちらを使い、なければ pairings.total_eggs を使う
-  const totalEggs = lineEggRecs.length > 0 ? totalEggsFromRecs : totalEggsFromSets;
+  // ════════════════════════════════════════════════════
+  // ライン集計 — 卵の流れに沿った定義
+  // ════════════════════════════════════════════════════
 
-  // ロット化済み卵数 = ロットの initial_count 合計
-  const lotInitTotal = allLots.reduce((s, l) => s + (parseInt(l.initial_count, 10) || 0), 0);
+  // ① 採卵数 = SUM(egg_records.egg_count)  / フォールバック: pairings.total_eggs
+  const eggRecords  = Store.getDB('egg_records') || [];
+  const lineEggRecs = eggRecords.filter(r => pairings.some(p => p.set_id === r.set_id));
+  const totalEggs   = lineEggRecs.length > 0
+    ? lineEggRecs.reduce((s, r) => s + (parseInt(r.egg_count, 10) || 0), 0)
+    : pairings.reduce((s, p) => s + (parseInt(p.total_eggs, 10) || 0), 0);
 
-  // 個体化済み数 = 個体数（ロット経由以外の直接個体化も含む）
-  // → aliveInds.length は既に計算済みだが、ここでは全個体を使う
-  const indTotal = allInds.length;
+  // ② 腐卵数 = SUM(egg_records.failed_count)
+  const rottenEggs  = lineEggRecs.reduce((s, r) => s + (parseInt(r.failed_count, 10) || 0), 0);
 
-  // ダメ卵数 = 採卵履歴の failed_count 合計
-  const failedTotal = lineEggRecs.reduce((s, r) => s + (parseInt(r.failed_count, 10) || 0), 0);
+  // ③ ロット化累計 = ルートロット（parent_lot_id が空）の initial_count 合計
+  //    分割で作られた子ロットは initial_count を持つが重複カウントを避けるため除外
+  const rootLots     = allLots.filter(l => !l.parent_lot_id || l.parent_lot_id === '');
+  const lotInitTotal = rootLots.reduce((s, l) => s + (parseInt(l.initial_count, 10) || 0), 0);
 
-  // 未ロット卵 = 採卵数 - ロット化済み - ダメ卵（マイナス防止）
-  // ※ ロット→個体化は lotInitTotal に含まれているので個体数は引かない
-  const unLotEggs = Math.max(0, totalEggs - lotInitTotal - failedTotal);
+  // ④ 直接個体化数 = lot_id が空の個体（ロット経由しない直接個体化）
+  const directInds  = allInds.filter(i => !i.lot_id || i.lot_id === '');
+
+  // ⑤ 未ロット卵 = MAX(採卵数 - 腐卵数 - ロット化累計 - 直接個体化数, 0)
+  //    ロット内減耗はロット化後の話なので未ロット卵には含めない
+  const unLotEggs   = Math.max(0, totalEggs - rottenEggs - lotInitTotal - directInds.length);
+
+  // ⑥ 現在ロット内頭数 = SUM(active lots.count)
+  const lotCurrentTotal = activeLots.reduce((s, l) => s + (parseInt(l.count, 10) || 0), 0);
+
+  // ⑦ ロット内減耗 = SUM(lots.attrition_total)（dissolved含む全ロット）
+  const attritionTotal  = allLots.reduce((s, l) => s + (parseInt(l.attrition_total, 10) || 0), 0);
 
   // 親情報ヘルパー
   function _parentInfo(p, pBld, sexColor) {
@@ -311,20 +319,21 @@ function _renderLineDetail(line, main) {
         </div>
         <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-top:12px">
           <div style="text-align:center;background:var(--surface2);border-radius:6px;padding:8px 2px">
-            <div style="font-size:.6rem;color:var(--text3)">ロット</div>
-            <div style="font-weight:700;font-size:1rem;color:var(--blue)">${activeLots.length}</div>
-          </div>
-          <div style="text-align:center;background:var(--surface2);border-radius:6px;padding:8px 2px">
-            <div style="font-size:.6rem;color:var(--text3)">個体</div>
-            <div style="font-weight:700;font-size:1rem;color:var(--green)">${aliveInds.length}</div>
-          </div>
-          <div style="text-align:center;background:var(--surface2);border-radius:6px;padding:8px 2px">
             <div style="font-size:.6rem;color:var(--text3)">採卵数</div>
             <div style="font-weight:700;font-size:1rem;color:var(--amber)">${totalEggs}</div>
           </div>
           <div style="text-align:center;background:var(--surface2);border-radius:6px;padding:8px 2px">
             <div style="font-size:.6rem;color:var(--text3)">未ロット卵</div>
             <div style="font-weight:700;font-size:1rem;color:var(--text2)">${unLotEggs}</div>
+          </div>
+          <div style="text-align:center;background:var(--surface2);border-radius:6px;padding:8px 2px">
+            <div style="font-size:.6rem;color:var(--text3)">ロット</div>
+            <div style="font-weight:700;font-size:1rem;color:var(--blue)">${activeLots.length}</div>
+            <div style="font-size:.62rem;color:var(--text3);margin-top:1px">${lotCurrentTotal}頭</div>
+          </div>
+          <div style="text-align:center;background:var(--surface2);border-radius:6px;padding:8px 2px">
+            <div style="font-size:.6rem;color:var(--text3)">個体</div>
+            <div style="font-weight:700;font-size:1rem;color:var(--green)">${aliveInds.length}</div>
           </div>
         </div>
       </div>
@@ -404,6 +413,37 @@ function _renderLineDetail(line, main) {
           ${line.note_private    ? _lnRow('内部メモ', line.note_private)   : ''}
         </div>
       </div>
+
+      <!-- 詳細集計（展開表示） -->
+      ${(rottenEggs > 0 || attritionTotal > 0 || directInds.length > 0) ? `
+      <div class="card" style="padding:10px 14px">
+        <div style="font-size:.72rem;font-weight:700;color:var(--text3);letter-spacing:.06em;margin-bottom:8px">詳細集計</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:.78rem">
+          ${rottenEggs > 0 ? `
+          <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border)">
+            <span style="color:var(--text3)">腐卵数</span>
+            <span style="color:var(--red);font-weight:600">${rottenEggs}個</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border)">
+            <span style="color:var(--text3)">ロット化累計</span>
+            <span style="font-weight:600">${lotInitTotal}個</span>
+          </div>` : ''}
+          ${attritionTotal > 0 ? `
+          <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border)">
+            <span style="color:var(--text3)">ロット内減耗</span>
+            <span style="color:var(--amber);font-weight:600">${attritionTotal}頭</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border)">
+            <span style="color:var(--text3)">現在ロット内頭数</span>
+            <span style="font-weight:600">${lotCurrentTotal}頭</span>
+          </div>` : ''}
+          ${directInds.length > 0 ? `
+          <div style="display:flex;justify-content:space-between;padding:4px 0">
+            <span style="color:var(--text3)">直接個体化</span>
+            <span style="font-weight:600">${directInds.length}頭</span>
+          </div>` : ''}
+        </div>
+      </div>` : ''}
 
     </div>`;
 }
