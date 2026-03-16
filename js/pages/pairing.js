@@ -320,7 +320,7 @@ Pages._pairAddEggModal = function (setId) {
         ${UI.field('孵化確認数', `<input type="number" id="hatch-count" class="input" min="0" value="0">`)}
       </div>
       <div class="form-row-2">
-        ${UI.field('ダメになった卵数', `<input type="number" id="egg-failed" class="input" min="0" value="0" placeholder="無精卵・潰れ等">`)}
+        ${UI.field('腐卵数（無精卵・潰れ等）', `<input type="number" id="egg-failed" class="input" min="0" value="0" placeholder="無精卵・潰れ等">`)}
         <div></div>
       </div>
       ${UI.field('メモ（任意）', `<input type="text" id="egg-note" class="input" placeholder="例: 材あり・26℃">`)}
@@ -386,7 +386,7 @@ Pages._pairEditOneEgg = async function (eggRecordId, setId) {
         ${UI.field('孵化確認数', `<input type="number" id="edit-hatch-count" class="input" min="0" value="${hatchCnt}">`)}
       </div>
       <div class="form-row-2">
-        ${UI.field('ダメになった卵数', `<input type="number" id="edit-egg-failed" class="input" min="0" value="${failedCnt}" placeholder="無精卵・潰れ等">`)}
+        ${UI.field('腐卵数（無精卵・潰れ等）', `<input type="number" id="edit-egg-failed" class="input" min="0" value="${failedCnt}" placeholder="無精卵・潰れ等">`)}
         <div></div>
       </div>
       ${UI.field('メモ', `<input type="text" id="edit-egg-note" class="input" value="${note}">`)}

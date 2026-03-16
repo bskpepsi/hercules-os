@@ -160,6 +160,15 @@ Pages.growthRecord = function (params = {}) {
                 <span style="font-size:.9rem;font-weight:600">🍄 モルト入り</span>
               </label>
             </div>
+            ${targetType === 'LOT' ? `
+            <div style="margin-top:10px;padding:10px;background:rgba(231,76,60,.06);border:1px solid rgba(231,76,60,.2);border-radius:var(--radius-sm)">
+              <div style="font-size:.78rem;font-weight:700;color:var(--text2);margin-bottom:8px">🔢 マット交換時の頭数記録（任意）</div>
+              <div class="form-row-2">
+                ${UI.field('交換前頭数', `<input type="number" id="gr-before-count" class="input" min="0" placeholder="例: 5" oninput="Pages._grCalcAttrition()">`)}
+                ${UI.field('交換後頭数', `<input type="number" id="gr-after-count"  class="input" min="0" placeholder="例: 4" oninput="Pages._grCalcAttrition()">`)}
+              </div>
+              <div id="gr-attrition-display" style="font-size:.8rem;color:var(--text3);margin-top:4px;min-height:20px"></div>
+            </div>` : ''}
             <div class="form-row-2">
               ${UI.field('体色', `<select id="gr-color" class="input">
                 <option value="">—</option>
@@ -318,6 +327,23 @@ Pages.growthRecord = function (params = {}) {
     }
   };
 
+  // 減耗数自動計算
+  Pages._grCalcAttrition = function () {
+    const before = parseInt(document.getElementById('gr-before-count')?.value || '');
+    const after  = parseInt(document.getElementById('gr-after-count')?.value  || '');
+    const el = document.getElementById('gr-attrition-display');
+    if (!el) return;
+    if (!isNaN(before) && !isNaN(after)) {
+      const diff = before - after;
+      el.textContent = diff > 0
+        ? `減耗: ${diff}頭（${before}頭 → ${after}頭）`
+        : diff === 0 ? '変化なし' : '⚠️ 交換後が交換前より多い';
+      el.style.color = diff > 0 ? 'var(--red)' : diff === 0 ? 'var(--text3)' : 'var(--amber)';
+    } else {
+      el.textContent = '';
+    }
+  };
+
   // 保存
   Pages._grSave = async function (type, id) {
     if (!id) { UI.toast('対象を選択してください', 'error'); return; }
@@ -334,7 +360,9 @@ Pages.growthRecord = function (params = {}) {
     const aiCmt    = document.getElementById('gr-ai-comment')?.value || '';
     const pub      = document.getElementById('gr-public')?.value || 'private';
 
-    const hasMalt  = document.getElementById('gr-malt')?.checked || false;
+    const hasMalt     = document.getElementById('gr-malt')?.checked || false;
+    const beforeCount = document.getElementById('gr-before-count')?.value;
+    const afterCount  = document.getElementById('gr-after-count')?.value;
     const payload = {
       target_type:   type,
       target_id:     id,
@@ -345,6 +373,8 @@ Pages.growthRecord = function (params = {}) {
       mat_type:      mat,
       has_malt:      hasMalt,
       exchange_type: exchange,
+      before_count:  beforeCount !== undefined && beforeCount !== '' ? parseInt(beforeCount) : undefined,
+      after_count:   afterCount  !== undefined && afterCount  !== '' ? parseInt(afterCount)  : undefined,
       larva_color:   color,
       larva_firmness:firm,
       ai_comment:    aiCmt,

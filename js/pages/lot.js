@@ -93,7 +93,7 @@ function _lotCardHTML(lot) {
   return `<div class="ind-card" onclick="routeTo('lot-detail',{lotId:'${lot.lot_id}'})">
     <div style="min-width:42px;text-align:center">
       <div style="font-size:1.4rem">🥚</div>
-      <div style="font-size:.7rem;color:var(--text3);margin-top:2px">${lot.count}頭</div>
+      <div style="font-size:.95rem;font-weight:800;color:var(--text1);margin-top:1px">${lot.count}<span style="font-size:.65rem;font-weight:400;color:var(--text3)">頭</span></div>
     </div>
     <div class="ind-card-body">
       <div class="ind-card-row">
@@ -107,7 +107,7 @@ function _lotCardHTML(lot) {
         ${lot.container_size ? ' / ' + lot.container_size : ''}
       </div>
       <div class="ind-card-age">
-        ${age ? age.days + ' / ' + age.stageGuess : '日齢不明'}
+        ${age && age.totalDays > 0 ? age.days + ' / ' + age.stageGuess : '日齢不明'}
         ${lot.mat_changed_at ? ' / 交換: ' + lot.mat_changed_at : ''}
       </div>
     </div>
@@ -116,7 +116,19 @@ function _lotCardHTML(lot) {
 }
 
 Pages._lotShowDissolved = function () {
-  UI.toast('分割済みロット表示（実装中）', 'info');
+  const dissolved = (Store.getDB('lots') || []).filter(l =>
+    l.status === 'dissolved' || l.status === 'split'
+  );
+  if (!dissolved.length) { UI.toast('分割済みロットはありません', 'info'); return; }
+  const el = document.getElementById('lot-list-body');
+  if (!el) return;
+  const html = `<div style="margin-top:8px;opacity:.6">
+    <div style="font-size:.72rem;color:var(--text3);padding:4px 0">── 分割済みロット ──</div>
+    ${dissolved.map(_lotCardHTML).join('')}
+  </div>`;
+  el.insertAdjacentHTML('beforeend', html);
+  // ボタンを非表示に
+  document.querySelector('[onclick*="_lotShowDissolved"]')?.style.setProperty('display','none');
 };
 
 // ════════════════════════════════════════════════════════════════
