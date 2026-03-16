@@ -552,29 +552,7 @@ textarea.input { resize: vertical; min-height: 72px; }
 .label-id   { font-size: .9rem; font-weight: 700; color: #1a3a1a; }
 .label-row  { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 3px; font-size: .65rem; color: #444; }
 
-/* ── モーダル ────────────────────────────────────────────────────── */
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 150;
-  background: rgba(0,0,0,.7);
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-}
-.modal {
-  background: var(--bg2);
-  border: 1px solid var(--border2);
-  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-  padding: 20px 16px calc(20px + var(--safe-b));
-  width: 100%;
-  max-height: 90dvh;
-  overflow-y: auto;
-  animation: slideUp .25s ease;
-}
-@keyframes slideUp { from { transform: translateY(40px); opacity: .3; } }
-.modal-title { font-size: 1rem; font-weight: 700; margin-bottom: 16px; }
-.modal-footer { display: flex; gap: 10px; margin-top: 20px; }
+/* ── モーダル（旧定義 → 新定義に統合済み、この枠は残しておく） ── */
 
 /* ── 写真アップロード ────────────────────────────────────────────── */
 .photo-upload-area {
@@ -612,16 +590,36 @@ textarea.input { resize: vertical; min-height: 72px; }
    ════════════════════════════════════════════════════════════════ */
 
 /* ── モーダル ────────────────────────────────────────────────── */
-#modal-wrap { display:none; position:fixed; inset:0; z-index:300; }
-.modal-overlay { position:absolute; inset:0; background:rgba(0,0,0,.6); }
-.modal {
-  position:absolute; bottom:0; left:0; right:0;
-  background:var(--bg2); border-radius:16px 16px 0 0;
-  padding:20px 16px calc(20px + env(safe-area-inset-bottom));
-  max-height:85vh; overflow-y:auto;
-  animation:slideUp .25s ease;
-  z-index:1;
+/* #modal-wrap: 画面全体を覆うコンテナ */
+#modal-wrap {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 900;         /* ナビより確実に上 */
+  pointer-events: none; /* wrap自体はタップを通す */
 }
+/* overlay: 背景の暗転。タップで閉じるがmodalより後ろ */
+.modal-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,.6);
+  pointer-events: auto; /* 背景タップを受け取る */
+  z-index: 1;
+}
+/* modal本体: overlayより前面 */
+.modal {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  background: var(--bg2);
+  border-radius: 16px 16px 0 0;
+  padding: 20px 16px calc(20px + env(safe-area-inset-bottom));
+  max-height: 85vh;
+  overflow-y: auto;
+  animation: slideUp .25s ease;
+  z-index: 2;           /* overlay(z-index:1)より上 */
+  pointer-events: auto; /* modal内のタップを確実に受け取る */
+}
+@keyframes slideUp { from { transform: translateY(30px); opacity: .4; } }
 .modal-title { font-size:1.05rem; font-weight:700; margin-bottom:16px; color:var(--text1); }
 .modal-footer { display:flex; gap:10px; margin-top:20px; }
 
@@ -634,6 +632,9 @@ textarea.input { resize: vertical; min-height: 72px; }
   text-align:center; cursor:pointer; letter-spacing:.02em;
   border:1px solid var(--border,rgba(255,255,255,.15));
   transition:background .12s, transform .08s;
+  pointer-events: auto;  /* overlayによるブロックを明示的に防ぐ */
+  position: relative;    /* stacking contextで確実に前面 */
+  z-index: 3;
 }
 .action-sheet-btn:active {
   background:var(--surface3,#2e2e45);

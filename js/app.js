@@ -420,15 +420,20 @@ Object.assign(UI, {
       document.body.appendChild(wrap);
     }
     wrap.innerHTML = `
-      <div class="modal-overlay" onclick="UI.closeModal()"></div>
-      <div class="modal">${html}</div>`;
+      <div class="modal-overlay" onclick="UI.closeModal()" style="pointer-events:auto"></div>
+      <div class="modal" onclick="event.stopPropagation()" style="pointer-events:auto">${html}</div>`;
     wrap.style.display = 'block';
+    wrap.style.pointerEvents = 'auto';
     document.body.style.overflow = 'hidden';
   },
 
   closeModal() {
     const wrap = document.getElementById('modal-wrap');
-    if (wrap) { wrap.style.display = 'none'; wrap.innerHTML = ''; }
+    if (wrap) {
+      wrap.style.display = 'none';
+      wrap.style.pointerEvents = 'none';
+      wrap.innerHTML = '';
+    }
     document.body.style.overflow = '';
   },
 
@@ -437,12 +442,12 @@ Object.assign(UI, {
     // fn.toString()はクロージャを失うため、関数をグローバル一時登録してインデックスで呼ぶ
     window.__actionCallbacks = items.map(item => item.fn);
     const btns = items.map((item, i) =>
-      `<button class="action-sheet-btn" onclick="UI.closeModal();window.__actionCallbacks[${i}]&&window.__actionCallbacks[${i}]()">${item.label}</button>`
+      `<button class="action-sheet-btn" style="pointer-events:auto" onclick="event.stopPropagation();UI.closeModal();setTimeout(()=>{window.__actionCallbacks[${i}]&&window.__actionCallbacks[${i}]()},30)">${item.label}</button>`
     ).join('');
     UI.modal(`
-      <div class="action-sheet">
+      <div class="action-sheet" onclick="event.stopPropagation()">
         ${btns}
-        <button class="action-sheet-btn action-sheet-cancel" onclick="UI.closeModal()">キャンセル</button>
+        <button class="action-sheet-btn action-sheet-cancel" style="pointer-events:auto" onclick="event.stopPropagation();UI.closeModal()">キャンセル</button>
       </div>`);
   },
 
@@ -463,4 +468,3 @@ Object.assign(PAGES, {
   'heatmap':         () => Pages.bloodlineHeatmap(),
   'parent-dashboard':() => Pages.parentDashboard(),
 });
-
