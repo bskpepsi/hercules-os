@@ -1009,6 +1009,85 @@ Pages._parV2Save = async function (editId) {
   } catch (e) {}
 };
 
+// ════════════════════════════════════════════════════════════════
+// … メニュー（編集 / ステータス変更 / 後食日設定）
+// ════════════════════════════════════════════════════════════════
+function _parentEditMenu(parId) {
+  const p = Store.getParent(parId);
+  if (!p) return;
+  UI.actionSheet([
+    { label: '✏️ 種親情報を編集',
+      fn: () => routeTo('parent-new', { editId: parId }) },
+    { label: '🍽️ 後食開始日を設定',
+      fn: () => _parentSetFeeding(parId) },
+    { label: p.status === 'active' ? '📦 引退にする' : '✅ 現役に戻す',
+      fn: () => _parentChangeStatus(parId, p.status === 'active' ? 'retired' : 'active') },
+    { label: '💴 売却済みにする',
+      fn: () => _parentChangeStatus(parId, 'sold') },
+  ]);
+}
+
+function _parentSetFeeding(parId) {
+  const today = new Date().toISOString().split('T')[0];
+  UI.modal(`
+    <div class="modal-title">🍽️ 後食開始日を設定</div>
+    <div class="form-section">
+      ${UI.field('後食開始日', '<input type="date" id="par-feeding-inp" class="input" value="' + today + '">')}
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" style="flex:1" onclick="UI.closeModal()">キャンセル</button>
+      <button class="btn btn-primary" style="flex:2"
+        onclick="Pages._parFeedingSave('' + parId + '')">設定する</button>
+    </div>
+  `);
+}
+
+Pages._parFeedingSave = async function (parId) {
+  const val = document.getElementById('par-feeding-inp')?.value;
+  if (!val) { UI.toast('日付を選択してください'); return; }
+  const date = val.replace(/-/g, '/');
+  try {
+    UI.loading(true);
+    UI.closeModal();
+    await API.phase2.updateParent({ par_id: parId, feeding_start_date: date });
+    Store.patchDBItem('parents', 'par_id', parId, { feeding_start_date: date });
+    UI.toast('後食開始日を設定しました');
+    Pages.parentDetail(parId);
+  } catch(e) {
+    UI.toast('設定失敗: ' + e.message, 'error');
+  } finally {
+    UI.loading(false);
+  }
+};
+
+function _parentChangeStatus(parId, newStatus) {
+  const labels = { active: '現役', retired: '引退', sold: '売却済み', dead: '死亡' };
+  const label = labels[newStatus] || newStatus;
+  UI.modal(
+    '<div class="modal-title">ステータスを変更</div>'
+    + '<div style="padding:8px 0 16px;color:var(--text2);font-size:.9rem">「' + label + '」に変更しますか？</div>'
+    + '<div class="modal-footer">'
+    + '<button class="btn btn-ghost" style="flex:1" onclick="UI.closeModal()">キャンセル</button>'
+    + '<button class="btn btn-primary" style="flex:2"'
+    + ' onclick="Pages._parStatusSave(\'' + parId + '\',\'' + newStatus + '\')">変更する</button>'
+    + '</div>'
+  );
+}
+
+Pages._parStatusSave = async function (parId, newStatus) {
+  try {
+    UI.loading(true);
+    UI.closeModal();
+    await API.phase2.updateParent({ par_id: parId, status: newStatus });
+    Store.patchDBItem('parents', 'par_id', parId, { status: newStatus });
+    UI.toast('ステータスを変更しました');
+    Pages.parentDetail(parId);
+  } catch(e) {
+    UI.toast('変更失敗: ' + e.message, 'error');
+  } finally {
+    UI.loading(false);
+  }
+};
 
 window.PAGES = window.PAGES || {};
 window.PAGES['parent-list']      = () => Pages.parentList();
