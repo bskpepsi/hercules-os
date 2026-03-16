@@ -226,6 +226,7 @@ Pages.lineDetail = async function (lineId) {
 };
 
 function _renderLineDetail(line, main) {
+  try {
   const f    = Store.getParent(line.father_par_id);
   const m    = Store.getParent(line.mother_par_id);
   const bld  = Store.getBloodline(line.bloodline_id);
@@ -395,8 +396,9 @@ function _renderLineDetail(line, main) {
           ${line.generation ? _lnRow('累代', line.generation) : ''}
           ${(()=>{
             // 父母の血統タグを自動表示
-            const fTags = f ? (f.bloodline_tags ? JSON.parse(f.bloodline_tags||'[]').join(' / ') : '') : '';
-            const mTags = m ? (m.bloodline_tags ? JSON.parse(m.bloodline_tags||'[]').join(' / ') : '') : '';
+            const _parseTags2 = t => { try { const a = JSON.parse(t||'[]'); return Array.isArray(a) ? a.join(' / ') : String(a); } catch(e) { return ''; } };
+            const fTags = f ? _parseTags2(f.bloodline_tags) : '';
+            const mTags = m ? _parseTags2(m.bloodline_tags) : '';
             const fRaw  = f ? (f.bloodline_raw || '') : '';
             const mRaw  = m ? (m.bloodline_raw || '') : '';
             let rows = '';
@@ -447,6 +449,11 @@ function _renderLineDetail(line, main) {
       </div>
 
     </div>`;
+  } catch(e) {
+    console.error('_renderLineDetail error:', e);
+    main.innerHTML = UI.header(line.display_id + ' 詳細', {back:true})
+      + '<div class="page-body">' + UI.empty('表示エラー: ' + e.message) + '</div>';
+  }
 }
 
 function _lnRow(key, val) {
