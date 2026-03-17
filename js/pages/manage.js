@@ -247,6 +247,17 @@ function _renderLineDetail(line, main) {
   // このラインに属する個体・ロット（全状態）
   // status='all' で dissolved/individualized も含めて取得
   // 【フォールバック】lot.line_id が空 / 不整合でも pairing_set_id 経由で拾う
+  // ※ TDZ修正: pairings を先に宣言してから _pairingSetIds で参照する
+  const allPairings = Store.getDB('pairings') || [];
+  const pairings = allPairings.filter(p => {
+    if (p.line_id === line.line_id) return true;
+    // 後方互換: line_id 未設定かつ父母IDが一致する場合
+    if (!p.line_id && line.father_par_id && line.mother_par_id) {
+      return (p.father_par_id === line.father_par_id && p.mother_par_id === line.mother_par_id);
+    }
+    return false;
+  });
+
   const _lotsById  = Store.filterLots({ line_id: line.line_id, status: 'all' });
   const _pairingSetIds = new Set(pairings.map(p => p.set_id).filter(Boolean));
   const _lotsByPairing = (Store.getDB('lots') || []).filter(l =>
@@ -257,20 +268,6 @@ function _renderLineDetail(line, main) {
   const activeLots = allLots.filter(l => l.status === 'active');
   const allInds    = Store.getIndividualsByLine(line.line_id);
   const aliveInds  = allInds.filter(i => i.status !== 'dead');
-
-  // 産卵セット紐づき: line_id で照合（正常ケース）
-  // line_id 未設定データの後方互換フォールバック:
-  //   createPairing は現在常に line_id を自動生成するため、新規データには発生しない
-  //   旧データ（自動生成前に登録されたもの）のみフォールバック照合
-  const allPairings = Store.getDB('pairings') || [];
-  const pairings = allPairings.filter(p => {
-    if (p.line_id === line.line_id) return true;
-    // 後方互換: line_id 未設定かつ父母IDが一致する場合
-    if (!p.line_id && line.father_par_id && line.mother_par_id) {
-      return (p.father_par_id === line.father_par_id && p.mother_par_id === line.mother_par_id);
-    }
-    return false;
-  });
 
   // ════════════════════════════════════════════════════
   // ライン集計 — 卵の流れに沿った定義

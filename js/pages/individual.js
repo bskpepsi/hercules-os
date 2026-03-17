@@ -427,7 +427,10 @@ function _renderSaleActions(ind) {
     btns = '<div class="ind-sale-done-msg">💰 販売済みです — これ以上の変更はできません</div>';
 
   } else if (st === 'dead') {
-    btns = '<div class="ind-sale-done-msg">💀 死亡として記録済みです</div>';
+    // dead → 復旧ボタンを表示（StatusRules: dead → adult/larva を許容）
+    btns =
+      '<div class="ind-sale-done-msg">💀 死亡として記録済みです</div>'
+      + btn('btn-sale-gray', '🔄', '誤操作の場合は復旧', "Pages._indReviveModal('" + id + "')");
   }
 
   var canFlag = (st !== 'dead');
@@ -709,30 +712,68 @@ function _drawWeightChart(indId, records) {
   });
 }
 
-// ステータス変更
+// ── 死亡記録 ────────────────────────────────────────────────────
+// 死亡は updateIndividual 経由で status を変更するだけ（物理削除しない）。
+// 誤操作時は個体詳細の「復旧」ボタンから dead → adult に戻せる。
 Pages._indMarkDead = async function (id) {
-  if (!UI.confirm('死亡として記録しますか？（元に戻せません）')) return;
+  if (!UI.confirm('死亡として記録しますか？\n誤操作時は詳細画面から復旧できます。')) return;
   try {
-    await apiCall(() => API.individual.changeStatus(id, 'dead'), '死亡を記録しました');
+    await apiCall(() => API.individual.update({ ind_id: id, status: 'dead' }), '死亡を記録しました');
     Store.patchDBItem('individuals', 'ind_id', id, { status: 'dead' });
-    routeTo('ind-list');
-  } catch (e) {}
-};
-
-Pages._indCancelReserved = async function (id) {
-  try {
-    await apiCall(() => API.individual.changeStatus(id, 'for_sale'), '予約を解除しました');
-    Store.patchDBItem('individuals', 'ind_id', id, { status: 'for_sale' });
     Pages.individualDetail(id);
   } catch (e) {}
 };
 
-Pages._indMarkReserved = async function (id) {
+// 後方互換: 旧ハンドラは _indSetStatus に委譲
+Pages._indCancelReserved = function (id) { Pages._indSetStatus(id, 'for_sale'); };
+Pages._indMarkReserved   = function (id) { Pages._indSetStatus(id, 'reserved'); };
+
+
+// ── 死亡状態からの復旧（誤操作時の緊急復旧用）────────────────────
+// StatusRules: dead → adult / larva への遷移を許容（updateIndividual 経由）
+// 通常運用では使わない。個体取り違えや誤タップ時の復旧専用。
+Pages._indReviveModal = function (id) {
+  const ind = Store.getIndividual(id);
+  _showModal('🔄 死亡記録の復旧', '<div class="form-section">'
+    + '<div style="background:rgba(224,80,80,.08);border:1px solid rgba(224,80,80,.25);'
+    + 'border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:.8rem;color:var(--text2)">'
+    + '⚠️ 誤操作・個体取り違えなどの場合のみ使用してください。<br>'
+    + '復旧後は飼育中の状態に戻ります。'
+    + '</div>'
+    + UI.field('復旧後のステータス', UI.select('revive-status-sel',
+        [
+          { code:'adult', label:'成虫（adult）' },
+          { code:'larva', label:'幼虫（larva）' },
+        ],
+        (ind && ['adult','alive'].includes(ind.status)) ? 'adult' : 'larva'))
+    + UI.field('復旧理由（必須・内部メモに記録）',
+        '<input type="text" id="revive-reason" class="input" placeholder="例: 個体取り違え、誤タップ" required>')
+    + '<div class="modal-footer">'
+    + '<button class="btn btn-ghost" style="flex:1" onclick="_closeModal()">キャンセル</button>'
+    + '<button class="btn btn-primary" style="flex:2" onclick="Pages._indReviveExec(\'' + id + '\')">🔄 復旧する</button>'
+    + '</div>'
+    + '</div>'
+  );
+};
+
+Pages._indReviveExec = async function (id) {
+  const newStatus = document.getElementById('revive-status-sel')?.value || 'adult';
+  const reason    = document.getElementById('revive-reason')?.value?.trim() || '';
+  if (!reason) { UI.toast('復旧理由を入力してください', 'error'); return; }
+  _closeModal();
   try {
-    await apiCall(() => API.individual.changeStatus(id, 'reserved'), '予約済みに変更しました');
-    Store.patchDBItem('individuals', 'ind_id', id, { status: 'reserved' });
+    const ind     = Store.getIndividual(id);
+    const oldNote = (ind && ind.note_private) || '';
+    const reviveNote = oldNote
+      ? oldNote + '\n[復旧] ' + new Date().toLocaleDateString('ja-JP') + ': ' + reason
+      : '[復旧] ' + new Date().toLocaleDateString('ja-JP') + ': ' + reason;
+    await apiCall(
+      () => API.individual.update({ ind_id: id, status: newStatus, note_private: reviveNote }),
+      '復旧しました（' + newStatus + '）'
+    );
+    Store.patchDBItem('individuals', 'ind_id', id, { status: newStatus, note_private: reviveNote });
     Pages.individualDetail(id);
-  } catch (e) {}
+  } catch(e) {}
 };
 
 Pages._indFlagMenu = function (id, guinness, parent, g200) {
@@ -771,17 +812,22 @@ Pages._indFlagSave = async function (id) {
 
 // ── 汎用ステータス変更 ──────────────────────────────────────────
 // for_sale / reserved / listed / adult など各状態への遷移に使用
+// ── 汎用ステータス変更（updateIndividual 経由 = StatusRules のバリデーション付き）
+// changeStatus（deleteIndividual）は dead/sold/excluded 専用のため使わない。
+// for_sale / reserved / listed / adult など汎用遷移はすべてこちらを使う。
 Pages._indSetStatus = async function (id, newStatus) {
   const labelMap = {
     for_sale: '販売候補',
     reserved: '予約中',
     listed:   '出品中',
     adult:    '成虫（飼育中）',
+    larva:    '幼虫（飼育中）',
   };
   const label = labelMap[newStatus] || newStatus;
   if (!UI.confirm('「' + label + '」に変更しますか？')) return;
   try {
-    await apiCall(() => API.individual.changeStatus(id, newStatus), label + 'に変更しました');
+    // API.individual.update → GAS updateIndividual → validateStatusTransition で正しくチェック
+    await apiCall(() => API.individual.update({ ind_id: id, status: newStatus }), label + 'に変更しました');
     Store.patchDBItem('individuals', 'ind_id', id, { status: newStatus });
     Pages.individualDetail(id);
   } catch(e) {}
@@ -818,16 +864,13 @@ Pages._indMarkSoldExec = async function (id) {
   const soldReason = document.getElementById('sold-reason')?.value  || '';
   _closeModal();
   try {
-    // changeStatus で sold に変更し、販売情報を同時に更新
-    await apiCall(() => API.individual.changeStatus(id, 'sold', soldReason), '販売済みとして記録しました');
-    const updates = { status: 'sold' };
+    // updateIndividual で status=sold と販売情報を一括更新
+    const updates = { ind_id: id, status: 'sold' };
     if (soldDate)   updates.sold_date   = soldDate.replace(/-/g, '/');
     if (soldWeight) updates.sold_weight = soldWeight;
     if (soldStage)  updates.sold_stage  = soldStage;
     if (soldReason) updates.sold_reason = soldReason;
-    if (Object.keys(updates).length > 1) {
-      await API.individual.update({ ind_id: id, ...updates }).catch(() => {});
-    }
+    await apiCall(() => API.individual.update(updates), '販売済みとして記録しました');
     Store.patchDBItem('individuals', 'ind_id', id, updates);
     Pages.individualDetail(id);
   } catch(e) {}
