@@ -171,6 +171,26 @@ function _renderSettings(main) {
         </div>
       </div>
 
+      <!-- Phase A: データ安定化 -->
+      <div class="card" style="border-color:rgba(91,168,232,.25)">
+        <div class="card-title" style="color:var(--blue)">🔍 データ整合性</div>
+        <div style="font-size:.78rem;color:var(--text3);margin-bottom:10px;line-height:1.6">
+          ロットの <code>line_id</code> / <code>count</code> / <code>attrition_total</code>
+          の不整合を検出・修正します。
+        </div>
+        <div class="form-section" style="gap:8px">
+          <button class="btn btn-ghost btn-full" id="integrity-check-btn"
+            onclick="Pages._integrityCheck()">
+            🔍 整合性チェック
+          </button>
+          <button class="btn btn-ghost btn-full" id="recalc-all-btn"
+            onclick="Pages._recalcAll()">
+            ♻️ 全ロット再計算
+          </button>
+        </div>
+        <div id="integrity-result" style="margin-top:8px"></div>
+      </div>
+
       <!-- GAS初期化 -->
       <div class="card" style="border-color:rgba(224,80,80,.2)">
         <div class="card-title" style="color:var(--red)">🚨 GASシステム初期化</div>
@@ -575,7 +595,150 @@ Pages._bkLoadHistory = async function () {
   }
 };
 
+window.PAGES = window.PAGES || {};
 window.PAGES['settings'] = () => Pages.settings();
+
+// ════════════════════════════════════════════════════════════════
+// Phase A — 整合性チェック / 再計算
+// ════════════════════════════════════════════════════════════════
+
+Pages._integrityCheck = async function () {
+  const btn   = document.getElementById('integrity-check-btn');
+  const resEl = document.getElementById('integrity-result');
+
+  if (btn)   { btn.disabled = true; btn.textContent = '🔍 チェック中...'; }
+  if (resEl) { resEl.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>'; }
+
+  try {
+    const res  = await API.integrity.check();
+    const errs = res.errors  || [];
+    const summ = res.summary || {};
+
+    if (!errs.length) {
+      if (resEl) resEl.innerHTML = `
+        <div style="padding:10px 12px;
+          background:rgba(45,122,82,.10);border:1px solid rgba(45,122,82,.30);
+          border-radius:8px;font-size:.82rem;color:var(--green)">
+          ✅ 不整合なし — 全 ${res.ok_count || 0} ロット正常
+        </div>`;
+      return;
+    }
+
+    // サマリー行
+    const summaryHtml = [
+      summ.lot_line_missing       ? `line欠損: ${summ.lot_line_missing}`             : '',
+      summ.lot_line_invalid       ? `line無効: ${summ.lot_line_invalid}`             : '',
+      summ.ind_lot_invalid        ? `lot無効参照: ${summ.ind_lot_invalid}`           : '',
+      summ.lot_count_negative     ? `count負値: ${summ.lot_count_negative}`          : '',
+      summ.lot_count_mismatch     ? `count不一致: ${summ.lot_count_mismatch}`        : '',
+      summ.attrition_total_mismatch ? `attrition不一致: ${summ.attrition_total_mismatch}` : '',
+    ].filter(Boolean).join(' / ');
+
+    // 詳細行（最大20件）
+    const detailRows = errs.slice(0, 20).map(function (e) {
+      return `<div style="padding:5px 0;border-bottom:1px solid var(--border);font-size:.78rem">
+        <span style="color:var(--red);font-weight:600">[${e.type}]</span>
+        <span style="color:var(--text2);margin-left:6px">${e.display || e.lot_id || e.ind_id || ''}</span>
+        <div style="font-size:.72rem;color:var(--text3);margin-top:2px">${e.msg}</div>
+      </div>`;
+    }).join('');
+
+    const moreHtml = errs.length > 20
+      ? `<div style="font-size:.72rem;color:var(--text3);padding:4px 0">
+           他 ${errs.length - 20} 件は GAS ログを確認してください
+         </div>`
+      : '';
+
+    if (resEl) resEl.innerHTML = `
+      <div style="padding:10px 12px;
+        background:rgba(231,76,60,.06);border:1px solid rgba(231,76,60,.25);
+        border-radius:8px">
+        <div style="font-size:.85rem;font-weight:700;color:var(--red);margin-bottom:6px">
+          ⚠️ ${errs.length} 件の不整合を検出
+        </div>
+        <div style="font-size:.72rem;color:var(--text3);margin-bottom:8px">${summaryHtml}</div>
+        ${detailRows}
+        ${moreHtml}
+        <button class="btn btn-ghost"
+          style="margin-top:10px;width:100%;font-size:.8rem"
+          onclick="Pages._recalcAll()">
+          ♻️ 再計算で修正を試みる
+        </button>
+      </div>`;
+
+  } catch (e) {
+    if (resEl) resEl.innerHTML =
+      `<div style="color:var(--red);font-size:.82rem">エラー: ${e.message}</div>`;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🔍 整合性チェック'; }
+  }
+};
+
+Pages._recalcAll = async function () {
+  if (!UI.confirm(
+    '全ロットの count / attrition_total を\n成長記録から再計算します。\nよろしいですか？'
+  )) return;
+
+  const btn   = document.getElementById('recalc-all-btn');
+  const resEl = document.getElementById('integrity-result');
+
+  if (btn)   { btn.disabled = true; btn.textContent = '♻️ 再計算中...'; }
+  if (resEl) { resEl.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>'; }
+
+  try {
+    const res = await API.integrity.recalculateAll();
+    await syncAll(true);   // キャッシュを最新化
+
+    const errHtml = (res.errors || []).slice(0, 5).map(function (e) {
+      return `<div style="font-size:.72rem;color:var(--red)">${e.display || e.lot_id}: ${e.error}</div>`;
+    }).join('');
+
+    // 変化があったロットのみ表示（最大10件）
+    const changedRows = (res.results || [])
+      .filter(function (r) {
+        return r.old_count !== r.new_count || r.old_attrition !== r.new_attrition;
+      })
+      .slice(0, 10)
+      .map(function (r) {
+        return `<div style="font-size:.72rem;color:var(--text3);
+          padding:3px 0;border-top:1px solid var(--border)">
+          ${r.display}:
+          count ${r.old_count}→${r.new_count} /
+          attrition ${r.old_attrition}→${r.new_attrition}
+        </div>`;
+      }).join('');
+
+    if (resEl) resEl.innerHTML = `
+      <div style="padding:10px 12px;
+        background:rgba(45,122,82,.10);border:1px solid rgba(45,122,82,.30);
+        border-radius:8px;font-size:.82rem">
+        <div style="font-weight:700;color:var(--green);margin-bottom:6px">
+          ♻️ 再計算完了
+        </div>
+        <div style="color:var(--text2)">
+          対象: ${res.total || 0} ロット /
+          更新: ${res.updated || 0} /
+          スキップ: ${res.skipped || 0}
+          ${(res.errors || []).length
+            ? `/ <span style="color:var(--red)">エラー: ${res.errors.length}</span>`
+            : ''}
+        </div>
+        ${changedRows}
+        ${errHtml}
+        <button class="btn btn-ghost"
+          style="margin-top:10px;width:100%;font-size:.8rem"
+          onclick="Pages._integrityCheck()">
+          🔍 再チェックして確認
+        </button>
+      </div>`;
+
+  } catch (e) {
+    if (resEl) resEl.innerHTML =
+      `<div style="color:var(--red);font-size:.82rem">エラー: ${e.message}</div>`;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '♻️ 全ロット再計算'; }
+  }
+};
 
 // ── Phase2: 後食・ペアリング設定保存 ────────────────────────────
 Pages._savePairingSettings = async function () {

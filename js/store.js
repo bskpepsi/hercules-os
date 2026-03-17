@@ -38,6 +38,7 @@ const Store = (() => {
     bloodlines:        [],
     pairings:          [],
     pairing_histories: [],
+    egg_records:       [],
     growthMap:   {},  // target_id → records[]
     settings:    {},
     labelHistory:{},  // target_id → labels[]
@@ -264,7 +265,8 @@ const Store = (() => {
 
   function clearCache() {
     _db = { individuals:[], lots:[], lines:[], parents:[], bloodlines:[],
-            pairings:[], growthMap:{}, settings: _db.settings, labelHistory:{} };
+            pairings:[], pairing_histories:[], egg_records:[],
+            growthMap:{}, settings: _db.settings, labelHistory:{} };
     _scheduleSave();
     _notify('db_all');
   }
@@ -306,24 +308,29 @@ const Store = (() => {
     }
     if (filters.sex)      list = list.filter(i => i.sex           === filters.sex);
     // statusフィルター
-    // '_all' = 全件表示（フィルタなし）
-    // 空文字 = 死亡以外を表示（デフォルト）
-    // 'alive'/'sold'/'dead'/'reserved' = 該当ステータスのみ
+    // '_all'   = 全件表示（フィルタなし）
+    // 'active' = 飼育中グループ（larva/prepupa/pupa/adult/alive/seed_candidate/seed_reserved）
+    // 'selling'= 販売フロー（for_sale/reserved/listed）
+    // 'sold'   = 販売済みのみ
+    // 'dead'   = 死亡のみ
+    // 'excluded'= 除外のみ
+    // その他の文字列 = 完全一致
+    // 空文字/未指定 = 終端（dead/sold/excluded）以外を表示
+    const _ACTIVE_STATUSES  = new Set(['larva','prepupa','pupa','adult','alive','seed_candidate','seed_reserved']);
+    const _SELLING_STATUSES = new Set(['for_sale','reserved','listed']);
+    const _TERMINAL_STATUSES= new Set(['dead','sold','excluded']);
     if (filters.status === '_all') {
       // 全件：フィルタなし
-    } else if (filters.status === 'alive') {
-      list = list.filter(i => i.status === 'alive');
-    } else if (filters.status === 'reserved') {
-      list = list.filter(i => i.status === 'reserved');
-    } else if (filters.status === 'sold') {
-      list = list.filter(i => i.status === 'sold');
-    } else if (filters.status === 'dead') {
-      list = list.filter(i => i.status === 'dead');
+    } else if (filters.status === 'active' || filters.status === 'alive') {
+      // 後方互換: alive も active グループに含める
+      list = list.filter(i => _ACTIVE_STATUSES.has(i.status));
+    } else if (filters.status === 'selling') {
+      list = list.filter(i => _SELLING_STATUSES.has(i.status));
     } else if (filters.status) {
       list = list.filter(i => i.status === filters.status);
     } else {
-      // status未指定：死亡以外を表示
-      list = list.filter(i => i.status !== 'dead');
+      // status 未指定：終端以外を表示（デフォルト）
+      list = list.filter(i => !_TERMINAL_STATUSES.has(i.status));
     }
     if (filters.guinness) list = list.filter(i => String(i.guinness_flag) === 'true');
     if (filters.q) {
@@ -381,8 +388,12 @@ const Store = (() => {
     let list = [..._db.lots];
     if (filters.line_id) list = list.filter(l => l.line_id === filters.line_id);
     if (filters.stage)   list = list.filter(l => l.stage   === filters.stage);
-    if (filters.status)  list = list.filter(l => l.status  === filters.status);
-    else                 list = list.filter(l => l.status  === 'active');
+    // status:'all' → 全ステータス取得（dissolved/individualized を含む）
+    // status未指定  → active のみ
+    // status指定    → そのステータスのみ
+    if (filters.status !== 'all') {
+      list = list.filter(l => l.status === (filters.status || 'active'));
+    }
     return list;
   }
 

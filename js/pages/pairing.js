@@ -262,7 +262,7 @@ function _renderPairDetail(pair, eggRecords, main) {
         <button class="btn btn-primary" style="flex:1"
           onclick="Pages._pairAddEggModal('${pair.set_id}')">🥚 採卵記録</button>
         <button class="btn btn-gold" style="flex:1"
-          onclick="Pages._pairGoLotNew('${pair.line_id||''}','${pair.mother_par_id||''}')">🐛 ロット作成</button>
+          onclick="Pages._pairGoLotNew('${pair.line_id||''}','${pair.mother_par_id||''}','${pair.father_par_id||''}')">🐛 ロット作成</button>
       </div>
 
       <!-- セット情報 -->
@@ -625,13 +625,49 @@ Pages._pairSave = async function (editId) {
   } catch(e) {}
 };
 
-Pages._pairGoLotNew = function (directLineId, motherParId) {
+Pages._pairGoLotNew = function (directLineId, motherParId, fatherParId) {
   let lineId = directLineId || '';
+  const lines = Store.getDB('lines') || [];
+
+  // 1. pair.line_id が直接渡された場合はそのまま使う
+  // 2. 空なら母親IDで検索
   if (!lineId && motherParId) {
-    const matched = (Store.getDB('lines')||[]).find(l => l.mother_par_id === motherParId);
-    if (matched) lineId = matched.line_id;
+    const m = lines.find(l => l.mother_par_id === motherParId);
+    if (m) lineId = m.line_id;
   }
-  routeTo('lot-new', lineId ? { lineId } : {});
+  // 3. まだ空なら父親IDで検索（フォールバック）
+  if (!lineId && fatherParId) {
+    const f = lines.find(l => l.father_par_id === fatherParId);
+    if (f) lineId = f.line_id;
+  }
+  // 4. 内部IDパターン確認（LINE- で始まるか）
+  if (lineId && !lineId.startsWith('LINE-')) lineId = '';
+
+  if (!lineId) {
+    // ラインが特定できない場合: 選択肢を表示
+    UI.modal(`
+      <div class="modal-title">⚠️ ラインを選択してください</div>
+      <div style="font-size:.82rem;color:var(--text2);padding:8px 0 12px">
+        この産卵セットのラインが特定できません。<br>登録先ラインを選択してください。
+      </div>
+      <div class="form-section">
+        ${UI.field('ライン', `<select id="plgn-line" class="input">
+          <option value="">— 選択 —</option>
+          ${lines.map(l => `<option value="${l.line_id}">${l.line_code||l.display_id}${l.line_name?' / '+l.line_name:''}</option>`).join('')}
+        </select>`, true)}
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" style="flex:1" onclick="UI.closeModal()">キャンセル</button>
+        <button class="btn btn-primary" style="flex:2" onclick="
+          const v=document.getElementById('plgn-line')?.value;
+          if(!v){UI.toast('ラインを選択してください','error');return;}
+          UI.closeModal();routeTo('lot-new',{lineId:v})
+        ">ロット登録へ</button>
+      </div>
+    `);
+    return;
+  }
+  routeTo('lot-new', { lineId });
 };
 
 window.PAGES = window.PAGES || {};

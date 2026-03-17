@@ -30,7 +30,10 @@ function _renderDashboard(main) {
   const parents  = Store.getDB('parents')     || [];
   const pairings = Store.getDB('pairings')    || [];
 
-  const alive    = inds.filter(i => i.status === 'alive');
+  // Phase B: 飼育中判定 — 終端ステータス（sold/dead/excluded）以外を全て含む
+  // alive は旧データ互換として残す
+  const _TERMINAL = new Set(['sold', 'dead', 'excluded']);
+  const alive    = inds.filter(i => !_TERMINAL.has(i.status));
   const actLot   = lots.filter(l => l.status === 'active');
   const today    = new Date(); today.setHours(0,0,0,0);
 
@@ -169,8 +172,9 @@ function _renderDashboard(main) {
   lines.forEach(l => { lineStats[l.line_id] = { label: l.display_id, weights: [], alive: 0, dead: 0 }; });
   inds.forEach(i => {
     if (!lineStats[i.line_id]) return;
-    if (i.status === 'alive') { lineStats[i.line_id].alive++; if (i.latest_weight_g) lineStats[i.line_id].weights.push(+i.latest_weight_g); }
-    if (i.status === 'dead')   lineStats[i.line_id].dead++;
+    // Phase B: 終端以外はすべて「飼育中」としてカウント（alive 互換含む）
+    if (!_TERMINAL.has(i.status)) { lineStats[i.line_id].alive++; if (i.latest_weight_g) lineStats[i.line_id].weights.push(+i.latest_weight_g); }
+    if (i.status === 'dead')        lineStats[i.line_id].dead++;
   });
   const lineRank = Object.values(lineStats)
     .filter(s => s.weights.length > 0)

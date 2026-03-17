@@ -780,3 +780,167 @@ textarea.input { resize: vertical; min-height: 72px; }
   font-size: .82rem;
   flex: 1;
 }
+
+/* ════════════════════════════════════════════════════════════════
+   Phase C — クイック記録モード
+   ════════════════════════════════════════════════════════════════ */
+
+/* 下部固定アクションバー（保存ボタン等を常に見えるように） */
+.quick-action-bar {
+  position: fixed;
+  bottom: calc(var(--nav-h) + var(--safe-b));
+  left: 0; right: 0;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding: 10px 14px;
+  padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+  z-index: 80;
+  display: flex;
+  gap: 10px;
+  box-shadow: 0 -2px 12px rgba(0,0,0,.20);
+}
+/* quick-action-bar がある画面はコンテンツ末尾に余白を確保 */
+.has-quick-bar {
+  padding-bottom: calc(72px + var(--nav-h) + var(--safe-b)) !important;
+}
+
+/* XL ボタン（親指で押しやすい最小タップ領域 56px） */
+.btn-xl {
+  min-height: 52px;
+  font-size: 1rem;
+  font-weight: 700;
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+
+/* 大型数値入力（体重・頭数） */
+.num-input-xl {
+  font-size: 2.8rem;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  text-align: center;
+  background: var(--surface2);
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 8px;
+  width: 100%;
+  line-height: 1;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.num-input-xl:focus {
+  border-color: var(--gold);
+  outline: none;
+  background: var(--surface);
+}
+
+/* コンパクト情報バー（スキャン後の対象表示） */
+.quick-info-bar {
+  background: var(--surface2);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.quick-info-id {
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--gold);
+}
+.quick-info-age {
+  font-size: 1.6rem;
+  font-weight: 800;
+  color: var(--blue);
+  font-family: var(--font-mono);
+  margin-left: auto;
+  line-height: 1;
+}
+.quick-info-age-label {
+  font-size: .6rem;
+  color: var(--text3);
+}
+
+/* before/after 頭数行（LOT用） */
+.count-row {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.count-row-arrow {
+  font-size: 1.4rem;
+  color: var(--text3);
+  text-align: center;
+}
+.count-attrition {
+  text-align: center;
+  font-size: .78rem;
+  color: var(--amber);
+  font-weight: 700;
+  margin-top: 4px;
+  min-height: 1.2em;
+}
+
+/* 次ロットバー（保存後に画面下に浮くスライド） */
+.next-lot-bar {
+  position: fixed;
+  bottom: calc(var(--nav-h) + var(--safe-b) + 58px);
+  left: 0; right: 0;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding: 8px 14px 8px;
+  z-index: 79;
+  box-shadow: 0 -1px 8px rgba(0,0,0,.15);
+  animation: slideUp .25s ease;
+}
+@keyframes slideUp {
+  from { transform: translateY(100%); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+.next-lot-scroll {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  -webkit-overflow-scrolling: touch;
+}
+.next-lot-btn {
+  flex-shrink: 0;
+  padding: 7px 14px;
+  border-radius: 20px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  font-size: .82rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+/* 折りたたみパネル */
+.collapse-toggle {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  background: var(--surface2);
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: .82rem;
+  color: var(--text2);
+  margin-bottom: 6px;
+  border: 1px solid var(--border);
+  -webkit-tap-highlight-color: transparent;
+}
+.collapse-body {
+  overflow: hidden;
+  transition: max-height .2s ease;
+}
+.collapse-body.open {
+  max-height: 600px;
+}
+.collapse-body.closed {
+  max-height: 0;
+}

@@ -233,7 +233,15 @@ const API = (() => {
     getDashboardExt:  ()         => call('getDashboardExtended', {}),
   };
 
-  return { system, line, lot, individual, growth, parent, bloodline, pairing, label, drive, gemini, backup, scan, phase2 };
+    // ── Phase A: データ安定化 ─────────────────────────────────────
+  const integrity = {
+    check:             ()  => call('checkDataIntegrity', {}),
+    recalculateLot:    (d) => call('recalculateLot',    d),
+    recalculateAll:    ()  => call('recalculateAllLots', {}),
+    getLotEvents:      (d) => call('getLotEvents',       d || {}),
+  };
+
+return { system, line, lot, individual, growth, parent, bloodline, pairing, label, drive, gemini, backup, scan, phase2, integrity };
 })();
 
 // ── Gemini プロンプト ──────────────────────────────────────────

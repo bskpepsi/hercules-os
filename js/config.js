@@ -51,10 +51,30 @@ function stageColor(code) {
 
 // ── 個体ステータス ──────────────────────────────────────────────
 const IND_STATUS = {
-  ALIVE:    { code:'alive',    label:'飼育中', color:'#4caf78' },
-  SOLD:     { code:'sold',     label:'販売済', color:'#e09040' },
-  DEAD:     { code:'dead',     label:'死亡',   color:'#e05050' },
-  RESERVED: { code:'reserved', label:'予約済', color:'#5ba8e8' },
+  // 幼虫ライフサイクル
+  LARVA:          { code:'larva',          label:'幼虫',       color:'#4caf50' },
+  PREPUPA:        { code:'prepupa',        label:'前蛹',       color:'#e09040' },
+  PUPA:           { code:'pupa',           label:'蛹',         color:'#bf360c' },
+  ADULT:          { code:'adult',          label:'成虫',       color:'#4caf78' },
+
+  // 成虫の状態分岐
+  SEED_CANDIDATE: { code:'seed_candidate', label:'種親候補',   color:'#2196f3' },
+  FOR_SALE:       { code:'for_sale',       label:'販売候補',   color:'#9c27b0' },
+
+  // 種親フロー
+  SEED_RESERVED:  { code:'seed_reserved',  label:'種親確保済', color:'#1565c0' },
+
+  // 販売フロー
+  RESERVED:       { code:'reserved',       label:'予約済',     color:'#5ba8e8' },
+  LISTED:         { code:'listed',         label:'出品中',     color:'#ff9800' },
+  SOLD:           { code:'sold',           label:'販売済',     color:'#e09040' },
+
+  // 終端
+  DEAD:           { code:'dead',           label:'死亡',       color:'#e05050' },
+  EXCLUDED:       { code:'excluded',       label:'除外',       color:'#888888' },
+
+  // 後方互換（既存データの alive を adult として表示）
+  ALIVE:          { code:'alive',          label:'飼育中',     color:'#4caf78' },
 };
 
 function indStatusLabel(code) {

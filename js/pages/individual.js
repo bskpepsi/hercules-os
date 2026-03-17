@@ -124,11 +124,13 @@ Pages.individualList = function () {
       if (!p) return;
       const val = p.dataset.val;
       filters.statusFilter = val === filters.statusFilter ? '' : val;
-      if (!val)                  filters.status = 'alive';
-      else if (val === 'active') filters.status = 'alive';
-      else if (val === 'sold')   filters.status = 'sold';
-      else if (val === 'dead')   filters.status = 'dead';
-      else if (val === 'parent') filters.status = 'parent';
+      if (!val)                       filters.status = '';
+      else if (val === 'active')      filters.status = 'active';
+      else if (val === 'selling')     filters.status = 'selling';
+      else if (val === 'sold')        filters.status = 'sold';
+      else if (val === 'dead')        filters.status = 'dead';
+      else if (val === 'parent')      filters.status = 'parent';
+      else                            filters.status = val;
       render();
     });
   }
@@ -164,8 +166,9 @@ function _statusFilters(active) {
   const statuses = [
     { val:'',       label:'全状態' },
     { val:'active', label:'飼育中' },
-    { val:'sold',   label:'販売済' },
-    { val:'dead',   label:'死亡' },
+    { val:'selling', label:'販売候補・出品中・予約済' },
+    { val:'sold',    label:'販売済' },
+    { val:'dead',    label:'死亡' },
     { val:'parent', label:'種親' },
   ];
   return statuses.map(s =>
@@ -196,8 +199,18 @@ function _indCardHTML(ind) {
   const locality = ind.locality || (line ? line.locality : '') || '';
 
   // ステータスラベル
-  const stMap = { alive:'飼育中', reserved:'予約済', sold:'販売済', dead:'死亡' };
-  const stColor= { alive:'var(--green)', reserved:'var(--blue)', sold:'var(--amber)', dead:'var(--red,#e05050)' };
+  const stMap = {
+    larva:'幼虫', prepupa:'前蛹', pupa:'蛹', adult:'成虫', alive:'飼育中',
+    seed_candidate:'種親候補', seed_reserved:'種親確保済',
+    for_sale:'販売候補', reserved:'予約済', listed:'出品中',
+    sold:'販売済', dead:'死亡', excluded:'除外',
+  };
+  const stColor = {
+    larva:'var(--green)', prepupa:'var(--amber)', pupa:'#bf360c', adult:'var(--green)', alive:'var(--green)',
+    seed_candidate:'var(--blue)', seed_reserved:'var(--blue)',
+    for_sale:'#9c27b0', reserved:'var(--blue)', listed:'#ff9800',
+    sold:'var(--amber)', dead:'var(--red,#e05050)', excluded:'var(--text3)',
+  };
   const stLbl  = stMap[ind.status] || ind.status || '—';
   const stClr  = stColor[ind.status] || 'var(--text3)';
 
@@ -273,11 +286,13 @@ Pages._indQrScan = function () {
 // filtersオブジェクトを参照せず、paramsで渡すパターンに統一。
 Pages._indStatusModal = function () {
   const statuses = [
-    { code:'alive',    label:'飼育中のみ（デフォルト）' },
-    { code:'reserved', label:'予約済みを含む' },
-    { code:'sold',     label:'販売済みを表示' },
-    { code:'dead',     label:'死亡を表示' },
-    { code:'_all',     label:'すべて表示' },
+    { code:'',              label:'飼育中すべて（デフォルト）' },
+    { code:'active',        label:'幼虫・成虫のみ' },
+    { code:'selling',       label:'販売候補・出品中・予約済' },
+    { code:'seed_candidate',label:'種親候補を表示' },
+    { code:'sold',          label:'販売済みを表示' },
+    { code:'dead',          label:'死亡を表示' },
+    { code:'_all',          label:'すべて表示' },
   ];
   const html = statuses.map(s =>
     `<button class="btn btn-ghost btn-full" style="margin-bottom:8px"
@@ -613,8 +628,8 @@ Pages._indMarkDead = async function (id) {
 
 Pages._indCancelReserved = async function (id) {
   try {
-    await apiCall(() => API.individual.changeStatus(id, 'alive'), '予約を解除しました');
-    Store.patchDBItem('individuals', 'ind_id', id, { status: 'alive' });
+    await apiCall(() => API.individual.changeStatus(id, 'for_sale'), '予約を解除しました');
+    Store.patchDBItem('individuals', 'ind_id', id, { status: 'for_sale' });
     Pages.individualDetail(id);
   } catch (e) {}
 };
@@ -838,7 +853,7 @@ Pages._indSave = async function (editId) {
   if (editId) {
     const chk = document.getElementById('chk-reserved');
     if (chk) {
-      data.status = chk.checked ? 'reserved' : 'alive';
+      data.status = chk.checked ? 'reserved' : 'for_sale';
     }
   }
 

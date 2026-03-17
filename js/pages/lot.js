@@ -523,14 +523,21 @@ function _lotQuickActions(lotId) {
 
 // ── ロット情報編集 ────────────────────────────────────────────────
 Pages._lotEdit = function (lotId) {
-  const lot = Store.getLot(lotId);
+  const lot   = Store.getLot(lotId);
   if (!lot) { UI.toast('ロットが見つかりません', 'error'); return; }
+  const lines = Store.getDB('lines') || [];
   UI.modal(`
     <div class="modal-title">ロット情報を修正</div>
     <div class="form-section" style="max-height:65vh;overflow-y:auto">
+      ${UI.field('ライン', `<select id="le-line" class="input">
+        <option value="">— 未選択 —</option>
+        ${lines.map(l => `<option value="${l.line_id}" ${l.line_id===lot.line_id?'selected':''}>${l.line_code||l.display_id}${l.line_name?' / '+l.line_name:''}</option>`).join('')}
+      </select>
+      <div style="font-size:.7rem;color:var(--amber);margin-top:3px">
+        ⚠️ 集計がずれている場合のみ変更してください
+      </div>`)}
       <div class="form-row-2">
-        ${UI.field('孵化日', `<input type="date" id="le-hatch" class="input" value="${(lot.hatch_date||'').replace(/\//g,'-')}">`)
-        }
+        ${UI.field('孵化日', `<input type="date" id="le-hatch" class="input" value="${(lot.hatch_date||'').replace(/\//g,'-')}">`)}
         ${UI.field('頭数', `<input type="number" id="le-count" class="input" value="${lot.count||''}" min="1">`)}
       </div>
       <div class="form-row-2">
@@ -551,15 +558,24 @@ Pages._lotEdit = function (lotId) {
 };
 
 Pages._lotEditSave = async function (lotId) {
+  const lineId    = document.getElementById('le-line')?.value || '';
   const hatch     = document.getElementById('le-hatch')?.value?.replace(/-/g,'/') || '';
   const count     = parseInt(document.getElementById('le-count')?.value || '0');
   const container = document.getElementById('le-container')?.value || '';
   const mat       = document.getElementById('le-mat')?.value || '';
   const note      = document.getElementById('le-note')?.value || '';
+  // 再発防止: line_id が内部IDパターン(LINE-xxxxx)でなければ保存しない
+  if (lineId && !lineId.startsWith('LINE-')) {
+    UI.toast('ライン選択が不正です。内部IDが必要です', 'error');
+    return;
+  }
+  const payload = { lot_id: lotId, hatch_date: hatch, count, container_size: container, mat_type: mat, note };
+  if (lineId) payload.line_id = lineId;
   try {
     UI.loading(true);
     UI.closeModal();
-    await API.lot.update({ lot_id: lotId, hatch_date: hatch, count, container_size: container, mat_type: mat, note });
+    await API.lot.update(payload);
+    if (lineId) Store.patchDBItem('lots', 'lot_id', lotId, { line_id: lineId });
     await syncAll(true);
     UI.toast('ロット情報を更新しました');
     Pages.lotDetail(lotId);

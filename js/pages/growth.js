@@ -47,7 +47,7 @@ Pages.growthRecord = function (params = {}) {
 
     main.innerHTML = `
       ${UI.header('成長記録入力', { back: true })}
-      <div class="page-body">
+      <div class="page-body has-quick-bar">
 
         <!-- 対象選択 -->
         <div class="card">
@@ -169,40 +169,43 @@ Pages.growthRecord = function (params = {}) {
               </div>
               <div id="gr-attrition-display" style="font-size:.8rem;color:var(--text3);margin-top:4px;min-height:20px"></div>
             </div>` : ''}
-            <div class="form-row-2">
-              ${UI.field('体色', `<select id="gr-color" class="input">
-                <option value="">—</option>
-                <option>黄白色</option><option>クリーム色</option>
-                <option>やや黄色</option><option>黄色</option>
-              </select>`)}
-              ${UI.field('張り', `<select id="gr-firm" class="input">
-                <option value="">—</option>
-                <option>良好</option><option>普通</option>
-                <option>やや弱い</option><option>弱い</option>
+
+          </div>
+        </div>
+
+        <!-- 詳細入力（折りたたみ） -->
+        <div class="collapse-toggle" onclick="this.nextElementSibling.classList.toggle('open');this.nextElementSibling.classList.toggle('closed');this.querySelector('span:last-child').style.transform=this.nextElementSibling.classList.contains('open')?'rotate(180deg)':''">
+          <span>📝 詳細入力（体色・メモ・公開設定）</span>
+          <span style="font-size:.7rem;transition:transform .2s">▼</span>
+        </div>
+        <div class="collapse-body closed">
+          <div class="card" style="border-radius:0 0 var(--radius) var(--radius)">
+            <div class="form-section">
+              <div class="form-row-2">
+                ${UI.field('体色', `<select id="gr-color" class="input">
+                  <option value="">—</option>
+                  <option>黄白色</option><option>クリーム色</option>
+                  <option>やや黄色</option><option>黄色</option>
+                </select>`)}
+                ${UI.field('張り', `<select id="gr-firm" class="input">
+                  <option value="">—</option>
+                  <option>良好</option><option>普通</option>
+                  <option>やや弱い</option><option>弱い</option>
+                </select>`)}
+              </div>
+              <div class="field">
+                <label class="field-label">観察コメント</label>
+                <textarea id="gr-ai-comment" class="input" rows="2"
+                  placeholder="AI解析結果またはご自身の観察メモ"></textarea>
+              </div>
+              ${UI.field('公開区分', `<select id="gr-public" class="input">
+                <option value="private">🔒 非公開</option>
+                <option value="buyer_only">🔑 購入者限定</option>
+                <option value="public">🌐 公開</option>
               </select>`)}
             </div>
           </div>
         </div>
-
-        <!-- AIコメント欄 -->
-        <div class="card">
-          <div class="card-title">観察コメント</div>
-          <textarea id="gr-ai-comment" class="input" rows="2"
-            placeholder="AI解析結果またはご自身の観察メモ"></textarea>
-          <div style="margin-top:8px">
-            ${UI.field('公開区分', `<select id="gr-public" class="input">
-              <option value="private">🔒 非公開</option>
-              <option value="buyer_only">🔑 購入者限定</option>
-              <option value="public">🌐 公開</option>
-            </select>`)}
-          </div>
-        </div>
-
-        <!-- 保存ボタン -->
-        <button class="btn btn-primary btn-full" style="font-size:1rem;padding:14px"
-          onclick="Pages._grSave('${targetType}','${targetId}')">
-          ✅ 記録を保存
-        </button>
 
         <!-- 記録履歴 -->
         ${targetId ? `<div class="sec-hdr" style="margin-top:4px">
@@ -211,6 +214,17 @@ Pages.growthRecord = function (params = {}) {
         </div>
         <div id="gr-history">${UI.spinner()}</div>` : ''}
 
+      </div>
+
+      <!-- 下部固定アクションバー（保存ボタン常時表示）-->
+      <div class="quick-action-bar">
+        <button class="btn btn-ghost btn-xl" style="flex:1" onclick="Store.back()">
+          ← 戻る
+        </button>
+        <button class="btn btn-primary btn-xl" style="flex:2"
+          onclick="Pages._grSave('${targetType}','${targetId}')">
+          ✅ 保存
+        </button>
       </div>`;
 
     // 対象が既に選択されている場合は履歴をロード
@@ -462,38 +476,41 @@ function _showNextLotBar(currentLotId) {
 
   const bar = document.createElement('div');
   bar.id = 'gr-next-lot-bar';
-  bar.style.cssText = `
-    position:fixed;bottom:56px;left:0;right:0;
-    background:var(--surface);border-top:1px solid var(--border);
-    padding:10px 14px;z-index:200;
-    box-shadow:0 -2px 12px rgba(0,0,0,.25)`;
-  bar.innerHTML = `
-    <div style="font-size:.72rem;color:var(--text3);margin-bottom:6px;font-weight:700">
-      📦 次のロットへ（同ライン）
-    </div>
-    <div style="display:flex;gap:7px;overflow-x:auto;padding-bottom:2px">
-      ${candidates.slice(0, 6).map(l => {
-        const line = Store.getLine(l.line_id);
-        const code = line ? (line.line_code || line.display_id) : l.display_id;
-        return `<button style="
-          flex-shrink:0;padding:6px 12px;border-radius:20px;
-          background:var(--surface2);border:1px solid var(--border);
-          font-size:.78rem;cursor:pointer;white-space:nowrap"
-          onclick="document.getElementById('gr-next-lot-bar').remove();
-            routeTo('growth-rec',{targetType:'LOT',targetId:'${l.lot_id}',displayId:'${l.display_id}'})">
-          <span style="color:var(--gold);font-weight:700">${code}</span>
-          <span style="color:var(--text3);margin-left:4px">${l.count}頭</span>
-        </button>`;
-      }).join('')}
-      <button style="
-        flex-shrink:0;padding:6px 12px;border-radius:20px;
-        background:transparent;border:1px solid var(--border);
-        font-size:.78rem;cursor:pointer;color:var(--text3)"
-        onclick="document.getElementById('gr-next-lot-bar').remove()">
-        ✕ 閉じる
-      </button>
-    </div>`;
+  bar.className = 'next-lot-bar';
 
+  const labelEl = document.createElement('div');
+  labelEl.style.cssText = 'font-size:.72rem;color:var(--text3);margin-bottom:6px;font-weight:700';
+  labelEl.textContent = '📦 次のロットへ（同ライン）';
+  bar.appendChild(labelEl);
+
+  const scrollEl = document.createElement('div');
+  scrollEl.className = 'next-lot-scroll';
+
+  candidates.slice(0, 6).forEach(function(l) {
+    const ln   = Store.getLine(l.line_id);
+    const code = ln ? (ln.line_code || ln.display_id) : l.display_id;
+    const btn  = document.createElement('button');
+    btn.className = 'next-lot-btn';
+    btn.innerHTML =
+      '<span style="color:var(--gold);font-weight:700">' + code + '</span>' +
+      '<span style="color:var(--text3);margin-left:4px">' + l.count + '頭</span>';
+    btn.onclick = (function(lotId, lotDisplayId) {
+      return function() {
+        document.getElementById('gr-next-lot-bar')?.remove();
+        routeTo('growth-rec', { targetType:'LOT', targetId:lotId, displayId:lotDisplayId });
+      };
+    })(l.lot_id, l.display_id);
+    scrollEl.appendChild(btn);
+  });
+
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'next-lot-btn';
+  closeBtn.style.color = 'var(--text3)';
+  closeBtn.textContent = '✕ 閉じる';
+  closeBtn.onclick = () => document.getElementById('gr-next-lot-bar')?.remove();
+  scrollEl.appendChild(closeBtn);
+
+  bar.appendChild(scrollEl);
   document.body.appendChild(bar);
 }
 

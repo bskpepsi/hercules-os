@@ -735,36 +735,27 @@ const WM_THRESHOLDS = [
  */
 Pages.weightMode = function (params = {}) {
   const res = params.resolve_result;
-  // resolve_result がない場合はスキャン画面（体重測定モード）に戻す
   if (!res || !res.entity) { routeTo('qr-scan', { mode: 'weight' }); return; }
 
   const main = document.getElementById('main');
   const { entity_type, entity, line, last_growth } = res;
 
-  // ── エンティティ情報を整理 ──────────────────────────────────
-  const displayId  = entity.display_id  || '—';
-  const isLot      = entity_type === 'LOT';
-  // IND は current_stage、LOT は stage
-  const stage      = (isLot ? entity.stage : entity.current_stage) || '—';
-  // ステージ表示名（config.js の STAGE_LABELS を参照、なければそのまま表示）
-  const stageDisp  = (typeof STAGE_LABELS !== 'undefined' && STAGE_LABELS[stage]) || stage;
-  // 日齢: GAS側の _age オブジェクト or ageDays フィールド
-  const ageDays    = entity._age?.totalDays ?? entity.ageDays ?? '—';
-  // コンテナ・マット（成長記録に自動補完）
-  const container  = (isLot ? entity.container_size : entity.current_container) || '';
-  const matType    = (isLot ? entity.mat_type : entity.current_mat)             || '';
-  // ライン略称
-  const lineDisp   = line?.line_code || line?.display_id || '';
-  // エンティティID（保存に使用）
-  const entityId   = (isLot ? entity.lot_id : entity.ind_id) || '';
+  const displayId = entity.display_id || '—';
+  const isLot     = entity_type === 'LOT';
+  const stage     = (isLot ? entity.stage : entity.current_stage) || '—';
+  const stageDisp = (typeof STAGE_LABELS !== 'undefined' && STAGE_LABELS[stage]) || stage;
+  const ageDays   = entity._age?.totalDays ?? entity.ageDays ?? '—';
+  const container = (isLot ? entity.container_size : entity.current_container) || '';
+  const matType   = (isLot ? entity.mat_type : entity.current_mat) || '';
+  const lineDisp  = line?.line_code || line?.display_id || '';
+  const entityId  = (isLot ? entity.lot_id : entity.ind_id) || '';
+  const lotCount  = isLot ? (parseInt(entity.count, 10) || 0) : 0;
 
-  // ── 前回記録 ────────────────────────────────────────────────
   const prevWeight  = (last_growth?.weight_g != null && last_growth.weight_g !== '')
     ? parseFloat(last_growth.weight_g) : null;
   const prevDate    = last_growth?.record_date || '';
   const prevAgeDays = last_growth?.age_days    || '';
 
-  // ── ページ状態をモジュール変数に保持（_wmUpdateDelta / _wmSave から参照）──
   Pages._wmState = {
     entityType : entity_type,
     entityId   : entityId,
@@ -773,198 +764,174 @@ Pages.weightMode = function (params = {}) {
     matType    : matType,
     prevWeight : prevWeight,
     displayId  : displayId,
+    lotCount   : lotCount,
   };
 
-  // ── HTML レンダリング ────────────────────────────────────────
   main.innerHTML = `
     ${UI.header('⚖️ 体重測定', { back: true, backFn: "routeTo('qr-scan',{mode:'weight'})" })}
-    <div class="page-body">
+    <div class="page-body has-quick-bar">
 
-      <!-- ① 個体/ロット情報ヘッダー（コンパクト） -->
-      <div class="card" style="padding:12px 14px">
-        <div style="display:flex;align-items:center;gap:10px">
-          <div style="flex:1;min-width:0">
-            <!-- 表示ID -->
-            <div style="font-family:var(--font-mono);font-size:.98rem;font-weight:700;
-              color:var(--gold);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
-              ${displayId}
-            </div>
-            <!-- バッジ行 -->
-            <div style="display:flex;gap:6px;align-items:center;margin-top:5px;flex-wrap:wrap">
-              <span style="background:rgba(76,175,120,.15);color:var(--green);
-                font-size:.7rem;padding:2px 7px;border-radius:99px;font-weight:600">
-                ${stageDisp}
-              </span>
-              ${isLot
-                ? `<span style="font-size:.73rem;color:var(--text3)">${entity.count || '?'}頭ロット</span>`
-                : `<span style="font-size:.73rem;color:var(--text3)">${entity.sex || ''}</span>`}
-              ${lineDisp
-                ? `<span style="font-size:.7rem;color:var(--text3)">L:${lineDisp}</span>`
-                : ''}
-            </div>
-          </div>
-          <!-- 日齢 -->
-          <div style="text-align:right;flex-shrink:0">
-            <div style="font-size:1.8rem;font-weight:700;color:var(--blue);line-height:1;
-              font-family:var(--font-mono)">
-              ${ageDays !== '—' ? ageDays : '—'}
-            </div>
-            <div style="font-size:.63rem;color:var(--text3);margin-top:1px">日齢</div>
+      <!-- ① コンパクト情報バー -->
+      <div class="quick-info-bar">
+        <div style="flex:1;min-width:0">
+          <div class="quick-info-id"
+            style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${displayId}</div>
+          <div style="display:flex;gap:5px;align-items:center;margin-top:4px;flex-wrap:wrap">
+            <span style="background:rgba(76,175,120,.15);color:var(--green);
+              font-size:.68rem;padding:1px 6px;border-radius:99px;font-weight:600">${stageDisp}</span>
+            ${isLot
+              ? `<span style="font-size:.7rem;color:var(--text3)">${entity.count || '?'}頭</span>`
+              : `<span style="font-size:.7rem;color:var(--text3)">${entity.sex || ''}</span>`}
+            ${lineDisp
+              ? `<span style="font-size:.68rem;color:var(--text3)">L:${lineDisp}</span>` : ''}
           </div>
         </div>
-        ${isLot ? `
-          <div style="font-size:.7rem;color:var(--amber);margin-top:7px;
-            padding-top:7px;border-top:1px solid var(--border)">
-            ⚠️ ロット測定: 平均体重として記録します
-          </div>` : ''}
+        <div style="text-align:right;flex-shrink:0">
+          <div class="quick-info-age">${ageDays !== '—' ? ageDays : '—'}</div>
+          <div class="quick-info-age-label">日齢</div>
+        </div>
       </div>
 
-      <!-- ② 体重入力カード（メイン操作） -->
-      <div class="card" style="border-color:rgba(76,175,120,.35)">
-
-        <!-- ラベル -->
-        <div style="text-align:center;font-size:.75rem;font-weight:700;
-          color:var(--text3);letter-spacing:.08em;margin-bottom:10px">
-          体重を入力 (g)
-        </div>
-
-        <!-- 体重入力フィールド -->
-        <div style="display:flex;align-items:center;justify-content:center;gap:10px">
+      <!-- ② 体重入力 -->
+      <div class="card" style="border-color:rgba(76,175,120,.35);padding:16px 14px">
+        <div style="text-align:center;font-size:.72rem;font-weight:700;
+          color:var(--text3);letter-spacing:.08em;margin-bottom:10px">体重 (g)</div>
+        <div style="display:flex;align-items:center;justify-content:center;gap:8px">
           <input
             id="wm-weight"
-            type="number"
-            inputmode="decimal"
-            step="0.1"
-            min="0.1"
-            max="999.9"
-            placeholder="0.0"
-            autocomplete="off"
+            type="number" inputmode="decimal" step="0.1" min="0.1" max="999.9"
+            placeholder="0.0" autocomplete="off"
+            class="num-input-xl"
+            style="width:180px;color:var(--green)"
             oninput="Pages._wmUpdateDelta(this.value)"
-            onkeydown="if(event.key==='Enter'&&!event.isComposing){Pages._wmSave()}"
-            style="
-              font-size:2.8rem;
-              font-weight:700;
-              font-family:var(--font-mono);
-              text-align:center;
-              width:190px;
-              padding:12px 8px;
-              background:var(--bg3);
-              border:2px solid var(--green2);
-              border-radius:var(--radius);
-              color:var(--green);
-              outline:none;
-              -webkit-appearance:none;
-              -moz-appearance:textfield;
-            ">
-          <span style="font-size:1.6rem;color:var(--text3);font-weight:600;flex-shrink:0">g</span>
+            onkeydown="if(event.key==='Enter'&&!event.isComposing){Pages._wmSave()}">
+          <span style="font-size:1.4rem;color:var(--text3);font-weight:600;flex-shrink:0">g</span>
         </div>
-
-        <!-- ③ 前回比 + 閾値バッジ（リアルタイム更新エリア） -->
         <div id="wm-delta"
-          style="text-align:center;min-height:30px;margin-top:10px;font-size:.95rem;
-            transition:all .15s ease">
+          style="text-align:center;min-height:28px;margin-top:8px;font-size:.92rem;transition:all .15s">
           ${prevWeight !== null
             ? `<span style="color:var(--text3)">前回 <b>${prevWeight}g</b> から —</span>`
-            : `<span style="color:var(--text3)">（前回体重なし・初回記録）</span>`}
+            : `<span style="color:var(--text3)">（初回記録）</span>`}
         </div>
-
-        <!-- 保存ボタン -->
-        <button
-          id="wm-save-btn"
-          class="btn btn-gold btn-full"
-          style="margin-top:14px;font-size:1.05rem;padding:15px;letter-spacing:.03em"
-          onclick="Pages._wmSave()">
-          💾 成長記録を保存
-        </button>
       </div>
 
-      <!-- ④ 前回記録カード -->
-      ${prevWeight !== null ? `
-      <div class="card" style="padding:10px 14px">
-        <div style="font-size:.7rem;color:var(--text3);font-weight:700;
-          letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px">
-          前回記録
+      <!-- ③ LOT 専用: before/after 頭数（growth.js と統一ロジック） -->
+      ${isLot ? `
+      <div class="card" style="padding:14px">
+        <div style="font-size:.72rem;font-weight:700;color:var(--text2);margin-bottom:10px">
+          🔢 頭数変化（マット交換時）
         </div>
+        <div class="count-row">
+          <div>
+            <div style="font-size:.68rem;color:var(--text3);margin-bottom:4px;text-align:center">交換前</div>
+            <input id="wm-before" type="number" inputmode="numeric"
+              class="num-input-xl" style="font-size:2rem"
+              min="0" max="999" placeholder="${lotCount || '—'}" value="${lotCount || ''}"
+              oninput="Pages._wmCalcAttrition()">
+          </div>
+          <div class="count-row-arrow">→</div>
+          <div>
+            <div style="font-size:.68rem;color:var(--text3);margin-bottom:4px;text-align:center">交換後</div>
+            <input id="wm-after" type="number" inputmode="numeric"
+              class="num-input-xl" style="font-size:2rem"
+              min="0" max="999" placeholder="—"
+              oninput="Pages._wmCalcAttrition()">
+          </div>
+        </div>
+        <div id="wm-attrition" class="count-attrition"></div>
+      </div>` : ''}
+
+      <!-- ④ 追加（折りたたみ） -->
+      <div style="margin-top:8px">
+        <div class="collapse-toggle" onclick="Pages._wmToggleExtra(this)">
+          <span>📝 追加メモ（任意）</span>
+          <span style="font-size:.7rem;transition:transform .2s">▼</span>
+        </div>
+        <div id="wm-extra" class="collapse-body closed">
+          <div class="card" style="border-radius:0 0 var(--radius) var(--radius);margin-top:-1px">
+            <div class="form-section">
+              <div class="field">
+                <label class="field-label">頭幅 (mm)</label>
+                <input id="wm-head" class="input" type="number"
+                  inputmode="decimal" step="0.1" min="0" max="99" placeholder="例: 38.5">
+              </div>
+              <div class="field">
+                <label class="field-label">観察メモ</label>
+                <textarea id="wm-note" class="input" rows="2"
+                  placeholder="幼虫の状態、色艶、活動性など"></textarea>
+              </div>
+              <div class="field">
+                <label class="field-label">交換種別</label>
+                <select id="wm-exchange" class="input">
+                  <option value="">体重測定のみ</option>
+                  <option value="マット交換">マット交換</option>
+                  <option value="容器交換">容器交換</option>
+                  <option value="マット+容器交換">マット+容器交換</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      ${prevWeight !== null ? `
+      <div class="card" style="padding:10px 14px;margin-top:8px">
+        <div style="font-size:.68rem;color:var(--text3);margin-bottom:4px">前回記録</div>
         <div style="display:flex;align-items:baseline;gap:10px">
-          <span style="font-size:1.7rem;font-weight:700;color:var(--text2);
+          <span style="font-size:1.5rem;font-weight:700;color:var(--text2);
             font-family:var(--font-mono)">${prevWeight}g</span>
-          <span style="font-size:.78rem;color:var(--text3)">
+          <span style="font-size:.75rem;color:var(--text3)">
             ${prevDate}${prevAgeDays ? ` / ${prevAgeDays}日齢` : ''}
           </span>
         </div>
       </div>` : ''}
 
-      <!-- ⑤ 追加メモ（アコーディオン・任意） -->
-      <div class="card" style="padding:0;overflow:hidden">
-        <button class="btn btn-ghost btn-full"
-          style="padding:11px 14px;justify-content:space-between;border-radius:var(--radius);
-            font-size:.82rem;color:var(--text2)"
-          onclick="Pages._wmToggleExtra(this)">
-          <span>📝 追加メモ（任意）</span>
-          <span id="wm-extra-arrow" style="font-size:.7rem;transition:transform .2s">▼</span>
-        </button>
-        <div id="wm-extra" style="display:none;padding:4px 14px 14px">
-          <div class="form-section">
-            <div class="field">
-              <label class="field-label">頭幅 (mm)</label>
-              <input id="wm-head" class="input" type="number"
-                inputmode="decimal" step="0.1" min="0" max="99" placeholder="例: 38.5">
-            </div>
-            <div class="field">
-              <label class="field-label">観察メモ</label>
-              <textarea id="wm-note" class="input" rows="2"
-                placeholder="幼虫の状態、色艶、活動性など"></textarea>
-            </div>
-            <div class="field">
-              <label class="field-label">交換種別</label>
-              <select id="wm-exchange" class="input">
-                <option value="">体重測定のみ</option>
-                <option value="マット交換">マット交換</option>
-                <option value="容器交換">容器交換</option>
-                <option value="マット+容器交換">マット+容器交換</option>
-              </select>
-            </div>
-          </div>
-        </div>
-      </div>
+    </div>
 
-      <!-- Phase2拡張ポイント: 写真撮影セクション（現在は非表示） -->
-      <!-- <div id="wm-photo-section" style="display:none"> Phase2: カメラUI </div> -->
-
+    <!-- 下部固定アクションバー -->
+    <div class="quick-action-bar">
+      <button class="btn btn-ghost btn-xl" style="flex:1"
+        onclick="routeTo('qr-scan',{mode:'weight'})">
+        📷 スキャン
+      </button>
+      <button id="wm-save-btn" class="btn btn-gold btn-xl" style="flex:2"
+        onclick="Pages._wmSave()">
+        💾 保存
+      </button>
     </div>`;
 
-  // 体重フィールドに自動フォーカス（スマホキーボードを即時展開）
-  setTimeout(() => { document.getElementById('wm-weight')?.focus(); }, 180);
+  // 体重入力にフォーカス（キーボード即表示）
+  setTimeout(() => document.getElementById('wm-weight')?.focus(), 120);
 };
 
-// ─────────────────────────────────────────────────────────────────
-// Pages.wmScan — weight-mode内でQR入力を直接受け付けるサブ関数
-// 用途: 将来的に weight-mode画面内にインラインQR入力エリアを追加する場合
-//       現在は qr-scan → weight-mode の遷移フローを使用
-// ─────────────────────────────────────────────────────────────────
-Pages.wmScan = async function (qrText) {
-  if (!qrText || !qrText.trim()) {
-    UI.toast('QRコードを入力してください', 'error');
+// LOT の before/after から減耗数を自動計算して表示
+Pages._wmCalcAttrition = function () {
+  const beforeEl = document.getElementById('wm-before');
+  const afterEl  = document.getElementById('wm-after');
+  const dispEl   = document.getElementById('wm-attrition');
+  if (!dispEl) return;
+
+  const before = parseInt(beforeEl?.value, 10);
+  const after  = parseInt(afterEl?.value,  10);
+
+  if (isNaN(before) || isNaN(after)) {
+    dispEl.textContent = '';
     return;
   }
-  try {
-    const res = await API.scan.resolve(qrText.trim());
-    if (res.entity_type === 'SET') {
-      UI.toast('産卵セットは体重測定できません', 'info');
-      return;
-    }
-    // weight-mode 画面を再レンダリング
-    Pages.weightMode({ resolve_result: res, qr_text: qrText });
-  } catch (e) {
-    UI.toast('QR解析失敗: ' + (e.message || '不明なエラー'), 'error');
+  const attrition = before - after;
+  if (attrition > 0) {
+    dispEl.textContent  = `減耗 ${attrition} 頭`;
+    dispEl.style.color  = 'var(--red)';
+  } else if (attrition === 0) {
+    dispEl.textContent  = '変化なし';
+    dispEl.style.color  = 'var(--text3)';
+  } else {
+    dispEl.textContent  = `⚠️ 後の方が多い (${Math.abs(attrition)}頭増)`;
+    dispEl.style.color  = 'var(--amber)';
   }
 };
 
-// ─────────────────────────────────────────────────────────────────
-// Pages._wmUpdateDelta — 体重入力のリアルタイム表示更新
-// ・前回比（↑+Xg / ↓-Xg / →同じ）を色付きで表示
-// ・150g以上: 🔥大型候補、170g以上: ⭐超大型候補 バッジを表示
-// ─────────────────────────────────────────────────────────────────
+
 Pages._wmUpdateDelta = function (rawVal) {
   const el   = document.getElementById('wm-delta');
   if (!el) return;
@@ -1054,7 +1021,19 @@ Pages._wmSave = async function () {
   if (btn) { btn.disabled = true; btn.textContent = '⏳ 保存中...'; }
 
   try {
-    // ── 成長記録データを構築 ──────────────────────────────
+    // ── 成長記録データを構築（growth.js の _grSave と統一ロジック）──
+    const headVal     = parseFloat(document.getElementById('wm-head')?.value);
+    const noteVal     = document.getElementById('wm-note')?.value?.trim() || '';
+    const exchangeVal = document.getElementById('wm-exchange')?.value || '';
+
+    // LOT 専用: before_count / after_count（growth.js と同一計算）
+    const beforeRaw = document.getElementById('wm-before')?.value;
+    const afterRaw  = document.getElementById('wm-after')?.value;
+    const beforeCount = (beforeRaw !== undefined && beforeRaw !== '')
+      ? parseInt(beforeRaw, 10) : undefined;
+    const afterCount  = (afterRaw  !== undefined && afterRaw  !== '')
+      ? parseInt(afterRaw,  10) : undefined;
+
     const growthData = {
       target_type:   state.entityType,
       target_id:     state.entityId,
@@ -1062,12 +1041,10 @@ Pages._wmSave = async function () {
       weight_g:      weightVal,
       container:     state.container || '',
       mat_type:      state.matType   || '',
+      // LOT の頭数変化（undefined のまま送ると GAS 側でスキップ）
+      before_count:  beforeCount,
+      after_count:   afterCount,
     };
-
-    // 追加メモ（任意入力）
-    const headVal     = parseFloat(document.getElementById('wm-head')?.value);
-    const noteVal     = document.getElementById('wm-note')?.value?.trim();
-    const exchangeVal = document.getElementById('wm-exchange')?.value;
     if (!isNaN(headVal) && headVal > 0) growthData.head_width_mm = headVal;
     if (noteVal)     growthData.note_private  = noteVal;
     if (exchangeVal) growthData.exchange_type = exchangeVal;
@@ -1075,9 +1052,22 @@ Pages._wmSave = async function () {
     // ── API呼び出し ───────────────────────────────────────
     await API.growth.create(growthData);
 
-    // ── キャッシュ更新（IND は latest_weight_g が変わるため必須）──
+    // ── キャッシュ更新（growth.js と統一）──────────────────────
     if (state.entityType === 'IND') {
+      Store.patchDBItem('individuals', 'ind_id', state.entityId,
+        { latest_weight_g: weightVal, current_stage: state.stage });
       await Store.syncEntityType('individuals').catch(() => {});
+    }
+    if (state.entityType === 'LOT') {
+      const lotUpdates = {};
+      if (state.stage) lotUpdates.stage = state.stage;
+      if (afterCount !== undefined) {
+        lotUpdates.count = afterCount;
+        if (afterCount === 0) lotUpdates.status = 'individualized';
+      }
+      if (Object.keys(lotUpdates).length) {
+        Store.patchDBItem('lots', 'lot_id', state.entityId, lotUpdates);
+      }
     }
     await Store.syncEntityType('growth').catch(() => {});
 
@@ -1225,10 +1215,11 @@ Pages._wmShowComplete = function (entityType, entityId, weight) {
 // ─────────────────────────────────────────────────────────────────
 Pages._wmToggleExtra = function (btn) {
   const body  = document.getElementById('wm-extra');
-  const arrow = document.getElementById('wm-extra-arrow');
+  const arrow = btn?.querySelector('span:last-child');
   if (!body) return;
-  const isOpen = body.style.display !== 'none';
-  body.style.display  = isOpen ? 'none' : 'block';
+  const isOpen = body.classList.contains('open');
+  body.classList.toggle('open',   !isOpen);
+  body.classList.toggle('closed',  isOpen);
   if (arrow) arrow.style.transform = isOpen ? '' : 'rotate(180deg)';
 };
 

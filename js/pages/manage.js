@@ -42,7 +42,7 @@ Pages.manage = function () {
     {
       icon: '🧬', label: '血統管理', count: blds.filter(b=>b.bloodline_id!=='BLD-UNKNOWN').length, unit: '血統',
       page: 'bloodline-list', newPage: 'bloodline-new',
-      sub: `確定 ${blds.filter(b=>b.bloodline_status==='confirmed').length}件`,
+      sub: `確定 ${blds.filter(b=>b.bloodline_status==='confirmed').length}件${blds.some(b=>b.bloodline_id==='BLD-UNKNOWN') ? ' / うち不明1件' : ''}`,
       color: 'var(--amber)',
     },
     {
@@ -246,7 +246,14 @@ function _renderLineDetail(line, main) {
 
   // このラインに属する個体・ロット（全状態）
   // status='all' で dissolved/individualized も含めて取得
-  const allLots    = Store.filterLots({ line_id: line.line_id, status: 'all' });
+  // 【フォールバック】lot.line_id が空 / 不整合でも pairing_set_id 経由で拾う
+  const _lotsById  = Store.filterLots({ line_id: line.line_id, status: 'all' });
+  const _pairingSetIds = new Set(pairings.map(p => p.set_id).filter(Boolean));
+  const _lotsByPairing = (Store.getDB('lots') || []).filter(l =>
+    l.pairing_set_id && _pairingSetIds.has(l.pairing_set_id) &&
+    !_lotsById.some(x => x.lot_id === l.lot_id)
+  );
+  const allLots    = [..._lotsById, ..._lotsByPairing];
   const activeLots = allLots.filter(l => l.status === 'active');
   const allInds    = Store.getIndividualsByLine(line.line_id);
   const aliveInds  = allInds.filter(i => i.status !== 'dead');
@@ -284,8 +291,12 @@ function _renderLineDetail(line, main) {
   const rootLots     = allLots.filter(l => !l.parent_lot_id || l.parent_lot_id === '');
   const lotInitTotal = rootLots.reduce((s, l) => s + (parseInt(l.initial_count, 10) || 0), 0);
 
-  // ④ 直接個体化数 = lot_id が空の個体（ロット経由しない直接個体化）
-  const directInds  = allInds.filter(i => !i.lot_id || i.lot_id === '');
+  // ④ 直接個体化数 = lot_id が空 OR このラインのロットに属さない個体
+  //    lot_id に値があっても、対応ロットが別ラインなら直接個体化として計上
+  const allLotIds   = new Set(allLots.map(l => l.lot_id));
+  const directInds  = allInds.filter(i =>
+    !i.lot_id || i.lot_id === '' || !allLotIds.has(i.lot_id)
+  );
 
   // ⑤ 未ロット卵 = MAX(採卵数 - 腐卵数 - ロット化累計 - 直接個体化数, 0)
   //    ロット内減耗はロット化後の話なので未ロット卵には含めない
