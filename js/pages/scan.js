@@ -248,75 +248,150 @@ Pages._qrRescanFromHistory = function (qrText) {
 };
 
 // ── カメラスキャン ────────────────────────────────────────────
-Pages._qrStartCamera = async function () {
-  // jsQR確認
-  if (typeof jsQR === 'undefined') {
-    UI.toast('QRライブラリ未ロード。ページを再読み込みしてください', 'error');
-    return;
+
+// ════════════════════════════════════════════════════════════════
+// _qrEnsureLibrary — jsQRライブラリを確実にロードする
+// SPA構造でのページ遷移時に未ロード状態になる問題を解決。
+// 1. すでにロード済みなら即 resolve
+// 2. 未ロードなら CDN から動的にロードして resolve
+// 3. タイムアウト（8秒）で reject
+// ════════════════════════════════════════════════════════════════
+Pages._qrEnsureLibrary = function () {
+  return new Promise((resolve, reject) => {
+    // ① 既にロード済み
+    if (typeof jsQR === 'function') { resolve(); return; }
+
+    // ② 既に <script> タグが挿入済みなら読み込み完了を待つ
+    const existing = document.getElementById('jsqr-script');
+    if (existing) {
+      const check = setInterval(() => {
+        if (typeof jsQR === 'function') { clearInterval(check); clearTimeout(tid); resolve(); }
+      }, 100);
+      const tid = setTimeout(() => { clearInterval(check); reject(new Error('jsQR読み込みタイムアウト')); }, 8000);
+      return;
+    }
+
+    // ③ 動的に CDN からロード
+    const script = document.createElement('script');
+    script.id  = 'jsqr-script';
+    script.src = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js';
+    script.async = true;
+
+    const tid = setTimeout(() => {
+      reject(new Error('jsQRライブラリのロードがタイムアウトしました（8秒）'));
+    }, 8000);
+
+    script.onload = () => {
+      clearTimeout(tid);
+      if (typeof jsQR === 'function') {
+        resolve();
+      } else {
+        reject(new Error('jsQRのロードに失敗しました'));
+      }
+    };
+    script.onerror = () => {
+      clearTimeout(tid);
+      reject(new Error('jsQRライブラリのダウンロードに失敗しました。通信環境を確認してください'));
+    };
+
+    document.head.appendChild(script);
+  });
+};
+
+// ── QRエラー表示 + 再試行ボタン ────────────────────────────────
+function _qrShowCameraError(msg) {
+  const errEl = document.getElementById('qr-camera-error');
+  if (errEl) { errEl.style.display = 'block'; errEl.textContent = ''; }
+
+  // 既存エラー表示を差し替え
+  const cameraBtn = document.getElementById('camera-btn');
+  if (cameraBtn) {
+    cameraBtn.textContent = '📷 カメラで読み取る';
+    cameraBtn.disabled = false;
   }
+
+  // エラーカードを表示（既存があれば更新）
+  const existingErr = document.getElementById('qr-cam-err-card');
+  const errHtml = `
+    <div id="qr-cam-err-card" class="card"
+      style="border-color:rgba(224,80,80,.4);background:rgba(224,80,80,.04);margin-top:8px">
+      <div style="font-size:.82rem;color:var(--red);margin-bottom:10px">
+        ⚠️ ${msg}
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-ghost btn-sm" style="flex:1"
+          onclick="Pages._qrRetryCamera()">🔄 再試行</button>
+        <button class="btn btn-ghost btn-sm" style="flex:1"
+          onclick="location.reload()">🔃 ページ再読み込み</button>
+        <button class="btn btn-ghost btn-sm" style="flex:1;color:var(--blue)"
+          onclick="document.getElementById('qr-input')?.focus()">⌨️ 手動入力へ</button>
+      </div>
+    </div>`;
+  if (existingErr) {
+    existingErr.outerHTML = errHtml;
+  } else {
+    const inputCard = document.querySelector('#camera-btn')?.closest('.card');
+    if (inputCard) inputCard.insertAdjacentHTML('afterend', errHtml);
+    else UI.toast(msg, 'error', 5000);
+  }
+}
+
+// 再試行処理
+Pages._qrRetryCamera = async function () {
+  // エラーカードを消してから再試行
+  document.getElementById('qr-cam-err-card')?.remove();
+  await Pages._qrStartCamera();
+};
+
+Pages._qrStartCamera = async function () {
   const card = document.getElementById('camera-card');
   if (!card) return;
 
-  // getUserMedia が使えない環境（HTTP / 非対応ブラウザ）
-  if (!navigator.mediaDevices?.getUserMedia) {
-    UI.toast('このブラウザはカメラに対応していません。HTTPS接続が必要です', 'error');
-    return;
-  }
-
-  // 制約を3段階で試みる（厳しい→緩やか→最小限）
-  const CONSTRAINTS = [
-    // 第1候補: 背面カメラ優先
-    { video: { facingMode: { ideal: 'environment' } } },
-    // 第2候補: 任意のカメラ
-    { video: true },
-  ];
-
-  let stream = null;
-  let lastErr = null;
-
-  for (const c of CONSTRAINTS) {
-    try {
-      stream = await navigator.mediaDevices.getUserMedia(c);
-      break;
-    } catch (e) {
-      lastErr = e;
-      // OverconstrainedError / NotFoundError は次の制約で再試行
-      if (e.name === 'NotAllowedError') break; // 権限拒否は再試行しない
-    }
-  }
-
-  if (!stream) {
-    const e = lastErr;
-    let msg;
-    if (!e) {
-      msg = 'カメラを起動できませんでした';
-    } else if (e.name === 'NotAllowedError') {
-      msg = 'カメラの使用が拒否されました。\nブラウザのアドレスバー左のアイコン→「カメラ」→「許可」に変更してください';
-    } else if (e.name === 'NotFoundError' || e.name === 'DevicesNotFoundError') {
-      msg = 'カメラが見つかりません。端末にカメラが搭載されているか確認してください';
-    } else if (e.name === 'NotReadableError' || e.name === 'TrackStartError') {
-      msg = 'カメラが他のアプリに使用中です。他のアプリを閉じてから再試行してください';
-    } else if (e.name === 'OverconstrainedError') {
-      msg = 'カメラの要件を満たせません。端末のカメラを確認してください';
-    } else if (e.name === 'SecurityError') {
-      msg = 'セキュリティエラー。HTTPS接続が必要です';
-    } else {
-      msg = 'カメラ起動失敗: ' + (e.message || e.name || '不明なエラー');
-    }
-    UI.toast(msg, 'error');
-    return;
-  }
-
-  const video = document.getElementById('qr-video');
-  if (!video) { stream.getTracks().forEach(t => t.stop()); return; }
-
-  video.srcObject = stream;
-  card.style.display = 'block';
   const btn = document.getElementById('camera-btn');
-  if (btn) btn.textContent = '📷 スキャン中...';
+  if (btn) { btn.textContent = '⏳ 準備中...'; btn.disabled = true; }
 
-  video.addEventListener('loadedmetadata', () => { video.play(); }, { once: true });
-  Pages._qrScanLoop(video);
+  // ── jsQRライブラリの確認・動的ロード（Fix 3）──────────────
+  try {
+    await Pages._qrEnsureLibrary();
+  } catch (libErr) {
+    if (btn) { btn.textContent = '📷 カメラで読み取る'; btn.disabled = false; }
+    _qrShowCameraError(
+      'QRライブラリのロードに失敗しました。\n' +
+      '通信環境を確認して「再試行」してください。\n' +
+      '（' + libErr.message + '）'
+    );
+    return;
+  }
+
+  try {
+    // 高解像度でリクエスト（Android最適化）
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: { ideal: 'environment' },
+        width:  { ideal: 1920, min: 640 },
+        height: { ideal: 1080, min: 480 },
+        focusMode: 'continuous',
+      }
+    });
+    const video = document.getElementById('qr-video');
+    if (!video) { stream.getTracks().forEach(t=>t.stop()); return; }
+
+    video.srcObject = stream;
+    card.style.display = 'block';
+    // ※ btn は関数スコープ先頭で宣言済みのため再宣言しない
+    if (btn) { btn.textContent = '📷 スキャン中...'; btn.disabled = false; }
+
+    video.addEventListener('loadedmetadata', () => { video.play(); }, { once: true });
+    Pages._qrScanLoop(video);
+  } catch (e) {
+    if (btn) { btn.textContent = '📷 カメラで読み取る'; btn.disabled = false; }
+    const msg = e.name === 'NotAllowedError'
+      ? 'カメラへのアクセスを許可してください（アドレスバー左の🔒→カメラ→許可）'
+      : e.name === 'NotFoundError'
+      ? 'カメラが見つかりません。別のデバイスのカメラをお試しください'
+      : 'カメラ起動失敗: ' + e.message;
+    _qrShowCameraError(msg);
+  }
 };
 
 Pages._qrScanLoop = function (video) {
@@ -368,10 +443,17 @@ Pages._qrStopCamera = function () {
 };
 
 // ── 画像ファイルからQR読み取り ────────────────────────────────
-Pages._qrReadFromImage = function (input) {
+Pages._qrReadFromImage = async function (input) {
   const file = input?.files?.[0];
   if (!file) return;
-  if (typeof jsQR === 'undefined') { UI.toast('QRライブラリ未ロード', 'error'); return; }
+
+  // jsQRライブラリ確認・動的ロード
+  try {
+    await Pages._qrEnsureLibrary();
+  } catch(libErr) {
+    UI.toast('QRライブラリのロードに失敗しました: ' + libErr.message, 'error', 5000);
+    return;
+  }
 
   const reader = new FileReader();
   reader.onload = function (e) {

@@ -419,11 +419,24 @@ function _renderPairingManagement(parId, entries, isLoading) {
   const sec = document.getElementById('pairing-stats-section');
   if (!sec) return;
 
-  // 分離
-  const done      = entries.filter(e => !e.status || e.status === 'done')
-                           .sort((a,b) => String(b.pairing_date||'').localeCompare(String(a.pairing_date||'')));
-  const planned   = entries.filter(e => e.status === 'planned')
-                           .sort((a,b) => String(a.planned_date||'').localeCompare(String(b.planned_date||'')));
+  // ── 分離（Fix 2: status判定を厳密化）────────────────────────
+  // 【修正前の問題】!e.status が true になるエントリ（statusフィールド欠落）が
+  //                 すべて done に分類されていた
+  // 【修正後】planned_date があって pairing_date がない = planned として扱う（フォールバック）
+  //           status === 'done' または (status未設定かつ pairing_date あり) = done
+
+  const planned   = entries.filter(e =>
+      e.status === 'planned' ||
+      // フォールバック: statusなし+planned_dateあり+pairing_dateなし
+      (!e.status && e.planned_date && !e.pairing_date)
+    ).sort((a,b) => String(a.planned_date||'').localeCompare(String(b.planned_date||'')));
+
+  const done      = entries.filter(e =>
+      e.status === 'done' ||
+      // フォールバック: statusなし+pairing_dateあり（旧データ互換）
+      (!e.status && e.pairing_date && !e.planned_date)
+    ).sort((a,b) => String(b.pairing_date||'').localeCompare(String(a.pairing_date||'')));
+
   const cancelled = entries.filter(e => e.status === 'cancelled');
 
   const parents = Store.getDB('parents') || [];
@@ -607,12 +620,25 @@ function _loadPairingManagement(parId) {
     .then(res => {
       const apiEntries  = res.histories || [];
       const apiIds      = new Set(apiEntries.map(e => e.pairing_id));
-      // ローカルで _source='pairing' のもの（産卵セット由来）は保持
-      const localOnly   = merged.filter(e => e._source === 'pairing' || !apiIds.has(e.pairing_id));
+
+      // ── Fix 2: マージ修正 ──────────────────────────────────
+      // 旧コード: localOnly.filter(e => e._source === 'pairing') のみ残していた
+      // → ローカルで追加した planned エントリ（_source なし）が消えていた
+      //
+      // 修正後: 以下を保持する
+      //   (a) 産卵セット由来 (_source === 'pairing')
+      //   (b) API未返却 かつ status === 'planned' のローカルエントリ（追加直後など）
+      const localOnly   = merged.filter(e =>
+        e._source === 'pairing' ||
+        (!apiIds.has(e.pairing_id) && e.status === 'planned')
+      );
+
       const finalMerged = [
         ...apiEntries,
-        ...localOnly.filter(e => e._source === 'pairing'),
+        ...localOnly,
       ].sort((a,b) => {
+        // planned は planned_date で、done は pairing_date でソート
+        // 混在する場合は最新日を代表日として使用
         const da = a.pairing_date || a.planned_date || '';
         const db = b.pairing_date || b.planned_date || '';
         return db.localeCompare(da);
@@ -962,18 +988,56 @@ function _parseTags(json) {
 
 function _clientExtractTags(raw) {
   if (!raw) return [];
-  const known = ['T117','FF','FOX','TREX','OAKS','LS','U71','U6I','MX',
+
+  // ── 既知英数字タグ辞書 ──────────────────────────────────────
+  const known = [
+    'T117','FF','FOX','TREX','OAKS','LS','U71','U6I','MX',
     'KING','ROYAL','BLACK','WHITE','GOLD','SILVER','ACE',
     'ZEUS','TITAN','ATLAS','GIANT','MAX','SUPER','HYPER',
     'JKS','YKS','MKS','BKS','DKS','OKS',
-    'vol','CBS','WF','WD','WB','WC','SDU'];
-  const tokens = raw.split(/[×x\.\-_\s]+/i).map(t=>t.trim()).filter(Boolean);
+    'vol','CBS','WF','WD','WB','WC','SDU',
+    'GTR','RU','CB','WD','OA','GGX','GGB',
+  ].map(k => k.toUpperCase());
+
+  // ── 区切り文字で分割（全角・半角スペース、×、x、．、.、-、_、No前の数字）──
+  const tokens = raw
+    .split(/[×xｘ．。\.\-_\s　,，/／]+/i)
+    .map(t => t.trim())
+    .filter(Boolean);
+
   const tags = new Set();
+
   tokens.forEach(t => {
+    if (!t) return;
+
+    // ① 純粋な数字列はスキップ（11, 2025 など）
+    if (/^\d+$/.test(t)) return;
+
+    // ② No〇〇 / vol〇〇 形式はスキップ
+    if (/^(No|vol)\d/i.test(t)) return;
+
+    // ③ 英数字トークン → 既知辞書と照合 OR 2〜12文字の英字タグとして追加
     const up = t.toUpperCase();
-    known.forEach(k => { if (up.includes(k)) tags.add(k); });
-    if (/^\d{3,}$/.test(t)) tags.add(t);
+    let matched = false;
+    known.forEach(k => {
+      if (up.includes(k)) { tags.add(k); matched = true; }
+    });
+    // 辞書未収録でも 2〜12文字の英大文字タグとして抽出（例: SDU, GGB など）
+    if (!matched && /^[A-Z][A-Z0-9]{1,11}$/i.test(t) && t.length >= 2) {
+      tags.add(up);
+    }
+
+    // ④ 日本語（ひらがな・カタカナ・漢字）トークン → そのまま追加
+    //    例: 大和、ヤマト、やまと → タグとして認識
+    const jpMatch = t.match(/[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF\u3400-\u4DBF]+/g);
+    if (jpMatch) {
+      jpMatch.forEach(jp => {
+        if (jp.length >= 1) tags.add(jp);  // 1文字以上の日本語をタグ化
+      });
+    }
   });
+
+  // ⑤ 数値サイズタグ（100〜250mm相当の数値）は除外（ノイズになるため）
   return Array.from(tags);
 }
 
@@ -982,12 +1046,71 @@ function _clientExtractTags(raw) {
 // 種親登録 / 編集フォーム（v2）
 // parent.js の改善版 + v2拡張フィールド対応
 // ════════════════════════════════════════════════════════════════
+
+// ── フォーム用タグ一時保持（モジュールスコープ） ──────────────
+window._parFormTags = [];
+
+// 血統原文から自動抽出してUIを更新
+window._parTagsExtract = function (raw) {
+  window._parFormTags = _clientExtractTags(raw);
+  _parTagsRender();
+};
+
+// タグ一覧を描画
+function _parTagsRender() {
+  const el = document.getElementById('par-tag-preview');
+  if (!el) return;
+  if (window._parFormTags.length === 0) {
+    el.innerHTML = '<span style="font-size:.75rem;color:var(--text3)">タグなし（血統原文を入力すると自動抽出）</span>';
+  } else {
+    el.innerHTML = window._parFormTags.map((t, i) =>
+      `<span class="tag tag-gold" style="cursor:pointer;user-select:none"
+        onclick="_parTagsRemove(${i})">${t} <span style="opacity:.7;font-size:.7em">✕</span></span>`
+    ).join('');
+  }
+}
+
+// タグを追加
+window._parTagsAdd = function () {
+  const inp = document.getElementById('par-tag-input');
+  const val = (inp?.value || '').trim();
+  if (!val) return;
+  if (!window._parFormTags.includes(val)) {
+    window._parFormTags.push(val);
+    _parTagsRender();
+  }
+  if (inp) inp.value = '';
+};
+
+// タグを削除
+window._parTagsRemove = function (i) {
+  window._parFormTags.splice(i, 1);
+  _parTagsRender();
+};
+
 Pages.parentNew = function (params = {}) {
   const main   = document.getElementById('main');
   const isEdit = !!params.editId;
   const par    = isEdit ? Store.getParent(params.editId) : null;
   const blds   = Store.getDB('bloodlines') || [];
   const v = (f, d = '') => par ? (par[f] !== undefined && par[f] !== null ? par[f] : d) : (params[f] || d);
+
+  // ── 初期タグをセット ──────────────────────────────────────
+  if (isEdit && par?.bloodline_tags) {
+    window._parFormTags = _parseTags(par.bloodline_tags);
+  } else if (isEdit && par?.bloodline_raw) {
+    window._parFormTags = _clientExtractTags(par.bloodline_raw);
+  } else {
+    window._parFormTags = [];
+  }
+
+  // 初期タグのHTML
+  const initTagHtml = window._parFormTags.length
+    ? window._parFormTags.map((t, i) =>
+        `<span class="tag tag-gold" style="cursor:pointer;user-select:none"
+          onclick="window._parTagsRemove(${i})">${t} <span style="opacity:.7;font-size:.7em">✕</span></span>`
+      ).join('')
+    : '<span style="font-size:.75rem;color:var(--text3)">タグなし（血統原文を入力すると自動抽出）</span>';
 
   main.innerHTML = `
     ${UI.header(isEdit ? '種親を編集' : '種親を登録', { back: true })}
@@ -1024,8 +1147,47 @@ Pages.parentNew = function (params = {}) {
           UI.select('bloodline_id',
             blds.map(b => ({ code: b.bloodline_id, label: b.abbreviation || b.bloodline_name })),
             v('bloodline_id')))}
+
+        <!-- 血統原文: oninput で自動タグ抽出 -->
         ${UI.field('血統原文（ヤフオク等の表記）',
-          UI.input('bloodline_raw', 'text', v('bloodline_raw'), '例: U6SA-GTR.RU01U6SAティー×FFOFA2No113×T117R'))}
+          `<input name="bloodline_raw" type="text" class="form-input text-mono"
+            value="${(v('bloodline_raw') || '').replace(/"/g,'&quot;')}"
+            placeholder="例: SDU A-11.大和 × 大和"
+            oninput="window._parTagsExtract(this.value)">`)}
+
+        <!-- ▼ 血統タグ確認・編集エリア（Fix 1-2） -->
+        <div style="margin-top:-4px;margin-bottom:12px;padding:10px 12px;
+          background:var(--surface2);border-radius:10px;border:1px solid var(--border)">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <span style="font-size:.75rem;font-weight:700;color:var(--text2)">
+              🏷 血統タグ
+            </span>
+            <span style="font-size:.68rem;color:var(--text3)">タップで削除</span>
+          </div>
+          <!-- 抽出済みタグ表示 -->
+          <div id="par-tag-preview" class="tag-row" style="min-height:28px;flex-wrap:wrap">
+            ${initTagHtml}
+          </div>
+          <!-- 手動追加入力 -->
+          <div style="display:flex;gap:8px;margin-top:8px">
+            <input id="par-tag-input" class="form-input" type="text"
+              placeholder="タグを手動追加（例: 大和、SDU）"
+              style="flex:1;padding:6px 10px;font-size:.85rem"
+              onkeydown="if(event.key==='Enter'){event.preventDefault();window._parTagsAdd()}">
+            <button type="button" class="btn btn-ghost btn-sm"
+              onclick="window._parTagsAdd()">追加</button>
+          </div>
+          <div style="font-size:.68rem;color:var(--text3);margin-top:4px">
+            血統原文を入力 → 自動抽出 / 手動で追加・削除も可能
+          </div>
+          ${(isEdit && par?.bloodline_raw)
+            ? `<div style="margin-top:6px;font-size:.72rem;color:var(--text3)">
+                現在の血統原文: <span class="text-mono">${v('bloodline_raw')}</span>
+               </div>`
+            : ''}
+        </div>
+        <!-- ▲ 血統タグ編集エリアここまで -->
+
         <div class="form-row-2">
           ${UI.field('父系原文',
             UI.input('paternal_raw', 'text', v('paternal_raw'), '例: U6SA-GTR（父方）'))}
@@ -1082,6 +1244,15 @@ Pages._parV2Save = async function (editId) {
   ['eclosion_date','feeding_start_date','purchase_date'].forEach(k => {
     if (data[k]) data[k] = data[k].replace(/-/g, '/');
   });
+
+  // ── 血統タグを保存（Fix 1-2: タグUIの内容を使用）──────────
+  // フォームUIのタグが存在すればそれを優先、なければ bloodline_raw から再抽出
+  if (window._parFormTags && window._parFormTags.length > 0) {
+    data.bloodline_tags = JSON.stringify(window._parFormTags);
+  } else if (data.bloodline_raw) {
+    const autoTags = _clientExtractTags(data.bloodline_raw);
+    if (autoTags.length > 0) data.bloodline_tags = JSON.stringify(autoTags);
+  }
 
   try {
     if (editId) {
