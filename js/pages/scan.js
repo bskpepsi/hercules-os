@@ -249,7 +249,7 @@ Pages._qrRescanFromHistory = function (qrText) {
 
 // ── カメラスキャン ────────────────────────────────────────────
 Pages._qrStartCamera = async function () {
-  // jsQR確認（index.htmlで静的ロード済みのはずだが念のため）
+  // jsQR確認
   if (typeof jsQR === 'undefined') {
     UI.toast('QRライブラリ未ロード。ページを再読み込みしてください', 'error');
     return;
@@ -257,32 +257,66 @@ Pages._qrStartCamera = async function () {
   const card = document.getElementById('camera-card');
   if (!card) return;
 
-  try {
-    // 高解像度でリクエスト（Android最適化）
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: { ideal: 'environment' },
-        width:  { ideal: 1920, min: 640 },
-        height: { ideal: 1080, min: 480 },
-        focusMode: 'continuous',
-      }
-    });
-    const video = document.getElementById('qr-video');
-    if (!video) { stream.getTracks().forEach(t=>t.stop()); return; }
-
-    video.srcObject = stream;
-    card.style.display = 'block';
-    const btn = document.getElementById('camera-btn');
-    if (btn) btn.textContent = '📷 スキャン中...';
-
-    video.addEventListener('loadedmetadata', () => { video.play(); }, { once: true });
-    Pages._qrScanLoop(video);
-  } catch (e) {
-    const msg = e.name === 'NotAllowedError'
-      ? 'カメラへのアクセスを許可してください（アドレスバー左の🔒→カメラ→許可）'
-      : e.name === 'NotFoundError' ? 'カメラが見つかりません' : 'カメラ起動失敗: ' + e.message;
-    UI.toast(msg, 'error', 5000);
+  // getUserMedia が使えない環境（HTTP / 非対応ブラウザ）
+  if (!navigator.mediaDevices?.getUserMedia) {
+    UI.toast('このブラウザはカメラに対応していません。HTTPS接続が必要です', 'error');
+    return;
   }
+
+  // 制約を3段階で試みる（厳しい→緩やか→最小限）
+  const CONSTRAINTS = [
+    // 第1候補: 背面カメラ優先
+    { video: { facingMode: { ideal: 'environment' } } },
+    // 第2候補: 任意のカメラ
+    { video: true },
+  ];
+
+  let stream = null;
+  let lastErr = null;
+
+  for (const c of CONSTRAINTS) {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia(c);
+      break;
+    } catch (e) {
+      lastErr = e;
+      // OverconstrainedError / NotFoundError は次の制約で再試行
+      if (e.name === 'NotAllowedError') break; // 権限拒否は再試行しない
+    }
+  }
+
+  if (!stream) {
+    const e = lastErr;
+    let msg;
+    if (!e) {
+      msg = 'カメラを起動できませんでした';
+    } else if (e.name === 'NotAllowedError') {
+      msg = 'カメラの使用が拒否されました。\nブラウザのアドレスバー左のアイコン→「カメラ」→「許可」に変更してください';
+    } else if (e.name === 'NotFoundError' || e.name === 'DevicesNotFoundError') {
+      msg = 'カメラが見つかりません。端末にカメラが搭載されているか確認してください';
+    } else if (e.name === 'NotReadableError' || e.name === 'TrackStartError') {
+      msg = 'カメラが他のアプリに使用中です。他のアプリを閉じてから再試行してください';
+    } else if (e.name === 'OverconstrainedError') {
+      msg = 'カメラの要件を満たせません。端末のカメラを確認してください';
+    } else if (e.name === 'SecurityError') {
+      msg = 'セキュリティエラー。HTTPS接続が必要です';
+    } else {
+      msg = 'カメラ起動失敗: ' + (e.message || e.name || '不明なエラー');
+    }
+    UI.toast(msg, 'error');
+    return;
+  }
+
+  const video = document.getElementById('qr-video');
+  if (!video) { stream.getTracks().forEach(t => t.stop()); return; }
+
+  video.srcObject = stream;
+  card.style.display = 'block';
+  const btn = document.getElementById('camera-btn');
+  if (btn) btn.textContent = '📷 スキャン中...';
+
+  video.addEventListener('loadedmetadata', () => { video.play(); }, { once: true });
+  Pages._qrScanLoop(video);
 };
 
 Pages._qrScanLoop = function (video) {
