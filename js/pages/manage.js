@@ -165,7 +165,7 @@ function _lineCardHTML(line) {
       })()
     : '';
 
-  return `<div class="card" style="padding:12px 14px;cursor:pointer;display:flex;align-items:center;gap:12px"
+  return `<div class="card" style="padding:12px 14px;cursor:pointer;display:flex;align-items:center;gap:12px;margin-bottom:6px"
     onclick="routeTo('line-detail',{lineId:'${line.line_id}'})">
 
     <!-- 左：ラインコード＋年 -->
@@ -244,29 +244,33 @@ function _renderLineDetail(line, main) {
   const fBld = f && f.bloodline_id ? blds.find(b=>b.bloodline_id===f.bloodline_id) : null;
   const mBld = m && m.bloodline_id ? blds.find(b=>b.bloodline_id===m.bloodline_id) : null;
 
-  // ── 産卵セット（このラインに紐づくもの）─────────────────────
-  // ※ TDZ修正: _pairingSetIds が linePairings を参照するため、
-  //   必ず linePairings を先に宣言する
-  const allPairings  = Store.getDB('pairings') || [];
-  const linePairings = allPairings.filter(function(p) {
+  // このラインに属する個体・ロット（全状態）
+  // status='all' で dissolved/individualized も含めて取得
+  // 【フォールバック】lot.line_id が空 / 不整合でも pairing_set_id 経由で拾う
+  const _lotsById  = Store.filterLots({ line_id: line.line_id, status: 'all' });
+  const _pairingSetIds = new Set(pairings.map(p => p.set_id).filter(Boolean));
+  const _lotsByPairing = (Store.getDB('lots') || []).filter(l =>
+    l.pairing_set_id && _pairingSetIds.has(l.pairing_set_id) &&
+    !_lotsById.some(x => x.lot_id === l.lot_id)
+  );
+  const allLots    = [..._lotsById, ..._lotsByPairing];
+  const activeLots = allLots.filter(l => l.status === 'active');
+  const allInds    = Store.getIndividualsByLine(line.line_id);
+  const aliveInds  = allInds.filter(i => i.status !== 'dead');
+
+  // 産卵セット紐づき: line_id で照合（正常ケース）
+  // line_id 未設定データの後方互換フォールバック:
+  //   createPairing は現在常に line_id を自動生成するため、新規データには発生しない
+  //   旧データ（自動生成前に登録されたもの）のみフォールバック照合
+  const allPairings = Store.getDB('pairings') || [];
+  const pairings = allPairings.filter(p => {
     if (p.line_id === line.line_id) return true;
+    // 後方互換: line_id 未設定かつ父母IDが一致する場合
     if (!p.line_id && line.father_par_id && line.mother_par_id) {
       return (p.father_par_id === line.father_par_id && p.mother_par_id === line.mother_par_id);
     }
     return false;
   });
-
-  // このラインに属するロット・個体（全状態）
-  const _lotsById      = Store.filterLots({ line_id: line.line_id, status: 'all' });
-  const _pairingSetIds = new Set(linePairings.map(function(p) { return p.set_id; }).filter(Boolean));
-  const _lotsByPairing = (Store.getDB('lots') || []).filter(function(l) {
-    return l.pairing_set_id && _pairingSetIds.has(l.pairing_set_id) &&
-      !_lotsById.some(function(x) { return x.lot_id === l.lot_id; });
-  });
-  const allLots    = [..._lotsById, ..._lotsByPairing];
-  const activeLots = allLots.filter(function(l) { return l.status === 'active'; });
-  const allInds    = Store.getIndividualsByLine(line.line_id);
-  const aliveInds  = allInds.filter(function(i) { return i.status !== 'dead'; });
 
   // ════════════════════════════════════════════════════
   // ライン集計 — 卵の流れに沿った定義
@@ -274,10 +278,10 @@ function _renderLineDetail(line, main) {
 
   // ① 採卵数 = SUM(egg_records.egg_count)  / フォールバック: pairings.total_eggs
   const eggRecords  = Store.getDB('egg_records') || [];
-  const lineEggRecs = eggRecords.filter(r => linePairings.some(p => p.set_id === r.set_id));
+  const lineEggRecs = eggRecords.filter(r => pairings.some(p => p.set_id === r.set_id));
   const totalEggs   = lineEggRecs.length > 0
     ? lineEggRecs.reduce((s, r) => s + (parseInt(r.egg_count, 10) || 0), 0)
-    : linePairings.reduce((s, p) => s + (parseInt(p.total_eggs, 10) || 0), 0);
+    : pairings.reduce((s, p) => s + (parseInt(p.total_eggs, 10) || 0), 0);
 
   // ② 腐卵数 = SUM(egg_records.failed_count)
   const rottenEggs  = lineEggRecs.reduce((s, r) => s + (parseInt(r.failed_count, 10) || 0), 0);
@@ -371,10 +375,10 @@ function _renderLineDetail(line, main) {
       </div>
 
       <!-- 産卵セット紐づき -->
-      ${linePairings.length ? `
+      ${pairings.length ? `
       <div class="card">
-        <div class="card-title">🥚 産卵セット (${linePairings.length}件)</div>
-        ${linePairings.map(p => `
+        <div class="card-title">🥚 産卵セット (${pairings.length}件)</div>
+        ${pairings.map(p => `
           <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">
             <span style="font-family:var(--font-mono);font-size:.82rem;color:var(--blue);cursor:pointer"
               onclick="routeTo('pairing-detail',{pairingId:'${p.set_id}'})">
