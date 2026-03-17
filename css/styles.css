@@ -551,16 +551,25 @@ textarea.input { resize: vertical; min-height: 72px; }
 .label-row  { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 3px; font-size: .65rem; color: #444; }
 
 /* ── モーダル ────────────────────────────────────────────────────── */
-.modal-overlay {
+/* ── modal fix: wrap が flex コンテナ、overlay は absolute backdrop ── */
+#modal-wrap {
   position: fixed;
   inset: 0;
-  z-index: 150;
-  background: rgba(0,0,0,.7);
+  z-index: 200;
   display: flex;
   align-items: flex-end;
   justify-content: center;
 }
+.modal-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: rgba(0,0,0,.7);
+  pointer-events: auto;
+}
 .modal {
+  position: relative;   /* overlay より前面へ */
+  z-index: 1;
   background: var(--bg2);
   border: 1px solid var(--border2);
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
@@ -569,6 +578,7 @@ textarea.input { resize: vertical; min-height: 72px; }
   max-height: 90dvh;
   overflow-y: auto;
   animation: slideUp .25s ease;
+  pointer-events: auto;
 }
 @keyframes slideUp { from { transform: translateY(40px); opacity: .3; } }
 .modal-title { font-size: 1rem; font-weight: 700; margin-bottom: 16px; }
@@ -944,3 +954,102 @@ textarea.input { resize: vertical; min-height: 72px; }
 .collapse-body.closed {
   max-height: 0;
 }
+
+/* ════════════════════════════════════════════════════════════
+   種親詳細カード / 情報行
+   ════════════════════════════════════════════════════════════ */
+.detail-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: 12px;
+}
+.detail-title {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.detail-row {
+  display: flex;
+  align-items: flex-start;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: .85rem;
+  gap: 10px;
+}
+.detail-row:last-child { border-bottom: none; }
+.detail-label {
+  flex: 0 0 90px;
+  color: var(--text3);
+  font-size: .78rem;
+  padding-top: 1px;
+}
+.detail-value {
+  flex: 1;
+  color: var(--text);
+  font-weight: 500;
+  word-break: break-all;
+}
+.detail-raw {
+  font-family: var(--font-mono);
+  font-size: .76rem;
+  color: var(--text2);
+  margin-top: 4px;
+  word-break: break-all;
+}
+.tag-row-label {
+  font-size: .78rem;
+  color: var(--text3);
+  margin: 3px 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+/* ── 種親一覧グルーピング ─────────────────────────── */
+.parent-section-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  margin: 12px 0 6px;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+.parent-section-toggle:active { opacity: .75; }
+.parent-section-label {
+  font-size: .82rem;
+  font-weight: 700;
+  color: var(--text2);
+}
+.parent-section-arrow {
+  font-size: .7rem;
+  color: var(--text3);
+  transition: transform .2s;
+}
+.parent-section-body { overflow: hidden; }
+
+.parent-year-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  margin: 6px 0 4px 8px;
+  font-size: .78rem;
+  color: var(--text3);
+  -webkit-tap-highlight-color: transparent;
+}
+.parent-year-body { margin-left: 8px; overflow: hidden; }

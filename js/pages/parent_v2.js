@@ -11,7 +11,6 @@ Pages.parentList = function () {
   const main = document.getElementById('main');
   if (!main) return;
 
-  // ヘッダーを先に描画して真っ黒を防止
   main.innerHTML = UI.header('種親管理', { action: { fn: "routeTo('parent-new')", icon: '+' } })
     + '<div class="page-body" id="parent-list-body">' + UI.spinner() + '</div>';
 
@@ -33,6 +32,60 @@ Pages.parentList = function () {
       }
     }
 
+    // 引退・売却済を羽化年ごとにグルーピング
+    function _retiredByYear(list) {
+      const map = {};
+      list.forEach(p => {
+        const yr = (p.eclosion_date || p.updated_at || '')
+          .toString().slice(0, 4) || '年不明';
+        (map[yr] = map[yr] || []).push(p);
+      });
+      // 年度降順
+      return Object.keys(map).sort((a,b) => b.localeCompare(a))
+        .map(yr => ({ yr, items: map[yr] }));
+    }
+
+    // 折りたたみトグル（引退セクション・年度）
+    function _toggle(id) {
+      const body  = document.getElementById(id + '-body');
+      const arrow = document.getElementById(id + '-arrow');
+      if (!body) return;
+      const open = body.style.display !== 'none';
+      body.style.display = open ? 'none' : 'block';
+      if (arrow) arrow.style.transform = open ? '' : 'rotate(180deg)';
+    }
+    window._parentToggle = _toggle;
+
+    // 引退セクション HTML（年度別折りたたみ）
+    let retiredHtml = '';
+    if (retired.length) {
+      const byYear = _retiredByYear(retired);
+      const yearBlocks = byYear.map(({ yr, items }) => {
+        const yid = 'py-' + yr.replace(/[^0-9]/g, '');
+        return `
+          <div class="parent-year-toggle"
+            onclick="_parentToggle('${yid}')" style="cursor:pointer">
+            <span>${yr}年（${items.length}頭）</span>
+            <span id="${yid}-arrow" class="parent-section-arrow">▼</span>
+          </div>
+          <div id="${yid}-body" class="parent-year-body" style="display:none">
+            ${items.map(safeCard).join('')}
+          </div>`;
+      }).join('');
+
+      retiredHtml = `
+        <div class="parent-section-toggle"
+          onclick="_parentToggle('pr-retired')" style="margin-top:20px">
+          <span class="parent-section-label" style="color:var(--text3)">
+            引退・売却済（${retired.length}頭）
+          </span>
+          <span id="pr-retired-arrow" class="parent-section-arrow">▶</span>
+        </div>
+        <div id="pr-retired-body" class="parent-section-body" style="display:none">
+          ${yearBlocks}
+        </div>`;
+    }
+
     const body = `
       <div class="section-title">♂ 種雄（${males.length}頭）</div>
       ${males.length ? males.map(safeCard).join('') : UI.empty('種雄が未登録です')}
@@ -40,12 +93,7 @@ Pages.parentList = function () {
       <div class="section-title" style="margin-top:20px">♀ 種雌（${females.length}頭）</div>
       ${females.length ? females.map(safeCard).join('') : UI.empty('種雌が未登録です')}
 
-      ${retired.length ? `
-        <div class="section-title" style="margin-top:20px;color:var(--text3)">
-          引退・売却済（${retired.length}頭）
-        </div>
-        ${retired.map(safeCard).join('')}
-      ` : ''}`;
+      ${retiredHtml}`;
 
     const bodyEl = document.getElementById('parent-list-body');
     if (bodyEl) bodyEl.innerHTML = body;
@@ -220,19 +268,45 @@ Pages.parentDetail = async function (parIdParam) {
     ${UI.header(pid, { back: true, action: { fn: `_parentEditMenu('${parId}')`, icon: '…' } })}
     <div class="page-body">
 
+      <!-- 基本情報カード -->
       <div class="detail-card">
-        <div class="detail-title">${pid} <span style="color:${p.sex==='♂'?'var(--male)':'var(--female)'}">${p.sex}</span></div>
-        ${pairingBadge ? `<div style="margin:8px 0">${pairingBadge}</div>` : ''}
+        <!-- ヘッダー行 -->
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;
+          padding-bottom:10px;border-bottom:1px solid var(--border)">
+          <span style="font-family:var(--font-mono);font-size:1.05rem;font-weight:700;
+            color:var(--gold)">${pid}</span>
+          <span style="font-size:1.2rem;color:${p.sex==='♂'?'var(--male)':'var(--female)'}">
+            ${p.sex || ''}</span>
+          <span style="font-size:.9rem;font-weight:700;
+            color:${p.size_mm?'var(--green)':'var(--text3)'};margin-left:4px">
+            ${p.size_mm ? p.size_mm + 'mm' : '未計測'}</span>
+          <span style="margin-left:auto">
+            <span style="font-size:.7rem;padding:2px 8px;border-radius:20px;
+              border:1px solid currentColor;
+              color:${p.status==='active'?'var(--green)':p.status==='sold'?'var(--amber)':'var(--text3)'}">
+              ${_parentStatusLabel(p.status)}
+            </span>
+          </span>
+        </div>
+        ${pairingBadge ? `<div style="margin-bottom:10px">${pairingBadge}</div>` : ''}
 
+        <!-- 詳細行 -->
+        ${UI.detailRow('管理コード', pid)}
+        ${UI.detailRow('性別', p.sex || '—')}
         ${UI.detailRow('サイズ', p.size_mm ? p.size_mm + 'mm' : '未計測')}
-        ${UI.detailRow('産地',   p.locality  || '—')}
-        ${UI.detailRow('世代',   p.generation|| '—')}
-        ${UI.detailRow('父親サイズ', p.father_parent_size_mm ? p.father_parent_size_mm+'mm' : '—')}
-        ${UI.detailRow('母親サイズ', p.mother_parent_size_mm ? p.mother_parent_size_mm+'mm' : '—')}
+        ${UI.detailRow('産地', p.locality || '—')}
+        ${UI.detailRow('世代', p.generation || '—')}
+        ${UI.detailRow('父親サイズ', p.father_parent_size_mm ? p.father_parent_size_mm + 'mm' : '—')}
+        ${UI.detailRow('母親サイズ', p.mother_parent_size_mm ? p.mother_parent_size_mm + 'mm' : '—')}
         ${UI.detailRow('羽化日', p.eclosion_date || '—')}
-        ${UI.detailRow('後食開始日', p.feeding_start_date || '未設定')}
-        ${UI.detailRow('交配可能日', p.pairing_ready_date || '—')}
-        ${UI.detailRow('ステータス', _parentStatusLabel(p.status))}
+        ${UI.detailRow('後食開始日',
+          p.feeding_start_date
+            ? `<span style="color:var(--green)">${p.feeding_start_date}</span>`
+            : '<span style="color:var(--amber)">未設定</span>')}
+        ${UI.detailRow('交配可能日',
+          p.pairing_ready_date
+            ? `<span style="color:var(--blue)">${p.pairing_ready_date}</span>`
+            : '—')}
       </div>
 
       ${!p.feeding_start_date ? `
@@ -1054,9 +1128,13 @@ Pages._parFeedingSave = async function (parId) {
   try {
     UI.loading(true);
     UI.closeModal();
+    // GAS 側で pairing_ready_date も自動計算されるので syncAll してから再描画
     await API.phase2.updateParent({ par_id: parId, feeding_start_date: date });
+    // ローカルキャッシュを即時パッチ（GAS が pairing_ready_date を返すまでの暫定）
     Store.patchDBItem('parents', 'par_id', parId, { feeding_start_date: date });
     UI.toast('後食開始日を設定しました');
+    // 最新データを取得してから詳細を再描画
+    await syncAll(true).catch(() => {});
     Pages.parentDetail(parId);
   } catch(e) {
     UI.toast('設定失敗: ' + e.message, 'error');
