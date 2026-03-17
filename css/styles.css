@@ -1055,3 +1055,41 @@ textarea.input { resize: vertical; min-height: 72px; }
   -webkit-tap-highlight-color: transparent;
 }
 .parent-year-body { margin-left: 8px; overflow: hidden; }
+
+/* ════════════════════════════════════════════════════════════
+   アクションシート（縦並びメニュー）
+   ════════════════════════════════════════════════════════════ */
+.action-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 0;
+}
+.action-sheet-btn {
+  display: block;
+  width: 100%;
+  padding: 15px 16px;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: .95rem;
+  font-weight: 500;
+  font-family: var(--font);
+  color: var(--text);           /* 明示的に白系テキスト */
+  cursor: pointer;
+  transition: background .12s;
+  line-height: 1.4;
+}
+.action-sheet-btn:active,
+.action-sheet-btn:hover {
+  background: rgba(255,255,255,.07);
+}
+.action-sheet-cancel {
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 15px;
+  color: var(--text3);
+  font-size: .9rem;
+  text-align: center;
+}

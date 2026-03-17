@@ -32,40 +32,49 @@ Pages.parentList = function () {
       }
     }
 
-    // 引退・売却済を羽化年ごとにグルーピング
+    // 引退・売却済を管理コードの年度コードでグルーピング
+    // 例: M26-A → 2026、F25-01 → 2025、不明 → 'unknown'
     function _retiredByYear(list) {
       const map = {};
       list.forEach(p => {
-        const yr = (p.eclosion_date || p.updated_at || '')
-          .toString().slice(0, 4) || '年不明';
+        const code = p.parent_display_id || p.display_name || '';
+        // 管理コードから2桁年を抽出: M26-A → '26', F25-01 → '25'
+        const m = code.match(/[A-Za-z]+(\d{2})[^0-9]/);
+        const yr = m ? '20' + m[1] : 'unknown';
         (map[yr] = map[yr] || []).push(p);
       });
-      // 年度降順
-      return Object.keys(map).sort((a,b) => b.localeCompare(a))
+      // 年度降順（unknownは末尾）
+      return Object.keys(map)
+        .sort((a, b) => {
+          if (a === 'unknown') return 1;
+          if (b === 'unknown') return -1;
+          return b.localeCompare(a);
+        })
         .map(yr => ({ yr, items: map[yr] }));
     }
 
-    // 折りたたみトグル（引退セクション・年度）
-    function _toggle(id) {
+    // 折りたたみトグル — window.に登録してHTML onclick属性から参照できるようにする
+    window._parentToggle = function (id) {
       const body  = document.getElementById(id + '-body');
       const arrow = document.getElementById(id + '-arrow');
       if (!body) return;
-      const open = body.style.display !== 'none';
-      body.style.display = open ? 'none' : 'block';
-      if (arrow) arrow.style.transform = open ? '' : 'rotate(180deg)';
-    }
-    window._parentToggle = _toggle;
+      const isOpen = body.style.display !== 'none';
+      body.style.display = isOpen ? 'none' : 'block';
+      if (arrow) arrow.style.transform = isOpen ? '' : 'rotate(180deg)';
+    };
 
     // 引退セクション HTML（年度別折りたたみ）
     let retiredHtml = '';
     if (retired.length) {
       const byYear = _retiredByYear(retired);
       const yearBlocks = byYear.map(({ yr, items }) => {
-        const yid = 'py-' + yr.replace(/[^0-9]/g, '');
+        // ID: 年度数字 or 'unknown'（重複しないよう固定文字列）
+        const yid = 'py-' + (yr === 'unknown' ? 'unknown' : yr);
+        const label = yr === 'unknown' ? '年度不明' : yr + '年度';
         return `
           <div class="parent-year-toggle"
-            onclick="_parentToggle('${yid}')" style="cursor:pointer">
-            <span>${yr}年（${items.length}頭）</span>
+            onclick="window._parentToggle('${yid}')" style="cursor:pointer">
+            <span>${label}（${items.length}頭）</span>
             <span id="${yid}-arrow" class="parent-section-arrow">▼</span>
           </div>
           <div id="${yid}-body" class="parent-year-body" style="display:none">
@@ -75,7 +84,7 @@ Pages.parentList = function () {
 
       retiredHtml = `
         <div class="parent-section-toggle"
-          onclick="_parentToggle('pr-retired')" style="margin-top:20px">
+          onclick="window._parentToggle('pr-retired')" style="margin-top:20px">
           <span class="parent-section-label" style="color:var(--text3)">
             引退・売却済（${retired.length}頭）
           </span>
