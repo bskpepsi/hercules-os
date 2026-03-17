@@ -1100,41 +1100,123 @@ Pages._wmShowComplete = function (entityType, entityId, weight) {
   const body = main?.querySelector('.page-body');
   if (!body) return;
 
-  // 詳細ルートを解決（専用params名を使用）
-  const detailRoute  = entityType === 'IND' ? 'ind-detail' : 'lot-detail';
-  const detailParam  = entityType === 'IND' ? 'indId'      : 'lotId';
+  const detailRoute = entityType === 'IND' ? 'ind-detail' : 'lot-detail';
+  const detailParam = entityType === 'IND' ? 'indId'      : 'lotId';
 
-  // 完了バナーをページ先頭に挿入
-  const banner = document.createElement('div');
-  banner.innerHTML = `
-    <div style="
-      background:linear-gradient(135deg,rgba(45,122,82,.22),rgba(76,175,120,.08));
-      border:1px solid rgba(76,175,120,.45);
-      border-radius:var(--radius);
-      padding:20px 16px;
-      text-align:center;
-      margin-bottom:14px">
-      <div style="font-size:2.2rem;margin-bottom:6px">✅</div>
-      <div style="font-size:1.15rem;font-weight:700;color:var(--green)">
-        ${weight}g を記録しました
-      </div>
-      <div style="font-size:.78rem;color:var(--text3);margin-top:4px">
-        GROWTHテーブルに保存完了
-      </div>
-      <!-- 2ボタン: 次をスキャン / 詳細を見る -->
-      <div style="display:flex;gap:10px;margin-top:16px">
-        <button class="btn btn-ghost" style="flex:1;padding:12px"
-          onclick="routeTo('qr-scan',{mode:'weight'})">
-          📷 次をスキャン
-        </button>
-        <button class="btn btn-primary" style="flex:1;padding:12px"
-          onclick="routeTo('${detailRoute}',{[detailParam]:'${entityId}'})">
-          詳細を見る
-        </button>
-      </div>
-    </div>`;
+  // ── 完了バナー ──────────────────────────────────────────────
+  const bannerEl = document.createElement('div');
+  bannerEl.style.cssText = [
+    'background:linear-gradient(135deg,rgba(45,122,82,.22),rgba(76,175,120,.08))',
+    'border:1px solid rgba(76,175,120,.45)',
+    'border-radius:var(--radius)',
+    'padding:20px 16px',
+    'text-align:center',
+    'margin-bottom:14px',
+  ].join(';');
 
-  body.insertBefore(banner.firstElementChild, body.firstChild);
+  const scanBtn = document.createElement('button');
+  scanBtn.className = 'btn btn-ghost';
+  scanBtn.style.cssText = 'flex:1;padding:12px';
+  scanBtn.textContent = '📷 次をスキャン';
+  scanBtn.onclick = () => routeTo('qr-scan', { mode: 'weight' });
+
+  const detailBtn = document.createElement('button');
+  detailBtn.className = 'btn btn-primary';
+  detailBtn.style.cssText = 'flex:1;padding:12px';
+  detailBtn.textContent = '詳細を見る';
+  detailBtn.onclick = () => {
+    const p = {};
+    p[detailParam] = entityId;
+    routeTo(detailRoute, p);
+  };
+
+  const btnRow = document.createElement('div');
+  btnRow.style.cssText = 'display:flex;gap:10px;margin-top:16px';
+  btnRow.appendChild(scanBtn);
+  btnRow.appendChild(detailBtn);
+
+  bannerEl.innerHTML =
+    '<div style="font-size:2.2rem;margin-bottom:6px">✅</div>' +
+    '<div style="font-size:1.15rem;font-weight:700;color:var(--green)">' + weight + 'g を記録しました</div>' +
+    '<div style="font-size:.78rem;color:var(--text3);margin-top:4px">GROWTHテーブルに保存完了</div>';
+  bannerEl.appendChild(btnRow);
+  body.insertBefore(bannerEl, body.firstChild);
+
+  // ── LOT の場合: 同ラインの次ロット選択バー ─────────────────
+  if (entityType !== 'LOT') { main.scrollTop = 0; return; }
+
+  const currentLot = Store.getLot(entityId);
+  if (!currentLot) { main.scrollTop = 0; return; }
+
+  const sameLine = Store.filterLots({ line_id: currentLot.line_id, status: 'active' })
+    .filter(l => l.lot_id !== entityId);
+  const candidates = sameLine.length
+    ? sameLine
+    : Store.filterLots({ status: 'active' }).filter(l => l.lot_id !== entityId).slice(0, 6);
+
+  if (!candidates.length) { main.scrollTop = 0; return; }
+
+  const nextBarEl = document.createElement('div');
+  nextBarEl.style.cssText = 'margin-top:10px';
+
+  const barLabel = document.createElement('div');
+  barLabel.style.cssText = 'font-size:.72rem;color:var(--text3);margin-bottom:6px;font-weight:700';
+  barLabel.textContent = '📦 次のロットへ（同ライン）';
+  nextBarEl.appendChild(barLabel);
+
+  const btnScroll = document.createElement('div');
+  btnScroll.style.cssText = 'display:flex;gap:7px;overflow-x:auto;padding-bottom:2px';
+
+  candidates.slice(0, 6).forEach(function(l) {
+    const line = Store.getLine(l.line_id);
+    const code = line ? (line.line_code || line.display_id) : l.display_id;
+
+    const btn = document.createElement('button');
+    btn.style.cssText = [
+      'flex-shrink:0', 'padding:6px 12px', 'border-radius:20px',
+      'background:var(--surface2)', 'border:1px solid var(--border)',
+      'font-size:.78rem', 'cursor:pointer', 'white-space:nowrap',
+    ].join(';');
+    btn.innerHTML =
+      '<span style="color:var(--gold);font-weight:700">' + code + '</span>' +
+      '<span style="color:var(--text3);margin-left:4px">' + l.count + '頭</span>';
+
+    // 安全なクロージャでルート遷移（JSON.stringify を使わない）
+    btn.onclick = (function(lotId, lotDisplayId, lotLineId) {
+      return function() {
+        const lot2 = Store.getLot(lotId);
+        const ln2  = Store.getLine(lotLineId);
+        if (lot2) {
+          routeTo('weight-mode', {
+            resolve_result: {
+              entity_type: 'LOT',
+              entity:      lot2,
+              line:        ln2 || {},
+              last_growth: null,
+            },
+          });
+        } else {
+          routeTo('lot-detail', { lotId: lotId });
+        }
+      };
+    })(l.lot_id, l.display_id, l.line_id);
+
+    btnScroll.appendChild(btn);
+  });
+
+  // 閉じるボタン
+  const closeBtn = document.createElement('button');
+  closeBtn.style.cssText = [
+    'flex-shrink:0', 'padding:6px 12px', 'border-radius:20px',
+    'background:transparent', 'border:1px solid var(--border)',
+    'font-size:.78rem', 'cursor:pointer', 'color:var(--text3)',
+  ].join(';');
+  closeBtn.textContent = '✕';
+  closeBtn.onclick = () => nextBarEl.remove();
+  btnScroll.appendChild(closeBtn);
+
+  nextBarEl.appendChild(btnScroll);
+  bannerEl.insertAdjacentElement('afterend', nextBarEl);
   main.scrollTop = 0;
 };
 

@@ -23,8 +23,6 @@
   --green:     #4caf78;
   --green2:    #2d7a52;
   --blue:      #5ba8e8;
-  --male:      #5ba8e8;   /* ♂ 青系 */
-  --female:    #e87fa0;   /* ♀ ピンク系 */
   --amber:     #e09040;
   --red:       #e05050;
 
@@ -552,7 +550,29 @@ textarea.input { resize: vertical; min-height: 72px; }
 .label-id   { font-size: .9rem; font-weight: 700; color: #1a3a1a; }
 .label-row  { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 3px; font-size: .65rem; color: #444; }
 
-/* ── モーダル（旧定義 → 新定義に統合済み、この枠は残しておく） ── */
+/* ── モーダル ────────────────────────────────────────────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+  background: rgba(0,0,0,.7);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.modal {
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  padding: 20px 16px calc(20px + var(--safe-b));
+  width: 100%;
+  max-height: 90dvh;
+  overflow-y: auto;
+  animation: slideUp .25s ease;
+}
+@keyframes slideUp { from { transform: translateY(40px); opacity: .3; } }
+.modal-title { font-size: 1rem; font-weight: 700; margin-bottom: 16px; }
+.modal-footer { display: flex; gap: 10px; margin-top: 20px; }
 
 /* ── 写真アップロード ────────────────────────────────────────────── */
 .photo-upload-area {
@@ -585,210 +605,178 @@ textarea.input { resize: vertical; min-height: 72px; }
   .fab { right: calc(50% - 300px + 16px); }
 }
 
-/* ════════════════════════════════════════════════════════════════
-   Phase2 拡張CSS
-   ════════════════════════════════════════════════════════════════ */
+/* ════════════════════════════════════════════════════════════
+   Phase4 追加スタイル — ロットカード統一 / 一括ロット化
+   ════════════════════════════════════════════════════════════ */
 
-/* ── モーダル ────────────────────────────────────────────────── */
-/* #modal-wrap: 画面全体を覆うコンテナ */
-#modal-wrap {
-  display: none;
-  position: fixed;
-  inset: 0;
-  z-index: 900;         /* ナビより確実に上 */
-  pointer-events: none; /* wrap自体はタップを通す */
+/* ── ロットカード（3カラム統一） ──────────────────────────── */
+.lot-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 11px 13px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  transition: background .15s;
+  -webkit-tap-highlight-color: transparent;
+  margin-bottom: 6px;
 }
-/* overlay: 背景の暗転。タップで閉じるがmodalより後ろ */
-.modal-overlay {
-  position: absolute;
-  inset: 0;
-  background: rgba(0,0,0,.6);
-  pointer-events: auto; /* 背景タップを受け取る */
-  z-index: 1;
-}
-/* modal本体: overlayより前面 */
-.modal {
-  position: absolute;
-  bottom: 0; left: 0; right: 0;
-  background: var(--bg2);
-  border-radius: 16px 16px 0 0;
-  padding: 20px 16px calc(20px + env(safe-area-inset-bottom));
-  max-height: 85vh;
-  overflow-y: auto;
-  animation: slideUp .25s ease;
-  z-index: 2;           /* overlay(z-index:1)より上 */
-  pointer-events: auto; /* modal内のタップを確実に受け取る */
-}
-@keyframes slideUp { from { transform: translateY(30px); opacity: .4; } }
-.modal-title { font-size:1.05rem; font-weight:700; margin-bottom:16px; color:var(--text1); }
-.modal-footer { display:flex; gap:10px; margin-top:20px; }
+.lot-card:active { background: var(--surface2); }
 
-/* ── アクションシート ─────────────────────────────────────────── */
-.action-sheet { display:flex; flex-direction:column; gap:8px; }
-.action-sheet-btn {
-  width:100%; padding:16px; border:none; border-radius:12px;
-  background:var(--surface2,#252535); color:var(--text1,#f0f0f0);
-  font-size:.95rem; font-weight:600;
-  text-align:center; cursor:pointer; letter-spacing:.02em;
-  border:1px solid var(--border,rgba(255,255,255,.15));
-  transition:background .12s, transform .08s;
-  pointer-events: auto;  /* overlayによるブロックを明示的に防ぐ */
-  position: relative;    /* stacking contextで確実に前面 */
-  z-index: 3;
+/* 左列: ラインコード */
+.lot-card-left {
+  min-width: 58px;
+  max-width: 72px;
+  flex-shrink: 0;
 }
-.action-sheet-btn:active {
-  background:var(--surface3,#2e2e45);
-  transform:scale(.98);
+.lot-card-line {
+  font-family: var(--font-mono);
+  font-size: .95rem;
+  font-weight: 800;
+  color: var(--gold);
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.action-sheet-cancel {
-  background:transparent;
-  color:var(--text3,rgba(255,255,255,.45));
-  border:none; margin-top:4px; font-weight:400; font-size:.9rem;
+.lot-card-id {
+  font-size: .65rem;
+  color: var(--text3);
+  margin-top: 2px;
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-/* ── タグ ────────────────────────────────────────────────────── */
-.tag-row { display:flex; flex-wrap:wrap; gap:6px; margin-top:4px; }
-.tag {
-  display:inline-block; padding:3px 8px; border-radius:6px;
-  font-size:.75rem; font-weight:700;
+/* 中央: メイン情報 */
+.lot-card-center {
+  flex: 1;
+  min-width: 0;
 }
-.tag-gold   { background:rgba(200,168,75,.15); color:#c8a84b; border:1px solid rgba(200,168,75,.3); }
-.tag-blue   { background:rgba(80,130,200,.15); color:#5082c8; border:1px solid rgba(80,130,200,.3); }
-.tag-amber  { background:rgba(224,144,64,.15); color:#c97c10; border:1px solid rgba(224,144,64,.3); }
-.tag-green  { background:rgba(45,122,82,.15);  color:var(--green); border:1px solid rgba(45,122,82,.3); }
-.tag-removable { cursor:pointer; }
-.tag-removable:hover { opacity:.7; }
-
-/* ── 詳細行 ─────────────────────────────────────────────────── */
-.detail-row {
-  display:flex; justify-content:space-between; align-items:center;
-  padding:8px 0; border-bottom:1px solid var(--border);
-  font-size:.9rem;
+.lot-card-count {
+  font-size: 1.75rem;
+  font-weight: 800;
+  color: var(--text1);
+  line-height: 1;
 }
-.detail-row:last-child { border-bottom:none; }
-.detail-label { color:var(--text3); min-width:120px; }
-.detail-value { color:var(--text1); font-weight:500; text-align:right; }
-.detail-card { background:var(--bg2); border-radius:12px; padding:14px 16px; margin-bottom:12px; }
-.detail-title { font-size:1.1rem; font-weight:700; color:var(--text1); margin-bottom:12px; }
-.detail-raw { font-family:'Courier New',monospace; font-size:.8rem; color:var(--text3); word-break:break-all; }
-.tag-row-label { display:flex; align-items:center; gap:6px; margin-top:6px; font-size:.8rem; color:var(--text3); }
-
-/* ── 自動IDプレビュー ─────────────────────────────────────────── */
-.auto-id-preview {
-  padding:10px 14px; background:var(--bg3); border-radius:8px;
-  font-family:'Courier New',monospace; font-size:.9rem; color:var(--gold);
-  border:1px dashed var(--border2);
+.lot-card-count-unit {
+  font-size: .75rem;
+  font-weight: 400;
+  color: var(--text3);
+  margin-left: 2px;
 }
-
-/* ── 分析ページ ──────────────────────────────────────────────── */
-.analysis-summary {
-  display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-bottom:16px;
+.lot-card-sub {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 4px;
 }
-.analysis-card { padding:14px; margin-bottom:10px; cursor:pointer; position:relative; }
-.analysis-rank {
-  position:absolute; top:10px; right:14px;
-  font-size:1.2rem; font-weight:700; color:var(--text3);
+.lot-card-stage {
+  font-size: .72rem;
+  font-weight: 700;
 }
-.analysis-header {
-  display:flex; justify-content:space-between; align-items:center;
-  margin-bottom:10px;
+.lot-card-sub-item {
+  font-size: .68rem;
+  color: var(--text3);
 }
-.analysis-title { font-weight:700; font-size:.95rem; }
-.analysis-max { font-size:1.4rem; font-weight:800; color:var(--gold); }
-.analysis-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
-.ag-item { text-align:center; }
-.ag-label { display:block; font-size:.68rem; color:var(--text3); }
-.ag-val   { display:block; font-size:.9rem; font-weight:600; color:var(--text1); margin-top:2px; }
-
-/* ── 体重バー ────────────────────────────────────────────────── */
-.weight-bar-wrap {
-  position:relative; height:6px; background:var(--bg3);
-  border-radius:3px; margin-top:10px; overflow:visible;
+.lot-card-sub-item::before {
+  content: '·';
+  margin-right: 3px;
+  color: var(--border);
 }
-.weight-bar { height:100%; border-radius:3px; transition:width .4s ease; }
-.weight-bar-target {
-  position:absolute; right:0; top:-18px;
-  font-size:.65rem; color:var(--text3);
+.lot-card-arrow {
+  color: var(--text3);
+  font-size: 1.2rem;
+  flex-shrink: 0;
 }
 
-/* ── ランクバッジ ────────────────────────────────────────────── */
-.rank-badge {
-  min-width:32px; height:32px; border-radius:50%;
-  background:var(--bg3); color:var(--gold);
-  display:flex; align-items:center; justify-content:center;
-  font-weight:800; font-size:.85rem; margin-right:8px; flex-shrink:0;
+/* ── 一括ロット化フォーム ─────────────────────────────────── */
+.bulk-row {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+.bulk-row-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.bulk-row-num {
+  font-size: .75rem;
+  font-weight: 700;
+  color: var(--gold);
+  background: rgba(200,168,75,.15);
+  border-radius: 50%;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.bulk-summary-bar {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.bulk-summary-val {
+  font-size: 1.4rem;
+  font-weight: 800;
+}
+.bulk-summary-label {
+  font-size: .65rem;
+  color: var(--text3);
+  margin-top: 1px;
 }
 
-/* ── KPI ─────────────────────────────────────────────────────── */
-.kpi-row { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-bottom:16px; }
-.kpi-card {
-  border-radius:12px; padding:12px 8px; text-align:center;
-  background:var(--bg2);
+/* ── ダッシュボード タスク行色分け ───────────────────────── */
+.task-row-red {
+  background: rgba(231,76,60,.10);
+  border-left: 3px solid var(--red);
+  border-radius: 0 8px 8px 0;
+  padding: 9px 12px;
+  margin-bottom: 5px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
-.kpi-num   { font-size:1.6rem; font-weight:800; }
-.kpi-label { font-size:.65rem; color:var(--text3); margin-top:2px; }
-.kpi-green  .kpi-num { color:var(--green); }
-.kpi-amber  .kpi-num { color:var(--amber); }
-.kpi-gray   .kpi-num { color:var(--text3); }
-.kpi-red    .kpi-num { color:#e05555; }
-
-/* ── ペアリング統計 ──────────────────────────────────────────── */
-.stats-row { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
-.stat-box  { text-align:center; padding:8px; background:var(--bg3); border-radius:8px; }
-.stat-num  { font-size:1.3rem; font-weight:700; color:var(--gold); }
-.stat-label{ font-size:.65rem; color:var(--text3); margin-top:2px; }
-.history-row {
-  display:flex; justify-content:space-between; align-items:center;
-  padding:6px 0; border-bottom:1px solid var(--border);
-  font-size:.82rem; color:var(--text2);
+.task-row-yellow {
+  background: rgba(255,193,7,.08);
+  border-left: 3px solid var(--amber);
+  border-radius: 0 8px 8px 0;
+  padding: 9px 12px;
+  margin-bottom: 5px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
-.text-warn { color:#e09040; }
-.text-mono { font-family:'Courier New',monospace; }
-.text-sm   { font-size:.8rem; }
-
-/* ── ヒートマップ ────────────────────────────────────────────── */
-.heatmap-card { padding:14px; margin-bottom:10px; }
-.heatmap-combo { display:flex; align-items:center; gap:8px; }
-.heatmap-side  { flex:1; }
-.hm-label      { font-size:.7rem; color:var(--text3); margin-bottom:4px; }
-.hm-x          { font-size:1.2rem; color:var(--text3); font-weight:700; flex-shrink:0; }
-.heatmap-legend {
-  display:flex; align-items:center; gap:8px;
-  font-size:.75rem; color:var(--text3); margin-bottom:12px;
+.task-row-green {
+  background: rgba(76,175,120,.08);
+  border-left: 3px solid var(--green);
+  border-radius: 0 8px 8px 0;
+  padding: 9px 12px;
+  margin-bottom: 5px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
-.legend-bar {
-  flex:1; height:8px; border-radius:4px;
-  background:linear-gradient(to right, rgba(200,50,50,.3), rgba(50,200,100,.5));
+.task-row-text {
+  font-size: .82rem;
+  flex: 1;
 }
-
-/* ── フォームヒント ──────────────────────────────────────────── */
-.form-hint { font-size:.75rem; color:var(--text3); margin-top:4px; }
-.form-section { margin-bottom:14px; }
-.form-label { display:block; font-size:.82rem; color:var(--text2); margin-bottom:6px; font-weight:600; }
-.form-input {
-  width:100%; padding:10px 12px; background:var(--bg3);
-  border:1px solid var(--border); border-radius:8px;
-  color:var(--text1); font-size:.9rem; box-sizing:border-box;
-}
-.form-input:focus { outline:none; border-color:var(--green); }
-
-/* ── セクションタイトル ──────────────────────────────────────── */
-.section-title {
-  font-size:.8rem; font-weight:700; color:var(--text3);
-  text-transform:uppercase; letter-spacing:.05em;
-  margin:16px 0 8px; padding-bottom:4px;
-  border-bottom:1px solid var(--border);
-}
-
-/* ── バッジ ─────────────────────────────────────────────────── */
-.badge        { display:inline-block; padding:2px 7px; border-radius:5px; font-size:.72rem; font-weight:700; }
-.badge.large  { padding:5px 12px; font-size:.85rem; }
-.badge-green  { background:rgba(45,122,82,.2);  color:var(--green); }
-.badge-amber  { background:rgba(200,168,75,.2); color:var(--gold);  }
-.badge-gray   { background:var(--bg3); color:var(--text3); }
-
-/* ── ボタン追加 ──────────────────────────────────────────────── */
-.btn-toggle { background:var(--bg3); color:var(--text2); border:1px solid var(--border); border-radius:8px; padding:10px 20px; font-size:.9rem; }
-.btn-toggle.active { background:var(--green); color:#fff; border-color:var(--green); }
-.btn-sm { padding:7px 14px; font-size:.82rem; border-radius:8px; }
-.btn-group { display:flex; gap:8px; }

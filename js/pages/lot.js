@@ -1,8 +1,7 @@
 // ════════════════════════════════════════════════════════════════
-// lot.js
-// 役割: ロットの一覧・詳細・分割・個体化を担う。
-//       T0〜T3のロット管理はこの画面が起点。
-//       「今すぐ個体化」「ロット分割」を3タップ以内で実行できるUIを優先。
+// lot.js — Phase4-1 UI統一版
+// ロット一覧・詳細・分割・個体化を担う
+// カードUIを3列（コード | 頭数+ステージ | ›）に統一
 // ════════════════════════════════════════════════════════════════
 
 'use strict';
@@ -13,7 +12,6 @@
 Pages.lotList = function () {
   const main   = document.getElementById('main');
   const params = Store.getParams() || {};
-  // ライン詳細から来た場合は固定フィルタ（ライン限定モード）
   const fixedLineId = params.line_id || '';
   const fixedLine   = fixedLineId ? Store.getLine(fixedLineId) : null;
   const isLineLimited = !!fixedLineId;
@@ -24,11 +22,14 @@ Pages.lotList = function () {
     const lots  = Store.filterLots(filters);
     const lines = Store.getDB('lines') || [];
     const title = isLineLimited
-      ? (fixedLine ? fixedLine.display_id + ' のロット' : 'ロット一覧')
+      ? (fixedLine ? (fixedLine.line_code || fixedLine.display_id) + ' のロット' : 'ロット一覧')
       : 'ロット一覧';
     const headerOpts = isLineLimited
       ? { back: true, action: { fn: "routeTo('lot-new',{lineId:'" + fixedLineId + "'})", icon: '＋' } }
       : { action: { fn: "routeTo('lot-new')", icon: '＋' } };
+
+    // 合計頭数
+    const totalCount = lots.reduce((s, l) => s + (+l.count || 0), 0);
 
     main.innerHTML = `
       ${UI.header(title, headerOpts)}
@@ -39,12 +40,16 @@ Pages.lotList = function () {
         ${!isLineLimited ? `<div class="filter-bar" id="lot-line-filter">
           <button class="pill ${!filters.line_id ? 'active' : ''}" data-val="">ライン全て</button>
           ${lines.slice(0,8).map(l =>
-            '<button class="pill ' + (l.line_id === filters.line_id ? 'active' : '') + '" data-val="' + l.line_id + '">' + l.display_id + '</button>'
+            '<button class="pill ' + (l.line_id === filters.line_id ? 'active' : '') + '" data-val="' + l.line_id + '">' + (l.line_code || l.display_id) + '</button>'
           ).join('')}
         </div>` : ''}
         <div class="sec-hdr">
-          <span class="sec-title">${lots.length}ロット</span>
-          <span class="sec-more" onclick="Pages._lotShowDissolved()">分割済も表示</span>
+          <span class="sec-title">${lots.length}ロット / 計<strong>${totalCount}</strong>頭</span>
+          <div style="display:flex;gap:8px;align-items:center">
+            ${isLineLimited && fixedLineId ? `<button class="btn btn-ghost btn-sm" style="font-size:.72rem;padding:4px 10px"
+              onclick="event.stopPropagation();routeTo('lot-bulk',{lineId:'${fixedLineId}'})">📦 一括ロット化</button>` : ''}
+            <span class="sec-more" onclick="Pages._lotShowDissolved()">分割済も表示</span>
+          </div>
         </div>
         <div id="lot-list-body">
           ${lots.length ? lots.map(_lotCardHTML).join('') : UI.empty('ロットがありません', isLineLimited ? 'このラインにロットがありません' : 'ラインから産卵セット経由で登録できます')}
@@ -84,43 +89,47 @@ function _lotStageFilters(active) {
   ).join('');
 }
 
+// ════════════════════════════════════════════════════════════════
+// ロットカード — 3列レイアウト（コード | 頭数+情報 | ›）
+// ════════════════════════════════════════════════════════════════
 function _lotCardHTML(lot) {
-  const age  = lot._age || Store.calcAge(lot.hatch_date);
   const line = Store.getLine(lot.line_id);
-  // ステージ表示: T2A/T2B は通常の T2 として表示（モルト情報は成長記録側で管理）
-  const stageDisp = stageLabel(lot.stage === 'T2A' || lot.stage === 'T2B' ? 'T2' : lot.stage);
+  const lineCode = line ? (line.line_code || line.display_id) : '';
 
-  // 最新成長記録から容器・マットを取得
+  // 最新成長記録から状態を取得
   const recs = Store.getGrowthRecords(lot.lot_id) || [];
   const latestRec = recs.length > 0
     ? [...recs].sort((a,b) => String(b.record_date).localeCompare(String(a.record_date)))[0]
     : null;
-  const dispContainer = latestRec?.container || lot.container_size || '';
-  const dispMat       = latestRec?.mat_type  || lot.mat_type       || '';
+  const dispStage     = latestRec?.stage       || lot.stage           || '—';
+  const dispContainer = latestRec?.container   || lot.container_size  || '';
+  const dispMat       = latestRec?.mat_type    || lot.mat_type        || '';
+  const dispWeight    = latestRec?.weight_g    ? latestRec.weight_g + 'g' : null;
 
-  return `<div class="ind-card" onclick="routeTo('lot-detail',{lotId:'${lot.lot_id}'})">
-    <div style="min-width:42px;text-align:center">
-      <div style="font-size:1.4rem">🥚</div>
-      <div style="font-size:.95rem;font-weight:800;color:var(--text1);margin-top:1px">${lot.count}<span style="font-size:.65rem;font-weight:400;color:var(--text3)">頭</span></div>
+  const stageDisp = stageLabel(dispStage === 'T2A' || dispStage === 'T2B' ? 'T2' : dispStage);
+  const sColor    = stageColor(dispStage);
+
+  // 腐卵統一済み（表示のみ）
+  const count = +lot.count || 0;
+
+  return `<div class="lot-card" onclick="routeTo('lot-detail',{lotId:'${lot.lot_id}'})">
+    <!-- 左列: ラインコード + ロットID -->
+    <div class="lot-card-left">
+      <div class="lot-card-line">${lineCode}</div>
+      <div class="lot-card-id">${lot.display_id}</div>
     </div>
-    <div class="ind-card-body">
-      <div class="ind-card-row">
-        <span class="ind-card-id">${lot.display_id}</span>
-        <span class="badge" style="background:${stageColor(lot.stage)}22;color:${stageColor(lot.stage)};border:1px solid ${stageColor(lot.stage)}55">
-          ${stageDisp}
-        </span>
-      </div>
-      <div class="ind-card-row" style="font-size:.78rem;color:var(--text2)">
-        ${line ? `ライン: ${line.display_id}` : ''}
-        ${dispContainer ? ' / ' + dispContainer : ''}
-        ${dispMat ? ' / ' + dispMat : ''}
-      </div>
-      <div class="ind-card-age">
-        ${age && age.totalDays > 0 ? age.days + ' / ' + age.stageGuess : '日齢不明'}
-        ${lot.mat_changed_at ? ' / 交換: ' + lot.mat_changed_at : ''}
+    <!-- 中央: 頭数強調 + サブ情報 -->
+    <div class="lot-card-center">
+      <div class="lot-card-count">${count}<span class="lot-card-count-unit">頭</span></div>
+      <div class="lot-card-sub">
+        <span class="lot-card-stage" style="color:${sColor}">${stageDisp}</span>
+        ${dispContainer ? `<span class="lot-card-sub-item">${dispContainer}</span>` : ''}
+        ${dispMat       ? `<span class="lot-card-sub-item">${dispMat}</span>` : ''}
+        ${dispWeight    ? `<span class="lot-card-sub-item" style="color:var(--green)">${dispWeight}</span>` : ''}
       </div>
     </div>
-    <div style="color:var(--text3);font-size:1.2rem">›</div>
+    <!-- 右列: 矢印 -->
+    <div class="lot-card-arrow">›</div>
   </div>`;
 }
 
@@ -131,12 +140,10 @@ Pages._lotShowDissolved = function () {
   if (!dissolved.length) { UI.toast('分割済みロットはありません', 'info'); return; }
   const el = document.getElementById('lot-list-body');
   if (!el) return;
-  const html = `<div style="margin-top:8px;opacity:.6">
+  el.insertAdjacentHTML('beforeend', `<div style="margin-top:8px;opacity:.6">
     <div style="font-size:.72rem;color:var(--text3);padding:4px 0">── 分割済みロット ──</div>
     ${dissolved.map(_lotCardHTML).join('')}
-  </div>`;
-  el.insertAdjacentHTML('beforeend', html);
-  // ボタンを非表示に
+  </div>`);
   document.querySelector('[onclick*="_lotShowDissolved"]')?.style.setProperty('display','none');
 };
 
@@ -144,7 +151,6 @@ Pages._lotShowDissolved = function () {
 // ロット詳細
 // ════════════════════════════════════════════════════════════════
 Pages.lotDetail = async function (lotId) {
-  // params が object で渡された場合の防御
   if (lotId && typeof lotId === 'object') lotId = lotId.id || lotId.lotId || '';
   const main = document.getElementById('main');
   if (!lotId) { main.innerHTML = UI.empty('IDが指定されていません'); return; }
@@ -155,7 +161,6 @@ Pages.lotDetail = async function (lotId) {
 
   try {
     const res = await API.lot.get(lotId);
-    // 競合防止: API返却時に lot-detail にいるか・同じIDか確認
     if (Store.getPage() !== 'lot-detail') return;
     if (Store.getParams().lotId !== lotId && Store.getParams().id !== lotId) return;
     lot = res.lot;
@@ -171,9 +176,10 @@ Pages.lotDetail = async function (lotId) {
 function _renderLotDetail(lot, main) {
   const age   = Store.calcAge(lot.hatch_date);
   const line  = Store.getLine(lot.line_id);
+  const lineCode = line ? (line.line_code || line.display_id) : '';
   const records = lot._growthRecords || Store.getGrowthRecords(lot.lot_id) || [];
 
-  // 最新成長記録から状態を取得（なければロットの初期値を使用）
+  // 最新成長記録から状態を取得
   const latestRec = records.length > 0
     ? [...records].sort((a,b) => String(b.record_date).localeCompare(String(a.record_date)))[0]
     : null;
@@ -190,25 +196,27 @@ function _renderLotDetail(lot, main) {
     })}
     <div class="page-body">
 
-      <!-- ヘッダーカード -->
+      <!-- ヘッダーカード: 3列レイアウト統一 -->
       <div class="card card-gold">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-          <span style="font-size:2rem">🥚</span>
-          <div>
-            <div style="font-family:var(--font-mono);color:var(--gold);font-size:.85rem">${lot.display_id}</div>
-            <div style="margin-top:4px;display:flex;gap:6px;flex-wrap:wrap">
-              ${UI.stageBadge(dispStage !== '—' ? dispStage : lot.stage)}
-              <span class="badge" style="background:var(--surface2);color:var(--text2)">${lot.count}頭</span>
-            </div>
+        <div class="lot-detail-header">
+          <div class="lot-detail-left">
+            <div class="lot-detail-line">${lineCode}</div>
+            <div class="lot-detail-id">${lot.display_id}</div>
+          </div>
+          <div class="lot-detail-center">
+            <div class="lot-detail-count">${lot.count}<span style="font-size:.9rem;font-weight:400;color:var(--text3)">頭</span></div>
+            ${UI.stageBadge(dispStage !== '—' ? dispStage : lot.stage)}
+          </div>
+          <div class="lot-detail-right">
+            ${age ? `<div style="font-size:.72rem;color:var(--text3)">日齢</div><div style="font-weight:700;font-size:1rem">${age.days}</div>` : ''}
           </div>
         </div>
-        ${age ? `<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:10px">
-          <div style="font-size:.7rem;color:var(--text3);margin-bottom:6px">📅 現在の日齢</div>
+        ${age ? `<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:8px;margin-top:8px">
           ${UI.ageFull(lot.hatch_date)}
         </div>` : ''}
       </div>
 
-      <!-- アクションボタン：同格2ボタン -->
+      <!-- アクションボタン -->
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
         <button style="padding:14px 8px;border-radius:var(--radius);font-weight:700;font-size:.92rem;
           background:var(--green);color:#fff;border:none;cursor:pointer"
@@ -221,19 +229,12 @@ function _renderLotDetail(lot, main) {
           ✂️ 分割
         </button>
       </div>
-      ${(lot.stage === 'T0' || lot.stage === 'T1') ? `
-      <button style="width:100%;padding:12px;margin-top:4px;border-radius:var(--radius);
-        font-weight:700;font-size:.9rem;background:var(--surface2);color:var(--text1);
-        border:1px solid var(--border);cursor:pointer"
-        onclick="routeTo('qr-scan-t1')">
-        🔄 マット交換 連続モード
-      </button>` : ''}
 
       <!-- 基本情報 -->
       <div class="card">
         <div class="card-title">ロット情報</div>
         <div class="info-list">
-          ${_infoRow('ライン', line ? `<span onclick="routeTo('line-detail',{lineId:'${line.line_id}'})" style="color:var(--blue);cursor:pointer">${line.display_id}</span>` : lot.line_id)}
+          ${_infoRow('ライン', line ? `<span onclick="routeTo('line-detail',{lineId:'${line.line_id}'})" style="color:var(--blue);cursor:pointer">${lineCode}</span>` : lot.line_id)}
           ${dispWeight ? _infoRow('最新体重', `<span style="font-weight:700;color:var(--green)">${dispWeight}</span>`) : ''}
           ${_infoRow('現在ステージ', dispStage !== '—' ? dispStage : (lot.stage || '—'))}
           ${_infoRow('容器',     dispContainer)}
@@ -278,17 +279,13 @@ function _renderLotDetail(lot, main) {
 }
 
 // ════════════════════════════════════════════════════════════════
-// ロット分割 — カード形式詳細入力UI
+// ロット分割
 // ════════════════════════════════════════════════════════════════
-
-// 分割カードの状態
 let _splitCards = [];
 let _splitContext = {};
 
 Pages._showSplitModal = function (lotId, totalCount, stage, lineId, hatchDate, displayId) {
   _splitContext = { lotId, totalCount: +totalCount, stage, lineId, hatchDate, displayId };
-
-  // 初期2カード
   _splitCards = [
     { count: Math.floor(totalCount/2), container:'', mat:'', size_category:'', sex_hint:'', note:'' },
     { count: totalCount - Math.floor(totalCount/2), container:'', mat:'', size_category:'', sex_hint:'', note:'' },
@@ -395,21 +392,15 @@ Pages._execSplit = async function (lotId, maxCount) {
       counts.length + 'ロットに分割しました'
     );
     await syncAll(true);
-
-    // 自動個体化された個体がある場合は通知
     if (res && res.auto_individuals && res.auto_individuals.length) {
       const names = res.auto_individuals.map(i => i.display_id).join(', ');
       UI.toast('自動個体化: ' + names, 'success');
     }
-
-    // 分割後はロット一覧へ（ライン限定モード維持）
     const ctx = _splitContext;
     if (ctx.lineId) routeTo('lot-list', { line_id: ctx.lineId });
     else routeTo('lot-list');
   } catch (e) {}
 };
-
-// 個体化は分割時の1頭自動個体化で対応。単体モーダルは廃止。
 
 // ステージ変更
 Pages._lotEditStage = function (lotId, currentStage) {
@@ -465,7 +456,7 @@ Pages._lotMatUpdate = async function (lotId) {
   } catch (e) {}
 };
 
-// ロット新規登録（簡易）
+// ロット新規登録
 Pages.lotNew = function (params = {}) {
   const main  = document.getElementById('main');
   const lines = Store.getDB('lines') || [];
@@ -475,7 +466,7 @@ Pages.lotNew = function (params = {}) {
     <div class="page-body">
       <form id="lot-form" class="form-section">
         ${UI.field('ライン', UI.select('line_id',
-          lines.map(l => ({ code: l.line_id, label: `${l.display_id}${l.line_name ? ' / '+l.line_name : ''}` })),
+          lines.map(l => ({ code: l.line_id, label: `${l.line_code || l.display_id}${l.line_name ? ' / '+l.line_name : ''}` })),
           params.lineId || ''), true)}
         <div class="form-row-2">
           ${UI.field('ステージ', UI.select('stage', [
@@ -491,14 +482,13 @@ Pages.lotNew = function (params = {}) {
             {code:'1.8L', label:'1.8L'},
             {code:'2.7L', label:'2.7L'},
             {code:'4.8L', label:'4.8L'},
-          ], '2.7L'))}
+          ], '1.8L'))}
         </div>
         ${UI.field('マット種別', UI.select('mat_type',
           MAT_TYPES.map(m => ({code:m.code, label:m.label})), 'T0'))}
         ${UI.field('モルト', `<label style="display:flex;align-items:center;gap:8px">
           <input type="checkbox" name="has_malt"> モルト入り
         </label>`)}
-        <!-- 産卵セット紐づけ・ロット化数は削除（ラインで管理） -->
         ${UI.field('メモ', UI.input('note', 'text', '', '任意のメモ'))}
         <div style="display:flex;gap:10px;margin-top:4px">
           <button type="button" class="btn btn-ghost" style="flex:1" onclick="Store.back()">戻る</button>
@@ -521,12 +511,7 @@ Pages._lotSave = async function () {
   } catch (e) {}
 };
 
-// ページ登録
-Pages.lotNew = Pages.lotNew;
-window.PAGES = window.PAGES || {};
-window.PAGES['lot-list']   = () => Pages.lotList();
-
-// ── ロット詳細クイックアクション ─────────────────────────────────
+// ── クイックアクション ────────────────────────────────────────────
 function _lotQuickActions(lotId) {
   UI.actionSheet([
     { label: '✏️ ロット情報を修正', fn: () => Pages._lotEdit(lotId) },
@@ -536,16 +521,16 @@ function _lotQuickActions(lotId) {
   ]);
 }
 
-// ── ロット情報編集モーダル ─────────────────────────────────────
+// ── ロット情報編集 ────────────────────────────────────────────────
 Pages._lotEdit = function (lotId) {
   const lot = Store.getLot(lotId);
   if (!lot) { UI.toast('ロットが見つかりません', 'error'); return; }
-  const today = new Date().toISOString().split('T')[0];
   UI.modal(`
     <div class="modal-title">ロット情報を修正</div>
     <div class="form-section" style="max-height:65vh;overflow-y:auto">
       <div class="form-row-2">
-        ${UI.field('孵化日', `<input type="date" id="le-hatch" class="input" value="${(lot.hatch_date||'').replace(/\//g,'-')}">`)}
+        ${UI.field('孵化日', `<input type="date" id="le-hatch" class="input" value="${(lot.hatch_date||'').replace(/\//g,'-')}">`)
+        }
         ${UI.field('頭数', `<input type="number" id="le-count" class="input" value="${lot.count||''}" min="1">`)}
       </div>
       <div class="form-row-2">
@@ -585,7 +570,7 @@ Pages._lotEditSave = async function (lotId) {
   }
 };
 
-// ── 孵化日設定 ───────────────────────────────────────────────
+// 孵化日設定
 Pages._lotSetHatchDate = function (lotId) {
   UI.modal(`
     <div class="modal-title">📅 孵化日を設定</div>
@@ -617,5 +602,401 @@ Pages._lotHatchSave = async function (lotId) {
   }
 };
 
+// ヘルパー
+function _infoRow(key, val) {
+  return `<div class="info-row">
+    <span class="info-key">${key}</span>
+    <span class="info-val">${val}</span>
+  </div>`;
+}
+
+// ════════════════════════════════════════════════════════════════
+// 一括ロット化
+// ════════════════════════════════════════════════════════════════
+Pages.lotBulk = function (params = {}) {
+  const main    = document.getElementById('main');
+  const lineId  = params.lineId || params.line_id || '';
+  const line    = lineId ? Store.getLine(lineId) : null;
+  const lines   = Store.getDB('lines') || [];
+
+  // 未ロット卵の算出（manage.js と同じ式）
+  function _calcUnLotEggs(lid) {
+    if (!lid) return null;
+    const allPairings = Store.getDB('pairings') || [];
+    const pairings = allPairings.filter(p => p.line_id === lid);
+    const eggRecords = Store.getDB('egg_records') || [];
+    const lineEggRecs = eggRecords.filter(r => pairings.some(p => p.set_id === r.set_id));
+    const totalEggs = lineEggRecs.length > 0
+      ? lineEggRecs.reduce((s, r) => s + (parseInt(r.egg_count, 10) || 0), 0)
+      : pairings.reduce((s, p) => s + (parseInt(p.total_eggs, 10) || 0), 0);
+    const rottenEggs = lineEggRecs.reduce((s, r) => s + (parseInt(r.failed_count, 10) || 0), 0);
+    const allLots = Store.filterLots({ line_id: lid, status: 'all' });
+    const rootLots = allLots.filter(l => !l.parent_lot_id || l.parent_lot_id === '');
+    const lotInitTotal = rootLots.reduce((s, l) => s + (parseInt(l.initial_count, 10) || 0), 0);
+    const allInds = Store.getIndividualsByLine(lid);
+    const directInds = allInds.filter(i => !i.lot_id || i.lot_id === '');
+    return Math.max(0, totalEggs - rottenEggs - lotInitTotal - directInds.length);
+  }
+
+  const unLotEggs = _calcUnLotEggs(lineId);
+  const lineCode  = line ? (line.line_code || line.display_id) : '';
+
+  // 状態
+  let rows = [{ count: '', container_size: '1.8L', mat_type: 'T0', note: '' }];
+  let selectedLineId  = lineId;
+  let selectedStage   = 'T0';
+  let selectedHatch   = '';
+  let defaultContainer = '1.8L';
+  let defaultMat       = 'T0';
+
+  function totalCount() {
+    return rows.reduce((s, r) => s + (parseInt(r.count, 10) || 0), 0);
+  }
+
+  function renderSummary() {
+    const total  = totalCount();
+    const remain = unLotEggs !== null ? unLotEggs - total : null;
+    const el = document.getElementById('bulk-summary');
+    if (!el) return;
+    const overCls = remain !== null && remain < 0 ? 'color:var(--red);font-weight:700' : 'color:var(--green)';
+    el.innerHTML = `
+      <div style="text-align:center">
+        <div class="bulk-summary-val" style="color:var(--blue)">${total}</div>
+        <div class="bulk-summary-label">入力合計</div>
+      </div>
+      <div style="text-align:center">
+        <div class="bulk-summary-val" style="${overCls}">${remain !== null ? remain : '—'}</div>
+        <div class="bulk-summary-label">残り未ロット卵</div>
+      </div>
+      <div style="text-align:center">
+        <div class="bulk-summary-val">${rows.length}</div>
+        <div class="bulk-summary-label">ロット数</div>
+      </div>`;
+  }
+
+  function rowHtml(i, row) {
+    return `<div class="bulk-row" id="bulk-row-${i}">
+      <div class="bulk-row-header">
+        <span class="bulk-row-num">${i + 1}</span>
+        <span style="font-size:.82rem;color:var(--text2);flex:1">ロット ${i + 1}</span>
+        ${i > 0 ? `<button style="font-size:.75rem;color:var(--red);background:none;border:none;cursor:pointer;padding:2px 6px"
+          onclick="Pages._blkRemoveRow(${i})">✕</button>` : ''}
+      </div>
+      <div class="form-row-2">
+        ${UI.field('頭数 *', `<input type="number" id="blk-count-${i}" class="input" min="1" value="${row.count}"
+          placeholder="例: 5" oninput="Pages._blkCalc(${i})">`)}
+        ${UI.field('容器', `<select id="blk-container-${i}" class="input">
+          <option value="1.8L" ${row.container_size==='1.8L'?'selected':''}>1.8L</option>
+          <option value="2.7L" ${row.container_size==='2.7L'?'selected':''}>2.7L</option>
+          <option value="4.8L" ${row.container_size==='4.8L'?'selected':''}>4.8L</option>
+        </select>`)}
+      </div>
+      <div class="form-row-2">
+        ${UI.field('マット', `<select id="blk-mat-${i}" class="input">
+          ${MAT_TYPES.map(m => `<option value="${m.code}" ${row.mat_type===m.code?'selected':''}>${m.label}</option>`).join('')}
+        </select>`)}
+        ${UI.field('メモ', `<input type="text" id="blk-note-${i}" class="input" value="${row.note}" placeholder="任意">`)}
+      </div>
+    </div>`;
+  }
+
+  function renderRows() {
+    const el = document.getElementById('bulk-rows');
+    if (el) el.innerHTML = rows.map((r, i) => rowHtml(i, r)).join('');
+    renderSummary();
+  }
+
+  main.innerHTML = `
+    ${UI.header('📦 一括ロット化', { back: true })}
+    <div class="page-body">
+
+      <!-- 共通設定 -->
+      <div class="form-section">
+        <div class="form-title">共通設定</div>
+        ${UI.field('ライン *', `<select id="blk-line" class="input" onchange="Pages._blkLineChange()">
+          <option value="">— 選択 —</option>
+          ${lines.map(l => `<option value="${l.line_id}" ${l.line_id===selectedLineId?'selected':''}>${l.line_code||l.display_id}${l.line_name?' / '+l.line_name:''}</option>`).join('')}
+        </select>`, true)}
+        <div class="form-row-2">
+          ${UI.field('ステージ', `<select id="blk-stage" class="input">
+            <option value="T0" ${'T0'===selectedStage?'selected':''}>T0</option>
+            <option value="T1" ${'T1'===selectedStage?'selected':''}>T1</option>
+            <option value="T2A" ${'T2A'===selectedStage?'selected':''}>T2①</option>
+            <option value="T2B" ${'T2B'===selectedStage?'selected':''}>T2②</option>
+            <option value="T3" ${'T3'===selectedStage?'selected':''}>T3</option>
+          </select>`, true)}
+          ${UI.field('孵化日', `<input type="date" id="blk-hatch" class="input" value="${selectedHatch}">`)}
+        </div>
+      </div>
+
+      <!-- 進捗サマリー -->
+      <div class="bulk-summary-bar" id="bulk-summary"></div>
+
+      <!-- ロット行リスト -->
+      <div id="bulk-rows"></div>
+
+      <!-- 行追加 -->
+      <button class="btn btn-ghost" style="width:100%;margin-bottom:12px"
+        onclick="Pages._blkAddRow()">＋ ロットを追加</button>
+
+      <!-- 一括作成ボタン -->
+      <div style="display:flex;gap:10px">
+        <button class="btn btn-ghost" style="flex:1" onclick="Store.back()">キャンセル</button>
+        <button class="btn btn-primary" style="flex:2" id="blk-save-btn"
+          onclick="Pages._blkSave()">📦 まとめて作成</button>
+      </div>
+
+    </div>`;
+
+  renderRows();
+};
+
+// 行追加
+Pages._blkAddRow = function () {
+  const cont = document.getElementById('blk-container-0')?.value || '1.8L';
+  const mat  = document.getElementById('blk-mat-0')?.value || 'T0';
+  Pages._blkSyncRows();
+  const newRows = window.__blkRows || [];
+  newRows.push({ count: '', container_size: cont, mat_type: mat, note: '' });
+  window.__blkRows = newRows;
+  _blkRenderFromState();
+};
+
+// 行削除
+Pages._blkRemoveRow = function (idx) {
+  Pages._blkSyncRows();
+  const rows = window.__blkRows || [];
+  rows.splice(idx, 1);
+  window.__blkRows = rows;
+  _blkRenderFromState();
+};
+
+// 行数変更時の再レンダリング（DOM から現在値を取得して再描画）
+Pages._blkSyncRows = function () {
+  const rows = [];
+  let i = 0;
+  while (document.getElementById('blk-count-' + i)) {
+    rows.push({
+      count:          document.getElementById('blk-count-' + i)?.value     || '',
+      container_size: document.getElementById('blk-container-' + i)?.value || '1.8L',
+      mat_type:       document.getElementById('blk-mat-' + i)?.value       || 'T0',
+      note:           document.getElementById('blk-note-' + i)?.value      || '',
+    });
+    i++;
+  }
+  window.__blkRows = rows;
+};
+
+function _blkRenderFromState() {
+  const rows = window.__blkRows || [];
+  const el = document.getElementById('bulk-rows');
+  if (!el) return;
+
+  // 未ロット卵の再計算
+  const lineId = document.getElementById('blk-line')?.value || '';
+  function _calcUnLotEggs2(lid) {
+    if (!lid) return null;
+    const allPairings = Store.getDB('pairings') || [];
+    const pairings = allPairings.filter(p => p.line_id === lid);
+    const eggRecords = Store.getDB('egg_records') || [];
+    const lineEggRecs = eggRecords.filter(r => pairings.some(p => p.set_id === r.set_id));
+    const totalEggs = lineEggRecs.length > 0
+      ? lineEggRecs.reduce((s, r) => s + (parseInt(r.egg_count, 10) || 0), 0)
+      : pairings.reduce((s, p) => s + (parseInt(p.total_eggs, 10) || 0), 0);
+    const rottenEggs = lineEggRecs.reduce((s, r) => s + (parseInt(r.failed_count, 10) || 0), 0);
+    const allLots = Store.filterLots({ line_id: lid, status: 'all' });
+    const rootLots = allLots.filter(l => !l.parent_lot_id || l.parent_lot_id === '');
+    const lotInitTotal = rootLots.reduce((s, l) => s + (parseInt(l.initial_count, 10) || 0), 0);
+    const allInds = Store.getIndividualsByLine(lid);
+    const directInds = allInds.filter(i => !i.lot_id || i.lot_id === '');
+    return Math.max(0, totalEggs - rottenEggs - lotInitTotal - directInds.length);
+  }
+  const unLotEggs = _calcUnLotEggs2(lineId);
+
+  function rowHtml2(i, row) {
+    return `<div class="bulk-row" id="bulk-row-${i}">
+      <div class="bulk-row-header">
+        <span class="bulk-row-num">${i + 1}</span>
+        <span style="font-size:.82rem;color:var(--text2);flex:1">ロット ${i + 1}</span>
+        ${i > 0 ? `<button style="font-size:.75rem;color:var(--red);background:none;border:none;cursor:pointer;padding:2px 6px"
+          onclick="Pages._blkRemoveRow(${i})">✕</button>` : ''}
+      </div>
+      <div class="form-row-2">
+        ${UI.field('頭数 *', `<input type="number" id="blk-count-${i}" class="input" min="1" value="${row.count}"
+          placeholder="例: 5" oninput="Pages._blkCalc(${i})">`)}
+        ${UI.field('容器', `<select id="blk-container-${i}" class="input">
+          <option value="1.8L" ${row.container_size==='1.8L'?'selected':''}>1.8L</option>
+          <option value="2.7L" ${row.container_size==='2.7L'?'selected':''}>2.7L</option>
+          <option value="4.8L" ${row.container_size==='4.8L'?'selected':''}>4.8L</option>
+        </select>`)}
+      </div>
+      <div class="form-row-2">
+        ${UI.field('マット', `<select id="blk-mat-${i}" class="input">
+          ${MAT_TYPES.map(m => `<option value="${m.code}" ${row.mat_type===m.code?'selected':''}>${m.label}</option>`).join('')}
+        </select>`)}
+        ${UI.field('メモ', `<input type="text" id="blk-note-${i}" class="input" value="${row.note}" placeholder="任意">`)}
+      </div>
+    </div>`;
+  }
+
+  el.innerHTML = rows.map((r, i) => rowHtml2(i, r)).join('');
+
+  // サマリー更新
+  const total  = rows.reduce((s, r) => s + (parseInt(r.count, 10) || 0), 0);
+  const remain = unLotEggs !== null ? unLotEggs - total : null;
+  const sumEl  = document.getElementById('bulk-summary');
+  if (sumEl) {
+    const overCls = remain !== null && remain < 0 ? 'color:var(--red);font-weight:700' : 'color:var(--green)';
+    sumEl.innerHTML = `
+      <div style="text-align:center">
+        <div class="bulk-summary-val" style="color:var(--blue)">${total}</div>
+        <div class="bulk-summary-label">入力合計</div>
+      </div>
+      <div style="text-align:center">
+        <div class="bulk-summary-val" style="${overCls}">${remain !== null ? remain : '—'}</div>
+        <div class="bulk-summary-label">残り未ロット卵</div>
+      </div>
+      <div style="text-align:center">
+        <div class="bulk-summary-val">${rows.length}</div>
+        <div class="bulk-summary-label">ロット数</div>
+      </div>`;
+  }
+}
+
+// 入力変更時のサマリー更新
+Pages._blkCalc = function () {
+  Pages._blkSyncRows();
+  _blkRenderFromState();
+};
+
+// ライン変更時
+Pages._blkLineChange = function () {
+  Pages._blkSyncRows();
+  _blkRenderFromState();
+};
+
+// 一括保存
+Pages._blkSave = async function () {
+  const lineId = document.getElementById('blk-line')?.value;
+  const stage  = document.getElementById('blk-stage')?.value || 'T0';
+  const hatch  = (document.getElementById('blk-hatch')?.value || '').replace(/-/g, '/');
+  if (!lineId) { UI.toast('ラインを選択してください', 'error'); return; }
+
+  Pages._blkSyncRows();
+  const rows = (window.__blkRows || []).filter(r => parseInt(r.count, 10) > 0);
+  if (rows.length === 0) { UI.toast('頭数を入力してください', 'error'); return; }
+
+  const btn = document.getElementById('blk-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ 作成中...'; }
+
+  try {
+    const res = await apiCall(() => API.lot.createBulk({
+      line_id:    lineId,
+      stage,
+      hatch_date: hatch,
+      lots:       rows.map(r => ({
+        count:          parseInt(r.count, 10),
+        container_size: r.container_size,
+        mat_type:       r.mat_type,
+        note:           r.note,
+      })),
+    }), null);
+
+    const created = res.created || [];
+    await syncAll(true);
+
+    // 完了画面
+    const main = document.getElementById('main');
+    main.innerHTML = `
+      ${UI.header('一括ロット化 完了', { back: true })}
+      <div class="page-body">
+        <div style="background:rgba(45,122,82,.1);border:1px solid rgba(45,122,82,.35);
+          border-radius:var(--radius);padding:20px 16px;text-align:center;margin-bottom:16px">
+          <div style="font-size:2rem;margin-bottom:8px">✅</div>
+          <div style="font-size:1.1rem;font-weight:700;color:var(--green)">${created.length}ロットを作成しました</div>
+          <div style="font-size:.8rem;color:var(--text3);margin-top:6px">
+            合計 ${created.reduce((s,l)=>s+(l.count||0),0)} 頭
+          </div>
+        </div>
+
+        <!-- 作成したロット一覧 -->
+        <div class="card">
+          <div class="card-title">作成されたロット</div>
+          ${created.map(l => `
+            <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border)">
+              <span style="font-family:var(--font-mono);font-size:.9rem;color:var(--gold)">${l.display_id}</span>
+              <span style="color:var(--text2)">${l.count}頭</span>
+            </div>`).join('')}
+        </div>
+
+        <!-- アクション -->
+        <div style="display:flex;gap:10px;margin-top:8px">
+          <button class="btn btn-ghost" style="flex:1"
+            onclick="routeTo('lot-list',{line_id:'${lineId}'})">ロット一覧へ</button>
+          <button class="btn btn-primary" style="flex:1"
+            onclick="Pages._blkQrBatch(${JSON.stringify(created).replace(/"/g,'&quot;')})">🏷 QR一括発行</button>
+        </div>
+      </div>`;
+
+  } catch (e) {
+    UI.toast('作成失敗: ' + (e.message || '不明なエラー'), 'error');
+    if (btn) { btn.disabled = false; btn.textContent = '📦 まとめて作成'; }
+  }
+};
+
+// QR一括発行（作成済みロットの QR を連続生成して印刷画面へ）
+Pages._blkQrBatch = function (createdLots) {
+  if (!createdLots || !createdLots.length) { UI.toast('ロット情報がありません', 'error'); return; }
+  // ロットIDリストを保存して label-gen へ遷移
+  window.__blkCreatedLots = createdLots;
+  const main = document.getElementById('main');
+  main.innerHTML = `
+    ${UI.header('QR一括発行', { back: true })}
+    <div class="page-body">
+      <div class="card">
+        <div class="card-title">🏷 作成ロットのQRコード</div>
+        <div id="qr-batch-list" style="display:flex;flex-wrap:wrap;gap:12px;padding:8px 0"></div>
+        <div style="font-size:.75rem;color:var(--text3);margin-top:8px">
+          ※ 各QRをタップしてラベル生成・印刷できます
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn btn-ghost" style="flex:1"
+          onclick="routeTo('lot-list')">ロット一覧へ</button>
+        <button class="btn btn-primary" style="flex:1"
+          onclick="window.print()">🖨 印刷</button>
+      </div>
+    </div>`;
+
+  // QR一括描画
+  const container = document.getElementById('qr-batch-list');
+  if (!container) return;
+  createdLots.forEach(lot => {
+    const wrapper = document.createElement('div');
+    wrapper.style.cssText = 'text-align:center;cursor:pointer;padding:8px';
+    wrapper.onclick = () => routeTo('label-gen', { targetType: 'LOT', targetId: lot.lot_id });
+    wrapper.innerHTML = `
+      <div id="qr-${lot.lot_id}" style="display:inline-block"></div>
+      <div style="font-family:monospace;font-size:.72rem;color:var(--gold);margin-top:4px">${lot.display_id}</div>
+      <div style="font-size:.65rem;color:var(--text3)">${lot.count}頭</div>`;
+    container.appendChild(wrapper);
+
+    // QRコード生成
+    setTimeout(() => {
+      try {
+        new QRCode(document.getElementById('qr-' + lot.lot_id), {
+          text: 'LOT:' + lot.lot_id,
+          width: 80, height: 80,
+          colorDark: '#000', colorLight: '#fff',
+          correctLevel: QRCode.CorrectLevel.M,
+        });
+      } catch (e) {}
+    }, 100);
+  });
+};
+
+window.PAGES = window.PAGES || {};
+window.PAGES['lot-list']   = () => Pages.lotList();
 window.PAGES['lot-detail'] = () => Pages.lotDetail(Store.getParams().lotId || Store.getParams().id);
 window.PAGES['lot-new']    = () => Pages.lotNew(Store.getParams());
+window.PAGES['lot-bulk']   = () => Pages.lotBulk(Store.getParams());

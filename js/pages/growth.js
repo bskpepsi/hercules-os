@@ -431,11 +431,71 @@ Pages.growthRecord = function (params = {}) {
       const cached = Store.getGrowthRecords(id);
       const histEl = document.getElementById('gr-history');
       if (histEl && cached) histEl.innerHTML = UI.weightTable(cached);
+
+      // 「次のロットへ」ボタンを表示（LOT対象のみ）
+      if (type === 'LOT') {
+        _showNextLotBar(id);
+      }
     } catch (e) {}
   };
 
   render();
 };
+
+// ── 次のロット選択バー ──────────────────────────────────────────
+function _showNextLotBar(currentLotId) {
+  // 既存バーがあれば除去
+  document.getElementById('gr-next-lot-bar')?.remove();
+
+  // 同じラインのアクティブなロット一覧（自分以外）
+  const currentLot = Store.getLot(currentLotId);
+  if (!currentLot) return;
+  const sameLine = Store.filterLots({ line_id: currentLot.line_id, status: 'active' })
+    .filter(l => l.lot_id !== currentLotId);
+
+  // アクティブロット全体（ライン問わず）
+  const allActive = Store.filterLots({ status: 'active' })
+    .filter(l => l.lot_id !== currentLotId);
+
+  const candidates = sameLine.length ? sameLine : allActive.slice(0, 8);
+  if (!candidates.length) return;
+
+  const bar = document.createElement('div');
+  bar.id = 'gr-next-lot-bar';
+  bar.style.cssText = `
+    position:fixed;bottom:56px;left:0;right:0;
+    background:var(--surface);border-top:1px solid var(--border);
+    padding:10px 14px;z-index:200;
+    box-shadow:0 -2px 12px rgba(0,0,0,.25)`;
+  bar.innerHTML = `
+    <div style="font-size:.72rem;color:var(--text3);margin-bottom:6px;font-weight:700">
+      📦 次のロットへ（同ライン）
+    </div>
+    <div style="display:flex;gap:7px;overflow-x:auto;padding-bottom:2px">
+      ${candidates.slice(0, 6).map(l => {
+        const line = Store.getLine(l.line_id);
+        const code = line ? (line.line_code || line.display_id) : l.display_id;
+        return `<button style="
+          flex-shrink:0;padding:6px 12px;border-radius:20px;
+          background:var(--surface2);border:1px solid var(--border);
+          font-size:.78rem;cursor:pointer;white-space:nowrap"
+          onclick="document.getElementById('gr-next-lot-bar').remove();
+            routeTo('growth-rec',{targetType:'LOT',targetId:'${l.lot_id}',displayId:'${l.display_id}'})">
+          <span style="color:var(--gold);font-weight:700">${code}</span>
+          <span style="color:var(--text3);margin-left:4px">${l.count}頭</span>
+        </button>`;
+      }).join('')}
+      <button style="
+        flex-shrink:0;padding:6px 12px;border-radius:20px;
+        background:transparent;border:1px solid var(--border);
+        font-size:.78rem;cursor:pointer;color:var(--text3)"
+        onclick="document.getElementById('gr-next-lot-bar').remove()">
+        ✕ 閉じる
+      </button>
+    </div>`;
+
+  document.body.appendChild(bar);
+}
 
 // ── 成長記録編集モーダル ─────────────────────────────────────────
 Pages._grEditRecord = async function (recordId) {

@@ -103,22 +103,21 @@ function _renderDashboard(main) {
   const over150 = alive.filter(i => +i.latest_weight_g >= 150);
   if (over150.length) tasks.green.push({ icon:'🏆', text:`150g超え ${over150.length}頭`, fn:"routeTo('ind-list')" });
 
-  // ── カテゴリ別集計 ──
-  // 採卵・セット交換: red+yellowのうち産卵セット関連
-  const catEgg     = [...tasks.red, ...tasks.yellow].filter(t => t.fn.includes('pairing'));
-  // ペアリング: green+yellowのうち種親ペアリング関連
-  const catPairing = [...tasks.green, ...tasks.yellow].filter(t => t.fn.includes('parent'));
-  // 注意: redタスク全体（超過・緊急）
-  const catAlert   = tasks.red.filter(t => !t.fn.includes('pairing') || true);
-  // マット交換: 個体のマット交換時期（日齢から推定）
+  // ── カテゴリ別集計（③カテゴリセクションで使用）──────────────
+  // 採卵・セット交換: 産卵セット関連タスク
+  const catEgg     = [...tasks.red, ...tasks.yellow].filter(t => t.fn.includes('pairing-detail'));
+  // ペアリング: 種親ペアリング関連タスク
+  const catPairing = [...tasks.red, ...tasks.yellow, ...tasks.green].filter(t => t.fn.includes('parent-detail'));
+  // マット交換: 個体の日齢推定
   const matDays = parseInt(Store.getSetting('mat_change_interval_days') || '60', 10);
   const matDue  = alive.filter(i => {
     if (!i.hatch_date) return false;
     const age = Store.calcAge(i.hatch_date);
     if (!age) return false;
-    // 最終成長記録からの経過日数（簡易判定）
-    return age.days > 0 && age.days % matDays < 7; // 交換時期±7日以内
+    return age.days > 0 && age.days % matDays < 7;
   });
+
+
 
   // ────────────────────────────────────────────────
   // 3. 種親・ペアリング状況
@@ -191,43 +190,29 @@ function _renderDashboard(main) {
           <span style="color:var(--blue);cursor:pointer" onclick="routeTo('settings')">設定画面へ</span>
         </div></div>` : ''}
 
-      <!-- ① 今日のタスク（カテゴリ表示） -->
-      <div class="card" style="border-color:rgba(231,76,60,.3)">
-        <div class="card-title">📋 今日のタスク</div>
-        ${(catEgg.length || catPairing.length || matDue.length || catAlert.length) ? `
-          <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
-            ${catEgg.length ? `
-            <div onclick="routeTo('pairing-list')" style="display:flex;justify-content:space-between;align-items:center;padding:12px;background:rgba(231,76,60,.1);border-radius:8px;cursor:pointer">
-              <div style="display:flex;align-items:center;gap:8px">
-                <span style="font-size:1.3rem">🥚</span>
-                <span style="font-weight:600">採卵・セット交換</span>
-              </div>
-              <span style="font-size:1.4rem;font-weight:700;color:var(--red)">${catEgg.length}件</span>
-            </div>` : ''}
-            ${catPairing.length ? `
-            <div onclick="routeTo('parent-list')" style="display:flex;justify-content:space-between;align-items:center;padding:12px;background:rgba(255,193,7,.1);border-radius:8px;cursor:pointer">
-              <div style="display:flex;align-items:center;gap:8px">
-                <span style="font-size:1.3rem">💕</span>
-                <span style="font-weight:600">ペアリング</span>
-              </div>
-              <span style="font-size:1.4rem;font-weight:700;color:var(--amber)">${catPairing.length}件</span>
-            </div>` : ''}
-            ${matDue.length ? `
-            <div onclick="routeTo('ind-list')" style="display:flex;justify-content:space-between;align-items:center;padding:12px;background:rgba(52,152,219,.1);border-radius:8px;cursor:pointer">
-              <div style="display:flex;align-items:center;gap:8px">
-                <span style="font-size:1.3rem">🌱</span>
-                <span style="font-weight:600">マット交換</span>
-              </div>
-              <span style="font-size:1.4rem;font-weight:700;color:var(--blue)">${matDue.length}頭</span>
-            </div>` : ''}
-            ${catAlert.length ? `
-            <div onclick="routeTo('pairing-list')" style="display:flex;justify-content:space-between;align-items:center;padding:12px;background:rgba(231,76,60,.15);border-radius:8px;cursor:pointer;border:1px solid rgba(231,76,60,.3)">
-              <div style="display:flex;align-items:center;gap:8px">
-                <span style="font-size:1.3rem">⚠️</span>
-                <span style="font-weight:600">注意</span>
-              </div>
-              <span style="font-size:1.4rem;font-weight:700;color:var(--red)">${catAlert.length}件</span>
-            </div>` : ''}
+      <!-- ① 今日のタスク（色付き行表示） -->
+      <div class="card" style="border-color:rgba(231,76,60,.25)">
+        <div class="card-title" style="margin-bottom:8px">📋 今日のタスク</div>
+        ${(tasks.red.length || tasks.yellow.length) ? `
+          <div>
+            ${tasks.red.map(t => `
+              <div class="task-row-red" onclick="${t.fn}">
+                <span style="font-size:1.1rem">${t.icon}</span>
+                <span class="task-row-text">${t.text}</span>
+                <span style="color:var(--red);font-size:.8rem">›</span>
+              </div>`).join('')}
+            ${tasks.yellow.map(t => `
+              <div class="task-row-yellow" onclick="${t.fn}">
+                <span style="font-size:1.1rem">${t.icon}</span>
+                <span class="task-row-text">${t.text}</span>
+                <span style="color:var(--amber);font-size:.8rem">›</span>
+              </div>`).join('')}
+            ${tasks.green.slice(0,3).map(t => `
+              <div class="task-row-green" onclick="${t.fn}">
+                <span style="font-size:1.1rem">${t.icon}</span>
+                <span class="task-row-text">${t.text}</span>
+                <span style="color:var(--green);font-size:.8rem">›</span>
+              </div>`).join('')}
           </div>
         ` : `<div style="text-align:center;padding:12px;color:var(--green);font-size:.9rem">✅ 今日のタスクはありません</div>`}
       </div>
@@ -252,6 +237,47 @@ function _renderDashboard(main) {
         </button>
       </div>
 
+      <!-- ③ カテゴリ -->
+      ${(catEgg.length || catPairing.length || matDue.length) ? `
+      <div class="card">
+        <div class="card-title" style="margin-bottom:8px">📂 カテゴリ</div>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          ${catEgg.length ? `
+          <div onclick="routeTo('pairing-list')"
+            style="display:flex;justify-content:space-between;align-items:center;
+              padding:11px 13px;background:rgba(231,76,60,.07);border-radius:9px;cursor:pointer;
+              border:1px solid rgba(231,76,60,.18)">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font-size:1.2rem">🥚</span>
+              <span style="font-size:.88rem;font-weight:600">採卵・セット交換</span>
+            </div>
+            <span style="font-size:1.2rem;font-weight:800;color:var(--red)">${catEgg.length}件 ›</span>
+          </div>` : ''}
+          ${catPairing.length ? `
+          <div onclick="routeTo('parent-list')"
+            style="display:flex;justify-content:space-between;align-items:center;
+              padding:11px 13px;background:rgba(255,193,7,.07);border-radius:9px;cursor:pointer;
+              border:1px solid rgba(255,193,7,.18)">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font-size:1.2rem">💕</span>
+              <span style="font-size:.88rem;font-weight:600">ペアリング</span>
+            </div>
+            <span style="font-size:1.2rem;font-weight:800;color:var(--amber)">${catPairing.length}件 ›</span>
+          </div>` : ''}
+          ${matDue.length ? `
+          <div onclick="routeTo('ind-list')"
+            style="display:flex;justify-content:space-between;align-items:center;
+              padding:11px 13px;background:rgba(52,152,219,.07);border-radius:9px;cursor:pointer;
+              border:1px solid rgba(52,152,219,.18)">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font-size:1.2rem">🌱</span>
+              <span style="font-size:.88rem;font-weight:600">マット交換目安</span>
+            </div>
+            <span style="font-size:1.2rem;font-weight:800;color:var(--blue)">${matDue.length}頭 ›</span>
+          </div>` : ''}
+        </div>
+      </div>` : ''}
+
       <!-- KPIバー -->
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
         ${[
@@ -266,7 +292,7 @@ function _renderDashboard(main) {
         </div>`).join('')}
       </div>
 
-      <!-- ③ 種親・ペアリング状況 -->
+      <!-- ④ 種親・ペアリング状況 -->
       <div class="card">
         <div class="card-title" style="display:flex;justify-content:space-between">
           <span>🦋 種親・ペアリング状況</span>
@@ -307,7 +333,7 @@ function _renderDashboard(main) {
         <button class="btn btn-ghost btn-sm" style="margin-top:8px;width:100%" onclick="routeTo('parent-list')">種親一覧を見る →</button>
       </div>
 
-      <!-- ④ 産卵セット状況 -->
+      <!-- ⑤ 産卵セット状況 -->
       <div class="card">
         <div class="card-title" style="display:flex;justify-content:space-between">
           <span>🥚 産卵セット状況</span>
@@ -337,7 +363,7 @@ function _renderDashboard(main) {
         ${activePairs.length > 0 ? `<button class="btn btn-ghost btn-sm" style="margin-top:8px;width:100%" onclick="routeTo('pairing-list')">産卵セット一覧を見る →</button>` : ''}
       </div>
 
-      <!-- ⑤ 有望個体エリア -->
+      <!-- ⑥ 有望個体エリア -->
       ${topWeight.length ? `
       <div class="card">
         <div class="card-title" style="display:flex;justify-content:space-between">
@@ -360,7 +386,7 @@ function _renderDashboard(main) {
         <button class="btn btn-ghost btn-sm" style="margin-top:8px;width:100%" onclick="routeTo('ind-list')">個体一覧を見る →</button>
       </div>` : ''}
 
-      <!-- ⑥ ライン分析サマリー -->
+      <!-- ⑦ ライン分析サマリー -->
       ${lineRank.length ? `
       <div class="card">
         <div class="card-title">📊 ライン平均体重 TOP${lineRank.length}</div>

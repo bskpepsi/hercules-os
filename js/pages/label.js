@@ -139,6 +139,11 @@ Pages.labelGen = function (params = {}) {
                 🖨 印刷プレビュー
               </button>
             </div>
+            <button id="lbl-drive-btn" class="btn btn-ghost"
+              style="width:100%;font-size:.88rem;padding:10px;margin-bottom:8px;display:none"
+              onclick="Pages._lblOpenDrive()">
+              📂 Driveを開く
+            </button>
             <button class="btn btn-ghost" style="width:100%;font-size:.8rem;padding:8px"
               onclick="Pages._lblGenerate('${targetType}','${targetId}','${labelType}')">
               🔄 再生成
@@ -264,7 +269,10 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
   // Canvas描画（100ms後にQRが確実に描画されてから）
   // displayId を保持（ダウンロード時のファイル名に使用）
   const capturedDisplayId = ld.display_id || targetId;
-  const capturedFileName  = capturedDisplayId.replace(/[^a-zA-Z0-9_\-]/g, '_') + '_label.png';
+  // ファイル名: LINE-A1-L01_label.png 形式（line_code を先頭に）
+  const _lineCode = ld.line_code || ld.line_display_id || '';
+  const _dispId   = capturedDisplayId.replace(/[^a-zA-Z0-9_\-]/g, '_');
+  const capturedFileName  = (_lineCode ? _lineCode.replace(/[^a-zA-Z0-9_\-]/g,'_') + '_' : '') + _dispId + '_label.png';
 
   setTimeout(() => {
     _drawLabel(canvas, ld, qrDiv);
@@ -275,14 +283,17 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         displayId: capturedDisplayId,
         fileName:  capturedFileName,
         dataUrl:   canvas.toDataURL('image/png'),
+        driveUrl:  null,  // Drive保存後に設定
       };
 
       // アクションバーを更新して表示
       const bar = document.getElementById('lbl-action-bar');
       if (bar) {
-        // ファイル名表示を更新
         const fnEl = document.getElementById('lbl-filename');
         if (fnEl) fnEl.textContent = capturedFileName;
+        // Drive URL ボタンをリセット
+        const driveBtn = document.getElementById('lbl-drive-btn');
+        if (driveBtn) driveBtn.style.display = 'none';
         bar.style.display = 'block';
       }
       const dlBtn = document.getElementById('lbl-dl-btn');
@@ -506,6 +517,15 @@ Pages._lblDownload = function () {
   a.download = fileName;
   a.click();
   UI.toast('📥 ' + fileName + ' をダウンロードしました', 'success', 4000);
+};
+
+Pages._lblOpenDrive = function () {
+  const url = window._currentLabel?.driveUrl;
+  if (url) {
+    window.open(url, '_blank');
+  } else {
+    UI.toast('Driveに保存されていません。ダウンロードを使用してください', 'info');
+  }
 };
 
 Pages._lblPrint = function () {

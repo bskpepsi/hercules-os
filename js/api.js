@@ -66,6 +66,7 @@ const API = (() => {
   // ── ロット ────────────────────────────────────────────────────
   const lot = {
     create:       (d)  => call('createLot',        d),
+    createBulk:   (d)  => call('createLotBulk',    d),   // { line_id, stage, lots:[{count,...}] }
     list:         (f)  => call('getLots',           f || {}),
     get:          (id) => call('getLot',            { lot_id: id }),
     update:       (d)  => call('updateLot',         d),
