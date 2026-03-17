@@ -19,7 +19,18 @@ Pages.lotList = function () {
   let filters = { status: 'active', stage: '', line_id: fixedLineId };
 
   function render() {
-    const lots  = Store.filterLots(filters);
+    // ロット一覧表示条件:
+    //   count > 1 かつ status !== 'archived' のみ表示
+    //   count === 1 → 個体に自動変換済み (archived)
+    //   count === 0 → archived に変更済み
+    const _allLots  = Store.filterLots(filters);
+    const lots      = _allLots.filter(l =>
+      (+l.count || 0) > 1 && l.status !== 'archived'
+    );
+    // 自動個体化済み件数（バッジ表示用）
+    const _oneCount = _allLots.filter(l =>
+      l.status === 'archived' || (+l.count || 0) <= 1
+    ).length;
     const lines = Store.getDB('lines') || [];
     const title = isLineLimited
       ? (fixedLine ? (fixedLine.line_code || fixedLine.display_id) + ' のロット' : 'ロット一覧')
@@ -44,7 +55,7 @@ Pages.lotList = function () {
           ).join('')}
         </div>` : ''}
         <div class="sec-hdr">
-          <span class="sec-title">${lots.length}ロット / 計<strong>${totalCount}</strong>頭</span>
+          <span class="sec-title">${lots.length}ロット / 計<strong>${totalCount}</strong>頭${_oneCount > 0 ? ' <span style="font-size:.68rem;color:var(--blue);margin-left:6px">1頭→個体化 ' + _oneCount + '件</span>' : ''}</span>
           <div style="display:flex;gap:8px;align-items:center">
             ${isLineLimited && fixedLineId ? `<button class="btn btn-ghost btn-sm" style="font-size:.72rem;padding:4px 10px"
               onclick="event.stopPropagation();routeTo('lot-bulk',{lineId:'${fixedLineId}'})">📦 一括ロット化</button>` : ''}
@@ -89,6 +100,23 @@ function _lotStageFilters(active) {
   ).join('');
 }
 
+// ── 経過日数カラー（最終交換日用）─────────────────────────────
+// 設定画面の exchange_warn_days / exchange_alert_days を参照
+// 未設定時のデフォルト: 60日→オレンジ / 90日→赤
+function _exchangeColor(dateStr) {
+  if (!dateStr) return null;
+  try {
+    const d = new Date(String(dateStr).replace(/\//g, '-'));
+    if (isNaN(d.getTime())) return null;
+    const days      = Math.floor((Date.now() - d.getTime()) / 86400000);
+    const warnDays  = parseInt(Store.getSetting('exchange_warn_days')  || '60', 10);
+    const alertDays = parseInt(Store.getSetting('exchange_alert_days') || '90', 10);
+    if (days >= alertDays) return 'var(--red,#e05555)';
+    if (days >= warnDays)  return 'var(--amber,#e09040)';
+    return null;
+  } catch(e) { return null; }
+}
+
 // ════════════════════════════════════════════════════════════════
 // ロットカード — 4ブロック横断レイアウト（手書きスケッチ準拠）
 //
@@ -103,12 +131,18 @@ function _lotCardHTML(lot) {
   const lineCode = line ? (line.line_code || line.display_id) : '';
 
   // ── display_id からブロック識別情報を分解 ──────────────────
-  // 例: "HM2026-B1-001" → yearCode="HM2026", lotSuffix="001"
+  // フォーマット: {brand+year}-{lineCode}-{lotNum}[-{suffix}[-{num}]]
+  //   HM2026-B2-L01          → year=HM2026, lotSuffix=L01
+  //   HM2026-B2-L01-A        → year=HM2026, lotSuffix=L01-A
+  //   HM2026-B2-L01-A-1      → year=HM2026, lotSuffix=L01-A-1
   const didParts  = (lot.display_id || '').split('-');
-  // 先頭セグメント（ブランド+年: HM2026）
-  const yearCode  = didParts.length >= 2 ? didParts[0] : '';
-  // 末尾セグメント（ロット連番: 001 / L02）
-  const lotSuffix = didParts.length >= 2 ? didParts[didParts.length - 1] : lot.display_id;
+  // parts[0] = ブランド+年 (HM2026)
+  const yearCode  = didParts.length >= 1 ? didParts[0] : '';
+  // parts[2..] を '-' で結合 → 完全なロット番号 (L01 / L01-A / L01-A-1)
+  // parts[1] はラインコード (B2) で lineCode 変数と同じなので除外
+  const lotSuffix = didParts.length >= 3
+    ? didParts.slice(2).join('-')
+    : (didParts.length >= 2 ? didParts[didParts.length - 1] : (lot.display_id || ''));
 
   // ── 最新成長記録から飼育状態を取得 ────────────────────────
   const recs = Store.getGrowthRecords(lot.lot_id) || [];
@@ -142,9 +176,10 @@ function _lotCardHTML(lot) {
     ? `<div class="lc-status-row2"><span class="lc-status-label">孵化</span>${dispHatch}</div>`
     : '';
 
-  // 行3: 最終交換日（あれば）
-  const statusRow3 = dispLastExch
-    ? `<div class="lc-status-row2"><span class="lc-status-label">交換</span>${dispLastExch}</div>`
+  // 行3: 最終交換日（あれば）+ 経過日数で色変更
+  const _exchColor  = _exchangeColor(dispLastExch);
+  const statusRow3  = dispLastExch
+    ? `<div class="lc-status-row2"${_exchColor ? ' style="color:' + _exchColor + ';font-weight:600"' : ''}><span class="lc-status-label">交換</span>${dispLastExch}${_exchColor ? ' ⚠' : ''}</div>`
     : '';
 
   // ── ブロック4: メモ（あれば表示）───────────────────────────
@@ -190,8 +225,10 @@ function _lotCardHTML(lot) {
 }
 
 Pages._lotShowDissolved = function () {
+  // dissolved / individualized / archived をすべて表示
   const dissolved = (Store.getDB('lots') || []).filter(l =>
-    l.status === 'dissolved' || l.status === 'split'
+    l.status === 'dissolved' || l.status === 'split' ||
+    l.status === 'individualized' || l.status === 'archived'
   );
   if (!dissolved.length) { UI.toast('分割済みロットはありません', 'info'); return; }
   const el = document.getElementById('lot-list-body');

@@ -52,6 +52,8 @@ function _renderSettings(main) {
   const guinW     = Store.getSetting('guinness_weight_g') || '170';
   const targetMm  = Store.getSetting('target_size_mm')    || '200';
   const largeMm   = Store.getSetting('large_male_threshold_mm') || '180';
+  const exchWarn  = Store.getSetting('exchange_warn_days')  || '60';
+  const exchAlert = Store.getSetting('exchange_alert_days') || '90';
   const lastSync  = localStorage.getItem(CONFIG.LS_KEYS.LAST_SYNC);
   const fmtSync   = lastSync
     ? new Date(lastSync).toLocaleString('ja-JP', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' })
@@ -132,6 +134,32 @@ function _renderSettings(main) {
           </div>
           <button class="btn btn-ghost btn-full" onclick="Pages._setThresholds()">
             閾値を保存
+          </button>
+        </div>
+      </div>
+
+      <!-- マット交換サイクル警告設定 -->
+      <div class="card">
+        <div class="card-title">🔄 マット交換サイクル警告</div>
+        <div style="font-size:.78rem;color:var(--text2);margin-bottom:10px;line-height:1.6">
+          ロットカードの「最終交換日」からの経過日数で色が変わります。
+        </div>
+        <div class="form-section">
+          <div class="form-row-2">
+            ${UI.field('⚠️ 注意（日）',
+              `<input id="set-exch-warn" class="input" type="number" min="1" max="365"
+                value="${exchWarn}" placeholder="例: 60">`)}
+            ${UI.field('🔴 警告（日）',
+              `<input id="set-exch-alert" class="input" type="number" min="1" max="365"
+                value="${exchAlert}" placeholder="例: 90">`)}
+          </div>
+          <div style="font-size:.72rem;color:var(--text3);margin-bottom:10px;line-height:1.8">
+            <div>• <span style="color:var(--text2)">通常</span>　→ 設定日数未満</div>
+            <div>• <span style="color:var(--amber)">⚠️ オレンジ</span>　→ 注意日数以上</div>
+            <div>• <span style="color:var(--red,#e05555)">🔴 赤</span>　→ 警告日数以上</div>
+          </div>
+          <button class="btn btn-ghost btn-full" onclick="Pages._saveExchangeWarnSettings()">
+            交換警告日数を保存
           </button>
         </div>
       </div>
@@ -592,6 +620,34 @@ Pages._bkLoadHistory = async function () {
     }).join('');
   } catch (e) {
     if (el) el.innerHTML = '<div style="font-size:.75rem;color:var(--text3)">履歴の取得に失敗しました</div>';
+  }
+};
+
+// ── マット交換警告日数保存 ──────────────────────────────────────
+Pages._saveExchangeWarnSettings = async function () {
+  const warnDays  = parseInt(document.getElementById('set-exch-warn')?.value  || '60',  10);
+  const alertDays = parseInt(document.getElementById('set-exch-alert')?.value || '90', 10);
+
+  if (isNaN(warnDays) || warnDays < 1) { UI.toast('注意日数を正しく入力してください', 'error'); return; }
+  if (isNaN(alertDays) || alertDays < 1) { UI.toast('警告日数を正しく入力してください', 'error'); return; }
+  if (warnDays >= alertDays) { UI.toast('警告日数は注意日数より大きくしてください', 'error'); return; }
+
+  Store.setSetting('exchange_warn_days',  String(warnDays));
+  Store.setSetting('exchange_alert_days', String(alertDays));
+
+  const gasUrl = Store.getSetting('gas_url');
+  if (gasUrl) {
+    try {
+      await Promise.all([
+        API.system.updateSetting('exchange_warn_days',  String(warnDays)),
+        API.system.updateSetting('exchange_alert_days', String(alertDays)),
+      ]);
+      UI.toast(`交換警告日数を保存しました（注意: ${warnDays}日 / 警告: ${alertDays}日）`, 'success');
+    } catch (e) {
+      UI.toast('ローカルに保存しました（GAS反映失敗）', 'info');
+    }
+  } else {
+    UI.toast(`ローカルに保存しました（注意: ${warnDays}日 / 警告: ${alertDays}日）`, 'success');
   }
 };
 

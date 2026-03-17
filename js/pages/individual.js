@@ -342,6 +342,43 @@ Pages.individualDetail = async function (indId) {
   }
 };
 
+
+// ── 元ロット情報アコーディオン（1頭個体化された個体のみ）────────
+function _renderSourceLotSection(ind) {
+  if (!ind.source_lot_id && !ind.source_lot_data) return '';
+
+  // source_lot_data をパース
+  let ld = {};
+  try { ld = JSON.parse(ind.source_lot_data || '{}'); } catch(e) {}
+
+  const lineObj  = ld.line_id ? Store.getLine(ld.line_id) : null;
+  const lineName = lineObj
+    ? (lineObj.line_code || lineObj.display_id)
+    : (ld.line_id || '—');
+
+  const rows = [
+    _infoRow('元ロットID',   ind.source_lot_display_id || ind.source_lot_id || '—'),
+    _infoRow('ライン',       lineName),
+    ld.hatch_date     ? _infoRow('孵化日',       ld.hatch_date)     : '',
+    ld.stage          ? _infoRow('飼育ステージ', ld.stage)           : '',
+    ld.container_size ? _infoRow('容器',         ld.container_size)  : '',
+    ld.mat_type       ? _infoRow('マット',       ld.mat_type)        : '',
+    ld.mat_changed_at ? _infoRow('最終交換日',   ld.mat_changed_at)  : '',
+    ld.size_category  ? _infoRow('サイズ区分',   ld.size_category)   : '',
+    ld.sex_hint       ? _infoRow('性別メモ',     ld.sex_hint)        : '',
+    ld.note           ? _infoRow('ロットメモ',   ld.note)            : '',
+  ].filter(Boolean).join('');
+
+  return '<div class="accordion" id="acc-source-lot">'
+    + '<div class="acc-hdr" onclick="_toggleAcc(\'acc-source-lot\')">'
+    + '📦 元ロット情報 <span class="acc-arrow">▶</span>'
+    + '</div>'
+    + '<div class="acc-body">'
+    + '<div class="info-list">' + rows + '</div>'
+    + '</div>'
+    + '</div>';
+}
+
 function _renderDetail(ind, main) {
   const age      = Store.calcAge(ind.hatch_date);    // 現在の日齢
   const verdict  = Store.getVerdict(ind);
@@ -459,6 +496,9 @@ function _renderDetail(ind, main) {
           </div>
         </div>
       </div>
+
+      <!-- 元ロット情報（1頭自動個体化の場合のみ表示） -->
+      ${_renderSourceLotSection(ind)}
 
       <!-- 体重推移 -->
       <div class="accordion" id="acc-growth">
