@@ -90,46 +90,102 @@ function _lotStageFilters(active) {
 }
 
 // ════════════════════════════════════════════════════════════════
-// ロットカード — 3列レイアウト（コード | 頭数+情報 | ›）
+// ロットカード — 4ブロック横断レイアウト（手書きスケッチ準拠）
+//
+// ┌──────────┬───────┬────────────────────┬────────┐
+// │ HM2026   │  4頭  │ T0  2.7L  T0       │ メモ   │
+// │   B1     │  18g  │ 孵化日: 2025/01/15  │ …     │
+// │   L02    │       │ 最終交換: —         │        │
+// └──────────┴───────┴────────────────────┴────────┘
 // ════════════════════════════════════════════════════════════════
 function _lotCardHTML(lot) {
-  const line = Store.getLine(lot.line_id);
+  const line     = Store.getLine(lot.line_id);
   const lineCode = line ? (line.line_code || line.display_id) : '';
 
-  // 最新成長記録から状態を取得
+  // ── display_id からブロック識別情報を分解 ──────────────────
+  // 例: "HM2026-B1-001" → yearCode="HM2026", lotSuffix="001"
+  const didParts  = (lot.display_id || '').split('-');
+  // 先頭セグメント（ブランド+年: HM2026）
+  const yearCode  = didParts.length >= 2 ? didParts[0] : '';
+  // 末尾セグメント（ロット連番: 001 / L02）
+  const lotSuffix = didParts.length >= 2 ? didParts[didParts.length - 1] : lot.display_id;
+
+  // ── 最新成長記録から飼育状態を取得 ────────────────────────
   const recs = Store.getGrowthRecords(lot.lot_id) || [];
   const latestRec = recs.length > 0
     ? [...recs].sort((a,b) => String(b.record_date).localeCompare(String(a.record_date)))[0]
     : null;
-  const dispStage     = latestRec?.stage       || lot.stage           || '—';
-  const dispContainer = latestRec?.container   || lot.container_size  || '';
-  const dispMat       = latestRec?.mat_type    || lot.mat_type        || '';
-  const dispWeight    = latestRec?.weight_g    ? latestRec.weight_g + 'g' : null;
 
-  const stageDisp = stageLabel(dispStage === 'T2A' || dispStage === 'T2B' ? 'T2' : dispStage);
-  const sColor    = stageColor(dispStage);
+  const dispStage     = latestRec?.stage     || lot.stage          || '';
+  const dispContainer = latestRec?.container || lot.container_size || '';
+  const dispMat       = latestRec?.mat_type  || lot.mat_type       || '';
+  const dispWeight    = latestRec?.weight_g  ? latestRec.weight_g + 'g' : null;
+  const dispLastExch  = latestRec?.record_date || lot.mat_changed_at || '';
+  const dispHatch     = lot.hatch_date || '';
 
-  // 腐卵統一済み（表示のみ）
+  // ステージ表示
+  const stageLabel2 = stageLabel(dispStage) || '—';
+  const sColor      = dispStage ? stageColor(dispStage) : 'var(--text3)';
+
   const count = +lot.count || 0;
 
-  return `<div class="lot-card" onclick="routeTo('lot-detail',{lotId:'${lot.lot_id}'})">
-    <!-- 左列: ラインコード + ロットID -->
-    <div class="lot-card-left">
-      <div class="lot-card-line">${lineCode}</div>
-      <div class="lot-card-id">${lot.display_id}</div>
+  // ── ブロック3: 飼育状態（2行構成）──────────────────────────
+  // 行1: ステージ + 容器 + マット（インライン、コンパクト）
+  const statusRow1Parts = [];
+  if (dispStage)     statusRow1Parts.push(`<span class="lc-stage-badge" style="color:${sColor}">${stageLabel2}</span>`);
+  if (dispContainer) statusRow1Parts.push(`<span class="lc-status-chip">${dispContainer}</span>`);
+  if (dispMat)       statusRow1Parts.push(`<span class="lc-status-chip">${dispMat}</span>`);
+  const statusRow1 = statusRow1Parts.join('');
+
+  // 行2: 孵化日（あれば）
+  const statusRow2 = dispHatch
+    ? `<div class="lc-status-row2"><span class="lc-status-label">孵化</span>${dispHatch}</div>`
+    : '';
+
+  // 行3: 最終交換日（あれば）
+  const statusRow3 = dispLastExch
+    ? `<div class="lc-status-row2"><span class="lc-status-label">交換</span>${dispLastExch}</div>`
+    : '';
+
+  // ── ブロック4: メモ（あれば表示）───────────────────────────
+  const memo     = lot.note || '';
+  const memoHtml = memo
+    ? `<div class="lc-memo">${memo.length > 18 ? memo.slice(0,16) + '…' : memo}</div>`
+    : '';
+
+  return `<div class="lc-card" onclick="routeTo('lot-detail',{lotId:'${lot.lot_id}'})">
+
+    <!-- ブロック1: 識別情報（年 / ラインコード / ロット番号）-->
+    <div class="lc-id-block">
+      ${yearCode ? `<div class="lc-year">${yearCode}</div>` : ''}
+      <div class="lc-linecode">${lineCode || '—'}</div>
+      <div class="lc-lotsuffix">${lotSuffix}</div>
     </div>
-    <!-- 中央: 頭数強調 + サブ情報 -->
-    <div class="lot-card-center">
-      <div class="lot-card-count">${count}<span class="lot-card-count-unit">頭</span></div>
-      <div class="lot-card-sub">
-        <span class="lot-card-stage" style="color:${sColor}">${stageDisp}</span>
-        ${dispContainer ? `<span class="lot-card-sub-item">${dispContainer}</span>` : ''}
-        ${dispMat       ? `<span class="lot-card-sub-item">${dispMat}</span>` : ''}
-        ${dispWeight    ? `<span class="lot-card-sub-item" style="color:var(--green)">${dispWeight}</span>` : ''}
-      </div>
+
+    <!-- 区切り線 -->
+    <div class="lc-divider"></div>
+
+    <!-- ブロック2: 頭数 + 体重 -->
+    <div class="lc-count-block">
+      <div class="lc-count">${count}<span class="lc-count-unit">頭</span></div>
+      ${dispWeight ? `<div class="lc-weight">${dispWeight}</div>` : ''}
     </div>
-    <!-- 右列: 矢印 -->
-    <div class="lot-card-arrow">›</div>
+
+    <!-- 区切り線 -->
+    <div class="lc-divider"></div>
+
+    <!-- ブロック3: 飼育状態 -->
+    <div class="lc-status-block">
+      <div class="lc-status-row1">${statusRow1 || '<span class="lc-status-chip" style="color:var(--text3)">—</span>'}</div>
+      ${statusRow2}
+      ${statusRow3}
+    </div>
+
+    <!-- ブロック4: メモ（条件付き）-->
+    ${memoHtml}
+
+    <!-- 矢印 -->
+    <div class="lc-arrow">›</div>
   </div>`;
 }
 

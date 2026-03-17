@@ -621,90 +621,187 @@ textarea.input { resize: vertical; min-height: 72px; }
    Phase4 追加スタイル — ロットカード統一 / 一括ロット化
    ════════════════════════════════════════════════════════════ */
 
-/* ── ロットカード（3カラム統一） ──────────────────────────── */
-.lot-card {
+/* ══════════════════════════════════════════════════════════════
+   ロットカード — 4ブロック横断レイアウト（手書きスケッチ準拠）
+   ══════════════════════════════════════════════════════════════
+   構成: [識別情報] | [頭数/体重] | [飼育状態] | [メモ?] [›]
+   ============================================================ */
+
+/* ── カード外枠 ──────────────────────────────────────────── */
+.lc-card {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 11px 13px;
+  margin-bottom: 6px;
   display: flex;
-  align-items: center;
-  gap: 10px;
+  align-items: stretch;          /* 全ブロック等高 */
   cursor: pointer;
+  overflow: hidden;
   transition: background .15s;
   -webkit-tap-highlight-color: transparent;
-  margin-bottom: 6px;
+  min-height: 62px;
 }
-.lot-card:active { background: var(--surface2); }
+.lc-card:active { background: var(--surface2); }
 
-/* 左列: ラインコード */
-.lot-card-left {
-  min-width: 58px;
-  max-width: 72px;
+/* ── 縦区切り線 ──────────────────────────────────────────── */
+.lc-divider {
+  width: 1px;
+  background: var(--border);
   flex-shrink: 0;
+  align-self: stretch;
 }
-.lot-card-line {
+
+/* ── ブロック1: 識別情報（年 / ラインコード / ロット番号）── */
+.lc-id-block {
+  min-width: 56px;
+  max-width: 68px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 8px 6px 8px 11px;
+}
+.lc-year {
+  font-size: .58rem;
+  color: var(--text3);
   font-family: var(--font-mono);
-  font-size: .95rem;
+  letter-spacing: -.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+}
+.lc-linecode {
+  font-family: var(--font-mono);
+  font-size: 1.25rem;
   font-weight: 800;
   color: var(--gold);
-  line-height: 1.2;
+  line-height: 1.1;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
-.lot-card-id {
-  font-size: .65rem;
+.lc-lotsuffix {
+  font-size: .62rem;
   color: var(--text3);
-  margin-top: 2px;
   font-family: var(--font-mono);
+  margin-top: 1px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/* 中央: メイン情報 */
-.lot-card-center {
-  flex: 1;
-  min-width: 0;
+/* ── ブロック2: 頭数 + 体重 ──────────────────────────────── */
+.lc-count-block {
+  min-width: 48px;
+  max-width: 60px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 6px;
 }
-.lot-card-count {
-  font-size: 1.75rem;
+.lc-count {
+  font-size: 1.65rem;
   font-weight: 800;
   color: var(--text1);
   line-height: 1;
+  white-space: nowrap;
 }
-.lot-card-count-unit {
-  font-size: .75rem;
+.lc-count-unit {
+  font-size: .68rem;
   font-weight: 400;
   color: var(--text3);
-  margin-left: 2px;
+  margin-left: 1px;
 }
-.lot-card-sub {
-  display: flex;
-  gap: 5px;
-  align-items: center;
-  flex-wrap: wrap;
-  margin-top: 4px;
-}
-.lot-card-stage {
+.lc-weight {
   font-size: .72rem;
   font-weight: 700;
+  color: var(--green);
+  margin-top: 3px;
+  white-space: nowrap;
 }
-.lot-card-sub-item {
-  font-size: .68rem;
+
+/* ── ブロック3: 飼育状態 ─────────────────────────────────── */
+.lc-status-block {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 7px 8px;
+  gap: 2px;
+}
+/* 行1: ステージ + 容器 + マット */
+.lc-status-row1 {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.lc-stage-badge {
+  font-size: .75rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.lc-status-chip {
+  font-size: .65rem;
   color: var(--text3);
+  white-space: nowrap;
 }
-.lot-card-sub-item::before {
+.lc-status-chip + .lc-status-chip::before,
+.lc-stage-badge + .lc-status-chip::before {
   content: '·';
   margin-right: 3px;
   color: var(--border);
 }
-.lot-card-arrow {
+/* 行2・3: 孵化日 / 最終交換日 */
+.lc-status-row2 {
+  font-size: .63rem;
   color: var(--text3);
-  font-size: 1.2rem;
-  flex-shrink: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.4;
 }
+.lc-status-label {
+  display: inline-block;
+  color: var(--text3);
+  margin-right: 3px;
+  font-size: .58rem;
+  opacity: .8;
+}
+
+/* ── ブロック4: メモ欄（条件付き）───────────────────────── */
+.lc-memo {
+  min-width: 52px;
+  max-width: 70px;
+  flex-shrink: 0;
+  font-size: .62rem;
+  color: var(--text3);
+  background: rgba(255,255,255,.025);
+  border-left: 1px solid var(--border);
+  padding: 6px 7px;
+  display: flex;
+  align-items: center;
+  word-break: break-all;
+  line-height: 1.45;
+  align-self: stretch;
+}
+
+/* ── 矢印 ───────────────────────────────────────────────── */
+.lc-arrow {
+  color: var(--text3);
+  font-size: 1.1rem;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 9px 0 5px;
+}
+
+/* ── 後方互換: 旧クラス名エイリアス ─────────────────────── */
+/* lot.js 以外のコードが旧クラス名を参照している場合の保険 */
+.lot-card          { display:none; } /* 旧カード非表示（念のため） */
+.lot-card-arrow    { color: var(--text3); font-size: 1.2rem; }
 
 /* ── 一括ロット化フォーム ─────────────────────────────────── */
 .bulk-row {
