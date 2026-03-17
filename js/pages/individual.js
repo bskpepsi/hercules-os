@@ -342,42 +342,105 @@ Pages.individualDetail = async function (indId) {
   }
 };
 
+// ════════════════════════════════════════════════════════════════
+// _renderSaleActions — 状態に応じた販売アクションUIを生成
+//
+// 状態遷移ルール（StatusRules.gs と一致）:
+//   larva/prepupa/pupa/adult → for_sale / dead
+//   for_sale   → reserved / sold / adult(解除) / dead
+//   reserved   → listed / sold / for_sale(解除) / dead
+//   listed     → sold / reserved(解除) / dead
+//   sold       → 変更不可（販売情報表示のみ）
+//   dead       → 変更不可
+// ════════════════════════════════════════════════════════════════
+function _renderSaleActions(ind) {
+  var id  = ind.ind_id;
+  var st  = ind.status || '';
+  var gf  = ind.guinness_flag;
+  var pf  = ind.parent_flag;
+  var g2  = ind.g200_flag;
 
-// ── 元ロット情報アコーディオン（1頭個体化された個体のみ）────────
-function _renderSourceLotSection(ind) {
-  if (!ind.source_lot_id && !ind.source_lot_data) return '';
+  // ── 状態バッジ ────────────────────────────────────────────
+  var STATUS_INFO = {
+    larva:          { label:'幼虫',       color:'var(--green)' },
+    prepupa:        { label:'前蛹',       color:'var(--amber)' },
+    pupa:           { label:'蛹',         color:'#bf360c' },
+    adult:          { label:'成虫',       color:'var(--green)' },
+    alive:          { label:'飼育中',     color:'var(--green)' },
+    seed_candidate: { label:'種親候補',   color:'var(--blue)' },
+    seed_reserved:  { label:'種親確保済', color:'var(--blue)' },
+    for_sale:       { label:'販売候補',   color:'#9c27b0' },
+    reserved:       { label:'予約中',     color:'var(--blue)' },
+    listed:         { label:'出品中',     color:'#ff9800' },
+    sold:           { label:'販売済',     color:'var(--gold)' },
+    dead:           { label:'死亡',       color:'var(--red,#e05555)' },
+  };
+  var si = STATUS_INFO[st] || { label: st, color:'var(--text3)' };
 
-  // source_lot_data をパース
-  let ld = {};
-  try { ld = JSON.parse(ind.source_lot_data || '{}'); } catch(e) {}
+  var statusBadge = '<div class="ind-sale-status">'
+    + '<span class="ind-sale-status-label">現在の状態</span>'
+    + '<span class="ind-sale-status-badge" style="color:' + si.color + ';border-color:' + si.color + '">'
+    + si.label
+    + '</span></div>';
 
-  const lineObj  = ld.line_id ? Store.getLine(ld.line_id) : null;
-  const lineName = lineObj
-    ? (lineObj.line_code || lineObj.display_id)
-    : (ld.line_id || '—');
+  // ── ボタンビルダー ────────────────────────────────────────
+  function btn(cls, icon, label, fn) {
+    return '<button class="btn-sale ' + cls + '" onclick="' + fn + '">' + icon + ' ' + label + '</button>';
+  }
 
-  const rows = [
-    _infoRow('元ロットID',   ind.source_lot_display_id || ind.source_lot_id || '—'),
-    _infoRow('ライン',       lineName),
-    ld.hatch_date     ? _infoRow('孵化日',       ld.hatch_date)     : '',
-    ld.stage          ? _infoRow('飼育ステージ', ld.stage)           : '',
-    ld.container_size ? _infoRow('容器',         ld.container_size)  : '',
-    ld.mat_type       ? _infoRow('マット',       ld.mat_type)        : '',
-    ld.mat_changed_at ? _infoRow('最終交換日',   ld.mat_changed_at)  : '',
-    ld.size_category  ? _infoRow('サイズ区分',   ld.size_category)   : '',
-    ld.sex_hint       ? _infoRow('性別メモ',     ld.sex_hint)        : '',
-    ld.note           ? _infoRow('ロットメモ',   ld.note)            : '',
-  ].filter(Boolean).join('');
+  var setFn   = function(s) { return "Pages._indSetStatus('" + id + "','" + s + "')"; };
+  var deadFn  = "Pages._indMarkDead('" + id + "')";
+  var soldFn  = "Pages._indMarkSoldModal('" + id + "')";
+  var flagFn  = "Pages._indFlagMenu('" + id + "','" + gf + "','" + pf + "','" + g2 + "')";
 
-  return '<div class="accordion" id="acc-source-lot">'
-    + '<div class="acc-hdr" onclick="_toggleAcc(\'acc-source-lot\')">'
-    + '📦 元ロット情報 <span class="acc-arrow">▶</span>'
-    + '</div>'
-    + '<div class="acc-body">'
-    + '<div class="info-list">' + rows + '</div>'
+  // ── 状態別ボタン ─────────────────────────────────────────
+  var isActive = ['larva','prepupa','pupa','adult','alive',
+                  'seed_candidate','seed_reserved'].indexOf(st) !== -1;
+  var btns = '';
+
+  if (isActive) {
+    btns =
+      btn('btn-sale-purple', '🛒', '販売候補にする', setFn('for_sale'))
+      + btn('btn-sale-red', '💀', '死亡', deadFn);
+
+  } else if (st === 'for_sale') {
+    btns =
+      btn('btn-sale-blue',   '📦', '予約する',       setFn('reserved'))
+      + btn('btn-sale-gold', '💰', '販売済みにする', soldFn)
+      + btn('btn-sale-gray', '↩',  '候補解除',       setFn('adult'))
+      + btn('btn-sale-red',  '💀', '死亡',            deadFn);
+
+  } else if (st === 'reserved') {
+    btns =
+      btn('btn-sale-orange', '📢', '出品する',       setFn('listed'))
+      + btn('btn-sale-gold', '💰', '販売済みにする', soldFn)
+      + btn('btn-sale-gray', '↩',  '予約解除',       setFn('for_sale'))
+      + btn('btn-sale-red',  '💀', '死亡',            deadFn);
+
+  } else if (st === 'listed') {
+    btns =
+      btn('btn-sale-gold', '💰', '販売済みにする', soldFn)
+      + btn('btn-sale-gray', '↩', '出品解除',       setFn('reserved'))
+      + btn('btn-sale-red',  '💀', '死亡',           deadFn);
+
+  } else if (st === 'sold') {
+    btns = '<div class="ind-sale-done-msg">💰 販売済みです — これ以上の変更はできません</div>';
+
+  } else if (st === 'dead') {
+    btns = '<div class="ind-sale-done-msg">💀 死亡として記録済みです</div>';
+  }
+
+  var canFlag = (st !== 'dead');
+
+  return '<div class="ind-sale-actions">'
+    + statusBadge
+    + '<div class="ind-sale-btn-grid">'
+    + btns
+    + (canFlag ? btn('btn-sale-gray', '🏷', 'フラグ', flagFn) : '')
     + '</div>'
     + '</div>';
 }
+
 
 function _renderDetail(ind, main) {
   const age      = Store.calcAge(ind.hatch_date);    // 現在の日齢
@@ -497,9 +560,6 @@ function _renderDetail(ind, main) {
         </div>
       </div>
 
-      <!-- 元ロット情報（1頭自動個体化の場合のみ表示） -->
-      ${_renderSourceLotSection(ind)}
-
       <!-- 体重推移 -->
       <div class="accordion" id="acc-growth">
         <div class="acc-hdr open" onclick="_toggleAcc('acc-growth')">
@@ -580,15 +640,8 @@ function _renderDetail(ind, main) {
         </div>
       </div>` : ''}
 
-      <!-- ステータス変更 -->
-      <div style="display:flex;gap:8px">
-        <button class="btn btn-ghost btn-sm"
-          onclick="Pages._indMarkDead('${ind.ind_id}')">💀 死亡</button>
-        <button class="btn btn-ghost btn-sm" style="${ind.status==='reserved'?'color:var(--blue);border-color:var(--blue);':''}"          onclick="Pages._indMarkReserved('${ind.ind_id}')">📦 予約${ind.status==='reserved'?' ✓':''}</button>
-        <button class="btn btn-ghost btn-sm" style="margin-left:auto"
-          onclick="Pages._indFlagMenu('${ind.ind_id}','${ind.guinness_flag}','${ind.parent_flag}','${ind.g200_flag}')">
-          🏷 フラグ</button>
-      </div>
+      <!-- 販売ステータス別アクションUI -->
+      ${_renderSaleActions(ind)}
 
     </div>`;
 
@@ -711,6 +764,70 @@ Pages._indFlagSave = async function (id) {
   _closeModal();
   try {
     await apiCall(() => API.individual.update(updates), 'フラグを保存しました');
+    Store.patchDBItem('individuals', 'ind_id', id, updates);
+    Pages.individualDetail(id);
+  } catch(e) {}
+};
+
+// ── 汎用ステータス変更 ──────────────────────────────────────────
+// for_sale / reserved / listed / adult など各状態への遷移に使用
+Pages._indSetStatus = async function (id, newStatus) {
+  const labelMap = {
+    for_sale: '販売候補',
+    reserved: '予約中',
+    listed:   '出品中',
+    adult:    '成虫（飼育中）',
+  };
+  const label = labelMap[newStatus] || newStatus;
+  if (!UI.confirm('「' + label + '」に変更しますか？')) return;
+  try {
+    await apiCall(() => API.individual.changeStatus(id, newStatus), label + 'に変更しました');
+    Store.patchDBItem('individuals', 'ind_id', id, { status: newStatus });
+    Pages.individualDetail(id);
+  } catch(e) {}
+};
+
+// ── 販売済みモーダル（販売情報を記録して sold に変更）────────────
+Pages._indMarkSoldModal = function (id) {
+  const ind   = Store.getIndividual(id);
+  const today = new Date().toISOString().split('T')[0];
+  _showModal('💰 販売済みとして記録', '<div class="form-section">'
+    + UI.field('販売日', '<input type="date" id="sold-date" class="input" value="' + today + '">')
+    + UI.field('販売時体重(g)', '<input type="number" id="sold-weight" class="input" placeholder="例: 85" step="0.1">')
+    + UI.field('販売時ステージ', UI.select('sold-stage-sel',
+        [
+          { code:'', label:'— 選択 —' },
+          { code:'T2A', label:'T2①' }, { code:'T2B', label:'T2②' },
+          { code:'T3', label:'T3' }, { code:'PREPUPA', label:'前蛹' },
+          { code:'PUPA', label:'蛹' }, { code:'ADULT', label:'成虫' },
+        ],
+        (ind && ind.current_stage) || ''))
+    + UI.field('販売理由（任意）', '<input type="text" id="sold-reason" class="input" placeholder="例: ヤフオク落札">')
+    + '<div class="modal-footer">'
+    + '<button class="btn btn-ghost" style="flex:1" onclick="_closeModal()">キャンセル</button>'
+    + '<button class="btn btn-gold" style="flex:2" onclick="Pages._indMarkSoldExec(\'' + id + '\')">💰 販売済みにする</button>'
+    + '</div>'
+    + '</div>'
+  );
+};
+
+Pages._indMarkSoldExec = async function (id) {
+  const soldDate   = document.getElementById('sold-date')?.value   || '';
+  const soldWeight = document.getElementById('sold-weight')?.value || '';
+  const soldStage  = document.getElementById('sold-stage-sel')?.value || '';
+  const soldReason = document.getElementById('sold-reason')?.value  || '';
+  _closeModal();
+  try {
+    // changeStatus で sold に変更し、販売情報を同時に更新
+    await apiCall(() => API.individual.changeStatus(id, 'sold', soldReason), '販売済みとして記録しました');
+    const updates = { status: 'sold' };
+    if (soldDate)   updates.sold_date   = soldDate.replace(/-/g, '/');
+    if (soldWeight) updates.sold_weight = soldWeight;
+    if (soldStage)  updates.sold_stage  = soldStage;
+    if (soldReason) updates.sold_reason = soldReason;
+    if (Object.keys(updates).length > 1) {
+      await API.individual.update({ ind_id: id, ...updates }).catch(() => {});
+    }
     Store.patchDBItem('individuals', 'ind_id', id, updates);
     Pages.individualDetail(id);
   } catch(e) {}
