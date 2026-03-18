@@ -445,6 +445,21 @@ function _renderSaleActions(ind) {
 }
 
 
+// ════════════════════════════════════════════════════════════════
+// _renderPublicStatusBar
+// 個体詳細画面の公開設定エリア（同期描画）
+// 初期は「公開設定を確認中」→ _indLoadPublicStatus で非同期更新
+// ════════════════════════════════════════════════════════════════
+function _renderPublicStatusBar(ind) {
+  return '<div id="pub-status-bar" style="margin-top:6px">'
+    + '<button class="btn btn-ghost btn-full" style="font-size:.82rem;color:var(--text3)"'
+    + ' onclick="Pages._indOpenPublicEdit(\'' + ind.ind_id + '\')">'
+    + '🌐 公開設定を読み込み中…'
+    + '</button>'
+    + '</div>';
+}
+
+
 function _renderDetail(ind, main) {
   const age      = Store.calcAge(ind.hatch_date);    // 現在の日齢
   const verdict  = Store.getVerdict(ind);
@@ -503,6 +518,8 @@ function _renderDetail(ind, main) {
         <button class="btn btn-ghost" style="flex:1"
           onclick="routeTo('label-gen',{targetType:'IND',targetId:'${ind.ind_id}'})">🏷</button>
       </div>
+      <!-- 公開設定エリア -->
+      ${_renderPublicStatusBar(ind)}
 
       <!-- 基本情報 -->
       <div class="accordion" id="acc-basic">
@@ -652,6 +669,9 @@ function _renderDetail(ind, main) {
   if (records.filter(r => r.weight_g).length >= 2) {
     setTimeout(() => _drawWeightChart(ind.ind_id, records), 100);
   }
+
+  // Phase5.5: 公開ステータスを非同期で取得してバーを更新
+  _indLoadPublicStatus(ind.ind_id);
 }
 
 function _defectTypeLabel(type) {
@@ -1080,6 +1100,65 @@ Pages._indSave = async function (editId) {
 // ════════════════════════════════════════════════════════════════
 
 // アコーディオン開閉
+// ── 公開設定ページへ遷移 ─────────────────────────────────────
+Pages._indOpenPublicEdit = function (indId) {
+  routeTo('public-edit', { indId: indId });
+};
+
+// ── 公開ステータスを非同期で取得してバーを更新 ────────────────
+// _renderDetail 後に呼ばれ、#pub-status-bar を書き換える
+async function _indLoadPublicStatus(indId) {
+  const bar = document.getElementById('pub-status-bar');
+  if (!bar) return;
+
+  // onclick に変数を直接渡すのを避けるため data属性 + グローバルコールバックを使用
+  window.__pubEditId = indId;
+
+  try {
+    const res = await API.publicPage.getByIndId(indId);
+    if (!document.getElementById('pub-status-bar')) return;
+
+    if (!res || !res.exists) {
+      bar.innerHTML = '<button class="btn btn-ghost btn-full"'
+        + ' style="font-size:.82rem;color:var(--text3)"'
+        + ' onclick="Pages._indOpenPublicEdit(window.__pubEditId)">'
+        + '🌐 公開設定（未設定）</button>';
+      return;
+    }
+
+    const isPublic = res.is_public;
+    const token    = res.token || '';
+    const pubUrl   = location.origin + location.pathname
+      + '#page=public-view&token=' + token;
+    window.__pubToken = pubUrl;
+
+    if (isPublic) {
+      bar.innerHTML = '<div style="display:flex;gap:6px;margin-top:6px">'
+        + '<a href="' + pubUrl + '" target="_blank" rel="noopener"'
+        + ' class="btn btn-ghost" style="flex:2;font-size:.82rem;color:var(--green);'
+        + 'border-color:rgba(76,175,120,.4);text-decoration:none;'
+        + 'display:flex;align-items:center;justify-content:center;gap:4px">'
+        + '🌐 公開ページを見る</a>'
+        + '<button class="btn btn-ghost" style="flex:1;font-size:.78rem"'
+        + ' onclick="Pages._indOpenPublicEdit(window.__pubEditId)">'
+        + '⚙ 設定</button>'
+        + '</div>';
+    } else {
+      bar.innerHTML = '<button class="btn btn-ghost btn-full"'
+        + ' style="font-size:.82rem;color:var(--text3)"'
+        + ' onclick="Pages._indOpenPublicEdit(window.__pubEditId)">'
+        + '🔒 公開設定（非公開）</button>';
+    }
+  } catch (e) {
+    var bar2 = document.getElementById('pub-status-bar');
+    if (bar2) {
+      bar2.innerHTML = '<button class="btn btn-ghost btn-full"'
+        + ' style="font-size:.82rem;color:var(--text3)"'
+        + ' onclick="Pages._indOpenPublicEdit(window.__pubEditId)">'
+        + '🌐 公開設定</button>';
+    }
+  }
+}
 window._toggleAcc = function (id) {
   const el = document.getElementById(id);
   if (!el) return;
