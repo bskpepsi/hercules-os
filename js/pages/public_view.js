@@ -164,6 +164,15 @@ function _pubRender(main, res) {
             </div>`}
       </div>
 
+      <!-- サブ写真（2〜3枚目） -->
+      ${photoUrls && photoUrls.length ? `
+      <div style="display:flex;gap:4px;padding:4px;background:#000">
+        ${photoUrls.slice(0,2).map(url => `
+          <div style="flex:1;height:90px;overflow:hidden;border-radius:4px;background:#111">
+            <img src="${url}" style="width:100%;height:100%;object-fit:cover;display:block">
+          </div>`).join('')}
+      </div>` : ''}
+
       <!-- ファーストビュー情報 -->
       <div class="pub-first-view">
 
