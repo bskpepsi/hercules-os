@@ -36,6 +36,45 @@ Pages.publicView = async function (params) {
   }
 };
 
+// ── Drive URL正規化 ──────────────────────────────────────────
+// 保存済みの壊れたURLを <img src> で表示できる形式に変換する。
+// 対応パターン:
+//   uc?id=XXX               → uc?export=view&id=XXX
+//   open?id=XXX             → uc?export=view&id=XXX
+//   file/d/XXX/view         → uc?export=view&id=XXX
+//   lh3.googleusercontent.com/d/XXX → そのまま（直接表示可能）
+//   uc?export=view&id=XXX   → そのまま（正常）
+function _normalizeDriveUrl(url) {
+  if (!url) return '';
+  // すでに正しい形式
+  if (url.includes('export=view')) return url;
+  if (url.includes('lh3.googleusercontent.com')) return url;
+
+  // FILE_ID を抽出
+  var fileId = null;
+
+  // パターン1: uc?id=XXX または uc?id=XXX&...
+  var m1 = url.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (m1) fileId = m1[1];
+
+  // パターン2: /file/d/XXX/
+  if (!fileId) {
+    var m2 = url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+    if (m2) fileId = m2[1];
+  }
+
+  // パターン3: /d/XXX（lh3等）
+  if (!fileId) {
+    var m3 = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
+    if (m3) fileId = m3[1];
+  }
+
+  if (fileId) {
+    return 'https://drive.google.com/uc?export=view&id=' + fileId;
+  }
+  return url; // 変換できなかった場合はそのまま
+}
+
 // ════════════════════════════════════════════════════════════════
 // メイン描画
 // ════════════════════════════════════════════════════════════════
@@ -46,10 +85,11 @@ function _pubRender(main, res) {
   const comment   = res.custom_comment || '';
   const lineUrl   = res.contact_line_url || '';
   const formUrl   = res.contact_form_url || '';
-  const mainPhoto = res.main_photo_url || snap.main_photo_url || '';
-  const photoUrls = (res.photo_urls && res.photo_urls.length)
+  const mainPhoto = _normalizeDriveUrl(res.main_photo_url || snap.main_photo_url || '');
+  const rawPhotoUrls = (res.photo_urls && res.photo_urls.length)
     ? res.photo_urls
     : (snap.photo_urls || []);
+  const photoUrls = rawPhotoUrls.map(u => _normalizeDriveUrl(u));
   const updatedAt = (snap.updated_at || res.updated_at || '').slice(0, 10);
   const growthCnt = res.show_growth_count || 5;
 
