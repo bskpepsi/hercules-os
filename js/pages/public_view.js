@@ -86,10 +86,16 @@ function _pubRender(main, res) {
   const lineUrl   = res.contact_line_url || '';
   const formUrl   = res.contact_form_url || '';
   const mainPhoto = _normalizeDriveUrl(res.main_photo_url || snap.main_photo_url || '');
-  const rawPhotoUrls = (res.photo_urls && res.photo_urls.length)
-    ? res.photo_urls
-    : (snap.photo_urls || []);
-  const photoUrls = rawPhotoUrls.map(u => _normalizeDriveUrl(u));
+  // photo_urls は配列またはJSON文字列で来る可能性がある
+  function _parsePhotoUrls(v) {
+    if (!v) return [];
+    if (Array.isArray(v)) return v;
+    try { var a = JSON.parse(v); return Array.isArray(a) ? a : []; } catch(e) { return []; }
+  }
+  const rawPhotoUrls = _parsePhotoUrls(res.photo_urls).length
+    ? _parsePhotoUrls(res.photo_urls)
+    : _parsePhotoUrls(snap.photo_urls);
+  const photoUrls = rawPhotoUrls.filter(Boolean).map(u => _normalizeDriveUrl(u));
   const updatedAt = (snap.updated_at || res.updated_at || '').slice(0, 10);
   const growthCnt = res.show_growth_count || 5;
 
