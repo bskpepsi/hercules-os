@@ -65,6 +65,21 @@ function _renderDashboard(main) {
     else if(diff<=2)  tasks.yellow.push({ icon:'📅', text:`${label} セット交換まで${diff}日`, fn:`routeTo('pairing-detail',{pairingId:'${p.set_id}'})` });
   });
 
+  // 次回採卵予定日アラート（next_collect_date が設定されている産卵セット）
+  activePairs.forEach(p => {
+    if (!p.next_collect_date) return;
+    const parts = String(p.next_collect_date).split(/[\/\-]/);
+    if (parts.length < 3) return;
+    const d = new Date(+parts[0], +parts[1] - 1, +parts[2]);
+    const diff = Math.floor((d - today) / 86400000);
+    const label = p.set_name || p.display_id;
+    const actionIcon = p.next_action === 'rest' ? '😴' : '♻️';
+    if (diff < 0)    tasks.red.push({ icon:'🥚', text:`${label} 採卵予定 ${Math.abs(diff)}日超過`, fn:`routeTo('pairing-detail',{pairingId:'${p.set_id}'})` });
+    else if(diff===0) tasks.red.push({ icon:'🥚', text:`${label} 今日採卵予定`, fn:`routeTo('pairing-detail',{pairingId:'${p.set_id}'})` });
+    else if(diff===1) tasks.yellow.push({ icon:actionIcon, text:`${label} 明日採卵予定`, fn:`routeTo('pairing-detail',{pairingId:'${p.set_id}'})` });
+    else if(diff<=3)  tasks.yellow.push({ icon:actionIcon, text:`${label} 採卵予定まで${diff}日`, fn:`routeTo('pairing-detail',{pairingId:'${p.set_id}'})` });
+  });
+
   // 種親ペアリング可能判定
   const maleWait   = parseInt(Store.getSetting('male_pairing_wait_days')   || '14', 10);
   const femaleWait = parseInt(Store.getSetting('female_pairing_wait_days') || '14', 10);

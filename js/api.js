@@ -241,7 +241,16 @@ const API = (() => {
     getLotEvents:      (d) => call('getLotEvents',       d || {}),
   };
 
-return { system, line, lot, individual, growth, parent, bloodline, pairing, label, drive, gemini, backup, scan, phase2, integrity };
+  // ── Phase5.5: 公開ページ ─────────────────────────────────────────
+  const publicPage = {
+    createOrUpdate: (d)     => call('createOrUpdatePublic', d),
+    getByToken:     (token) => call('getPublicByToken',     { token }),
+    getByIndId:     (indId) => call('getPublicByIndId',     { ind_id: indId }),
+    incrementView:  (token) => call('incrementViewCount',   { token }),
+    uploadPhoto:    (d)     => call('uploadPhoto',          d),
+  };
+
+return { system, line, lot, individual, growth, parent, bloodline, pairing, label, drive, gemini, backup, scan, phase2, integrity, publicPage };
 })();
 
 // ── Gemini プロンプト ──────────────────────────────────────────

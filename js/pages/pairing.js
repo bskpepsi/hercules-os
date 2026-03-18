@@ -182,6 +182,79 @@ function _exchangeBadgeHtml(pair) {
   return '';
 }
 
+
+// ── 次アクションバナー ────────────────────────────────────────────
+// 産卵セット詳細のセット情報カード直後に表示
+function _nextActionBannerHtml(pair) {
+  if (pair.status !== 'active') return '';
+
+  var action      = pair.next_action       || '';
+  var nextCollect = pair.next_collect_date || '';
+  var restUntil   = pair.rest_until_date   || '';
+
+  if (!action || !nextCollect) return '';
+
+  // 今日からの日数を計算
+  function dayDiff(dateStr) {
+    if (!dateStr) return null;
+    var parts = String(dateStr).split(/[\/\-]/);
+    if (parts.length < 3) return null;
+    var d = new Date(+parts[0], +parts[1] - 1, +parts[2]);
+    var today = new Date(); today.setHours(0, 0, 0, 0);
+    return Math.floor((d - today) / 86400000);
+  }
+
+  var diff    = dayDiff(nextCollect);
+  var diffTxt = diff === null ? '' :
+    diff < 0  ? '（' + Math.abs(diff) + '日超過）' :
+    diff === 0 ? '（今日）' :
+    diff === 1 ? '（明日）' :
+    '（あと' + diff + '日）';
+
+  var color   = diff !== null && diff <= 0  ? 'var(--red,#e05555)'   :
+                diff !== null && diff <= 2  ? 'var(--amber,#e09040)' :
+                'var(--green)';
+
+  var actionLabel = action === 'continue' ? '継続投入中' :
+                    action === 'rest'      ? '休養中'     : '';
+  if (!actionLabel) return '';
+
+  var lines = [
+    '<div style="display:flex;align-items:flex-start;gap:10px">',
+    '<div style="font-size:1.2rem;line-height:1.3">' + (action === 'rest' ? '😴' : '♻️') + '</div>',
+    '<div style="flex:1">',
+    '<div style="font-size:.75rem;font-weight:700;color:var(--text3);letter-spacing:.04em;margin-bottom:2px">' + actionLabel.toUpperCase() + '</div>',
+  ];
+
+  if (action === 'rest' && restUntil) {
+    var restDiff = dayDiff(restUntil);
+    var restTxt  = restDiff === null ? '' :
+      restDiff < 0  ? '（投入待ち）' :
+      restDiff === 0 ? '（今日再投入）' :
+      restDiff === 1 ? '（明日再投入）' :
+      '（あと' + restDiff + '日）';
+    lines.push(
+      '<div style="font-size:.83rem;color:var(--text2);margin-bottom:3px">',
+      '再投入日: <strong>' + restUntil + '</strong>',
+      '<span style="font-size:.72rem;color:var(--amber);margin-left:4px">' + restTxt + '</span>',
+      '</div>'
+    );
+  }
+
+  lines.push(
+    '<div style="font-size:.88rem;font-weight:700;color:' + color + '">',
+    '次回採卵予定: ' + nextCollect,
+    '<span style="font-size:.75rem;font-weight:400;margin-left:4px">' + diffTxt + '</span>',
+    '</div>',
+    '</div>',
+    '</div>'
+  );
+
+  return '<div style="background:rgba(76,175,120,.08);border:1px solid rgba(76,175,120,.25);'
+    + 'border-radius:var(--radius);padding:12px 14px;margin-top:0">'
+    + lines.join('') + '</div>';
+}
+
 // ── 産卵セット詳細 ───────────────────────────────────────────────
 Pages.pairingDetail = async function (setId) {
   if (setId && typeof setId === 'object') setId = setId.id || setId.pairingId || setId.setId || '';
@@ -293,6 +366,9 @@ function _renderPairDetail(pair, eggRecords, main) {
           ${pair.note      ? _prow('メモ',       pair.note)        : ''}
         </div>
       </div>
+
+      <!-- 次アクション表示 -->
+      ${_nextActionBannerHtml(pair)}
 
       <!-- ③ QRラベルボタン -->
       <button class="btn btn-ghost btn-full" style="margin-top:0"
@@ -745,15 +821,15 @@ Pages._pairEditEggModal = async function (setId) {
     if (!records.length) { UI.toast('採卵記録がありません', 'error'); return; }
     const listHtml = records.map((rec, i) => `
       <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border)">
-        <div>
+        <div style="flex:1;min-width:0">
           <div style="font-size:.85rem;font-weight:600">${i+1}回目: ${rec.collect_date||'—'}</div>
-          <div style="font-size:.75rem;color:var(--text3)">採卵${rec.egg_count||0}個 / 孵化${rec.hatch_count||0}頭</div>
+          <div style="font-size:.75rem;color:var(--text3)">採卵${rec.egg_count||0}個 / 孵化${rec.hatch_count||0}頭 / 腐卵${rec.failed_count||0}</div>
         </div>
-        <div style="display:flex;gap:6px">
+        <div style="display:flex;gap:6px;flex-shrink:0">
           <button class="btn btn-ghost btn-sm" style="font-size:.75rem"
             onclick="_closeModal();Pages._pairEditOneEgg('${rec.egg_record_id}','${setId}')">✏️</button>
-          <button class="btn btn-ghost btn-sm" style="font-size:.75rem;color:var(--red)"
-style="display:none">
+          <button class="btn btn-ghost btn-sm" style="font-size:.75rem;color:var(--red,#e05555)"
+            onclick="Pages._pairDeleteEgg('${rec.egg_record_id}','${setId}')">🗑</button>
         </div>
       </div>`).join('');
     _showModal('採卵履歴を編集', `
@@ -787,6 +863,62 @@ Pages._pairFail = async function (id) {
     }), '失敗として記録しました');
     Pages.pairingDetail(id);
   } catch(e){}
+};
+
+// ── 採卵記録を削除 ───────────────────────────────────────────────
+// 削除後に産卵セットの集計（採卵数・孵化数・孵化率・最終採卵日）を再計算して更新する
+Pages._pairDeleteEgg = async function (eggRecordId, setId) {
+  if (!UI.confirm('この採卵記録を削除しますか？\n削除後は元に戻せません。')) return;
+
+  _closeModal(); // 一覧モーダルを閉じる
+
+  try {
+    // ① 採卵記録を削除
+    await apiCall(
+      () => API.pairing.deleteEgg({ egg_record_id: eggRecordId }),
+      '採卵記録を削除しました'
+    );
+
+    // ② 削除後の全記録を再取得して集計を再計算
+    const res = await API.pairing.getEggRecords({ set_id: setId });
+    const remaining = res.egg_records || [];
+
+    const totalEggs  = remaining.reduce((s, r) => s + (parseInt(r.egg_count,  10) || 0), 0);
+    const totalHatch = remaining.reduce((s, r) => s + (parseInt(r.hatch_count, 10) || 0), 0);
+    const hatchRate  = totalEggs > 0
+      ? Math.round(totalHatch / totalEggs * 100) : 0;
+
+    // 最終採卵日（日付降順で最新）
+    const lastCollect = remaining
+      .map(r => r.collect_date || '')
+      .filter(Boolean)
+      .sort()
+      .pop() || '';
+
+    // ③ 産卵セットの集計フィールドを更新
+    await API.pairing.update({
+      set_id:       setId,
+      total_eggs:   totalEggs,
+      total_hatch:  totalHatch,
+      hatch_rate:   hatchRate,
+    }).catch(function(e) {
+      console.warn('pairing集計更新失敗:', e.message);
+    });
+
+    // ④ ローカルキャッシュも更新
+    Store.patchDBItem('pairings', 'set_id', setId, {
+      total_eggs:  totalEggs,
+      total_hatch: totalHatch,
+      hatch_rate:  hatchRate,
+    });
+
+    // ⑤ セット詳細を再描画
+    Pages.pairingDetail(setId);
+
+  } catch(e) {
+    // エラー時も詳細画面に戻る
+    Pages.pairingDetail(setId);
+  }
 };
 
 // ── 産卵セット登録・編集 ─────────────────────────────────────────
