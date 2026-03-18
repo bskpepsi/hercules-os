@@ -1,14 +1,10 @@
 // ════════════════════════════════════════════════════════════════
-// public_edit.js — Phase5.5 公開設定（写真複数枚対応・圧縮転送版）
+// public_edit.js — Phase5.5 公開設定（写真10枚対応・POST転送版）
 //
 // 【画像アップロードの仕組み】
-//   GASはGETリクエスト（URLパラメータ）で通信するため、
-//   生の base64 をそのまま送ると URL 長さ制限で Failed to fetch になる。
-//   → canvas でリサイズ（max600px・品質0.55）してから送信する。
-//   → 典型的な写真が 15〜40KB に収まり、URLに乗る。
-//
-// 【複数枚対応】
-//   最大3枚。index 0 がメイン写真。
+//   api.js の callPost() で Content-Type: text/plain の POST 送信。
+//   GASのCORSプリフライトを回避しつつ、URLパラメータ長さ制限を解消。
+//   クライアント側でも圧縮（max800px）して転送量を減らす。
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
@@ -27,9 +23,11 @@ const PUBLIC_FIELD_DEFS = [
   { key: 'note_public',    label: '個体コメント',  group: 'メモ' },
 ];
 
-// 写真スロット（最大3枚）: { existingUrl, base64, mime, dataUrl, remove }
-window.__pubPhotos = window.__pubPhotos || [null, null, null];
-window.__pubCurrentSlot = 0;
+const PUB_PHOTO_MAX = 10;
+// window.__pubPhotos: 長さ10の配列
+// 各要素: null | { existingUrl, base64, mime, dataUrl, remove }
+window.__pubPhotos        = window.__pubPhotos || Array(PUB_PHOTO_MAX).fill(null);
+window.__pubCurrentSlot   = 0;
 
 Pages.publicEdit = async function (params) {
   params = params || Store.getParams() || {};
@@ -39,7 +37,7 @@ Pages.publicEdit = async function (params) {
     main.innerHTML = UI.header('公開設定', { back: true }) + UI.empty('個体IDが指定されていません');
     return;
   }
-  window.__pubPhotos = [null, null, null];
+  window.__pubPhotos = Array(PUB_PHOTO_MAX).fill(null);
   const ind = Store.getIndividual(indId);
   main.innerHTML = UI.header('公開設定', { back: true }) + UI.spinner();
   try {
@@ -51,49 +49,52 @@ Pages.publicEdit = async function (params) {
   }
 };
 
+// ── 写真スロットのHTML ────────────────────────────────────────
 function _photoSlotHtml(index, photo) {
-  const label = index === 0 ? 'メイン' : (index + 1) + '枚目';
+  const isMain = index === 0;
+  const label  = isMain ? 'メイン' : (index + 1) + '枚目';
   if (photo && (photo.existingUrl || photo.dataUrl)) {
     const src = photo.dataUrl || photo.existingUrl;
     return '<div style="position:relative;aspect-ratio:1;overflow:hidden;border-radius:8px;background:#111">'
       + '<img src="' + src + '" style="width:100%;height:100%;object-fit:cover;display:block">'
       + '<div style="position:absolute;inset:0;display:flex;flex-direction:column;'
-      + 'justify-content:space-between;padding:4px">'
-      + '<span style="font-size:.58rem;background:rgba(0,0,0,.55);color:#fff;'
-      + 'padding:1px 5px;border-radius:4px;align-self:flex-start">' + label + '</span>'
+      + 'justify-content:space-between;padding:3px">'
+      + '<span style="font-size:.55rem;background:rgba(0,0,0,.6);color:#fff;'
+      + 'padding:1px 4px;border-radius:3px;align-self:flex-start">' + label + '</span>'
       + '<button onclick="Pages._pubPhotoRemove(' + index + ')"'
       + ' style="background:rgba(0,0,0,.65);color:#fff;border:none;border-radius:50%;'
-      + 'width:22px;height:22px;font-size:.7rem;cursor:pointer;align-self:flex-end;'
-      + 'display:flex;align-items:center;justify-content:center">✕</button>'
+      + 'width:20px;height:20px;font-size:.65rem;cursor:pointer;align-self:flex-end;'
+      + 'display:flex;align-items:center;justify-content:center;line-height:1">✕</button>'
       + '</div></div>';
   }
   return '<div onclick="Pages._pubPhotoPickSlot(' + index + ')"'
     + ' style="aspect-ratio:1;border:1.5px dashed var(--border);border-radius:8px;'
     + 'background:var(--surface2);display:flex;flex-direction:column;align-items:center;'
-    + 'justify-content:center;cursor:pointer;gap:4px;color:var(--text3)">'
-    + '<span style="font-size:1.3rem">📷</span>'
-    + '<span style="font-size:.62rem">' + label + '</span>'
+    + 'justify-content:center;cursor:pointer;gap:3px;color:var(--text3)">'
+    + '<span style="font-size:' + (isMain ? '1.5rem' : '1.1rem') + '">📷</span>'
+    + '<span style="font-size:.58rem">' + label + '</span>'
     + '</div>';
 }
 
 function _renderPublicEdit(main, ind, pub, indId) {
-  const exists      = pub && pub.exists;
-  const isPublic    = exists ? pub.is_public  : false;
-  const token       = exists ? pub.token      : null;
-  const fields      = exists ? (pub.public_fields || []) : ['display_id','line','parents','weight','stage','sale_status'];
-  const comment     = exists ? (pub.custom_comment || '') : '';
-  const growthCnt   = exists ? (pub.show_growth_count || 5) : 5;
-  const viewCount   = exists ? (pub.view_count || 0) : 0;
-  const lineUrl     = exists ? (pub.contact_line_url || '') : '';
-  const formUrl     = exists ? (pub.contact_form_url || '') : '';
+  const exists    = pub && pub.exists;
+  const isPublic  = exists ? pub.is_public  : false;
+  const token     = exists ? pub.token      : null;
+  const fields    = exists ? (pub.public_fields || []) : ['display_id','line','parents','weight','stage','sale_status'];
+  const comment   = exists ? (pub.custom_comment || '') : '';
+  const growthCnt = exists ? (pub.show_growth_count || 5) : 5;
+  const viewCount = exists ? (pub.view_count || 0) : 0;
+  const lineUrl   = exists ? (pub.contact_line_url || '') : '';
+  const formUrl   = exists ? (pub.contact_form_url || '') : '';
+
+  // 既存写真を __pubPhotos に設定
   const mainPhotoUrl   = exists ? (pub.main_photo_url || '') : '';
   const extraPhotoUrls = exists ? (pub.photo_urls || []) : [];
-
-  window.__pubPhotos = [
-    mainPhotoUrl        ? { existingUrl: mainPhotoUrl }        : null,
-    extraPhotoUrls[0]   ? { existingUrl: extraPhotoUrls[0] }   : null,
-    extraPhotoUrls[1]   ? { existingUrl: extraPhotoUrls[1] }   : null,
-  ];
+  window.__pubPhotos   = Array(PUB_PHOTO_MAX).fill(null);
+  if (mainPhotoUrl) window.__pubPhotos[0] = { existingUrl: mainPhotoUrl };
+  extraPhotoUrls.forEach(function(url, i) {
+    if (url && i + 1 < PUB_PHOTO_MAX) window.__pubPhotos[i + 1] = { existingUrl: url };
+  });
 
   const displayName = (ind && ind.display_id) || indId;
   const publicUrl   = token ? (location.origin + location.pathname + '#page=public-view&token=' + token) : null;
@@ -118,6 +119,13 @@ function _renderPublicEdit(main, ind, pub, indId) {
           </label>`).join('')}
       </div>
     </div>`).join('');
+
+  // 写真グリッドHTML (10スロット: メイン大1 + サブ小9)
+  const photoGridHTML = '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px">'
+    + Array.from({length: PUB_PHOTO_MAX}, (_, i) =>
+        '<div id="pub-photo-slot-' + i + '">' + _photoSlotHtml(i, window.__pubPhotos[i]) + '</div>'
+      ).join('')
+    + '</div>';
 
   main.innerHTML = `
     ${UI.header('公開設定 — ' + displayName, { back: true })}
@@ -150,12 +158,12 @@ function _renderPublicEdit(main, ind, pub, indId) {
       </div>`}
 
       <div class="card">
-        <div class="card-title" style="margin-bottom:4px">📷 公開写真（最大3枚）</div>
-        <div style="font-size:.72rem;color:var(--text3);margin-bottom:12px">1枚目がメイン写真として大きく表示されます</div>
-        <div id="pub-photos-grid" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
-          ${[0,1,2].map(i => '<div id="pub-photo-slot-' + i + '">' + _photoSlotHtml(i, window.__pubPhotos[i]) + '</div>').join('')}
+        <div class="card-title" style="margin-bottom:4px">📷 公開写真（最大${PUB_PHOTO_MAX}枚）</div>
+        <div style="font-size:.72rem;color:var(--text3);margin-bottom:10px">1枚目がメイン写真として大きく表示 / スロットをタップして追加</div>
+        ${photoGridHTML}
+        <div style="font-size:.7rem;color:var(--text3);margin-top:8px;text-align:center">
+          自動圧縮（最大800px）してPOST送信 — URLパラメータ制限なし
         </div>
-        <div style="font-size:.7rem;color:var(--text3);margin-top:8px;text-align:center">自動圧縮（最大600px）して保存します</div>
       </div>
 
       <input type="file" id="pub-photo-input" accept="image/*" style="display:none" onchange="Pages._pubPhotoFileSelected(this)">
@@ -210,7 +218,7 @@ Pages._pubPhotoFileSelected = async function (input) {
   if (!file) return;
   UI.toast('圧縮中...', 'info', 1500);
   try {
-    const compressed = await compressImageToBase64(file, 600, 0.55);
+    const compressed = await compressImageToBase64(file, 800, 0.72);
     window.__pubPhotos[index] = { base64: compressed.base64, mime: compressed.mimeType, dataUrl: compressed.dataUrl };
     const slot = document.getElementById('pub-photo-slot-' + index);
     if (slot) slot.innerHTML = _photoSlotHtml(index, window.__pubPhotos[index]);
@@ -246,9 +254,11 @@ Pages._pubSave = async function (indId) {
     UI.loading(true);
     const ind           = Store.getIndividual(safeId);
     const lineDisplayId = (ind && ind.display_id) ? ind.display_id.split('-').slice(0, 2).join('-') : 'UNKNOWN';
-    const uploadedUrls  = [];
 
-    for (let i = 0; i < 3; i++) {
+    // ── 写真を順番にアップロード（POSTで送信）────────────────
+    const uploadedUrls = Array(PUB_PHOTO_MAX).fill(undefined);
+
+    for (let i = 0; i < PUB_PHOTO_MAX; i++) {
       const ph = window.__pubPhotos[i];
       if (ph && ph.base64 && ph.mime) {
         const ext      = ph.mime.split('/')[1] || 'jpg';
@@ -260,23 +270,23 @@ Pages._pubSave = async function (indId) {
           });
           uploadedUrls[i] = (upRes && upRes.url) ? upRes.url : '';
         } catch (upErr) {
-          UI.toast((i === 0 ? 'メイン' : (i+1) + '枚目') + '写真のアップロード失敗: ' + upErr.message, 'error');
+          UI.toast((i === 0 ? 'メイン' : (i+1) + '枚目') + '写真失敗: ' + upErr.message, 'error');
           uploadedUrls[i] = undefined;
         }
       } else if (ph && ph.remove) {
         uploadedUrls[i] = '';
-      } else {
-        uploadedUrls[i] = undefined;
       }
+      // undefined = 変更なし
     }
 
+    // ── ペイロード組み立て ────────────────────────────────────
     const payload = {
       ind_id: safeId, is_public: isPublic, level: 'public',
       public_fields: JSON.stringify(checked), custom_comment: comment,
       show_growth_count: growthCnt, contact_line_url: lineUrl, contact_form_url: formUrl,
     };
     if (uploadedUrls[0] !== undefined) payload.main_photo_url = uploadedUrls[0];
-    const extras = [uploadedUrls[1], uploadedUrls[2]].filter(u => u !== undefined);
+    const extras = uploadedUrls.slice(1).filter(u => u !== undefined);
     if (extras.length > 0) payload.photo_urls = JSON.stringify(extras);
 
     await API.publicPage.createOrUpdate(payload);

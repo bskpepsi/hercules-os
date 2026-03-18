@@ -46,6 +46,79 @@ const API = (() => {
     }
   }
 
+  // ── POST専用通信（画像アップロード用）────────────────────────
+  // 【GASリダイレクト問題の回避】
+  // GASのウェブアプリURLはPOSTを302リダイレクトする。
+  // redirect:'follow' だとリダイレクト先でPOST→GETに変換されボディが失われる。
+  // 解決: まず redirect:'manual' で302レスポンスを受け取り、
+  //       Location ヘッダーのリダイレクト先URLに同じボディで再POST する。
+  async function callPost(action, payload = {}) {
+    const gasUrl = CONFIG.GAS_URL || localStorage.getItem(CONFIG.LS_KEYS.GAS_URL) || '';
+    if (!gasUrl) throw new Error('GAS URLが設定されていません。');
+
+    const body = JSON.stringify(Object.assign({ action }, payload));
+    const ctrl = new AbortController();
+    const tid  = setTimeout(() => ctrl.abort(), 90000);
+
+    try {
+      // Step1: GAS URLへPOST → 302が返ってくる（ボディは無視）
+      let postUrl = gasUrl;
+      try {
+        const probe = await fetch(gasUrl, {
+          method:   'POST',
+          headers:  { 'Content-Type': 'text/plain' },
+          redirect: 'manual',
+          body:     body,
+        });
+        // 302の場合: Location ヘッダーのリダイレクト先を取得
+        if (probe.type === 'opaqueredirect' || probe.status === 0) {
+          // opaqueredirectの場合はヘッダーが読めないため元URLにそのまま送る
+        } else if (probe.status >= 300 && probe.status < 400) {
+          const loc = probe.headers.get('location');
+          if (loc) postUrl = loc;
+        } else if (probe.ok) {
+          // リダイレクトなしで直接レスポンスが返った（開発環境等）
+          clearTimeout(tid);
+          const json = await probe.json();
+          if (!json.ok) throw new Error(json.error || '不明なエラー');
+          return json.data;
+        }
+      } catch (probeErr) {
+        // probe自体のエラーは無視して元URLに直接POSTを試みる
+        console.warn('[callPost] probe failed, trying direct POST:', probeErr.message);
+      }
+
+      // Step2: リダイレクト先（またはオリジナルURL）に再POST
+      const res = await fetch(postUrl, {
+        method:   'POST',
+        headers:  { 'Content-Type': 'text/plain' },
+        redirect: 'follow',
+        signal:   ctrl.signal,
+        body:     body,
+      });
+      clearTimeout(tid);
+
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+
+      // GASがHTMLを返した場合に備えてテキストで受け取りパース
+      const text = await res.text();
+      let json;
+      try {
+        json = JSON.parse(text);
+      } catch(parseErr) {
+        console.error('[callPost] GAS returned non-JSON:', text.slice(0, 200));
+        throw new Error('GASがJSONを返しませんでした。スクリプトエラーの可能性があります。');
+      }
+      if (!json.ok) throw new Error(json.error || '不明なエラー');
+      return json.data;
+
+    } catch (e) {
+      clearTimeout(tid);
+      if (e.name === 'AbortError') throw new Error('タイムアウト（90秒）。画像が大きすぎる可能性があります。');
+      throw e;
+    }
+  }
+
   // ── システム ──────────────────────────────────────────────────
   const system = {
     init:       ()        => call('init'),
@@ -247,7 +320,8 @@ const API = (() => {
     getByToken:     (token) => call('getPublicByToken',     { token }),
     getByIndId:     (indId) => call('getPublicByIndId',     { ind_id: indId }),
     incrementView:  (token) => call('incrementViewCount',   { token }),
-    uploadPhoto:    (d)     => call('uploadPhoto',          d),
+    // 画像アップロードはPOSTで送信（GETのURLパラメータ長さ制限を回避）
+    uploadPhoto:    (d)     => callPost('uploadPhoto',      d),
   };
 
 return { system, line, lot, individual, growth, parent, bloodline, pairing, label, drive, gemini, backup, scan, phase2, integrity, publicPage };
