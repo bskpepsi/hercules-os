@@ -396,30 +396,158 @@ Pages._pairShowLabel = function (setId) {
   routeTo('label-gen', { targetType: 'SET', targetId: setId });
 };
 
-// ── 採卵記録モーダル ────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════
+// 採卵記録 → 次アクション（2ステップモーダル）
+// Step1: 採卵記録入力
+// Step2: 次アクション選択（継続 / 休養 / その他）
+// ════════════════════════════════════════════════════════════════
+
 Pages._pairAddEggModal = function (setId) {
-  const today = new Date().toISOString().split('T')[0];
-  _showModal('採卵記録', `
+  const today        = new Date().toISOString().split('T')[0];
+  const exchDays     = parseInt(Store.getSetting('pairing_set_exchange_days') || '7', 10);
+  const defaultNext  = new Date();
+  defaultNext.setDate(defaultNext.getDate() + exchDays);
+  const defaultNextStr = defaultNext.toISOString().split('T')[0];
+
+  _showModal('🥚 採卵記録', `
     <div class="form-section">
-      ${UI.field('今回のセット日（投入日）', `<input type="date" id="egg-set-date" class="input" value="${today}">`)}
-      ${UI.field('採卵日',                  `<input type="date" id="egg-date"     class="input" value="${today}">`)}
+      <div style="font-size:.75rem;font-weight:700;color:var(--text3);
+        letter-spacing:.06em;margin-bottom:10px">STEP 1 — 記録内容</div>
+
+      ${UI.field('今回のセット日（投入日）',
+        '<input type="date" id="egg-set-date" class="input" value="' + today + '">')}
+      ${UI.field('採卵日',
+        '<input type="date" id="egg-date" class="input" value="' + today + '">')}
       <div class="form-row-2">
-        ${UI.field('採卵数',     `<input type="number" id="egg-count"   class="input" min="0" value="0">`)}
-        ${UI.field('孵化確認数', `<input type="number" id="hatch-count" class="input" min="0" value="0">`)}
+        ${UI.field('採卵数',
+          '<input type="number" id="egg-count" class="input" min="0" value="0">')}
+        ${UI.field('孵化確認数',
+          '<input type="number" id="hatch-count" class="input" min="0" value="0">')}
       </div>
       <div class="form-row-2">
-        ${UI.field('腐卵数（無精卵・潰れ等）', `<input type="number" id="egg-failed" class="input" min="0" value="0" placeholder="無精卵・潰れ等">`)}
+        ${UI.field('腐卵数（無精卵・潰れ等）',
+          '<input type="number" id="egg-failed" class="input" min="0" value="0">')}
         <div></div>
       </div>
-      ${UI.field('メモ（任意）', `<input type="text" id="egg-note" class="input" placeholder="例: 材あり・26℃">`)}
-      <div style="font-size:.75rem;color:var(--text3);margin-bottom:8px">孵化確認がまだの場合は0でOK</div>
-      <div class="modal-footer">
-        <button class="btn btn-ghost" style="flex:1" type="button" onclick="_closeModal()">キャンセル</button>
-        <button class="btn btn-primary" style="flex:2" type="button" onclick="Pages._pairSaveEgg('${setId}')">記録する</button>
+      ${UI.field('メモ（任意）',
+        '<input type="text" id="egg-note" class="input" placeholder="例: 材あり・26℃">')}
+      <div style="font-size:.72rem;color:var(--text3);margin-bottom:12px">
+        孵化確認がまだの場合は0でOK
+      </div>
+
+      <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:4px">
+        <div style="font-size:.75rem;font-weight:700;color:var(--text3);
+          letter-spacing:.06em;margin-bottom:12px">STEP 2 — 次のアクション</div>
+
+        <!-- ── 主操作: 継続 / 休養 ────────────────────────────── -->
+        <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:14px">
+
+          <!-- 継続して戻す -->
+          <div id="act-continue-wrap">
+            <button type="button" id="act-continue-btn"
+              class="btn-pair-action btn-pair-action-green"
+              onclick="Pages._pairActSelect('continue')">
+              ♻️ そのまま継続して戻す
+            </button>
+            <div id="act-continue-opts" style="display:none;
+              background:var(--surface2);border:1px solid var(--border);
+              border-radius:0 0 10px 10px;padding:12px;margin-top:-4px">
+              ${UI.field('次回採卵まで（日）',
+                '<input type="number" id="continue-days" class="input" min="1" max="60" value="' + exchDays + '">')}
+              <div style="font-size:.72rem;color:var(--text3)">
+                次回採卵予定日が自動計算されます
+              </div>
+            </div>
+          </div>
+
+          <!-- 休養させて戻す -->
+          <div id="act-rest-wrap">
+            <button type="button" id="act-rest-btn"
+              class="btn-pair-action btn-pair-action-blue"
+              onclick="Pages._pairActSelect('rest')">
+              😴 数日休養させてから戻す
+            </button>
+            <div id="act-rest-opts" style="display:none;
+              background:var(--surface2);border:1px solid var(--border);
+              border-radius:0 0 10px 10px;padding:12px;margin-top:-4px">
+              <div class="form-row-2">
+                ${UI.field('休養日数',
+                  '<input type="number" id="rest-days" class="input" min="1" max="30" value="3">')}
+                ${UI.field('再投入後 採卵まで（日）',
+                  '<input type="number" id="rest-collect-days" class="input" min="1" max="60" value="' + exchDays + '">')}
+              </div>
+              <div style="font-size:.72rem;color:var(--text3)">
+                休養終了日と次回採卵予定日が自動計算されます
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── その他（折りたたみ）───────────────────────────── -->
+        <details style="margin-top:2px">
+          <summary style="
+            font-size:.78rem;color:var(--text3);cursor:pointer;
+            padding:8px 4px;list-style:none;display:flex;
+            align-items:center;gap:4px;user-select:none">
+            <span id="other-arrow" style="font-size:.7rem">▶</span>
+            その他の操作（完了・失敗・死亡）
+          </summary>
+          <div style="display:flex;flex-direction:column;gap:8px;padding:10px 4px 4px">
+            <button type="button" class="btn-pair-action btn-pair-action-gray"
+              onclick="Pages._pairActSelect('completed')">
+              ✅ 産卵セットを完了にする
+            </button>
+            <button type="button" class="btn-pair-action btn-pair-action-gray"
+              onclick="Pages._pairActSelect('failed')">
+              ❌ 失敗として記録する
+            </button>
+            <button type="button" class="btn-pair-action btn-pair-action-danger"
+              onclick="Pages._pairActSelect('dead')">
+              💀 ♀が死亡した（セット終了）
+            </button>
+          </div>
+        </details>
+
+        <!-- 選択状態の隠しフィールド -->
+        <input type="hidden" id="egg-next-action" value="continue">
+      </div>
+
+      <div class="modal-footer" style="margin-top:14px">
+        <button class="btn btn-ghost" style="flex:1" type="button"
+          onclick="_closeModal()">キャンセル</button>
+        <button class="btn btn-primary" style="flex:2" type="button"
+          onclick="Pages._pairSaveEgg('${setId}')">記録・保存</button>
       </div>
     </div>`);
+
+  // 初期選択: 継続
+  Pages._pairActSelect('continue');
 };
 
+// ── アクション選択の表示切り替え ────────────────────────────────
+Pages._pairActSelect = function (action) {
+  const actionEl = document.getElementById('egg-next-action');
+  if (actionEl) actionEl.value = action;
+
+  // ボタンをリセット
+  ['continue','rest','completed','failed','dead'].forEach(function(a) {
+    const btn = document.getElementById('act-' + a + '-btn');
+    if (btn) {
+      btn.style.opacity = (a === action) ? '1' : '0.55';
+      btn.style.fontWeight = (a === action) ? '800' : '600';
+    }
+  });
+
+  // 継続オプション開閉
+  const contOpts = document.getElementById('act-continue-opts');
+  if (contOpts) contOpts.style.display = (action === 'continue') ? 'block' : 'none';
+
+  // 休養オプション開閉
+  const restOpts = document.getElementById('act-rest-opts');
+  if (restOpts) restOpts.style.display = (action === 'rest') ? 'block' : 'none';
+};
+
+// ── 採卵記録保存 + 次アクション実行 ─────────────────────────────
 Pages._pairSaveEgg = async function (setId) {
   const setDate = (document.getElementById('egg-set-date')?.value || '').replace(/-/g,'/');
   const date    = (document.getElementById('egg-date')?.value     || '').replace(/-/g,'/');
@@ -427,13 +555,106 @@ Pages._pairSaveEgg = async function (setId) {
   const hatch   = +document.getElementById('hatch-count')?.value  || 0;
   const failed  = +document.getElementById('egg-failed')?.value   || 0;
   const note    = document.getElementById('egg-note')?.value      || '';
-  // 採卵日は任意（空でも登録可）
+  const action  = document.getElementById('egg-next-action')?.value || 'continue';
+
+  // ── 死亡の場合は事前確認 ─────────────────────────────────────
+  if (action === 'dead') {
+    if (!UI.confirm('♀が死亡したとして記録します。\n\n・産卵セットを完了にします\n・対象の♀個体ステータスを「死亡」にします\n\n後で編集から修正できます。続けますか？')) return;
+  }
+
+  // ── 次回予定日の計算 ─────────────────────────────────────────
+  const today   = new Date();
+  let nextCollect  = '';
+  let restUntil    = '';
+  const exchDays   = parseInt(Store.getSetting('pairing_set_exchange_days') || '7', 10);
+
+  if (action === 'continue') {
+    const contDays = parseInt(document.getElementById('continue-days')?.value || String(exchDays), 10);
+    const d = new Date();
+    d.setDate(d.getDate() + contDays);
+    nextCollect = d.toISOString().split('T')[0].replace(/-/g,'/');
+  } else if (action === 'rest') {
+    const restDays    = parseInt(document.getElementById('rest-days')?.value         || '3',          10);
+    const afterDays   = parseInt(document.getElementById('rest-collect-days')?.value || String(exchDays), 10);
+    const restEnd = new Date();
+    restEnd.setDate(restEnd.getDate() + restDays);
+    restUntil = restEnd.toISOString().split('T')[0].replace(/-/g,'/');
+    const nextD = new Date(restEnd);
+    nextD.setDate(nextD.getDate() + afterDays);
+    nextCollect = nextD.toISOString().split('T')[0].replace(/-/g,'/');
+  }
+
   _closeModal();
+
   try {
+    // ── 採卵記録を保存 ─────────────────────────────────────────
     await apiCall(
-      () => API.pairing.addEgg({ set_id: setId, round_set_date: setDate, collect_date: date, egg_count: eggs, hatch_count: hatch, failed_count: failed, note }),
-      `採卵${eggs}個を記録しました`
+      () => API.pairing.addEgg({
+        set_id:          setId,
+        round_set_date:  setDate,
+        collect_date:    date,
+        egg_count:       eggs,
+        hatch_count:     hatch,
+        failed_count:    failed,
+        note,
+      }),
+      '採卵' + eggs + '個を記録しました'
     );
+
+    // ── パイアリングの次アクション情報を更新 ──────────────────
+    const pairUpdates = {
+      set_id:             setId,
+      next_action:        action,
+      next_collect_date:  nextCollect,
+      rest_until_date:    restUntil,
+    };
+
+    // 終了系アクションの場合: ステータスを変更
+    if (action === 'completed') {
+      pairUpdates.status         = 'completed';
+      pairUpdates.closing_reason = 'completed';
+      pairUpdates.next_collect_date = '';
+      pairUpdates.rest_until_date   = '';
+    } else if (action === 'failed') {
+      pairUpdates.status         = 'failed';
+      pairUpdates.closing_reason = 'failed';
+      pairUpdates.next_collect_date = '';
+      pairUpdates.rest_until_date   = '';
+    } else if (action === 'dead') {
+      pairUpdates.status         = 'completed';
+      pairUpdates.closing_reason = 'dead';
+      pairUpdates.next_action    = 'dead';
+      pairUpdates.next_collect_date = '';
+      pairUpdates.rest_until_date   = '';
+    }
+
+    await API.pairing.update(pairUpdates).catch(function(e) {
+      console.warn('pairing update failed:', e.message);
+    });
+
+    // ── 死亡の場合: ♀個体ステータスを dead に変更 ────────────
+    if (action === 'dead') {
+      const pair = (Store.getDB('pairings') || []).find(function(p) {
+        return p.set_id === setId;
+      });
+      const motherParId = pair && pair.mother_par_id;
+      if (motherParId) {
+        // 種親台帳から個体IDを逆引き
+        const parents = Store.getDB('parents') || [];
+        const mother  = parents.find(function(p) { return p.par_id === motherParId; });
+        const indId   = mother && mother.ind_id; // 種親昇格時に設定される ind_id
+        if (indId) {
+          await API.individual.update({
+            ind_id:       indId,
+            status:       'dead',
+            note_private: '[自動] 産卵セット ' + setId + ' 終了時に死亡として記録',
+          }).catch(function(e) {
+            console.warn('individual dead update failed:', e.message);
+          });
+        }
+      }
+    }
+
     Pages.pairingDetail(setId);
   } catch(e) {}
 };
@@ -543,14 +764,29 @@ style="display:none">
   } catch(e) { UI.toast('取得失敗: ' + e.message, 'error'); }
 };
 
+// _pairComplete / _pairFail はセット詳細下部のボタン（採卵記録なしで完了させる場合）
 Pages._pairComplete = async function (id) {
-  if (!UI.confirm('完了にしますか？')) return;
-  try { await apiCall(() => API.pairing.update({ set_id: id, status: 'completed' }), '完了にしました'); Pages.pairingDetail(id); } catch(e){}
+  if (!UI.confirm('完了にしますか？\n採卵記録は採卵記録ボタンから追加できます。')) return;
+  try {
+    await apiCall(() => API.pairing.update({
+      set_id: id, status: 'completed',
+      closing_reason: 'completed', next_action: 'completed',
+      next_collect_date: '', rest_until_date: '',
+    }), '完了にしました');
+    Pages.pairingDetail(id);
+  } catch(e){}
 };
 
 Pages._pairFail = async function (id) {
   if (!UI.confirm('失敗として記録しますか？')) return;
-  try { await apiCall(() => API.pairing.update({ set_id: id, status: 'failed' }), '失敗として記録しました'); Pages.pairingDetail(id); } catch(e){}
+  try {
+    await apiCall(() => API.pairing.update({
+      set_id: id, status: 'failed',
+      closing_reason: 'failed', next_action: 'failed',
+      next_collect_date: '', rest_until_date: '',
+    }), '失敗として記録しました');
+    Pages.pairingDetail(id);
+  } catch(e){}
 };
 
 // ── 産卵セット登録・編集 ─────────────────────────────────────────

@@ -1320,3 +1320,62 @@ textarea.input { resize: vertical; min-height: 72px; }
   color: var(--text2);
   letter-spacing: .03em;
 }
+
+/* ════════════════════════════════════════════════════════════
+   産卵セット 次アクションボタン
+   ════════════════════════════════════════════════════════════ */
+
+.btn-pair-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 52px;
+  padding: 13px 14px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  font-size: .9rem;
+  font-weight: 700;
+  cursor: pointer;
+  letter-spacing: .02em;
+  transition: opacity .15s, transform .1s;
+  -webkit-tap-highlight-color: transparent;
+  box-sizing: border-box;
+  text-align: center;
+}
+.btn-pair-action:active {
+  opacity: .8;
+  transform: scale(.97);
+}
+
+/* 継続: 緑系 */
+.btn-pair-action-green {
+  background: rgba(76,175,120,.18);
+  color: var(--green);
+  border-color: rgba(76,175,120,.45);
+}
+
+/* 休養: 青系 */
+.btn-pair-action-blue {
+  background: rgba(91,168,232,.15);
+  color: var(--blue);
+  border-color: rgba(91,168,232,.4);
+}
+
+/* その他（完了・失敗）: グレー */
+.btn-pair-action-gray {
+  background: rgba(255,255,255,.05);
+  color: var(--text2);
+  border-color: var(--border);
+  min-height: 44px;
+  font-size: .84rem;
+}
+
+/* 危険（死亡）: 赤 */
+.btn-pair-action-danger {
+  background: rgba(224,80,80,.12);
+  color: var(--red, #e05555);
+  border-color: rgba(224,80,80,.35);
+  min-height: 44px;
+  font-size: .84rem;
+}

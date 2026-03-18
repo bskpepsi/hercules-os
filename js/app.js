@@ -46,6 +46,9 @@ window.PAGES = {
   'qr-scan':     () => Pages.qrScan(Store.getParams()),
   'qr-diff':     () => Pages.qrDiff(Store.getParams()),
   'weight-mode': () => Pages.weightMode(Store.getParams()),
+  // ── Phase5.5: 公開ページ ─────────────────────────────────────
+  'public-edit': () => Pages.publicEdit(Store.getParams()),
+  'public-view': () => Pages.publicView(Store.getParams()),
 };
 
 // ── 起動（PAGES定義の後に配置することでPAGES参照を保証） ────────
