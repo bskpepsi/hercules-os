@@ -1,20 +1,18 @@
 // ════════════════════════════════════════════════════════════════
 // label.js
-// 役割: 個体・ロット・産卵セットのラベルをCanvas APIで生成し
+// 役割: 個体・ロット・産卵セット・種親のラベルをCanvas APIで生成し
 //       Phomemo M220 向け PNG として出力する。
 //       QRコードには内部ID（IND:xxx / LOT:xxx / SET:xxx）を埋め込む。
-//       Phomemoアプリで開く手順を画面に案内する。
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
 // ラベルサイズ（Phomemo M220 標準: 50×30mm を 200dpi 換算）
-// 現在生成中のラベル情報（_lblDownload で使用）
 window._currentLabel = { displayId: '', fileName: '', dataUrl: '' };
 
 const LABEL_W = 394;  // px (50mm)
 const LABEL_H = 236;  // px (30mm)
 
-// ── 4種ラベルの定義（ラベル選択UIで使用）────────────────────────────
+// ── ラベル種別定義 ────────────────────────────────────────────────
 const LABEL_TYPE_DEFS = [
   { code: 'egg_lot',   label: '① 卵管理',     target: 'LOT', desc: '採卵後・孵化日/頭数は後で補完' },
   { code: 'multi_lot', label: '② 複数頭飼育', target: 'LOT', desc: 'T1/T2①ロット用' },
@@ -24,8 +22,76 @@ const LABEL_TYPE_DEFS = [
   { code: 'sale',      label: '⑥ 販売用',     target: 'IND', desc: '販売・イベント向け（価格・QR）' },
 ];
 
-// ── ラベル生成メイン ─────────────────────────────────────────────
-Pages.labelGen = function (params = {}) {
+// ════════════════════════════════════════════════════════════════
+// _sortDisplayId — 表示IDの自然順ソート（グローバル共通関数）
+//
+// ソートキー優先順:
+//   1. 年        HM[2026]-B2-L01  → 数値比較
+//   2. 種親記号  HM2026-[B]2-L01  → アルファベット比較
+//   3. セット番号 HM2026-B[2]-L01 → 数値比較
+//   4. ロット番号 HM2026-B2-[L01] → 数値比較
+//
+// @param list  { sortKey: string(display_id), ...} の配列
+// @param dir   'asc' | 'desc'
+// ════════════════════════════════════════════════════════════════
+function _sortDisplayId(list, dir) {
+  // display_id から [year, parentLetter, setNum, lotNum] を抽出
+  function extractKey(displayId) {
+    // プレフィックス (IND-/LOT-/PAR-/SET-) と末尾スペース以降を除去
+    var s = String(displayId || '').replace(/^(IND|LOT|PAR|SET)-/i, '').split(' ')[0];
+    var parts = s.split('-');
+
+    var year = 0, parentLetter = '', setNum = 0, lotNum = 0;
+
+    for (var i = 0; i < parts.length; i++) {
+      var p = parts[i];
+
+      // 年: "HM2026" — 英字1〜3文字 + 4桁数字
+      if (/^[A-Za-z]{1,3}[0-9]{4}$/.test(p)) {
+        year = parseInt(p.replace(/[^0-9]/g, ''), 10) || 0;
+        continue;
+      }
+
+      // 産卵セットコード: "A1" "B2" — 英字1文字 + 数字1桁以上
+      if (/^[A-Za-z][0-9]+$/.test(p)) {
+        var sm = p.match(/^([A-Za-z])([0-9]+)$/);
+        if (sm) { parentLetter = sm[1].toUpperCase(); setNum = parseInt(sm[2], 10) || 0; }
+        continue;
+      }
+
+      // ロット番号: "L01" "L02" — L + 数字
+      if (/^[Ll][0-9]+$/.test(p)) {
+        lotNum = parseInt(p.slice(1), 10) || 0;
+        continue;
+      }
+      // "A" "B" "C" などサブID枝番は無視（ソートキー不要）
+    }
+
+    return [year, parentLetter, setNum, lotNum];
+  }
+
+  var sorted = list.slice().sort(function(a, b) {
+    // sortKey は必ず entity.display_id（ラベル表示文字列ではない）
+    var ka = extractKey(a.sortKey);
+    var kb = extractKey(b.sortKey);
+
+    if (ka[0] !== kb[0]) return ka[0] - kb[0];          // 年
+    if (ka[1] !== kb[1]) return ka[1] < kb[1] ? -1 : 1; // 種親記号
+    if (ka[2] !== kb[2]) return ka[2] - kb[2];          // セット番号
+    if (ka[3] !== kb[3]) return ka[3] - kb[3];          // ロット番号
+    // フォールバック: display_id 文字列比較
+    return String(a.sortKey) < String(b.sortKey) ? -1 : 1;
+  });
+
+  if (dir === 'desc') sorted.reverse();
+  return sorted;
+}
+
+// ════════════════════════════════════════════════════════════════
+// Pages.labelGen — ラベル生成メイン
+// ════════════════════════════════════════════════════════════════
+Pages.labelGen = function (params) {
+  params = params || {};
   const main = document.getElementById('main');
   let targetType = params.targetType || 'IND';
   let targetId   = params.targetId   || '';
@@ -36,18 +102,19 @@ Pages.labelGen = function (params = {}) {
   );
   const autoGenerate = !!params.autoGenerate;
 
-  // ── 一括生成: 選択済みIDセット ──────────────────────────────
-  // key: targetId, value: true
-  window.__lblBulkSelected  = window.__lblBulkSelected || {};
-  window.__lblAutoGenDone   = false; // autoGenerate の初回フラグ
-  window.__lblBulkDataUrls  = [];    // 一括生成DLリスト（将来のZIP/Drive用）
+  // ── 一括生成選択状態（ページ内で保持）──────────────────────────
+  // { [id]: true/false }
+  let bulkSelected = {};
+
+  // ソート方向
+  let sortDir = 'asc';
 
   // モード: 'single' | 'bulk'
   let mode = 'single';
 
   const inds    = Store.filterIndividuals({ status: 'alive' });
   const lots    = Store.filterLots({ status: 'active' });
-  const parents = (Store.getDB('parents') || []).filter(p => p.status === 'active');
+  const parents = (Store.getDB('parents')  || []).filter(p => p.status === 'active');
   const pairs   = (Store.getDB('pairings') || []).filter(p => p.status === 'active');
 
   // 対象ごとの自動ラベル種別
@@ -58,86 +125,94 @@ Pages.labelGen = function (params = {}) {
     return 'ind_fixed';
   }
 
-  // ── 一括生成リスト取得 ────────────────────────────────────────
-  // ── ソート方向 (asc/desc) ─────────────────────────────────────
-  let sortDir = 'asc';
-
+  // ── 対象一覧（ソート済み）────────────────────────────────────
   function getTargetList() {
-    let list;
-    if (targetType === 'IND') list = inds.map(i => ({ id: i.ind_id, label: i.display_id + ' ' + (i.sex||'') + (i.latest_weight_g?' ('+i.latest_weight_g+'g)':''), entity: i, sortKey: i.display_id||'' }));
-    else if (targetType === 'LOT') list = lots.map(l => ({ id: l.lot_id, label: l.display_id + ' ' + (stageLabel(l.stage)||'') + ' (' + (l.count||0) + '頭)', entity: l, sortKey: l.display_id||'' }));
-    else if (targetType === 'SET') list = pairs.map(p => ({ id: p.set_id, label: p.set_name || p.display_id, entity: p, sortKey: p.display_id||p.set_name||'' }));
-    else list = parents.map(p => ({ id: p.par_id, label: (p.display_name||p.par_id) + ' ' + (p.sex||'') + (p.size_mm?' '+p.size_mm+'mm':''), entity: p, sortKey: p.display_name||p.par_id||'' }));
-    return _sortDisplayId(list, sortDir);
+    let raw;
+    if (targetType === 'IND')
+      raw = inds.map(i => ({
+        id: i.ind_id,
+        sortKey: i.display_id || '',           // ← display_id だけ（表示文字列混入なし）
+        label: (i.display_id || '') + (i.sex ? ' ' + i.sex : '') + (i.latest_weight_g ? ' (' + i.latest_weight_g + 'g)' : ''),
+        entity: i,
+      }));
+    else if (targetType === 'LOT')
+      raw = lots.map(l => ({
+        id: l.lot_id,
+        sortKey: l.display_id || '',           // ← display_id だけ
+        label: (l.display_id || '') + (stageLabel(l.stage) ? ' ' + stageLabel(l.stage) : '') + ' (' + (l.count || 0) + '頭)',
+        entity: l,
+      }));
+    else if (targetType === 'SET')
+      raw = pairs.map(p => ({
+        id: p.set_id,
+        sortKey: p.display_id || p.set_name || '',
+        label: p.set_name || p.display_id || '',
+        entity: p,
+      }));
+    else
+      raw = parents.map(p => ({
+        id: p.par_id,
+        sortKey: p.display_name || p.par_id || '',
+        label: (p.display_name || p.par_id || '') + (p.sex ? ' ' + p.sex : '') + (p.size_mm ? ' ' + p.size_mm + 'mm' : ''),
+        entity: p,
+      }));
+
+    return _sortDisplayId(raw, sortDir);
   }
 
+  // ── レンダリング ─────────────────────────────────────────────
   function render() {
     const targetList = getTargetList();
-    const selected   = window.__lblBulkSelected;
-    const selCount   = Object.keys(selected).filter(k => selected[k]).length;
+    // bulkSelected の件数を毎回カウント（re-render 時も正確に反映）
+    const selCount = Object.values(bulkSelected).filter(Boolean).length;
 
     main.innerHTML =
       UI.header('ラベル生成', {})
       + '<div class="page-body">'
 
-      // ── モード切替タブ ──
+      // ── モード切替タブ ──────────────────────────────────────
       + '<div style="display:flex;gap:0;border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:0">'
       + '<button style="flex:1;padding:10px;font-size:.85rem;font-weight:700;border:none;cursor:pointer;'
-        + (mode==='single' ? 'background:var(--green);color:#fff;' : 'background:var(--surface2);color:var(--text2);')
+        + (mode === 'single' ? 'background:var(--green);color:#fff;' : 'background:var(--surface2);color:var(--text2);')
         + '" onclick="Pages._lblSetMode(\'single\')">🏷 単体生成</button>'
       + '<button style="flex:1;padding:10px;font-size:.85rem;font-weight:700;border:none;cursor:pointer;'
-        + (mode==='bulk' ? 'background:var(--green);color:#fff;' : 'background:var(--surface2);color:var(--text2);')
+        + (mode === 'bulk' ? 'background:var(--green);color:#fff;' : 'background:var(--surface2);color:var(--text2);')
         + '" onclick="Pages._lblSetMode(\'bulk\')">📦 一括生成</button>'
       + '</div>'
 
-      // ── 対象種別ピル ──
+      // ── 対象種別ピル ────────────────────────────────────────
       + '<div class="card" style="margin-top:8px">'
       + '<div class="card-title">ラベル対象</div>'
-      + '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:' + (mode==='single' ? '10px' : '0') + '">'
-      + '<button class="pill ' + (targetType==='IND'?'active':'') + '" onclick="Pages._lblSetType(\'IND\')">個体</button>'
-      + '<button class="pill ' + (targetType==='LOT'?'active':'') + '" onclick="Pages._lblSetType(\'LOT\')">ロット</button>'
-      + '<button class="pill ' + (targetType==='SET'?'active':'') + '" onclick="Pages._lblSetType(\'SET\')">産卵セット</button>'
-      + '<button class="pill ' + (targetType==='PAR'?'active':'') + '" onclick="Pages._lblSetType(\'PAR\')">種親</button>'
+      + '<div style="display:flex;flex-wrap:wrap;gap:8px;' + (mode === 'single' ? 'margin-bottom:10px' : '') + '">'
+      + ['IND','LOT','SET','PAR'].map(t =>
+          '<button class="pill ' + (targetType === t ? 'active' : '') + '" onclick="Pages._lblSetType(\'' + t + '\')">'
+          + ({ IND:'個体', LOT:'ロット', SET:'産卵セット', PAR:'種親' }[t]) + '</button>'
+        ).join('')
       + '</div>'
 
-      // ── 単体: ドロップダウン ──
-      + (mode === 'single' ? (
-          (targetType === 'IND' ? '<select id="lbl-target" class="input" onchange="Pages._lblSetTarget(this.value)">'
-            + '<option value="">個体を選択...</option>'
-            + inds.map(i => '<option value="' + i.ind_id + '" ' + (i.ind_id===targetId?'selected':'') + '>'
-              + i.display_id + ' ' + (i.sex||'') + (i.latest_weight_g?' ('+i.latest_weight_g+'g)':'') + '</option>').join('') + '</select>'
-          : targetType === 'LOT' ? '<select id="lbl-target" class="input" onchange="Pages._lblSetTarget(this.value)">'
-            + '<option value="">ロットを選択...</option>'
-            + lots.map(l => '<option value="' + l.lot_id + '" ' + (l.lot_id===targetId?'selected':'') + '>'
-              + l.display_id + ' ' + (stageLabel(l.stage)||'') + ' (' + (l.count||0) + '頭)</option>').join('') + '</select>'
-          : targetType === 'SET' ? '<select id="lbl-target" class="input" onchange="Pages._lblSetTarget(this.value)">'
-            + '<option value="">産卵セットを選択...</option>'
-            + pairs.map(p => '<option value="' + p.set_id + '" ' + (p.set_id===targetId?'selected':'') + '>'
-              + (p.set_name||p.display_id) + '</option>').join('') + '</select>'
-          : '<select id="lbl-target" class="input" onchange="Pages._lblSetTarget(this.value)">'
-            + '<option value="">種親を選択...</option>'
-            + parents.map(p => '<option value="' + p.par_id + '" ' + (p.par_id===targetId?'selected':'') + '>'
-              + (p.display_name||p.par_id) + ' ' + (p.sex||'') + (p.size_mm?' '+p.size_mm+'mm':'') + '</option>').join('') + '</select>')
-        ) : '' /* 一括モードではドロップダウン不要 */)
+      // ── 単体: ドロップダウン ──────────────────────────────
+      + (mode === 'single' ? _buildTargetSelect(targetType, targetId, inds, lots, pairs, parents) : '')
       + '</div>'
 
-      // ── ラベル種別（単体モードのみ） ──
+      // ── ラベル種別（単体のみ）────────────────────────────────
       + (mode === 'single' ? (
           '<div class="card">'
           + '<div class="card-title">ラベル種別</div>'
           + '<div class="filter-bar">'
-          + LABEL_TYPE_DEFS.filter(t => t.target === targetType || (targetType === 'IND' && t.code === 'sale')).map(t =>
-              '<button class="pill ' + (labelType===t.code?'active':'') + '"'
-              + ' data-ltype="' + t.code + '" title="' + t.desc + '"'
-              + ' onclick="Pages._lblSetLabelType(this.dataset.ltype)">' + t.label + '</button>'
-            ).join('')
+          + LABEL_TYPE_DEFS
+              .filter(t => t.target === targetType || (targetType === 'IND' && t.code === 'sale'))
+              .map(t =>
+                '<button class="pill ' + (labelType === t.code ? 'active' : '') + '"'
+                + ' data-ltype="' + t.code + '" title="' + t.desc + '"'
+                + ' onclick="Pages._lblSetLabelType(this.dataset.ltype)">' + t.label + '</button>'
+              ).join('')
           + '</div>'
           + '<div style="font-size:.72rem;color:var(--text3);margin-top:4px">'
-          + (LABEL_TYPE_DEFS.find(t => t.code === labelType) || {}).desc + '</div>'
-          + '</div>'
+          + ((LABEL_TYPE_DEFS.find(t => t.code === labelType) || {}).desc || '')
+          + '</div></div>'
         ) : '')
 
-      // ── 単体: プレビューカード ──
+      // ── 単体: プレビューカード ──────────────────────────────
       + (mode === 'single' ? (
           '<div class="card" id="lbl-preview-card">'
           + (targetId
@@ -154,47 +229,10 @@ Pages.labelGen = function (params = {}) {
           + '</div>'
         ) : '')
 
-      // ── 一括: チェックリスト ──
-      + (mode === 'bulk' ? (
-          '<div class="card">'
-          + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">'
-          + '<div class="card-title" style="margin-bottom:0">'
-          + '対象一覧 <span style="font-size:.78rem;color:var(--text3)">（' + selCount + '件選択）</span></div>'
-          + '<div style="display:flex;gap:6px;align-items:center">'
-          + '<button class="btn btn-ghost btn-sm" style="font-size:.75rem" onclick="Pages._lblBulkSelectAll()">全選択</button>'
-          + '<button class="btn btn-ghost btn-sm" style="font-size:.75rem" onclick="Pages._lblBulkClearAll()">解除</button>'
-          + '<button class="btn btn-ghost btn-sm" style="font-size:.72rem;padding:4px 8px" onclick="Pages._lblToggleSort()">'
-          + (sortDir === 'asc' ? '↑ 昇順' : '↓ 降順')
-          + '</button>'
-          + '</div></div>'
-          + '<div style="max-height:40vh;overflow-y:auto;display:flex;flex-direction:column;gap:0">'
-          + (targetList.length === 0
-            ? '<div style="color:var(--text3);font-size:.82rem;padding:12px;text-align:center">対象がありません</div>'
-            : targetList.map(item =>
-                '<label style="display:flex;align-items:center;gap:10px;padding:9px 4px;'
-                + 'border-bottom:1px solid var(--border);cursor:pointer">'
-                + '<input type="checkbox" data-bid="' + item.id + '"'
-                + ' ' + (selected[item.id] ? 'checked' : '')
-                + ' onchange="Pages._lblBulkToggle(\'' + item.id + '\',this.checked)"'
-                + ' style="width:16px;height:16px;accent-color:var(--green);flex-shrink:0">'
-                + '<span style="font-size:.82rem;color:var(--text1)">' + item.label + '</span>'
-                + '</label>'
-              ).join('')
-            )
-          + '</div>'
-          + '</div>'
-          // 一括生成ボタン
-          + '<button class="btn btn-primary btn-full"'
-          + ' style="font-weight:800;font-size:.95rem;' + (selCount === 0 ? 'opacity:.4;pointer-events:none' : '') + '"'
-          + ' onclick="Pages._lblBulkGenerate(\'' + targetType + '\')"'
-          + '>'
-          + '📦 ' + selCount + '件まとめてラベル生成・保存'
-          + '</button>'
-          // 一括進捗エリア
-          + '<div id="lbl-bulk-progress" style="display:none"></div>'
-        ) : '')
+      // ── 一括: チェックリスト ────────────────────────────────
+      + (mode === 'bulk' ? _buildBulkList(targetList, bulkSelected, selCount, sortDir) : '')
 
-      // ── アクションバー（単体用） ──
+      // ── アクションバー（単体用）────────────────────────────
       + '<div id="lbl-action-bar" style="display:none;margin-top:8px">'
       + '<div style="background:rgba(45,122,82,.10);border:1px solid rgba(45,122,82,.35);border-radius:var(--radius);padding:14px 16px">'
       + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">'
@@ -216,7 +254,7 @@ Pages.labelGen = function (params = {}) {
       + '<div style="font-size:.7rem;color:var(--text3);margin-top:10px;line-height:1.6;padding-top:8px;border-top:1px solid var(--border)">💡 印刷手順: ダウンロード → Phomemoアプリ「写真印刷」→ 50×30mm で印刷</div>'
       + '</div></div>'
 
-      // Phomemo手順
+      // Phomemo 手順
       + '<div class="card" style="background:rgba(91,168,232,.06);border-color:rgba(91,168,232,.2)">'
       + '<div class="card-title" style="color:var(--blue)">📱 Phomemo M220 印刷手順</div>'
       + '<ol style="font-size:.8rem;color:var(--text2);line-height:1.8;padding-left:1.2em">'
@@ -228,83 +266,163 @@ Pages.labelGen = function (params = {}) {
 
       + '</div>';
 
-    // 単体モード & 対象確定 → 即生成
-    // autoGenerate=true（詳細画面から来た場合）は初回のみ自動実行。
-    // 通常の render() 再呼び出しでは targetId確定時のみ生成する。
+    // 単体: 即生成
     if (mode === 'single' && targetId) {
-      const isFirstRender = !window.__lblAutoGenDone;
-      if (autoGenerate && !window.__lblAutoGenDone) {
-        window.__lblAutoGenDone = true;
-        setTimeout(() => Pages._lblGenerate(targetType, targetId, labelType), 200);
-      } else if (!autoGenerate) {
-        // 通常モード: 対象選択のたびに生成
-        setTimeout(() => Pages._lblGenerate(targetType, targetId, labelType), 200);
-      }
+      setTimeout(() => Pages._lblGenerate(targetType, targetId, labelType), 200);
     }
   }
 
-  Pages._lblSetMode = (m) => { mode = m; window.__lblBulkSelected = {}; render(); };
-  Pages._lblSetType = (t) => {
-    targetType = t; targetId = '';
-    window.__lblBulkSelected = {};
-    labelType = (t === 'LOT') ? 'egg_lot' : (t === 'SET') ? 'set' : (t === 'PAR') ? 'parent' : 'ind_fixed';
+  // ── ヘルパー: ドロップダウン ─────────────────────────────────
+  function _buildTargetSelect(tType, tId, inds, lots, pairs, parents) {
+    if (tType === 'IND') {
+      return '<select id="lbl-target" class="input" onchange="Pages._lblSetTarget(this.value)">'
+        + '<option value="">個体を選択...</option>'
+        + inds.map(i => '<option value="' + i.ind_id + '" ' + (i.ind_id === tId ? 'selected' : '') + '>'
+          + (i.display_id || '') + (i.sex ? ' ' + i.sex : '') + (i.latest_weight_g ? ' (' + i.latest_weight_g + 'g)' : '') + '</option>').join('')
+        + '</select>';
+    }
+    if (tType === 'LOT') {
+      return '<select id="lbl-target" class="input" onchange="Pages._lblSetTarget(this.value)">'
+        + '<option value="">ロットを選択...</option>'
+        + lots.map(l => '<option value="' + l.lot_id + '" ' + (l.lot_id === tId ? 'selected' : '') + '>'
+          + (l.display_id || '') + (stageLabel(l.stage) ? ' ' + stageLabel(l.stage) : '') + ' (' + (l.count || 0) + '頭)</option>').join('')
+        + '</select>';
+    }
+    if (tType === 'SET') {
+      return '<select id="lbl-target" class="input" onchange="Pages._lblSetTarget(this.value)">'
+        + '<option value="">産卵セットを選択...</option>'
+        + pairs.map(p => '<option value="' + p.set_id + '" ' + (p.set_id === tId ? 'selected' : '') + '>'
+          + (p.set_name || p.display_id || '') + '</option>').join('')
+        + '</select>';
+    }
+    // PAR
+    return '<select id="lbl-target" class="input" onchange="Pages._lblSetTarget(this.value)">'
+      + '<option value="">種親を選択...</option>'
+      + parents.map(p => '<option value="' + p.par_id + '" ' + (p.par_id === tId ? 'selected' : '') + '>'
+        + (p.display_name || p.par_id || '') + (p.sex ? ' ' + p.sex : '') + (p.size_mm ? ' ' + p.size_mm + 'mm' : '') + '</option>').join('')
+      + '</select>';
+  }
+
+  // ── ヘルパー: 一括チェックリスト ────────────────────────────
+  function _buildBulkList(targetList, selected, selCount, sortDir) {
+    // ── ボタン: disabled 属性のみ使用。pointer-events:none は使わない ──
+    const btnDisabled = selCount === 0;
+
+    return '<div class="card">'
+      + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">'
+      + '<div class="card-title" style="margin-bottom:0">'
+      + '対象一覧 <span id="lbl-sel-count" style="font-size:.78rem;color:var(--text3)">（' + selCount + '件選択）</span></div>'
+      + '<div style="display:flex;gap:6px;align-items:center">'
+      + '<button class="btn btn-ghost btn-sm" style="font-size:.75rem" onclick="Pages._lblBulkSelectAll()">全選択</button>'
+      + '<button class="btn btn-ghost btn-sm" style="font-size:.75rem" onclick="Pages._lblBulkClearAll()">解除</button>'
+      + '<button class="btn btn-ghost btn-sm" style="font-size:.72rem;padding:4px 8px" onclick="Pages._lblToggleSort()">'
+      + (sortDir === 'asc' ? '↑ 昇順' : '↓ 降順')
+      + '</button>'
+      + '</div></div>'
+      + '<div style="max-height:40vh;overflow-y:auto">'
+      + (targetList.length === 0
+          ? '<div style="color:var(--text3);font-size:.82rem;padding:12px;text-align:center">対象がありません</div>'
+          : targetList.map(item =>
+              '<label style="display:flex;align-items:center;gap:10px;padding:9px 4px;'
+              + 'border-bottom:1px solid var(--border);cursor:pointer">'
+              + '<input type="checkbox"'
+              + ' data-bid="' + item.id + '"'
+              + (selected[item.id] ? ' checked' : '')
+              + ' onchange="Pages._lblBulkToggle(\'' + item.id + '\',this.checked)"'
+              + ' style="width:16px;height:16px;accent-color:var(--green);flex-shrink:0">'
+              + '<span style="font-size:.82rem;color:var(--text1)">' + item.label + '</span>'
+              + '</label>'
+            ).join('')
+        )
+      + '</div></div>'
+      // ── 一括生成ボタン: disabled 属性のみで制御 ──────────────
+      + '<button id="lbl-bulk-btn" class="btn btn-primary btn-full"'
+      + ' style="font-weight:800;font-size:.95rem;' + (btnDisabled ? 'opacity:.4' : '') + '"'
+      + (btnDisabled ? ' disabled' : '')
+      + ' onclick="Pages._lblBulkGenerate(\'' + targetType + '\')">'
+      + '📦 ' + selCount + '件まとめてラベル生成・保存'
+      + '</button>'
+      + '<div id="lbl-bulk-progress" style="display:none"></div>';
+  }
+
+  // ── ハンドラ登録 ─────────────────────────────────────────────
+  Pages._lblSetMode = (m) => {
+    mode = m;
+    bulkSelected = {};
     render();
   };
-  Pages._lblSetTarget     = (id) => { targetId = id; render(); };
-  Pages._lblSetLabelType  = (t)  => { labelType = t; render(); };
 
-  // ── 一括選択操作 ─────────────────────────────────────────────
-  Pages._lblBulkToggle = (id, checked) => {
-    window.__lblBulkSelected[id] = checked;
-    // カウントだけ更新（再renderなし → 高速）
-    const selCount = Object.values(window.__lblBulkSelected).filter(Boolean).length;
-    const btn = document.querySelector('[onclick*="_lblBulkGenerate"]');
-    if (btn) {
-      btn.textContent = '📦 ' + selCount + '件まとめてラベル生成・保存';
-      btn.disabled    = selCount === 0;
-      btn.style.opacity = selCount === 0 ? '0.4' : '1';
-    }
+  Pages._lblSetType = (t) => {
+    targetType = t;
+    targetId   = '';
+    bulkSelected = {};
+    labelType = t === 'LOT' ? 'egg_lot' : t === 'SET' ? 'set' : t === 'PAR' ? 'parent' : 'ind_fixed';
+    render();
   };
-  Pages._lblBulkSelectAll = () => {
-    document.querySelectorAll('[data-bid]').forEach(cb => {
-      cb.checked = true;
-      window.__lblBulkSelected[cb.dataset.bid] = true;
-    });
-    Pages._lblBulkToggle('', true); // update button
-  };
-  Pages._lblBulkClearAll = () => {
-    window.__lblBulkSelected = {};
-    document.querySelectorAll('[data-bid]').forEach(cb => { cb.checked = false; });
-    Pages._lblBulkToggle('', false);
-  };
+
+  Pages._lblSetTarget    = (id) => { targetId = id; render(); };
+  Pages._lblSetLabelType = (t)  => { labelType = t; render(); };
 
   Pages._lblToggleSort = () => {
-    // 選択状態を保持したままソート方向を切替
     sortDir = sortDir === 'asc' ? 'desc' : 'asc';
-    render();
+    render();   // 完全再描画でソートを確実に適用
   };
 
-  // ── 一括生成・保存 ───────────────────────────────────────────
+  // ── 一括: チェック操作 ──────────────────────────────────────
+  // render() を使わず DOM 直接更新（チェック毎に全再描画しない）
+  Pages._lblBulkToggle = (id, checked) => {
+    bulkSelected[id] = checked;
+    _updateBulkUI();
+  };
+
+  Pages._lblBulkSelectAll = () => {
+    document.querySelectorAll('[data-bid]').forEach(cb => {
+      bulkSelected[cb.dataset.bid] = true;
+      cb.checked = true;
+    });
+    _updateBulkUI();
+  };
+
+  Pages._lblBulkClearAll = () => {
+    bulkSelected = {};
+    document.querySelectorAll('[data-bid]').forEach(cb => { cb.checked = false; });
+    _updateBulkUI();
+  };
+
+  // ── 一括UI更新（ボタン状態・件数を DOM 直接更新）────────────
+  function _updateBulkUI() {
+    const cnt = Object.values(bulkSelected).filter(Boolean).length;
+
+    // 件数テキスト
+    const countEl = document.getElementById('lbl-sel-count');
+    if (countEl) countEl.textContent = '（' + cnt + '件選択）';
+
+    // ボタン: disabled 属性と opacity のみ。pointer-events は操作しない
+    const btn = document.getElementById('lbl-bulk-btn');
+    if (btn) {
+      btn.textContent = '📦 ' + cnt + '件まとめてラベル生成・保存';
+      btn.disabled    = cnt === 0;
+      btn.style.opacity = cnt === 0 ? '0.4' : '1';
+    }
+  }
+
+  // ── 一括生成・保存 ──────────────────────────────────────────
   Pages._lblBulkGenerate = async (tType) => {
-    const ids = Object.keys(window.__lblBulkSelected).filter(k => window.__lblBulkSelected[k]);
+    const ids = Object.keys(bulkSelected).filter(k => bulkSelected[k]);
     if (!ids.length) { UI.toast('対象を選択してください', 'error'); return; }
 
     const progress = document.getElementById('lbl-bulk-progress');
-    window.__lblBulkDataUrls = []; // 蓄積リセット
     if (progress) {
       progress.style.display = 'block';
-      progress.innerHTML = '<div style="font-size:.82rem;color:var(--text3);padding:8px 0">'
-        + '⚠️ スマホでは「複数ファイルのダウンロードを許可」が必要な場合があります<br>'
-        + '0 / ' + ids.length + ' 件処理中...</div>';
+      progress.innerHTML = '<div style="font-size:.82rem;color:var(--text3);padding:8px 0">0 / ' + ids.length + ' 件処理中...</div>';
     }
 
-    // 隠しcanvas・QRdivをbody直下に準備
+    // 隠しCanvas・QRdivをbody直下に作成
     let bulkCanvas = document.getElementById('lbl-bulk-canvas');
     if (!bulkCanvas) {
       bulkCanvas = document.createElement('canvas');
       bulkCanvas.id = 'lbl-bulk-canvas';
-      bulkCanvas.width  = LABEL_W;
-      bulkCanvas.height = LABEL_H;
+      bulkCanvas.width = LABEL_W; bulkCanvas.height = LABEL_H;
       bulkCanvas.style.cssText = 'position:absolute;left:-9999px;top:0';
       document.body.appendChild(bulkCanvas);
     }
@@ -317,7 +435,6 @@ Pages.labelGen = function (params = {}) {
     }
 
     let successCount = 0;
-
     for (let i = 0; i < ids.length; i++) {
       const id     = ids[i];
       const entity = _getBulkEntity(tType, id);
@@ -327,7 +444,7 @@ Pages.labelGen = function (params = {}) {
       const ld = _buildLabelData(tType, id, entity, lt);
       if (!ld) continue;
 
-      // QR生成
+      // QR 生成
       bulkQrDiv.innerHTML = '';
       try {
         new QRCode(bulkQrDiv, {
@@ -337,31 +454,24 @@ Pages.labelGen = function (params = {}) {
         });
       } catch(e) {}
 
-      // Canvas描画（QR描画完了を待つ）
-      await new Promise(resolve => setTimeout(resolve, 180));
+      await new Promise(r => setTimeout(r, 180));
       _drawLabel(bulkCanvas, ld, bulkQrDiv);
-      await new Promise(resolve => setTimeout(resolve, 120));
+      await new Promise(r => setTimeout(r, 120));
 
-      // ダウンロード
-      const lineCode = (ld.line_code || ld.line_display_id || '').replace(/[^a-zA-Z0-9_\-]/g,'_');
-      const dispId   = (ld.display_id || id).replace(/[^a-zA-Z0-9_\-]/g,'_');
+      const lineCode = (ld.line_code || ld.line_display_id || '').replace(/[^a-zA-Z0-9_-]/g, '_');
+      const dispId   = (ld.display_id || id).replace(/[^a-zA-Z0-9_-]/g, '_');
       const fileName = (lineCode ? lineCode + '_' : '') + dispId + '_label.png';
-      const dataUrl  = bulkCanvas.toDataURL('image/png');
-      // 将来のZIP/Drive対応用に蓄積（現状は個別DL）
-      if (!window.__lblBulkDataUrls) window.__lblBulkDataUrls = [];
-      window.__lblBulkDataUrls.push({ fileName, dataUrl });
-
       const a = document.createElement('a');
-      a.href = dataUrl; a.download = fileName; a.click();
+      a.href = bulkCanvas.toDataURL('image/png');
+      a.download = fileName;
+      a.click();
 
       successCount++;
       if (progress) {
         progress.innerHTML = '<div style="font-size:.82rem;color:var(--text3);padding:8px 0">'
           + successCount + ' / ' + ids.length + ' 件完了 — ' + (ld.display_id || id) + '</div>';
       }
-
-      // ブラウザの保存ダイアログが出る場合に少し待つ
-      await new Promise(resolve => setTimeout(resolve, 400));
+      await new Promise(r => setTimeout(r, 400));
     }
 
     if (progress) {
@@ -369,23 +479,12 @@ Pages.labelGen = function (params = {}) {
         + '✅ ' + successCount + '件のラベルを生成しました</div>';
     }
     UI.toast('✅ ' + successCount + '件のラベルを保存しました', 'success', 4000);
-    window.__lblBulkSelected = {};
-
-    // ── 将来対応: ZIP化 / Drive一括保存フック ──────────────────
-    // window.__lblBulkDataUrls に全dataUrlが蓄積される設計にしておく。
-    // 現状は個別ダウンロード。将来は以下を実装可能:
-    //   - JSZip を使ってZIPまとめダウンロード
-    //   - API.drive.uploadBulk() でDriveに一括保存
-    // if (window.__lblBulkDataUrls && window.__lblBulkDataUrls.length) {
-    //   Pages._lblBulkSaveToDrive(window.__lblBulkDataUrls); // 将来実装
-    // }
+    bulkSelected = {};
   };
 
-  // autoGenerate: 詳細画面から来た場合は選択画面なしで即座にラベル画面を表示
   render();
 };
 
-// ── 一括生成: エンティティ取得 ──────────────────────────────────
 function _getBulkEntity(tType, id) {
   if (tType === 'IND') return Store.getIndividual(id);
   if (tType === 'LOT') return Store.getLot(id);
