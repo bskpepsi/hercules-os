@@ -22,7 +22,7 @@ function _renderSaleList(main, hists, totalRevenue) {
   let filterChannel = '';
   let filterKeyword = '';
 
-  const CHANNELS = ['ヤフオク','メルカリ','イベント','直接','その他'];
+  const CHANNELS = ['ヤフオク','イベント','直接','その他'];
 
   function filtered() {
     return hists.filter(h => {

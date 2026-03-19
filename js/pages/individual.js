@@ -866,7 +866,6 @@ Pages._indMarkSoldModal = function (id) {
     + UI.field('販売経路', UI.select('sold-channel-sel', [
         { code:'',       label:'— 選択 —' },
         { code:'ヤフオク', label:'ヤフオク' },
-        { code:'メルカリ', label:'メルカリ' },
         { code:'イベント', label:'イベント' },
         { code:'直接',    label:'直接取引' },
         { code:'その他',  label:'その他' },
