@@ -34,7 +34,13 @@ Pages.individualList = function () {
   };
 
   function _applyFilters() {
-    const list = Store.filterIndividuals(filters);
+    // T2 グループフィルタ: T2 / T2A / T2B すべてを T2 として扱う
+    let list = Store.filterIndividuals(
+      filters._t2Group ? { ...filters, stage: '' } : filters
+    );
+    if (filters._t2Group) {
+      list = list.filter(i => i.current_stage === 'T2' || i.current_stage === 'T2A' || i.current_stage === 'T2B');
+    }
     const el   = document.getElementById('ind-list-body');
     const cEl  = document.getElementById('ind-count');
     const sEl  = document.getElementById('ind-status-label');
@@ -49,7 +55,13 @@ Pages.individualList = function () {
   }
 
   function render() {
-    const list  = Store.filterIndividuals(filters);
+    // T2 グループフィルタ（render内）
+    let list  = Store.filterIndividuals(
+      filters._t2Group ? { ...filters, stage: '' } : filters
+    );
+    if (filters._t2Group) {
+      list = list.filter(i => i.current_stage === 'T2' || i.current_stage === 'T2A' || i.current_stage === 'T2B');
+    }
     const total = list.length;
     const title = isLineLimited
       ? (fixedLine ? fixedLine.display_id + ' の個体' : '個体一覧')
@@ -103,9 +115,16 @@ Pages.individualList = function () {
       if (sv === 'larva') {
         filters.stage = filters.stage === 'larva' ? '' : 'larva';
         filters._larvaGroup = filters.stage === 'larva';
+      } else if (sv === 'T2') {
+        // T2 ピル: T2 / T2A / T2B すべてをまとめてフィルタ
+        const isT2Active = (filters.stage === 'T2' || filters.stage === 'T2A' || filters.stage === 'T2B');
+        filters.stage     = isT2Active ? '' : 'T2';
+        filters._larvaGroup = false;
+        filters._t2Group    = filters.stage === 'T2';  // store.js 側は下記カスタムフィルタで処理
       } else {
         filters.stage = sv === filters.stage ? '' : sv;
         filters._larvaGroup = false;
+        filters._t2Group    = false;
       }
       render();
     });
@@ -146,20 +165,22 @@ Pages.individualList = function () {
 };
 
 function _stageFilters(active) {
+  // T2 はアクティブ判定: 'T2' または 'T2A' または 'T2B' のとき active
+  const isT2Active = (active === 'T2' || active === 'T2A' || active === 'T2B');
   const stages = [
-    { val:'', label:'全て' },
-    { val:'larva',   label:'幼虫' },   // T1/T2/T3まとめ
-    { val:'T1',      label:'T1' },
-    { val:'T2A',     label:'T2①' },
-    { val:'T2B',     label:'T2②' },
-    { val:'T3',      label:'T3' },
+    { val:'',        label:'全て'  },
+    { val:'larva',   label:'幼虫'  },  // T1/T2/T3 まとめ
+    { val:'T1',      label:'T1'   },
+    { val:'T2',      label:'T2'   },   // T2A / T2B 統合
+    { val:'T3',      label:'T3'   },
     { val:'PREPUPA', label:'前蛹' },
-    { val:'PUPA',    label:'蛹' },
+    { val:'PUPA',    label:'蛹'   },
     { val:'ADULT',   label:'成虫' },
   ];
-  return stages.map(s =>
-    `<button class="pill ${s.val === active ? 'active' : ''}" data-val="${s.val}">${s.label}</button>`
-  ).join('');
+  return stages.map(s => {
+    const isActive = s.val === 'T2' ? isT2Active : (s.val === active);
+    return `<button class="pill ${isActive ? 'active' : ''}" data-val="${s.val}">${s.label}</button>`;
+  }).join('');
 }
 
 function _statusFilters(active) {
@@ -271,10 +292,11 @@ function _indCardHTML(ind) {
 
     return '<div class="card" style="padding:12px 14px;cursor:pointer;display:flex;align-items:center;gap:12px;margin-bottom:8px"'
       + ' onclick="routeTo(\'ind-detail\',{indId:\'' + ind.ind_id + '\'})">'
-      // 左: 性別 + ライン/年度
-      + '<div style="min-width:40px;text-align:center;flex-shrink:0">'
-      +   '<div style="font-size:1.2rem;font-weight:800;color:' + sexColor + ';line-height:1">' + (ind.sex || '?') + '</div>'
-      +   ((lineCode || year) ? '<div style="font-size:.65rem;color:var(--text3);margin-top:2px">' + [lineCode, year].filter(Boolean).join(' / ') + '</div>' : '')
+      // 左: ① 性別（大・色付き）→ ② ライン（金・太・monospace）→ ③ 年度（小・薄）
+      + '<div style="min-width:44px;text-align:center;flex-shrink:0">'
+      +   '<div style="font-size:1.3rem;font-weight:800;color:' + sexColor + ';line-height:1">' + (ind.sex || '?') + '</div>'
+      +   (lineCode ? '<div style="font-family:var(--font-mono);font-size:.9rem;font-weight:800;color:var(--gold);margin-top:4px;line-height:1">' + lineCode + '</div>' : '')
+      +   (year     ? '<div style="font-size:.65rem;color:var(--text3);margin-top:3px">' + year + '</div>' : '')
       + '</div>'
       // 右: ID + サブ情報 + ステータス
       + '<div style="flex:1;min-width:0">'
@@ -502,7 +524,7 @@ function _renderDetail(ind, main) {
               `<span style="cursor:pointer;color:var(--blue)" onclick="routeTo('line-detail',{lineId:'${line.line_id}'})">${line.display_id} ${line.line_name ? '/ '+line.line_name : ''}</span>`
             ) : ''}
             ${ind.origin_lot_id ? _infoRow('元ロット',
-              `<span style="cursor:pointer;color:var(--blue)" onclick="routeTo('lot-detail',{lotId:'${ind.origin_lot_id}'})">${ind.origin_lot_id}</span>
+              `<span style="cursor:pointer;color:var(--blue)" onclick="routeTo('lot-detail',{lotId:'${ind.origin_lot_id}'})">${originLot ? originLot.display_id : ind.origin_lot_id}</span>
                <span style="font-size:.7rem;color:var(--text3)">（同腹: <span style="cursor:pointer;color:var(--blue)" onclick="routeTo('ind-list',{lotId:'${ind.origin_lot_id}'})">一覧を見る</span>）</span>`
             ) : ''}
           </div>
@@ -819,8 +841,8 @@ Pages.individualNew = function (params = {}) {
             { code:'不明', label:'不明' },
           ], v('sex')))}
           ${UI.field('ステージ', UI.select('current_stage',
-            STAGE_LIST.map(s => ({ code: s.code, label: s.label })),
-            v('current_stage', 'T1')), true)}
+            STAGE_LIST_NEW.map(s => ({ code: s.code, label: s.label })),
+            v('current_stage', 'L1')), true)}
         </div>
         <div class="form-row-2">
           ${UI.field('孵化日', UI.input('hatch_date', 'date', v('hatch_date')))}
@@ -837,23 +859,27 @@ Pages.individualNew = function (params = {}) {
         ${UI.field('産地', UI.input('locality', 'text', v('locality', 'Guadeloupe')))}
         ${UI.field('保管場所', UI.input('storage_location', 'text', v('storage_location'), '例: 棚A-3'))}
 
-        <div class="form-title">血統情報</div>
-        ${UI.field('血統', UI.select('bloodline_id',
-          blds.map(b => ({ code: b.bloodline_id, label: (b.abbreviation || b.bloodline_name) })),
-          v('bloodline_id')))}
-        ${UI.field('血統ステータス', UI.select('bloodline_status', [
-          { code:'confirmed',  label:'確定' },
-          { code:'temporary',  label:'暫定' },
-          { code:'unknown',    label:'不明' },
-        ], v('bloodline_status', 'unknown')))}
-
         <div class="form-title">種親</div>
         ${UI.field('親♂', UI.select('father_par_id',
-          parents.filter(p => p.sex === '♂').map(p => ({ code: p.par_id, label: `${p.display_name}${p.size_mm ? ' '+p.size_mm+'mm' : ''}` })),
+          [{code:'',label:'— 未選択 —'}, ...parents.filter(p => p.sex === '♂').map(p => ({ code: p.par_id, label: `${p.display_name}${p.size_mm ? ' '+p.size_mm+'mm' : ''}` }))],
           v('father_par_id')))}
+        ${(() => {
+          const fp = v('father_par_id') ? parents.find(p => p.par_id === v('father_par_id')) : null;
+          const raw = fp ? (fp.bloodline_raw || '') : '';
+          return raw
+            ? `<div style="font-size:.72rem;color:var(--text3);padding:4px 8px 8px;line-height:1.5;word-break:break-all">${raw}</div>`
+            : '';
+        })()}
         ${UI.field('親♀', UI.select('mother_par_id',
-          parents.filter(p => p.sex === '♀').map(p => ({ code: p.par_id, label: `${p.display_name}${p.size_mm ? ' '+p.size_mm+'mm' : ''}` })),
+          [{code:'',label:'— 未選択 —'}, ...parents.filter(p => p.sex === '♀').map(p => ({ code: p.par_id, label: `${p.display_name}${p.size_mm ? ' '+p.size_mm+'mm' : ''}` }))],
           v('mother_par_id')))}
+        ${(() => {
+          const mp = v('mother_par_id') ? parents.find(p => p.par_id === v('mother_par_id')) : null;
+          const raw = mp ? (mp.bloodline_raw || '') : '';
+          return raw
+            ? `<div style="font-size:.72rem;color:var(--text3);padding:4px 8px 8px;line-height:1.5;word-break:break-all">${raw}</div>`
+            : '';
+        })()}
 
         <!-- 元ロットIDは分割時に自動セット。手入力フィールドは廃止 -->
 
