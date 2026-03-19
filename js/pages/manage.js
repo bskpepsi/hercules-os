@@ -10,9 +10,10 @@
 // ── 管理メニュー ─────────────────────────────────────────────────
 Pages.manage = function () {
   const main  = document.getElementById('main');
-  const lines = Store.getDB('lines')     || [];
-  const lots  = Store.getDB('lots')      || [];
-  const pars  = Store.getDB('parents')   || [];
+  const lines = Store.getDB('lines')       || [];
+  const lots  = Store.getDB('lots')        || [];
+  const pars  = Store.getDB('parents')     || [];
+  const inds  = Store.getDB('individuals') || [];
   const blds  = Store.getDB('bloodlines')|| [];
   const pairs = Store.getDB('pairings')  || [];
 
