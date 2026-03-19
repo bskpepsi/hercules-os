@@ -58,7 +58,9 @@ function _parseDisplayId(displayId) {
     }
   }
 
-  return { year: year, line: line, lotNum: lotNum, letter: letter };
+  // lot は "L01" 形式の文字列（ゼロ埋め2桁）で返す
+  var lot = lotNum > 0 ? ('L' + ('00' + lotNum).slice(-2)) : '';
+  return { year: year, line: line, lot: lot, lotNum: lotNum, letter: letter };
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -108,7 +110,7 @@ Pages.labelGen = function (params) {
   let sortDir  = 'asc';
 
   // フィルタ状態
-  let filter = { line: '', lot: '', keyword: '' };
+  let filter = { year: '', line: '', lot: '', keyword: '' };
 
   // ── データ ───────────────────────────────────────────────────
   const inds    = Store.filterIndividuals({ status: 'alive' });
@@ -157,28 +159,27 @@ Pages.labelGen = function (params) {
   }
 
   // ── フィルタ → キーワード → ソート ───────────────────────────
-  // 処理順: 全取得 → ライン絞り込み → ロット絞り込み → キーワード → ソート
+  // 処理順: 全取得 → 年度 → ライン → ロット → キーワード → ソート
   function getTargetList() {
     let list = _rawList();
 
-    // ① ライン絞り込み (AND)
+    // ① 年度絞り込み (AND)
+    if (filter.year) {
+      const y = parseInt(filter.year, 10);
+      list = list.filter(item => _parseDisplayId(item.sortKey).year === y);
+    }
+
+    // ② ライン絞り込み (AND)  例: "B2"
     if (filter.line) {
-      list = list.filter(item => {
-        const parsed = _parseDisplayId(item.sortKey);
-        return parsed.line === filter.line.toUpperCase();
-      });
+      list = list.filter(item => _parseDisplayId(item.sortKey).line === filter.line);
     }
 
-    // ② ロット番号絞り込み (AND)
+    // ③ ロット絞り込み (AND)  例: "L01"
     if (filter.lot) {
-      const targetLot = parseInt(filter.lot.replace(/[^0-9]/g, ''), 10);
-      list = list.filter(item => {
-        const parsed = _parseDisplayId(item.sortKey);
-        return parsed.lotNum === targetLot;
-      });
+      list = list.filter(item => _parseDisplayId(item.sortKey).lot === filter.lot);
     }
 
-    // ③ フリーワード検索（部分一致・大文字小文字無視）
+    // ④ フリーワード検索（部分一致・大文字小文字無視）
     if (filter.keyword.trim()) {
       const kw = filter.keyword.trim().toLowerCase();
       list = list.filter(item =>
@@ -187,28 +188,52 @@ Pages.labelGen = function (params) {
       );
     }
 
-    // ④ ソート
+    // ⑤ ソート
     return _sortDisplayId(list, sortDir);
   }
 
-  // ── 利用可能なライン一覧（全件から抽出）─────────────────────
+  // ── 利用可能な年度一覧 ──────────────────────────────────────
+  function _availableYears() {
+    const set = new Set();
+    _rawList().forEach(item => {
+      const y = _parseDisplayId(item.sortKey).year;
+      if (y > 0) set.add(y);
+    });
+    return Array.from(set).sort((a, b) => a - b);
+  }
+
+  // ── 利用可能なライン一覧 ──────────────────────────────────
+  // 自然順ソート: A1 < A2 < B1 < B2 ...
   function _availableLines() {
     const set = new Set();
     _rawList().forEach(item => {
-      const parsed = _parseDisplayId(item.sortKey);
-      if (parsed.line) set.add(parsed.line);
+      const l = _parseDisplayId(item.sortKey).line;
+      if (l) set.add(l);
     });
-    return Array.from(set).sort();
+    return Array.from(set).sort(function(a, b) {
+      // 英字部分でまず比較、次に数字部分
+      const am = a.match(/^([A-Za-z]+)(\d+)$/);
+      const bm = b.match(/^([A-Za-z]+)(\d+)$/);
+      if (am && bm) {
+        if (am[1] !== bm[1]) return am[1] < bm[1] ? -1 : 1;
+        return parseInt(am[2], 10) - parseInt(bm[2], 10);
+      }
+      return a < b ? -1 : 1;
+    });
   }
 
-  // ── 利用可能なロット番号一覧（全件から抽出）─────────────────
+  // ── 利用可能なロット一覧 ──────────────────────────────────
+  // 数値順ソートで "L01", "L02", "L03" ... を返す
   function _availableLots() {
     const set = new Set();
     _rawList().forEach(item => {
-      const parsed = _parseDisplayId(item.sortKey);
-      if (parsed.lotNum > 0) set.add(parsed.lotNum);
+      const l = _parseDisplayId(item.sortKey).lot;  // "L01" 形式
+      if (l) set.add(l);
     });
-    return Array.from(set).sort((a, b) => a - b);
+    // "L01" の数値部分で数値順ソート
+    return Array.from(set).sort(function(a, b) {
+      return parseInt(a.slice(1), 10) - parseInt(b.slice(1), 10);
+    });
   }
 
   // ── メインレンダリング ───────────────────────────────────────
@@ -217,6 +242,7 @@ Pages.labelGen = function (params) {
     const selCount   = Object.values(bulkSelected).filter(Boolean).length;
     const btnDisabled = selCount === 0;
 
+    const availYears = _availableYears();
     const availLines = _availableLines();
     const availLots  = _availableLots();
 
@@ -283,7 +309,7 @@ Pages.labelGen = function (params) {
         ) : '')
 
       // ── 一括: 絞り込み＋チェックリスト ──────────────────
-      + (mode === 'bulk' ? _buildBulkSection(targetList, selCount, btnDisabled, availLines, availLots) : '')
+      + (mode === 'bulk' ? _buildBulkSection(targetList, selCount, btnDisabled, availYears, availLines, availLots) : '')
 
       // ── アクションバー（単体用）──────────────────────────
       + '<div id="lbl-action-bar" style="display:none;margin-top:8px">'
@@ -364,48 +390,59 @@ Pages.labelGen = function (params) {
   }
 
   // ── ヘルパー: 一括セクション（フィルタ＋リスト＋ボタン）────
-  function _buildBulkSection(targetList, selCount, btnDisabled, availLines, availLots) {
-    const hasFilter = filter.line || filter.lot || filter.keyword.trim();
+  function _buildBulkSection(targetList, selCount, btnDisabled, availYears, availLines, availLots) {
+    var hasFilter = filter.year || filter.line || filter.lot || filter.keyword.trim();
+
+    var yearSel = '<select id="lbl-filter-year" class="input"'
+      + ' style="flex:1;min-width:70px;max-width:88px;font-size:.82rem"'
+      + ' onchange="Pages._lblFilterYear(this.value)">'
+      + '<option value="">年度</option>'
+      + availYears.map(function(y) {
+          return '<option value="' + y + '"' + (filter.year === String(y) ? ' selected' : '') + '>' + y + '</option>';
+        }).join('')
+      + '</select>';
+
+    var lineSel = '<select id="lbl-filter-line" class="input"'
+      + ' style="flex:1;min-width:70px;max-width:88px;font-size:.82rem"'
+      + ' onchange="Pages._lblFilterLine(this.value)">'
+      + '<option value="">ライン</option>'
+      + availLines.map(function(l) {
+          return '<option value="' + l + '"' + (filter.line === l ? ' selected' : '') + '>' + l + '</option>';
+        }).join('')
+      + '</select>';
+
+    var lotSel = '<select id="lbl-filter-lot" class="input"'
+      + ' style="flex:1;min-width:70px;max-width:88px;font-size:.82rem"'
+      + ' onchange="Pages._lblFilterLot(this.value)">'
+      + '<option value="">ロット</option>'
+      + availLots.map(function(l) {
+          return '<option value="' + l + '"' + (filter.lot === l ? ' selected' : '') + '>' + l + '</option>';
+        }).join('')
+      + '</select>';
+
+    var clearBtn = '<button class="btn btn-ghost btn-sm"'
+      + ' style="font-size:.75rem' + (hasFilter ? ';border-color:var(--red);color:var(--red)' : '') + '"'
+      + ' onclick="Pages._lblFilterClear()">✕ 解除</button>';
 
     return (
-      // フィルタカード
       '<div class="card">'
-      // 検索ボックス
-      + '<input type="text" id="lbl-keyword" class="input" placeholder="🔍 検索（ライン・ロット・T0など）"'
+      + '<input type="text" id="lbl-keyword" class="input"'
+      + ' placeholder="🔍 フリーワード検索"'
       + ' value="' + (filter.keyword || '').replace(/"/g, '&quot;') + '"'
       + ' oninput="Pages._lblFilterKeyword(this.value)"'
       + ' style="margin-bottom:8px">'
-
-      // フィルタ行: ライン / ロット番号
-      + '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">'
-
-      // ライン選択（プルダウン）
-      + '<select id="lbl-filter-line" class="input" style="flex:1;min-width:80px;max-width:110px;font-size:.82rem"'
-      + ' onchange="Pages._lblFilterLine(this.value)">'
-      + '<option value="">ライン</option>'
-      + availLines.map(l => '<option value="' + l + '"' + (filter.line === l ? ' selected' : '') + '>' + l + '</option>').join('')
-      + '</select>'
-
-      // ロット番号選択（プルダウン）
-      + '<select id="lbl-filter-lot" class="input" style="flex:1;min-width:80px;max-width:110px;font-size:.82rem"'
-      + ' onchange="Pages._lblFilterLot(this.value)">'
-      + '<option value="">ロット</option>'
-      + availLots.map(n => '<option value="' + n + '"' + (filter.lot === String(n) ? ' selected' : '') + '>L' + ('00' + n).slice(-2) + '</option>').join('')
-      + '</select>'
-
-      // 解除ボタン（フィルタ有効時のみ強調）
-      + '<button class="btn btn-ghost btn-sm" style="font-size:.75rem' + (hasFilter ? ';border-color:var(--red);color:var(--red)' : '') + '"'
-      + ' onclick="Pages._lblFilterClear()">✕ 解除</button>'
-
+      + '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px">'
+      + yearSel + lineSel + lotSel + clearBtn
       + '</div>'
       + (hasFilter
-          ? '<div style="font-size:.7rem;color:var(--text3);margin-top:6px">'
-            + '絞り込み中: <b>' + targetList.length + '件</b> 表示'
+          ? '<div style="font-size:.7rem;color:var(--text3)">'
+            + '絞り込み中: <b>' + targetList.length + '件</b>'
+            + (filter.year  ? ' / 年度: ' + filter.year  : '')
+            + (filter.line  ? ' / ライン: ' + filter.line  : '')
+            + (filter.lot   ? ' / ロット: ' + filter.lot   : '')
             + '</div>'
           : '')
       + '</div>'
-
-      // チェックリストカード
       + '<div class="card">'
       + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">'
       + '<div class="card-title" style="margin-bottom:0">'
@@ -418,24 +455,21 @@ Pages.labelGen = function (params) {
       + (sortDir === 'asc' ? '↑ 昇順' : '↓ 降順')
       + '</button>'
       + '</div></div>'
-
       + '<div style="max-height:40vh;overflow-y:auto">'
       + (targetList.length === 0
           ? '<div style="color:var(--text3);font-size:.82rem;padding:12px;text-align:center">対象がありません</div>'
-          : targetList.map(item =>
-              '<label style="display:flex;align-items:center;gap:10px;padding:9px 4px;'
-              + 'border-bottom:1px solid var(--border);cursor:pointer">'
-              + '<input type="checkbox" data-bid="' + item.id + '"'
-              + (bulkSelected[item.id] ? ' checked' : '')
-              + ' onchange="Pages._lblBulkToggle(\'' + item.id + '\',this.checked)"'
-              + ' style="width:16px;height:16px;accent-color:var(--green);flex-shrink:0">'
-              + '<span style="font-size:.82rem;color:var(--text1)">' + item.label + '</span>'
-              + '</label>'
-            ).join('')
+          : targetList.map(function(item) {
+              return '<label style="display:flex;align-items:center;gap:10px;padding:9px 4px;'
+                + 'border-bottom:1px solid var(--border);cursor:pointer">'
+                + '<input type="checkbox" data-bid="' + item.id + '"'
+                + (bulkSelected[item.id] ? ' checked' : '')
+                + ' onchange="Pages._lblBulkToggle(\'' + item.id + '\',this.checked)"'
+                + ' style="width:16px;height:16px;accent-color:var(--green);flex-shrink:0">'
+                + '<span style="font-size:.82rem;color:var(--text1)">' + item.label + '</span>'
+                + '</label>';
+            }).join('')
         )
       + '</div></div>'
-
-      // 一括生成ボタン（disabled 属性のみ。pointer-events は絶対に使わない）
       + '<button id="lbl-bulk-btn" class="btn btn-primary btn-full"'
       + ' style="font-weight:800;font-size:.95rem' + (btnDisabled ? ';opacity:.4' : '') + '"'
       + (btnDisabled ? ' disabled' : '')
@@ -461,11 +495,12 @@ Pages.labelGen = function (params) {
   Pages._lblToggleSort   = ()   => { sortDir = sortDir === 'asc' ? 'desc' : 'asc'; render(); };
 
   // フィルタハンドラ（render で再描画）
+  Pages._lblFilterYear    = (v) => { filter.year    = v;  render(); };
   Pages._lblFilterLine    = (v) => { filter.line    = v;  render(); };
   Pages._lblFilterLot     = (v) => { filter.lot     = v;  render(); };
   Pages._lblFilterKeyword = (v) => { filter.keyword = v;  render(); };
   Pages._lblFilterClear   = ()  => {
-    filter = { line: '', lot: '', keyword: '' };
+    filter = { year: '', line: '', lot: '', keyword: '' };
     render();
   };
 
