@@ -136,24 +136,65 @@ function _renderSettings(main) {
         </div>
       </div>
 
-      <!-- ステージ目安日齢 -->
+      <!-- ステージ目安日齢（編集可能） -->
       <div class="card">
-        <div class="card-title">📅 ステージ目安日齢（デフォルト値）</div>
-        <div style="font-size:.78rem;color:var(--text2);margin-bottom:8px">
-          孵化日からのおおよその日齢でステージを自動判定します。<br>
-          変更はGASの設定シートから行ってください。
+        <div class="card-title">📅 ステージ目安日齢（自動判定ルール）</div>
+        <div style="font-size:.78rem;color:var(--text2);margin-bottom:10px;line-height:1.6">
+          孵化日からの日齢でステージを自動判定します。<br>
+          各ステージの開始日齢を変更できます。<br>
+          <span style="color:var(--text3)">※ 前蛹以降は自動で ∞ になります</span>
         </div>
-        <div style="font-size:.8rem">
-          ${DEFAULT_STAGE_AGE_RULES.map(r => {
-            const lbl   = (typeof stageLabel === 'function') ? stageLabel(r.code) : (r.label || r.code);
-            const color = (typeof stageColor === 'function') ? stageColor(r.code) : 'var(--text1)';
-            const maxStr = (r.maxDays === 9999 || r.maxDays === undefined) ? '∞' : r.maxDays;
-            return '<div style="display:flex;gap:8px;padding:5px 0;border-bottom:1px solid var(--border)">'
-              + '<span style="min-width:80px;color:var(--text3)">' + r.minDays + '〜' + maxStr + '日</span>'
-              + '<span style="color:' + color + ';font-weight:600">' + lbl + '</span>'
-              + '</div>';
-          }).join('')}
-        </div>
+        ${(() => {
+          // 保存済みルールがあれば使う、なければデフォルト
+          let rules = DEFAULT_STAGE_AGE_RULES;
+          const saved = Store.getSetting('stage_age_rules');
+          if (saved) {
+            try { rules = JSON.parse(saved); } catch(e) {}
+          }
+          // 編集対象: L1〜PREPUPA（前蛹以降は手入力不要）
+          const editable = [
+            { code:'L1',       label:'L1'    },
+            { code:'L2_EARLY', label:'L2前期' },
+            { code:'L2_LATE',  label:'L2後期' },
+            { code:'L3_EARLY', label:'L3前期' },
+            { code:'L3_MID',   label:'L3中期' },
+            { code:'L3_LATE',  label:'L3後期' },
+            { code:'PREPUPA',  label:'前蛹'   },
+          ];
+          return '<div style="font-size:.82rem">'
+            + '<div style="display:grid;grid-template-columns:80px 1fr 60px;gap:4px;padding:4px 0;'
+            + 'font-size:.72rem;color:var(--text3);border-bottom:2px solid var(--border);margin-bottom:4px">'
+            + '<span>ステージ</span><span style="padding-left:8px">開始日齢（孵化後）</span><span style="text-align:right">単位</span>'
+            + '</div>'
+            + editable.map((s, idx) => {
+                const rule     = rules.find(r => r.code === s.code) || {};
+                const minDays  = rule.minDays !== undefined ? rule.minDays : '';
+                const color    = (typeof stageColor === 'function') ? stageColor(s.code) : 'var(--text1)';
+                const isLast   = idx === editable.length - 1;
+                return '<div style="display:grid;grid-template-columns:80px 1fr 60px;gap:4px;padding:5px 0;'
+                  + 'border-bottom:1px solid var(--border);align-items:center">'
+                  + '<span style="font-weight:700;color:' + color + '">' + s.label + '</span>'
+                  + '<input type="number" min="0" max="9999" id="sar-' + s.code + '"'
+                  + ' class="input" style="font-size:.82rem;text-align:right"'
+                  + ' value="' + minDays + '"'
+                  + (isLast ? ' placeholder="450"' : '')
+                  + '>'
+                  + '<span style="font-size:.75rem;color:var(--text3);text-align:right;padding-left:4px">日〜</span>'
+                  + '</div>';
+              }).join('')
+            + '<div style="font-size:.72rem;color:var(--text3);padding:6px 0 2px">'
+            + '💡 例: L1=0, L2前期=30, L2後期=90, L3前期=150, L3中期=240, L3後期=330, 前蛹=450'
+            + '</div>'
+            + '</div>';
+        })()}
+        <button class="btn btn-primary btn-full" style="margin-top:10px"
+                onclick="Pages._saveStageAgeRules()">
+          ステージ目安を保存
+        </button>
+        <button class="btn btn-ghost btn-sm" style="margin-top:6px;width:100%"
+                onclick="Pages._resetStageAgeRules()">
+          ↺ デフォルトに戻す
+        </button>
       </div>
 
       <!-- データ管理 -->
@@ -703,6 +744,62 @@ Pages._saveExchangeSettings = async function () {
   } else {
     UI.toast('ローカルに保存しました', 'success');
   }
+};
+
+
+// ── Phase6: ステージ目安日齢 保存・リセット ───────────────────────
+Pages._saveStageAgeRules = async function () {
+  const codes = ['L1','L2_EARLY','L2_LATE','L3_EARLY','L3_MID','L3_LATE','PREPUPA'];
+
+  // 入力値を収集し minDays の昇順で rules 配列を構築
+  const inputs = codes.map(code => {
+    const el  = document.getElementById('sar-' + code);
+    const val = el ? parseInt(el.value, 10) : NaN;
+    return { code, minDays: isNaN(val) ? null : val };
+  }).filter(r => r.minDays !== null);
+
+  if (inputs.length < 2) {
+    UI.toast('少なくとも2つ以上入力してください', 'error');
+    return;
+  }
+
+  // 入力値を昇順にソートして maxDays を自動計算
+  inputs.sort((a, b) => a.minDays - b.minDays);
+  const rules = inputs.map((r, i) => ({
+    code:     r.code,
+    minDays:  r.minDays,
+    maxDays:  i < inputs.length - 1 ? inputs[i + 1].minDays : 9999,
+  }));
+
+  const json = JSON.stringify(rules);
+  Store.setSetting('stage_age_rules', json);
+
+  const gasUrl = Store.getSetting('gas_url');
+  if (gasUrl) {
+    try {
+      await API.system.updateSettings({ stage_age_rules: json });
+      UI.toast('ステージ目安を保存しました（GASにも反映済み）', 'success');
+    } catch (e) {
+      UI.toast('ローカルに保存しました（GAS反映失敗: ' + e.message + '）', 'info');
+    }
+  } else {
+    UI.toast('ローカルに保存しました', 'success');
+  }
+
+  // 再描画して確認
+  _renderSettings(document.getElementById('main'));
+};
+
+Pages._resetStageAgeRules = function () {
+  if (!UI.confirm('ステージ目安をデフォルト値に戻しますか？')) return;
+  Store.setSetting('stage_age_rules', '');
+  // GASにも空文字を保存
+  const gasUrl = Store.getSetting('gas_url');
+  if (gasUrl) {
+    API.system.updateSettings({ stage_age_rules: '' }).catch(() => {});
+  }
+  UI.toast('デフォルト値に戻しました', 'success');
+  _renderSettings(document.getElementById('main'));
 };
 
 
