@@ -264,25 +264,47 @@ function _renderSettings(main) {
       <!-- Phase2: 後食・ペアリング設定 -->
       <div class="card">
         <div class="card-title">🍽️ 後食・ペアリング設定</div>
-        <div class="form-group">
-          <label class="form-label">♂後食待機日数（日）</label>
-          <input id="set-male-wait" class="form-input" type="number" min="1" max="90"
-                 value="${Store.getSetting('male_pairing_wait_days') || '14'}">
-          <label class="form-label" style="margin-top:12px">♀後食待機日数（日）</label>
-          <input id="set-female-wait" class="form-input" type="number" min="1" max="90"
-                 value="${Store.getSetting('female_pairing_wait_days') || '14'}">
-          <label class="form-label" style="margin-top:12px">♂ペアリング間隔最小日数（日）</label>
-          <input id="set-pairing-interval" class="form-input" type="number" min="1" max="60"
-                 value="${Store.getSetting('male_pairing_interval_min_days') || '7'}">
-          <div class="form-hint">この日数未満でペアリングすると警告が表示されます</div>
 
-          <label class="form-label" style="margin-top:16px">🥚 産卵セット交換間隔（日）</label>
-          <input id="set-exchange-days" class="form-input" type="number" min="1" max="30"
-                 value="${Store.getSetting('pairing_set_exchange_days') || '7'}">
-          <div class="form-hint">セット開始からこの日数後に交換リマインドを表示します（初期値: 7日）</div>
-          <button class="btn btn-primary btn-full" style="margin-top:12px"
-                  onclick="Pages._savePairingSettings()">後食・ペアリング設定を保存</button>
+        <!-- ♂後食待機日数 -->
+        <div style="margin-bottom:14px">
+          <label class="form-label">♂後食待機日数（日）</label>
+          <input id="set-male-wait" class="input" type="number" min="1" max="90"
+                 value="${Store.getSetting('male_pairing_wait_days') || '14'}"
+                 style="margin-top:4px">
         </div>
+
+        <!-- ♀後食待機日数 -->
+        <div style="margin-bottom:14px">
+          <label class="form-label">♀後食待機日数（日）</label>
+          <input id="set-female-wait" class="input" type="number" min="1" max="90"
+                 value="${Store.getSetting('female_pairing_wait_days') || '14'}"
+                 style="margin-top:4px">
+        </div>
+
+        <!-- ♂ペアリング間隔 -->
+        <div style="margin-bottom:6px">
+          <label class="form-label">♂ペアリング間隔最小日数（日）</label>
+          <input id="set-pairing-interval" class="input" type="number" min="1" max="60"
+                 value="${Store.getSetting('male_pairing_interval_min_days') || '7'}"
+                 style="margin-top:4px">
+          <div style="font-size:.72rem;color:var(--text3);margin-top:5px;line-height:1.5">
+            この日数未満でペアリングすると<br>警告が表示されます
+          </div>
+        </div>
+
+        <!-- 産卵セット交換間隔 -->
+        <div style="margin-top:16px;margin-bottom:6px;padding-top:14px;border-top:1px solid var(--border)">
+          <label class="form-label">🥚 産卵セット交換間隔（日）</label>
+          <input id="set-exchange-days" class="input" type="number" min="1" max="30"
+                 value="${Store.getSetting('pairing_set_exchange_days') || '7'}"
+                 style="margin-top:4px">
+          <div style="font-size:.72rem;color:var(--text3);margin-top:5px;line-height:1.5">
+            セット開始からこの日数後に<br>交換リマインドを表示します（初期値: 7日）
+          </div>
+        </div>
+
+        <button class="btn btn-primary btn-full" style="margin-top:14px"
+                onclick="Pages._savePairingSettings()">後食・ペアリング設定を保存</button>
       </div>
 
 

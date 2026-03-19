@@ -187,34 +187,51 @@ function _sexFilters(active) {
 }
 
 function _indCardHTML(ind) {
-  const age     = ind._age || Store.calcAge(ind.hatch_date);
-  const w       = ind.latest_weight_g ? ind.latest_weight_g + 'g' : null;
-  const sz      = ind.adult_size_mm    ? ind.adult_size_mm + 'mm'  : null;
+  const age      = ind._age || Store.calcAge(ind.hatch_date);
+  const w        = ind.latest_weight_g ? ind.latest_weight_g + 'g' : null;
+  const sz       = ind.adult_size_mm    ? ind.adult_size_mm + 'mm'  : null;
 
-  // ライン名：line_id から正引き（undefined を防ぐ）
-  const line    = ind.line_id ? Store.getLine(ind.line_id) : null;
-  const lineStr = line ? (line.line_code || line.display_id || '') : '';
-  const lineLbl = lineStr ? lineStr + 'ライン' : (ind.line_id ? '—' : '—');
+  // ライン: display_id からライン部分を抽出するのが最も正確
+  let lineCode = '';
+  if (typeof _parseDisplayId === 'function') {
+    lineCode = _parseDisplayId(ind.display_id || '').line || '';
+  }
+  if (!lineCode) {
+    const line = ind.line_id ? Store.getLine(ind.line_id) : null;
+    lineCode = line ? (line.line_code || line.display_id || '') : '';
+  }
 
-  const locality = ind.locality || (line ? line.locality : '') || '';
+  // ステージ表示（stage_life 優先）
+  const OLD_TO_NEW = { T0:'L1', T1:'L2_EARLY', T2A:'L3_EARLY', T2B:'L3_MID', T3:'L3_LATE' };
+  const rawStage   = ind.stage_life || ind.current_stage || '';
+  const stageCode  = OLD_TO_NEW[rawStage] || rawStage;
+  const stageDisp  = stageCode ? (typeof stageLabel === 'function' ? stageLabel(stageCode) : stageCode) : '';
+  const sColor     = typeof stageColor === 'function' ? stageColor(stageCode) : 'var(--text1)';
 
-  // ステータスラベル
+  // マット表示（mat_molt 考慮）
+  const rawMat    = ind.current_mat || '';
+  const matCode   = rawMat === 'T2A' || rawMat === 'T2B' ? 'T2' : rawMat;
+  const isMatMolt = ind.mat_molt === true || ind.mat_molt === 'true';
+  const matDisp   = matCode === 'T2' && isMatMolt ? 'T2(M)' : matCode;
+
+  // ステータス
   const stMap = {
     larva:'幼虫', prepupa:'前蛹', pupa:'蛹', adult:'成虫', alive:'飼育中',
     seed_candidate:'種親候補', seed_reserved:'種親確保済',
     for_sale:'販売候補', reserved:'予約済', listed:'出品中',
     sold:'販売済', dead:'死亡', excluded:'除外',
   };
-  const stColor = {
-    larva:'var(--green)', prepupa:'var(--amber)', pupa:'#bf360c', adult:'var(--green)', alive:'var(--green)',
+  const stColorMap = {
+    larva:'var(--green)', prepupa:'var(--amber)', pupa:'#bf360c',
+    adult:'var(--green)', alive:'var(--green)',
     seed_candidate:'var(--blue)', seed_reserved:'var(--blue)',
     for_sale:'#9c27b0', reserved:'var(--blue)', listed:'#ff9800',
     sold:'var(--amber)', dead:'var(--red,#e05050)', excluded:'var(--text3)',
   };
-  const stLbl  = stMap[ind.status] || ind.status || '—';
-  const stClr  = stColor[ind.status] || 'var(--text3)';
+  const stLbl  = stMap[ind.status]      || ind.status      || '—';
+  const stClr  = stColorMap[ind.status] || 'var(--text3)';
 
-  // 種親・ギネスアイコン
+  // アイコン
   const icons = [
     String(ind.guinness_flag) === 'true' ? '🏆' : '',
     String(ind.parent_flag)   === 'true' ? '👑' : '',
@@ -224,29 +241,40 @@ function _indCardHTML(ind) {
   // 性別色
   const sexColor = ind.sex === '♂' ? 'var(--male,#5ba8e8)' : ind.sex === '♀' ? 'var(--female,#e87fa0)' : 'var(--text3)';
 
-  return '<div class="ind-card" onclick="routeTo(\x27ind-detail\x27,{indId:\x27' + ind.ind_id + '\x27})" style="padding:10px 12px">'
-    // 【1行目】性別 + ID + ステージ
-    + '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">'
-    +   '<span style="font-weight:700;color:' + sexColor + ';font-size:.95rem">' + (ind.sex || '?') + '</span>'
-    +   '<span style="font-family:var(--font-mono);font-weight:700;font-size:.9rem;flex:1">' + ind.display_id + '</span>'
-    +   (icons ? '<span style="font-size:.82rem">' + icons + '</span>' : '')
-    +   UI.stageBadge(ind.current_stage)
+  // サブ情報: ステージ / マット / 体重 / サイズ を整理して表示
+  const subParts = [
+    stageDisp  ? '<span style="font-size:.75rem;font-weight:700;color:' + sColor + '">' + stageDisp + '</span>' : '',
+    matDisp    ? '<span style="font-size:.72rem;color:var(--text3)">' + matDisp + '</span>' : '',
+    w          ? '<span style="font-size:.78rem;font-weight:700;color:var(--green)">' + w + '</span>' : '',
+    sz         ? '<span style="font-size:.72rem;color:var(--text3)">' + sz + '</span>' : '',
+  ].filter(Boolean).join('<span style="font-size:.65rem;color:var(--border)"> / </span>');
+
+  // ── .card スタイル（ロット一覧・ライン一覧と統一）─────────
+  return '<div class="card" style="padding:12px 14px;cursor:pointer;display:flex;align-items:center;gap:12px;margin-bottom:8px"'
+    + ' onclick="routeTo(\x27ind-detail\x27,{indId:\x27' + ind.ind_id + '\x27})">'
+
+    // 左: 性別記号 + ライン
+    + '<div style="min-width:36px;text-align:center;flex-shrink:0">'
+    +   '<div style="font-size:1.2rem;font-weight:800;color:' + sexColor + ';line-height:1">' + (ind.sex || '?') + '</div>'
+    +   (lineCode ? '<div style="font-size:.65rem;color:var(--text3);margin-top:3px">' + lineCode + '</div>' : '')
     + '</div>'
-    // 【2行目】ライン / 産地
-    + '<div style="font-size:.76rem;color:var(--text2);margin-bottom:3px">'
-    +   lineLbl + (locality ? ' / ' + locality : '')
+
+    // 右: ID + サブ情報行
+    + '<div style="flex:1;min-width:0">'
+    +   '<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">'
+    +     '<span style="font-family:var(--font-mono);font-size:.85rem;font-weight:700;color:var(--text1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">' + ind.display_id + '</span>'
+    +     (icons ? '<span style="font-size:.78rem;flex-shrink:0">' + icons + '</span>' : '')
+    +   '</div>'
+    +   (subParts ? '<div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-bottom:3px">' + subParts + '</div>' : '')
+    +   '<div style="display:flex;align-items:center;justify-content:space-between">'
+    +     '<span style="font-size:.72rem;font-weight:700;color:' + stClr + '">' + stLbl + '</span>'
+    +     (age ? '<span style="font-size:.68rem;color:var(--text3)">日齢 ' + age.days + '日</span>' : '')
+    +   '</div>'
     + '</div>'
-    // 【3行目】日齢
-    + '<div style="font-size:.76rem;color:var(--text3);margin-bottom:3px">'
-    +   (age ? '日齢' + age.days + '日' + (age.stageGuess ? ' · ' + age.stageGuess : '') : (ind.hatch_date ? '' : '<span style="color:var(--amber)">孵化日未設定</span>'))
-    + '</div>'
-    // 【4行目】サイズ
-    + (w || sz ? '<div style="font-size:.8rem;color:var(--text2);margin-bottom:4px">' + [w,sz].filter(Boolean).join(' / ') + '</div>' : '')
-    // 【最下段】状態バッジ
-    + '<div style="display:flex;align-items:center;justify-content:space-between">'
-    +   '<span style="font-size:.72rem;font-weight:700;color:' + stClr + '">' + stLbl + '</span>'
-    +   '<span style="color:var(--text3);font-size:1rem">›</span>'
-    + '</div>'
+
+    // 矢印
+    + '<div style="color:var(--text3);font-size:1.1rem;flex-shrink:0">›</div>'
+
     + '</div>';
 }
 
@@ -342,124 +370,6 @@ Pages.individualDetail = async function (indId) {
   }
 };
 
-// ════════════════════════════════════════════════════════════════
-// _renderSaleActions — 状態に応じた販売アクションUIを生成
-//
-// 状態遷移ルール（StatusRules.gs と一致）:
-//   larva/prepupa/pupa/adult → for_sale / dead
-//   for_sale   → reserved / sold / adult(解除) / dead
-//   reserved   → listed / sold / for_sale(解除) / dead
-//   listed     → sold / reserved(解除) / dead
-//   sold       → 変更不可（販売情報表示のみ）
-//   dead       → 変更不可
-// ════════════════════════════════════════════════════════════════
-function _renderSaleActions(ind) {
-  var id  = ind.ind_id;
-  var st  = ind.status || '';
-  var gf  = ind.guinness_flag;
-  var pf  = ind.parent_flag;
-  var g2  = ind.g200_flag;
-
-  // ── 状態バッジ ────────────────────────────────────────────
-  var STATUS_INFO = {
-    larva:          { label:'幼虫',       color:'var(--green)' },
-    prepupa:        { label:'前蛹',       color:'var(--amber)' },
-    pupa:           { label:'蛹',         color:'#bf360c' },
-    adult:          { label:'成虫',       color:'var(--green)' },
-    alive:          { label:'飼育中',     color:'var(--green)' },
-    seed_candidate: { label:'種親候補',   color:'var(--blue)' },
-    seed_reserved:  { label:'種親確保済', color:'var(--blue)' },
-    for_sale:       { label:'販売候補',   color:'#9c27b0' },
-    reserved:       { label:'予約中',     color:'var(--blue)' },
-    listed:         { label:'出品中',     color:'#ff9800' },
-    sold:           { label:'販売済',     color:'var(--gold)' },
-    dead:           { label:'死亡',       color:'var(--red,#e05555)' },
-  };
-  var si = STATUS_INFO[st] || { label: st, color:'var(--text3)' };
-
-  var statusBadge = '<div class="ind-sale-status">'
-    + '<span class="ind-sale-status-label">現在の状態</span>'
-    + '<span class="ind-sale-status-badge" style="color:' + si.color + ';border-color:' + si.color + '">'
-    + si.label
-    + '</span></div>';
-
-  // ── ボタンビルダー ────────────────────────────────────────
-  function btn(cls, icon, label, fn) {
-    return '<button class="btn-sale ' + cls + '" onclick="' + fn + '">' + icon + ' ' + label + '</button>';
-  }
-
-  var setFn   = function(s) { return "Pages._indSetStatus('" + id + "','" + s + "')"; };
-  var deadFn  = "Pages._indMarkDead('" + id + "')";
-  var soldFn  = "Pages._indMarkSoldModal('" + id + "')";
-  var flagFn  = "Pages._indFlagMenu('" + id + "','" + gf + "','" + pf + "','" + g2 + "')";
-
-  // ── 状態別ボタン ─────────────────────────────────────────
-  var isActive = ['larva','prepupa','pupa','adult','alive',
-                  'seed_candidate','seed_reserved'].indexOf(st) !== -1;
-  var btns = '';
-
-  if (isActive) {
-    btns =
-      btn('btn-sale-purple', '🛒', '販売候補にする', setFn('for_sale'))
-      + btn('btn-sale-red', '💀', '死亡', deadFn);
-
-  } else if (st === 'for_sale') {
-    btns =
-      btn('btn-sale-blue',   '📦', '予約する',       setFn('reserved'))
-      + btn('btn-sale-gold', '💰', '販売済みにする', soldFn)
-      + btn('btn-sale-gray', '↩',  '候補解除',       setFn('adult'))
-      + btn('btn-sale-red',  '💀', '死亡',            deadFn);
-
-  } else if (st === 'reserved') {
-    btns =
-      btn('btn-sale-orange', '📢', '出品する',       setFn('listed'))
-      + btn('btn-sale-gold', '💰', '販売済みにする', soldFn)
-      + btn('btn-sale-gray', '↩',  '予約解除',       setFn('for_sale'))
-      + btn('btn-sale-red',  '💀', '死亡',            deadFn);
-
-  } else if (st === 'listed') {
-    btns =
-      btn('btn-sale-gold', '💰', '販売済みにする', soldFn)
-      + btn('btn-sale-gray', '↩', '出品解除',       setFn('reserved'))
-      + btn('btn-sale-red',  '💀', '死亡',           deadFn);
-
-  } else if (st === 'sold') {
-    btns = '<div class="ind-sale-done-msg">💰 販売済みです — これ以上の変更はできません</div>';
-
-  } else if (st === 'dead') {
-    // dead → 復旧ボタンを表示（StatusRules: dead → adult/larva を許容）
-    btns =
-      '<div class="ind-sale-done-msg">💀 死亡として記録済みです</div>'
-      + btn('btn-sale-gray', '🔄', '誤操作の場合は復旧', "Pages._indReviveModal('" + id + "')");
-  }
-
-  var canFlag = (st !== 'dead');
-
-  return '<div class="ind-sale-actions">'
-    + statusBadge
-    + '<div class="ind-sale-btn-grid">'
-    + btns
-    + (canFlag ? btn('btn-sale-gray', '🏷', 'フラグ', flagFn) : '')
-    + '</div>'
-    + '</div>';
-}
-
-
-// ════════════════════════════════════════════════════════════════
-// _renderPublicStatusBar
-// 個体詳細画面の公開設定エリア（同期描画）
-// 初期は「公開設定を確認中」→ _indLoadPublicStatus で非同期更新
-// ════════════════════════════════════════════════════════════════
-function _renderPublicStatusBar(ind) {
-  return '<div id="pub-status-bar" style="margin-top:6px">'
-    + '<button class="btn btn-ghost btn-full" style="font-size:.82rem;color:var(--text3)"'
-    + ' onclick="Pages._indOpenPublicEdit(\'' + ind.ind_id + '\')">'
-    + '🌐 公開設定を読み込み中…'
-    + '</button>'
-    + '</div>';
-}
-
-
 function _renderDetail(ind, main) {
   const age      = Store.calcAge(ind.hatch_date);    // 現在の日齢
   const verdict  = Store.getVerdict(ind);
@@ -518,8 +428,6 @@ function _renderDetail(ind, main) {
         <button class="btn btn-ghost" style="flex:1"
           onclick="routeTo('label-gen',{targetType:'IND',targetId:'${ind.ind_id}'})">🏷</button>
       </div>
-      <!-- 公開設定エリア -->
-      ${_renderPublicStatusBar(ind)}
 
       <!-- 基本情報 -->
       <div class="accordion" id="acc-basic">
@@ -660,8 +568,15 @@ function _renderDetail(ind, main) {
         </div>
       </div>` : ''}
 
-      <!-- 販売ステータス別アクションUI -->
-      ${_renderSaleActions(ind)}
+      <!-- ステータス変更 -->
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-ghost btn-sm"
+          onclick="Pages._indMarkDead('${ind.ind_id}')">💀 死亡</button>
+        <button class="btn btn-ghost btn-sm" style="${ind.status==='reserved'?'color:var(--blue);border-color:var(--blue);':''}"          onclick="Pages._indMarkReserved('${ind.ind_id}')">📦 予約${ind.status==='reserved'?' ✓':''}</button>
+        <button class="btn btn-ghost btn-sm" style="margin-left:auto"
+          onclick="Pages._indFlagMenu('${ind.ind_id}','${ind.guinness_flag}','${ind.parent_flag}','${ind.g200_flag}')">
+          🏷 フラグ</button>
+      </div>
 
     </div>`;
 
@@ -669,9 +584,6 @@ function _renderDetail(ind, main) {
   if (records.filter(r => r.weight_g).length >= 2) {
     setTimeout(() => _drawWeightChart(ind.ind_id, records), 100);
   }
-
-  // Phase5.5: 公開ステータスを非同期で取得してバーを更新
-  _indLoadPublicStatus(ind.ind_id);
 }
 
 function _defectTypeLabel(type) {
@@ -732,68 +644,30 @@ function _drawWeightChart(indId, records) {
   });
 }
 
-// ── 死亡記録 ────────────────────────────────────────────────────
-// 死亡は updateIndividual 経由で status を変更するだけ（物理削除しない）。
-// 誤操作時は個体詳細の「復旧」ボタンから dead → adult に戻せる。
+// ステータス変更
 Pages._indMarkDead = async function (id) {
-  if (!UI.confirm('死亡として記録しますか？\n誤操作時は詳細画面から復旧できます。')) return;
+  if (!UI.confirm('死亡として記録しますか？（元に戻せません）')) return;
   try {
-    await apiCall(() => API.individual.update({ ind_id: id, status: 'dead' }), '死亡を記録しました');
+    await apiCall(() => API.individual.changeStatus(id, 'dead'), '死亡を記録しました');
     Store.patchDBItem('individuals', 'ind_id', id, { status: 'dead' });
+    routeTo('ind-list');
+  } catch (e) {}
+};
+
+Pages._indCancelReserved = async function (id) {
+  try {
+    await apiCall(() => API.individual.changeStatus(id, 'for_sale'), '予約を解除しました');
+    Store.patchDBItem('individuals', 'ind_id', id, { status: 'for_sale' });
     Pages.individualDetail(id);
   } catch (e) {}
 };
 
-// 後方互換: 旧ハンドラは _indSetStatus に委譲
-Pages._indCancelReserved = function (id) { Pages._indSetStatus(id, 'for_sale'); };
-Pages._indMarkReserved   = function (id) { Pages._indSetStatus(id, 'reserved'); };
-
-
-// ── 死亡状態からの復旧（誤操作時の緊急復旧用）────────────────────
-// StatusRules: dead → adult / larva への遷移を許容（updateIndividual 経由）
-// 通常運用では使わない。個体取り違えや誤タップ時の復旧専用。
-Pages._indReviveModal = function (id) {
-  const ind = Store.getIndividual(id);
-  _showModal('🔄 死亡記録の復旧', '<div class="form-section">'
-    + '<div style="background:rgba(224,80,80,.08);border:1px solid rgba(224,80,80,.25);'
-    + 'border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:.8rem;color:var(--text2)">'
-    + '⚠️ 誤操作・個体取り違えなどの場合のみ使用してください。<br>'
-    + '復旧後は飼育中の状態に戻ります。'
-    + '</div>'
-    + UI.field('復旧後のステータス', UI.select('revive-status-sel',
-        [
-          { code:'adult', label:'成虫（adult）' },
-          { code:'larva', label:'幼虫（larva）' },
-        ],
-        (ind && ['adult','alive'].includes(ind.status)) ? 'adult' : 'larva'))
-    + UI.field('復旧理由（必須・内部メモに記録）',
-        '<input type="text" id="revive-reason" class="input" placeholder="例: 個体取り違え、誤タップ" required>')
-    + '<div class="modal-footer">'
-    + '<button class="btn btn-ghost" style="flex:1" onclick="_closeModal()">キャンセル</button>'
-    + '<button class="btn btn-primary" style="flex:2" onclick="Pages._indReviveExec(\'' + id + '\')">🔄 復旧する</button>'
-    + '</div>'
-    + '</div>'
-  );
-};
-
-Pages._indReviveExec = async function (id) {
-  const newStatus = document.getElementById('revive-status-sel')?.value || 'adult';
-  const reason    = document.getElementById('revive-reason')?.value?.trim() || '';
-  if (!reason) { UI.toast('復旧理由を入力してください', 'error'); return; }
-  _closeModal();
+Pages._indMarkReserved = async function (id) {
   try {
-    const ind     = Store.getIndividual(id);
-    const oldNote = (ind && ind.note_private) || '';
-    const reviveNote = oldNote
-      ? oldNote + '\n[復旧] ' + new Date().toLocaleDateString('ja-JP') + ': ' + reason
-      : '[復旧] ' + new Date().toLocaleDateString('ja-JP') + ': ' + reason;
-    await apiCall(
-      () => API.individual.update({ ind_id: id, status: newStatus, note_private: reviveNote }),
-      '復旧しました（' + newStatus + '）'
-    );
-    Store.patchDBItem('individuals', 'ind_id', id, { status: newStatus, note_private: reviveNote });
+    await apiCall(() => API.individual.changeStatus(id, 'reserved'), '予約済みに変更しました');
+    Store.patchDBItem('individuals', 'ind_id', id, { status: 'reserved' });
     Pages.individualDetail(id);
-  } catch(e) {}
+  } catch (e) {}
 };
 
 Pages._indFlagMenu = function (id, guinness, parent, g200) {
@@ -826,108 +700,6 @@ Pages._indFlagSave = async function (id) {
   try {
     await apiCall(() => API.individual.update(updates), 'フラグを保存しました');
     Store.patchDBItem('individuals', 'ind_id', id, updates);
-    Pages.individualDetail(id);
-  } catch(e) {}
-};
-
-// ── 汎用ステータス変更 ──────────────────────────────────────────
-// for_sale / reserved / listed / adult など各状態への遷移に使用
-// ── 汎用ステータス変更（updateIndividual 経由 = StatusRules のバリデーション付き）
-// changeStatus（deleteIndividual）は dead/sold/excluded 専用のため使わない。
-// for_sale / reserved / listed / adult など汎用遷移はすべてこちらを使う。
-Pages._indSetStatus = async function (id, newStatus) {
-  const labelMap = {
-    for_sale: '販売候補',
-    reserved: '予約中',
-    listed:   '出品中',
-    adult:    '成虫（飼育中）',
-    larva:    '幼虫（飼育中）',
-  };
-  const label = labelMap[newStatus] || newStatus;
-  if (!UI.confirm('「' + label + '」に変更しますか？')) return;
-  try {
-    // API.individual.update → GAS updateIndividual → validateStatusTransition で正しくチェック
-    await apiCall(() => API.individual.update({ ind_id: id, status: newStatus }), label + 'に変更しました');
-    Store.patchDBItem('individuals', 'ind_id', id, { status: newStatus });
-    Pages.individualDetail(id);
-  } catch(e) {}
-};
-
-// ── 販売済みモーダル（販売情報を記録して sold に変更）────────────
-Pages._indMarkSoldModal = function (id) {
-  const ind   = Store.getIndividual(id);
-  const today = new Date().toISOString().split('T')[0];
-  _showModal('💰 販売情報を入力', '<div class="form-section">'
-
-    + '<div style="font-size:.72rem;font-weight:700;color:var(--text3);'
-    + 'letter-spacing:.06em;margin-bottom:8px">▼ 販売情報</div>'
-    + UI.field('販売日', '<input type="date" id="sold-date" class="input" value="' + today + '">')
-    + UI.field('販売価格（円）', '<input type="number" id="sold-price" class="input" min="0" placeholder="例: 15000">')
-    + UI.field('販売経路', UI.select('sold-channel-sel', [
-        { code:'',       label:'— 選択 —' },
-        { code:'ヤフオク', label:'ヤフオク' },
-        { code:'イベント', label:'イベント' },
-        { code:'直接',    label:'直接取引' },
-        { code:'その他',  label:'その他' },
-      ], ''))
-
-    + '<div style="font-size:.72rem;font-weight:700;color:var(--text3);'
-    + 'letter-spacing:.06em;margin:10px 0 8px">▼ 購入者情報（任意）</div>'
-    + UI.field('購入者名', '<input type="text" id="sold-buyer" class="input" placeholder="例: 田中様">')
-    + UI.field('メモ', '<input type="text" id="sold-note" class="input" placeholder="例: ヤフオク落札 送料込み">')
-
-    + '<div style="font-size:.72rem;font-weight:700;color:var(--text3);'
-    + 'letter-spacing:.06em;margin:10px 0 8px">▼ 個体情報（任意）</div>'
-    + UI.field('販売時体重(g)', '<input type="number" id="sold-weight" class="input" placeholder="例: 85" step="0.1">')
-    + UI.field('販売時ステージ', UI.select('sold-stage-sel', [
-        { code:'', label:'— 選択 —' },
-        { code:'T2A', label:'T2①' }, { code:'T2B', label:'T2②' },
-        { code:'T3', label:'T3' }, { code:'PREPUPA', label:'前蛹' },
-        { code:'PUPA', label:'蛹' }, { code:'ADULT', label:'成虫' },
-      ], (ind && ind.current_stage) || ''))
-
-    + '<div class="modal-footer">'
-    + '<button class="btn btn-ghost" style="flex:1" onclick="_closeModal()">キャンセル</button>'
-    + '<button class="btn btn-gold" style="flex:2" onclick="Pages._indMarkSoldExec(\'' + id + '\')">💰 販売済みにする</button>'
-    + '</div></div>'
-  );
-};
-
-Pages._indMarkSoldExec = async function (id) {
-  const ind        = Store.getIndividual(id);
-  const soldDate   = (document.getElementById('sold-date')?.value      || '').replace(/-/g, '/');
-  const soldPrice  = document.getElementById('sold-price')?.value      || '';
-  const soldChan   = document.getElementById('sold-channel-sel')?.value || '';
-  const soldBuyer  = document.getElementById('sold-buyer')?.value       || '';
-  const soldNote   = document.getElementById('sold-note')?.value        || '';
-  const soldWeight = document.getElementById('sold-weight')?.value      || '';
-  const soldStage  = document.getElementById('sold-stage-sel')?.value   || '';
-  _closeModal();
-  try {
-    // ① 個体を sold 更新
-    const updates = { ind_id: id, status: 'sold' };
-    if (soldDate)   updates.sold_date   = soldDate;
-    if (soldWeight) updates.sold_weight = soldWeight;
-    if (soldStage)  updates.sold_stage  = soldStage;
-    if (soldPrice)  updates.sold_reason = soldChan || '販売';
-    await apiCall(() => API.individual.update(updates), '販売済みとして記録しました');
-    Store.patchDBItem('individuals', 'ind_id', id, updates);
-
-    // ② 販売履歴を作成（API.sale が利用可能な場合）
-    if (API.sale && API.sale.create) {
-      API.sale.create({
-        ind_id:        id,
-        ind_display_id: (ind && ind.display_id) || id,
-        sold_at:       soldDate,
-        actual_price:  soldPrice,
-        platform:      soldChan,
-        buyer_name:    soldBuyer,
-        buyer_note:    soldNote,
-      }).catch(function(e) {
-        console.warn('[_indMarkSoldExec] 販売履歴保存失敗:', e.message);
-      });
-    }
-
     Pages.individualDetail(id);
   } catch(e) {}
 };
@@ -1136,65 +908,6 @@ Pages._indSave = async function (editId) {
 // ════════════════════════════════════════════════════════════════
 
 // アコーディオン開閉
-// ── 公開設定ページへ遷移 ─────────────────────────────────────
-Pages._indOpenPublicEdit = function (indId) {
-  routeTo('public-edit', { indId: indId });
-};
-
-// ── 公開ステータスを非同期で取得してバーを更新 ────────────────
-// _renderDetail 後に呼ばれ、#pub-status-bar を書き換える
-async function _indLoadPublicStatus(indId) {
-  const bar = document.getElementById('pub-status-bar');
-  if (!bar) return;
-
-  // onclick に変数を直接渡すのを避けるため data属性 + グローバルコールバックを使用
-  window.__pubEditId = indId;
-
-  try {
-    const res = await API.publicPage.getByIndId(indId);
-    if (!document.getElementById('pub-status-bar')) return;
-
-    if (!res || !res.exists) {
-      bar.innerHTML = '<button class="btn btn-ghost btn-full"'
-        + ' style="font-size:.82rem;color:var(--text3)"'
-        + ' onclick="Pages._indOpenPublicEdit(window.__pubEditId)">'
-        + '🌐 公開設定（未設定）</button>';
-      return;
-    }
-
-    const isPublic = res.is_public;
-    const token    = res.token || '';
-    const pubUrl   = location.origin + location.pathname
-      + '#page=public-view&token=' + token;
-    window.__pubToken = pubUrl;
-
-    if (isPublic) {
-      bar.innerHTML = '<div style="display:flex;gap:6px;margin-top:6px">'
-        + '<a href="' + pubUrl + '" target="_blank" rel="noopener"'
-        + ' class="btn btn-ghost" style="flex:2;font-size:.82rem;color:var(--green);'
-        + 'border-color:rgba(76,175,120,.4);text-decoration:none;'
-        + 'display:flex;align-items:center;justify-content:center;gap:4px">'
-        + '🌐 公開ページを見る</a>'
-        + '<button class="btn btn-ghost" style="flex:1;font-size:.78rem"'
-        + ' onclick="Pages._indOpenPublicEdit(window.__pubEditId)">'
-        + '⚙ 設定</button>'
-        + '</div>';
-    } else {
-      bar.innerHTML = '<button class="btn btn-ghost btn-full"'
-        + ' style="font-size:.82rem;color:var(--text3)"'
-        + ' onclick="Pages._indOpenPublicEdit(window.__pubEditId)">'
-        + '🔒 公開設定（非公開）</button>';
-    }
-  } catch (e) {
-    var bar2 = document.getElementById('pub-status-bar');
-    if (bar2) {
-      bar2.innerHTML = '<button class="btn btn-ghost btn-full"'
-        + ' style="font-size:.82rem;color:var(--text3)"'
-        + ' onclick="Pages._indOpenPublicEdit(window.__pubEditId)">'
-        + '🌐 公開設定</button>';
-    }
-  }
-}
 window._toggleAcc = function (id) {
   const el = document.getElementById(id);
   if (!el) return;
@@ -1216,11 +929,6 @@ function _showModal(title, body) {
       ${body}
     </div>
   </div>`;
-  // モーダル内のスクロールを先頭に戻す（スクロール位置ズレ対策）
-  requestAnimationFrame(function() {
-    const m = ov.querySelector('.modal');
-    if (m) m.scrollTop = 0;
-  });
 }
 
 function _closeModal() {

@@ -213,7 +213,9 @@ function _renderLotDetail(lot, main) {
   const line     = Store.getLine(lot.line_id);
   const lineCode = line ? (line.line_code || line.display_id) : '';
   const records  = lot._growthRecords || Store.getGrowthRecords(lot.lot_id) || [];
-  const settings = (Store.getSettings ? Store.getSettings() : null) || {};
+  // Store.getSettings はバージョンによって未定義の場合があるため安全に取得
+  let settings = {};
+  try { if (typeof Store.getSettings === 'function') settings = Store.getSettings() || {}; } catch(_e) {}
 
   const latestRec = records.length > 0
     ? [...records].sort((a,b) => String(b.record_date).localeCompare(String(a.record_date)))[0]
