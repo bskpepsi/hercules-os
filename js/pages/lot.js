@@ -142,24 +142,29 @@ function _lotCardHTML(lot) {
   const dispWeight    = latestRec?.weight_g ? latestRec.weight_g + 'g' : null;
   const count         = +lot.count || 0;
 
-  return `<div class="lot-card" onclick="routeTo('lot-detail',{lotId:'${lot.lot_id}'})">
-    <!-- 左列: ラインコード + ロットID -->
-    <div class="lot-card-left">
-      <div class="lot-card-line">${lineCode}</div>
-      <div class="lot-card-id">${lot.display_id}</div>
+  // ライン一覧・産卵セット一覧と同じ .card スタイルで統一
+  return `<div class="card" style="padding:12px 14px;cursor:pointer;display:flex;align-items:center;gap:12px;margin-bottom:8px"
+    onclick="routeTo('lot-detail',{lotId:'${lot.lot_id}'})">
+
+    <!-- 左: ラインコード + 頭数 -->
+    <div style="min-width:44px;text-align:center;flex-shrink:0">
+      <div style="font-family:var(--font-mono);font-size:1.2rem;font-weight:800;color:var(--gold);line-height:1">${lineCode}</div>
+      <div style="font-size:.75rem;font-weight:700;color:var(--text2);margin-top:4px">${count}<span style="font-size:.65rem;color:var(--text3)">頭</span></div>
     </div>
-    <!-- 中央: 頭数強調 + サブ情報 -->
-    <div class="lot-card-center">
-      <div class="lot-card-count">${count}<span class="lot-card-count-unit">頭</span></div>
-      <div class="lot-card-sub">
-        <span class="lot-card-stage" style="color:${sColor}">${stageDisp}</span>
-        ${dispContainer ? `<span class="lot-card-sub-item">${dispContainer}</span>` : ''}
-        ${matDisp       ? `<span class="lot-card-sub-item">${matDisp}</span>`        : ''}
-        ${dispWeight    ? `<span class="lot-card-sub-item" style="color:var(--green)">${dispWeight}</span>` : ''}
+
+    <!-- 右: ロットID + ステージ/マット/体重 -->
+    <div style="flex:1;min-width:0">
+      <div style="font-family:var(--font-mono);font-size:.85rem;font-weight:700;color:var(--text1);margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${lot.display_id}</div>
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+        <span style="font-size:.75rem;font-weight:700;color:${sColor}">${stageDisp}</span>
+        ${dispContainer ? `<span style="font-size:.72rem;color:var(--text3)">${dispContainer}</span>` : ''}
+        ${matDisp       ? `<span style="font-size:.72rem;color:var(--text3)">${matDisp}</span>` : ''}
+        ${dispWeight    ? `<span style="font-size:.78rem;font-weight:700;color:var(--green)">${dispWeight}</span>` : ''}
       </div>
     </div>
-    <!-- 右列: 矢印 -->
-    <div class="lot-card-arrow">›</div>
+
+    <!-- 矢印 -->
+    <div style="color:var(--text3);font-size:1.1rem;flex-shrink:0">›</div>
   </div>`;
 }
 
