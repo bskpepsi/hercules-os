@@ -1,23 +1,23 @@
 // ════════════════════════════════════════════════════════════════
-// config.js
-// 役割: フロントエンド全体で使う定数・設定値を一元管理する。
-//       GASの Config.gs と対応させて保守性を確保する。
-//       ここを変更すれば全画面に反映される。
+// config.js  (Phase6 改訂版)
+//
+// 変更点:
+//   - STAGE_TYPES: T0〜T3 を廃止 → L1/L2前期/L2後期/L3前期/L3中期/L3後期/前蛹/蛹/成虫
+//   - MAT_TYPES: T0/T1/T2/T3/MDカブトマット（マット種別として独立）
+//   - EXCHANGE_RULES: ステージ×飼育タイプ別の交換日数
+//   - MAT_RECOMMEND: ステージ別推奨マット
+//   - ALERT_DAYS: 注意・警告日数（設定で上書き可能）
+//   - 既存コードとの後方互換は stageLabel() で維持
 // ════════════════════════════════════════════════════════════════
 
 'use strict';
 
 const CONFIG = {
-  // ── アプリ基本情報 ──────────────────────────────────────────
   APP_NAME:    'HerculesOS',
-  APP_VERSION: '1.0.0',
-  PHASE:       1,
-
-  // ── GAS URL（設定画面で上書き・localStorageに永続化） ───────
+  APP_VERSION: '1.1.0',
+  PHASE:       6,
   GAS_URL:     '',
   GEMINI_KEY:  '',
-
-  // ── ローカルストレージキー ──────────────────────────────────
   LS_KEYS: {
     GAS_URL:    'hcos_gas_url',
     GEMINI_KEY: 'hcos_gemini_key',
@@ -27,20 +27,45 @@ const CONFIG = {
   },
 };
 
-// ── ステージ定義 ────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════
+// ステージ定義（生体の成長段階）
+// T0〜T3 はステージではなくマット種別として扱う
+// ════════════════════════════════════════════════════════════════
 const STAGE_TYPES = {
-  EGG:     { code:'EGG',     label:'卵',   order:0, color:'#8bc34a' },
-  T0:      { code:'T0',      label:'T0',   order:1, color:'#4caf50' },
-  T1:      { code:'T1',      label:'T1',   order:2, color:'#26a69a' },
-  T2A:     { code:'T2A',     label:'T2①',  order:3, color:'#2196f3' },
-  T2B:     { code:'T2B',     label:'T2②',  order:4, color:'#1565c0' },
-  T3:      { code:'T3',      label:'T3',   order:5, color:'#7b1fa2' },
-  PREPUPA: { code:'PREPUPA', label:'前蛹', order:6, color:'#e65100' },
-  PUPA:    { code:'PUPA',    label:'蛹',   order:7, color:'#bf360c' },
-  ADULT:   { code:'ADULT',   label:'成虫', order:8, color:'#c8a84b' },
+  EGG:     { code:'EGG',      label:'卵',       order:0,  color:'#8bc34a' },
+  L1:      { code:'L1',       label:'L1',       order:1,  color:'#4caf50' },
+  L2_EARLY:{ code:'L2_EARLY', label:'L2前期',   order:2,  color:'#26c6da' },
+  L2_LATE: { code:'L2_LATE',  label:'L2後期',   order:3,  color:'#26a69a' },
+  L3_EARLY:{ code:'L3_EARLY', label:'L3前期',   order:4,  color:'#42a5f5' },
+  L3_MID:  { code:'L3_MID',   label:'L3中期',   order:5,  color:'#2196f3' },
+  L3_LATE: { code:'L3_LATE',  label:'L3後期',   order:6,  color:'#1565c0' },
+  PREPUPA: { code:'PREPUPA',  label:'前蛹',     order:7,  color:'#e65100' },
+  PUPA:    { code:'PUPA',     label:'蛹',       order:8,  color:'#bf360c' },
+  ADULT:   { code:'ADULT',    label:'成虫',     order:9,  color:'#c8a84b' },
+
+  // ── 後方互換（旧データの T0〜T3 を受け付ける）──────────────
+  // 表示はラベルに変換し、実際には上のコードに移行することを推奨
+  T0:      { code:'T0',  label:'L1(T0)',   order:1,  color:'#4caf50' },
+  T1:      { code:'T1',  label:'L2前期(T1)', order:2, color:'#26a69a' },
+  T2A:     { code:'T2A', label:'L3前期(T2①)', order:4, color:'#2196f3' },
+  T2B:     { code:'T2B', label:'L3中期(T2②)', order:5, color:'#1565c0' },
+  T3:      { code:'T3',  label:'L3後期(T3)',  order:6, color:'#7b1fa2' },
 };
 
-const STAGE_LIST = Object.values(STAGE_TYPES); // 配列版
+const STAGE_LIST = Object.values(STAGE_TYPES);
+
+// 新ステージコードのみの配列（UIで選択肢として使う）
+const STAGE_LIST_NEW = [
+  STAGE_TYPES.L1,
+  STAGE_TYPES.L2_EARLY,
+  STAGE_TYPES.L2_LATE,
+  STAGE_TYPES.L3_EARLY,
+  STAGE_TYPES.L3_MID,
+  STAGE_TYPES.L3_LATE,
+  STAGE_TYPES.PREPUPA,
+  STAGE_TYPES.PUPA,
+  STAGE_TYPES.ADULT,
+];
 
 function stageLabel(code) {
   return STAGE_TYPES[code]?.label || code || '—';
@@ -49,34 +74,227 @@ function stageColor(code) {
   return STAGE_TYPES[code]?.color || '#888';
 }
 
-// ── 個体ステータス ──────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════
+// マット種別（飼育環境として独立）
+// T0〜T3 はマット名として使う
+// ════════════════════════════════════════════════════════════════
+const MAT_TYPES = [
+  { code:'T0',       label:'T0マット' },
+  { code:'T1',       label:'T1マット' },
+  { code:'T2',       label:'T2マット' },
+  { code:'T3',       label:'T3マット' },
+  { code:'MDカブト', label:'MDカブトマット' },
+];
+
+// マット表示名: T2 + モルト → T2(M)
+function matLabel(matType, matMolt) {
+  if (matType === 'T2' && matMolt) return 'T2(M)';
+  const found = MAT_TYPES.find(m => m.code === matType);
+  return found ? found.label : (matType || '—');
+}
+
+// ════════════════════════════════════════════════════════════════
+// ステージ別推奨マット
+// ════════════════════════════════════════════════════════════════
+const MAT_RECOMMEND = {
+  L1:       'T0',
+  L2_EARLY: 'T0',
+  L2_LATE:  'T1',
+  L3_EARLY: 'T1',
+  L3_MID:   'T2',
+  L3_LATE:  'T3',
+  PREPUPA:  'MDカブト',
+  PUPA:     null,
+  ADULT:    null,
+  // 旧コード後方互換
+  T0:       'T0',
+  T1:       'T1',
+  T2A:      'T2',
+  T2B:      'T2',
+  T3:       'T3',
+};
+
+function recommendedMat(stageCode) {
+  return MAT_RECOMMEND[stageCode] || null;
+}
+
+// ════════════════════════════════════════════════════════════════
+// 交換周期ルール（ステージ×飼育タイプ）
+// ════════════════════════════════════════════════════════════════
+const EXCHANGE_RULES = {
+  L1:       { single: 60,  multi: 60  },
+  L2_EARLY: { single: 60,  multi: 60  },
+  L2_LATE:  { single: 90,  multi: 75  },
+  L3_EARLY: { single: 90,  multi: 75  },
+  L3_MID:   { single: 90,  multi: 60  },
+  L3_LATE:  { single: 120, multi: 90  },
+  PREPUPA:  { single: 0,   multi: 0   },  // 0 = 交換なし
+  PUPA:     { single: 0,   multi: 0   },
+  ADULT:    { single: 0,   multi: 0   },
+  // 旧コード後方互換
+  T0:       { single: 60,  multi: 60  },
+  T1:       { single: 60,  multi: 60  },
+  T2A:      { single: 90,  multi: 75  },
+  T2B:      { single: 90,  multi: 60  },
+  T3:       { single: 120, multi: 90  },
+};
+
+// 設定オーバーライドを考慮した交換日数を返す
+// settingsMap: Store.getSettings() の結果
+function getExchangeDays(stageCode, feedingType, settingsMap) {
+  const key    = 'exchange_days_' + stageCode + '_' + (feedingType || 'single');
+  const stored = settingsMap && settingsMap[key];
+  if (stored) return parseInt(stored, 10) || 0;
+  const rule = EXCHANGE_RULES[stageCode];
+  if (!rule) return 60;
+  return feedingType === 'multi' ? rule.multi : rule.single;
+}
+
+// ════════════════════════════════════════════════════════════════
+// 交換アラート判定
+//
+// 仕様:
+//   残り > 7日       → normal
+//   残り -7 〜 +7日   → 🟡 caution  (期限前7日〜期限後7日)
+//   残り < -7日       → 🔴 warning
+// ════════════════════════════════════════════════════════════════
+const ALERT_DAYS = {
+  caution: 7,   // 期限の何日前から注意
+  warning: 7,   // 期限超過から何日後に警告へ格上げ
+};
+
+// 設定上書き考慮版
+function getAlertDays(settingsMap) {
+  return {
+    caution: parseInt((settingsMap && settingsMap.alert_caution_days) || ALERT_DAYS.caution, 10),
+    warning: parseInt((settingsMap && settingsMap.alert_warning_days) || ALERT_DAYS.warning, 10),
+  };
+}
+
+// 交換アラートレベルを返す
+// @param lastChangeDate  string '2026/01/15' または '2026-01-15'
+// @param exchangeDays    number
+// @param overrideDate    string|null 延長上書き日
+// @param settingsMap     object|null
+// @returns { level: 'normal'|'caution'|'warning'|'none', daysLeft, nextDate }
+function calcExchangeAlert(lastChangeDate, exchangeDays, overrideDate, settingsMap) {
+  if (!lastChangeDate || exchangeDays === 0) return { level: 'none', daysLeft: null, nextDate: null };
+
+  var baseDate = new Date(String(lastChangeDate).replace(/\//g, '-'));
+  var nextDate;
+
+  if (overrideDate) {
+    nextDate = new Date(String(overrideDate).replace(/\//g, '-'));
+  } else {
+    nextDate = new Date(baseDate);
+    nextDate.setDate(nextDate.getDate() + exchangeDays);
+  }
+
+  var today    = new Date();
+  today.setHours(0, 0, 0, 0);
+  var daysLeft = Math.round((nextDate - today) / 86400000);
+
+  var ad = getAlertDays(settingsMap);
+
+  var level;
+  if (daysLeft > ad.caution)        level = 'normal';
+  else if (daysLeft >= -ad.warning) level = 'caution';
+  else                              level = 'warning';
+
+  return {
+    level:    level,
+    daysLeft: daysLeft,
+    nextDate: nextDate.toISOString().slice(0, 10),
+  };
+}
+
+// アラートHTMLバッジを返す
+function exchangeAlertBadge(alert) {
+  if (!alert || alert.level === 'none' || alert.level === 'normal') return '';
+  if (alert.level === 'warning') {
+    return '<span style="font-size:.68rem;background:rgba(220,50,50,.15);color:var(--red);'
+      + 'border:1px solid rgba(220,50,50,.4);border-radius:4px;padding:1px 6px;font-weight:700">🔴 '
+      + (alert.daysLeft < 0 ? Math.abs(alert.daysLeft) + '日超過' : '交換推奨') + '</span>';
+  }
+  if (alert.level === 'caution') {
+    var txt = alert.daysLeft <= 0 ? '交換時期' : '残' + alert.daysLeft + '日';
+    return '<span style="font-size:.68rem;background:rgba(230,150,0,.12);color:var(--amber);'
+      + 'border:1px solid rgba(230,150,0,.35);border-radius:4px;padding:1px 6px;font-weight:700">🟡 '
+      + txt + '</span>';
+  }
+  return '';
+}
+
+// ════════════════════════════════════════════════════════════════
+// ステージ自動判定（日齢ベース・体重補正対応構造）
+// ════════════════════════════════════════════════════════════════
+const DEFAULT_STAGE_AGE_RULES = [
+  { minDays:   0, maxDays:  30, code: 'L1'       },
+  { minDays:  30, maxDays:  90, code: 'L2_EARLY'  },
+  { minDays:  90, maxDays: 150, code: 'L2_LATE'   },
+  { minDays: 150, maxDays: 240, code: 'L3_EARLY'  },
+  { minDays: 240, maxDays: 330, code: 'L3_MID'    },
+  { minDays: 330, maxDays: 450, code: 'L3_LATE'   },
+  { minDays: 450, maxDays:9999, code: 'PREPUPA'   },
+];
+
+// 日齢から自動ステージを推定する
+// @param agedays  number
+// @param weights  [{weight_g, record_date}] 体重履歴（新しい順）
+// @param settingsMap  object|null
+// @returns string stageCode
+function calcAutoStage(ageDays, weights, settingsMap) {
+  // 前蛹判定: 体重が2回連続で減少していれば PREPUPA候補
+  if (weights && weights.length >= 3) {
+    var sorted = weights.slice().sort(function(a, b) {
+      return String(b.record_date).localeCompare(String(a.record_date));
+    });
+    if (parseFloat(sorted[0].weight_g) < parseFloat(sorted[1].weight_g) &&
+        parseFloat(sorted[1].weight_g) < parseFloat(sorted[2].weight_g)) {
+      // 体重が2回連続減少 → 前蛹候補
+      return 'PREPUPA';
+    }
+  }
+
+  // 日齢ルール（設定オーバーライド考慮）
+  var rules = DEFAULT_STAGE_AGE_RULES;
+  if (settingsMap && settingsMap.stage_age_rules) {
+    try { rules = JSON.parse(settingsMap.stage_age_rules); } catch(e) {}
+  }
+
+  for (var i = 0; i < rules.length; i++) {
+    var r = rules[i];
+    if (ageDays >= r.minDays && ageDays < r.maxDays) return r.code;
+  }
+  return 'PREPUPA';
+}
+
+// ════════════════════════════════════════════════════════════════
+// 延長オプション
+// ════════════════════════════════════════════════════════════════
+const EXTEND_OPTIONS = [
+  { days: 15,  label: '15日延長' },
+  { days: 30,  label: '30日延長' },
+];
+
+// ════════════════════════════════════════════════════════════════
+// 既存定数（変更なし）
+// ════════════════════════════════════════════════════════════════
 const IND_STATUS = {
-  // 幼虫ライフサイクル
   LARVA:          { code:'larva',          label:'幼虫',       color:'#4caf50' },
   PREPUPA:        { code:'prepupa',        label:'前蛹',       color:'#e09040' },
   PUPA:           { code:'pupa',           label:'蛹',         color:'#bf360c' },
   ADULT:          { code:'adult',          label:'成虫',       color:'#4caf78' },
-
-  // 成虫の状態分岐
   SEED_CANDIDATE: { code:'seed_candidate', label:'種親候補',   color:'#2196f3' },
   FOR_SALE:       { code:'for_sale',       label:'販売候補',   color:'#9c27b0' },
-
-  // 種親フロー
   SEED_RESERVED:  { code:'seed_reserved',  label:'種親確保済', color:'#1565c0' },
-
-  // 販売フロー
   RESERVED:       { code:'reserved',       label:'予約済',     color:'#5ba8e8' },
   LISTED:         { code:'listed',         label:'出品中',     color:'#ff9800' },
   SOLD:           { code:'sold',           label:'販売済',     color:'#e09040' },
-
-  // 終端
   DEAD:           { code:'dead',           label:'死亡',       color:'#e05050' },
   EXCLUDED:       { code:'excluded',       label:'除外',       color:'#888888' },
-
-  // 後方互換（既存データの alive を adult として表示）
   ALIVE:          { code:'alive',          label:'飼育中',     color:'#4caf78' },
 };
-
 function indStatusLabel(code) {
   return Object.values(IND_STATUS).find(s => s.code === code)?.label || code || '—';
 }
@@ -84,62 +302,38 @@ function indStatusColor(code) {
   return Object.values(IND_STATUS).find(s => s.code === code)?.color || '#888';
 }
 
-// ── ロットステータス ────────────────────────────────────────────
 const LOT_STATUS = {
   ACTIVE:         { code:'active',         label:'管理中' },
   INDIVIDUALIZED: { code:'individualized', label:'個体化済' },
   DISSOLVED:      { code:'dissolved',      label:'分割済' },
+  FOR_SALE:       { code:'for_sale',       label:'販売候補' },
+  RESERVED:       { code:'reserved',       label:'予約済' },
+  LISTED:         { code:'listed',         label:'出品中' },
+  SOLD:           { code:'sold',           label:'販売済' },
 };
 
-// ── 血統ステータス ──────────────────────────────────────────────
 const BLOODLINE_STATUS = {
-  CONFIRMED:  { code:'confirmed',  label:'確定',  color:'#4caf78' },
-  TEMPORARY:  { code:'temporary',  label:'暫定',  color:'#e09040' },
-  UNKNOWN:    { code:'unknown',    label:'不明',  color:'#888' },
+  CONFIRMED: { code:'confirmed', label:'確定', color:'#4caf78' },
+  TEMPORARY: { code:'temporary', label:'暫定', color:'#e09040' },
+  UNKNOWN:   { code:'unknown',   label:'不明', color:'#888' },
 };
-
 function bloodlineStatusLabel(code) {
   return Object.values(BLOODLINE_STATUS).find(s => s.code === code)?.label || code || '—';
 }
 
-// ── 公開区分 ────────────────────────────────────────────────────
-// 各エンティティの公開制御方針:
-// LINE  : line_name/characteristics/locality/generation → public
-//         bloodline_id/status/note_private             → private
-//         father_par_id/mother_par_id                  → buyer_only
-// PARENT: display_name/sex/size_mm/locality/generation → buyer_only
-//         achievements/source/bloodline_id             → buyer_only
-//         note                                         → private
-// BLOODLINE: bloodline_name/abbreviation/description   → public
-//            feature_tags/best_size_mm                 → buyer_only
-//            external_source/note                      → private
-// INDIVIDUAL: 詳細は個体台帳の公開区分列を参照
 const PUBLIC_LEVELS = {
-  PUBLIC:  { code:'public',     label:'公開',     icon:'🌐' },
+  PUBLIC:  { code:'public',     label:'公開',      icon:'🌐' },
   BUYER:   { code:'buyer_only', label:'購入者限定', icon:'🔑' },
-  PRIVATE: { code:'private',    label:'非公開',   icon:'🔒' },
+  PRIVATE: { code:'private',    label:'非公開',    icon:'🔒' },
 };
 
-// ── マット種別 ──────────────────────────────────────────────────
-const MAT_TYPES = [
-  { code:'T0', label:'T0マット' },
-  { code:'T1', label:'T1マット' },
-  { code:'T2', label:'T2マット' },
-  { code:'T3', label:'T3マット' },
-];
+const CONTAINER_SIZES = ['1.8L', '2.7L', '4.8L'];
 
-// ── 容器サイズ ──────────────────────────────────────────────────
-const CONTAINER_SIZES = [
-  '1.8L', '2.7L', '4.8L',
-];
-
-// ── マット交換区分 ──────────────────────────────────────────────
 const EXCHANGE_TYPES = [
   { code:'FULL',    label:'全交換' },
   { code:'PARTIAL', label:'追加のみ' },
 ];
 
-// ── ラベル種別 ──────────────────────────────────────────────────
 const LABEL_TYPES = [
   { code:'larva',   label:'幼虫ラベル',       target:'IND' },
   { code:'pupa',    label:'蛹ラベル',         target:'IND' },
@@ -148,18 +342,17 @@ const LABEL_TYPES = [
   { code:'pairing', label:'産卵セットラベル', target:'SET' },
 ];
 
-// ── 日齢ステージ目安（設定で上書き可能） ───────────────────────
-const DEFAULT_STAGE_AGE_RULES = [
-  { minDays:   0, maxDays:  30, label:'T0',        code:'T0'     },
-  { minDays:  30, maxDays:  90, label:'T1',         code:'T1'     },
-  { minDays:  90, maxDays: 210, label:'T2中盤',     code:'T2A'    },
-  { minDays: 210, maxDays: 300, label:'T3',         code:'T3'     },
-  { minDays: 300, maxDays:9999, label:'前蛹・蛹期', code:'PREPUPA'},
-];
-
-// ── 選別基準（設定で上書き可能） ───────────────────────────────
 const DEFAULT_SELECTION_RULES = {
   male: [
+    { stage:'L3_MID',  minWeight:100, label:'ギネス候補',   cls:'guinness' },
+    { stage:'L3_MID',  minWeight: 75, label:'継続主力',     cls:'keep'     },
+    { stage:'L3_MID',  minWeight: 50, label:'スペース次第', cls:'check'    },
+    { stage:'L3_MID',  minWeight:  0, label:'販売推奨',     cls:'sell'     },
+    { stage:'L3_LATE', minWeight:130, label:'ギネス候補',   cls:'guinness' },
+    { stage:'L3_LATE', minWeight:100, label:'継続主力',     cls:'keep'     },
+    { stage:'L3_LATE', minWeight: 75, label:'スペース次第', cls:'check'    },
+    { stage:'L3_LATE', minWeight:  0, label:'販売推奨',     cls:'sell'     },
+    // 旧コード後方互換
     { stage:'T2A', minWeight:100, label:'ギネス候補',   cls:'guinness' },
     { stage:'T2A', minWeight: 75, label:'継続主力',     cls:'keep'     },
     { stage:'T2A', minWeight: 50, label:'スペース次第', cls:'check'    },
@@ -170,16 +363,15 @@ const DEFAULT_SELECTION_RULES = {
     { stage:'T2B', minWeight:  0, label:'販売推奨',     cls:'sell'     },
   ],
   female: [
+    { stage:'L3_MID',  minWeight:30, label:'継続ブリード用', cls:'keep'  },
+    { stage:'L3_MID',  minWeight:20, label:'スペース次第',   cls:'check' },
+    { stage:'L3_MID',  minWeight: 0, label:'販売推奨',       cls:'sell'  },
     { stage:'T2A', minWeight:30, label:'継続ブリード用', cls:'keep'  },
     { stage:'T2A', minWeight:20, label:'スペース次第',   cls:'check' },
     { stage:'T2A', minWeight: 0, label:'販売推奨',       cls:'sell'  },
-    { stage:'T2B', minWeight:30, label:'継続ブリード用', cls:'keep'  },
-    { stage:'T2B', minWeight:20, label:'スペース次第',   cls:'check' },
-    { stage:'T2B', minWeight: 0, label:'販売推奨',       cls:'sell'  },
   ],
 };
 
-// 選別判定カラー
 const VERDICT_COLORS = {
   guinness: { bg:'rgba(200,168,75,0.18)', border:'rgba(200,168,75,0.5)', text:'#c8a84b', icon:'🏆' },
   keep:     { bg:'rgba(76,175,120,0.15)', border:'rgba(76,175,120,0.4)', text:'#4caf78', icon:'▶'  },
@@ -187,7 +379,6 @@ const VERDICT_COLORS = {
   sell:     { bg:'rgba(224,80,80,0.12)',  border:'rgba(224,80,80,0.35)', text:'#e05050', icon:'✕'  },
 };
 
-// ── Drive フォルダ種別 ──────────────────────────────────────────
 const DRIVE_FOLDERS = {
   INDIVIDUALS: 'Individuals',
   GROWTH:      'Growth',
@@ -195,48 +386,18 @@ const DRIVE_FOLDERS = {
   LABELS:      'Labels',
 };
 
-// ── バックアップ設定 ─────────────────────────────────────────────
-const BACKUP_TYPES = {
-  DAILY:   'Daily',
-  WEEKLY:  'Weekly',
-  MONTHLY: 'Monthly',
-  MANUAL:  'Manual',
-};
-
-// 各種別の世代保持数（GAS側と一致させること）
-const BACKUP_RETAIN = {
-  Daily:   7,
-  Weekly:  4,
-  Monthly: 12,
-  Manual:  999,
-};
-
-// settings画面 バックアップセクション表示設定
+const BACKUP_TYPES   = { DAILY:'Daily', WEEKLY:'Weekly', MONTHLY:'Monthly', MANUAL:'Manual' };
+const BACKUP_RETAIN  = { Daily:7, Weekly:4, Monthly:12, Manual:999 };
 const BACKUP_DISPLAY = {
-  type_labels: {
-    Daily:   '毎日（Daily）',
-    Weekly:  '毎週（Weekly）',
-    Monthly: '毎月（Monthly）',
-    Manual:  '手動（Manual）',
-  },
-  type_icons: {
-    Daily:   '📅',
-    Weekly:  '📆',
-    Monthly: '🗓️',
-    Manual:  '✋',
-  },
-  status_icons: {
-    success: '✅',
-    error:   '❌',
-    running: '⏳',
-  },
+  type_labels:  { Daily:'毎日（Daily）', Weekly:'毎週（Weekly）', Monthly:'毎月（Monthly）', Manual:'手動（Manual）' },
+  type_icons:   { Daily:'📅', Weekly:'📆', Monthly:'🗓️', Manual:'✋' },
+  status_icons: { success:'✅', error:'❌', running:'⏳' },
 };
 
-// ── ナビタブ定義 ────────────────────────────────────────────────
 const NAV_TABS = [
-  { id:'dashboard',   label:'ホーム',  icon:'🏠', phase:1 },
-  { id:'growth-rec',  label:'記録',    icon:'📷', phase:1 },
-  { id:'individuals', label:'個体',    icon:'🐛', phase:1 },
-  { id:'manage',      label:'管理',    icon:'📋', phase:1 },
-  { id:'settings',    label:'設定',    icon:'⚙️', phase:1 },
+  { id:'dashboard',   label:'ホーム', icon:'🏠', phase:1 },
+  { id:'growth-rec',  label:'記録',   icon:'📷', phase:1 },
+  { id:'individuals', label:'個体',   icon:'🐛', phase:1 },
+  { id:'manage',      label:'管理',   icon:'📋', phase:1 },
+  { id:'settings',    label:'設定',   icon:'⚙️', phase:1 },
 ];
