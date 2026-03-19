@@ -59,11 +59,16 @@ Pages.labelGen = function (params = {}) {
   }
 
   // ── 一括生成リスト取得 ────────────────────────────────────────
+  // ── ソート方向 (asc/desc) ─────────────────────────────────────
+  let sortDir = 'asc';
+
   function getTargetList() {
-    if (targetType === 'IND') return inds.map(i => ({ id: i.ind_id, label: i.display_id + ' ' + (i.sex||'') + (i.latest_weight_g?' ('+i.latest_weight_g+'g)':''), entity: i }));
-    if (targetType === 'LOT') return lots.map(l => ({ id: l.lot_id, label: l.display_id + ' ' + (stageLabel(l.stage)||'') + ' (' + (l.count||0) + '頭)', entity: l }));
-    if (targetType === 'SET') return pairs.map(p => ({ id: p.set_id, label: p.set_name || p.display_id, entity: p }));
-    return parents.map(p => ({ id: p.par_id, label: (p.display_name||p.par_id) + ' ' + (p.sex||'') + (p.size_mm?' '+p.size_mm+'mm':''), entity: p }));
+    let list;
+    if (targetType === 'IND') list = inds.map(i => ({ id: i.ind_id, label: i.display_id + ' ' + (i.sex||'') + (i.latest_weight_g?' ('+i.latest_weight_g+'g)':''), entity: i, sortKey: i.display_id||'' }));
+    else if (targetType === 'LOT') list = lots.map(l => ({ id: l.lot_id, label: l.display_id + ' ' + (stageLabel(l.stage)||'') + ' (' + (l.count||0) + '頭)', entity: l, sortKey: l.display_id||'' }));
+    else if (targetType === 'SET') list = pairs.map(p => ({ id: p.set_id, label: p.set_name || p.display_id, entity: p, sortKey: p.display_id||p.set_name||'' }));
+    else list = parents.map(p => ({ id: p.par_id, label: (p.display_name||p.par_id) + ' ' + (p.sex||'') + (p.size_mm?' '+p.size_mm+'mm':''), entity: p, sortKey: p.display_name||p.par_id||'' }));
+    return _sortDisplayId(list, sortDir);
   }
 
   function render() {
@@ -155,9 +160,12 @@ Pages.labelGen = function (params = {}) {
           + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">'
           + '<div class="card-title" style="margin-bottom:0">'
           + '対象一覧 <span style="font-size:.78rem;color:var(--text3)">（' + selCount + '件選択）</span></div>'
-          + '<div style="display:flex;gap:6px">'
+          + '<div style="display:flex;gap:6px;align-items:center">'
           + '<button class="btn btn-ghost btn-sm" style="font-size:.75rem" onclick="Pages._lblBulkSelectAll()">全選択</button>'
           + '<button class="btn btn-ghost btn-sm" style="font-size:.75rem" onclick="Pages._lblBulkClearAll()">解除</button>'
+          + '<button class="btn btn-ghost btn-sm" style="font-size:.72rem;padding:4px 8px" onclick="Pages._lblToggleSort()">'
+          + (sortDir === 'asc' ? '↑ 昇順' : '↓ 降順')
+          + '</button>'
           + '</div></div>'
           + '<div style="max-height:40vh;overflow-y:auto;display:flex;flex-direction:column;gap:0">'
           + (targetList.length === 0
@@ -268,6 +276,12 @@ Pages.labelGen = function (params = {}) {
     window.__lblBulkSelected = {};
     document.querySelectorAll('[data-bid]').forEach(cb => { cb.checked = false; });
     Pages._lblBulkToggle('', false);
+  };
+
+  Pages._lblToggleSort = () => {
+    // 選択状態を保持したままソート方向を切替
+    sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+    render();
   };
 
   // ── 一括生成・保存 ───────────────────────────────────────────
@@ -820,4 +834,84 @@ Pages._lblPrint = function () {
 };
 
 window.PAGES = window.PAGES || {};
+// ════════════════════════════════════════════════════════════════
+// _sortDisplayId — 表示IDの自然順ソート
+//
+// ソートキー（優先順位）:
+//   1. 年        HM[2026]-B2-L01  → 数値比較
+//   2. 種親記号  HM2026-[B]2-L01  → アルファベット比較 (A < B < C)
+//   3. セット番号 HM2026-B[2]-L01 → 数値比較
+//   4. ロット番号 HM2026-B2-[L01] → 数値比較
+//
+// 例（昇順）:
+//   HM2026-A1-L01 < HM2026-A1-L02 < HM2026-A2-L01
+//   < HM2026-B1-L01 < HM2026-B2-L01 < HM2027-A1-L01
+// ════════════════════════════════════════════════════════════════
+function _sortDisplayId(list, dir) {
+  // display_id から 4 要素のソートキーを抽出する
+  // 入力例: "HM2026-B2-L01", "IND-HM2026-B2-L03-C", "LOT-HM2026-A1-L01"
+  function extractKey(raw) {
+    // IND- / LOT- / PAR- / SET- プレフィックスを除去
+    var s = String(raw || '').replace(/^(IND|LOT|PAR|SET)-/i, '').split(' ')[0];
+    var parts = s.split('-');
+
+    // キー1: 年（ブランドコード内の数値部分）
+    // HM2026 → 2026, HM2027 → 2027
+    var year = 0;
+    var parentLetter = '';
+    var setNum = 0;
+    var lotNum = 0;
+
+    for (var i = 0; i < parts.length; i++) {
+      var p = parts[i];
+
+      // 年: "HM2026" のような英字+4桁数字
+      if (/^[A-Z]{1,3}\d{4}$/i.test(p)) {
+        year = parseInt(p.replace(/[^0-9]/g, ''), 10) || 0;
+        continue;
+      }
+
+      // 産卵セットコード: "B2" "A1" のような [英字1文字][数値]
+      if (/^[A-Z]\d+$/i.test(p)) {
+        var m = p.match(/^([A-Z])(\d+)$/i);
+        if (m) {
+          parentLetter = m[1].toUpperCase();
+          setNum = parseInt(m[2], 10) || 0;
+        }
+        continue;
+      }
+
+      // ロット番号: "L01" "L02" のような L+数値
+      if (/^L\d+$/i.test(p)) {
+        lotNum = parseInt(p.slice(1), 10) || 0;
+        continue;
+      }
+    }
+
+    return [year, parentLetter, setNum, lotNum];
+  }
+
+  var sorted = list.slice().sort(function(a, b) {
+    var ka = extractKey(a.sortKey || a.label);
+    var kb = extractKey(b.sortKey || b.label);
+
+    // 1. 年
+    if (ka[0] !== kb[0]) return ka[0] - kb[0];
+    // 2. 種親記号 (A/B/C...)
+    if (ka[1] !== kb[1]) return ka[1] < kb[1] ? -1 : 1;
+    // 3. 産卵セット番号
+    if (ka[2] !== kb[2]) return ka[2] - kb[2];
+    // 4. ロット番号
+    if (ka[3] !== kb[3]) return ka[3] - kb[3];
+    // 5. 残りは文字列フォールバック
+    var sa = String(a.sortKey || a.label);
+    var sb = String(b.sortKey || b.label);
+    return sa < sb ? -1 : sa > sb ? 1 : 0;
+  });
+
+  if (dir === 'desc') sorted.reverse();
+  return sorted;
+}
+
+
 window.PAGES['label-gen'] = () => Pages.labelGen(Store.getParams());
