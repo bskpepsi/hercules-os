@@ -140,16 +140,73 @@ Pages.lineList = function () {
 
 function _lineCardHTML(line) {
   try {
-    var vm = (typeof normalizeLineForView === 'function')
-      ? normalizeLineForView(line) : null;
-    if (vm) return renderLineCard(vm);
-  } catch(e) { console.warn('[_lineCardHTML]', e.message); }
-  // フォールバック: 最小限の表示
-  var code = line.line_code || line.display_id || '?';
-  return '<div class="entity-card card" data-line-id="' + (line.line_id||'') + '">'
-    + '<div class="entity-card__left"><div class="entity-card__code">' + code + '</div></div>'
-    + '<div class="entity-card__main"><div style="font-size:.8rem">' + (line.line_id||'') + '</div></div>'
-    + '<div class="entity-card__arrow">›</div></div>';
+    var f = Store.getParent(line.father_par_id);
+    var m = Store.getParent(line.mother_par_id);
+    var lineCode = line.line_code || line.display_id || '?';
+    var year     = line.hatch_year || '—';
+
+    // 父母表示（サイズ先頭・強調）
+    var fName = f ? (f.parent_display_id || f.display_name || '') : '';
+    var mName = m ? (m.parent_display_id || m.display_name || '') : '';
+    var fSize = f && f.size_mm ? f.size_mm + 'mm' : '';
+    var mSize = m && m.size_mm ? m.size_mm + 'mm' : '';
+
+    // 血統情報
+    var _tags = function(t) { try { return (JSON.parse(t||'[]')||[]).slice(0,3).join(' '); } catch(e){ return ''; } };
+    var fRaw  = f ? (f.bloodline_raw || '') : '';
+    var mRaw  = m ? (m.bloodline_raw || '') : '';
+    var fTag  = f ? _tags(f.bloodline_tags) : '';
+    var mTag  = m ? _tags(m.maternal_tags || '') : '';
+    var fBlood = (fRaw || fTag || '').slice(0, 28);
+    var mBlood = (mRaw || mTag || '').slice(0, 28);
+
+    // 親情報行: サイズ優先
+    var fPart = fName
+      ? '<span style="color:var(--male,#5ba8e8)">♂</span>'
+        + (fSize ? '<strong style="font-size:.88rem;margin-right:2px"> ' + fSize + '</strong>' : '')
+        + '<span style="color:var(--text3);font-size:.72rem">' + fName + '</span>'
+      : '';
+    var mPart = mName
+      ? '<span style="color:var(--female,#e87fa0)">♀</span>'
+        + (mSize ? '<strong style="font-size:.88rem;margin-right:2px"> ' + mSize + '</strong>' : '')
+        + '<span style="color:var(--text3);font-size:.72rem">' + mName + '</span>'
+      : '';
+
+    var parentRow = (fPart || mPart)
+      ? '<div style="display:flex;gap:10px;flex-wrap:wrap;font-size:.8rem;margin-bottom:2px">'
+        + (fPart ? '<span>' + fPart + '</span>' : '')
+        + (mPart ? '<span>' + mPart + '</span>' : '')
+        + '</div>'
+      : '<div style="font-size:.8rem;color:var(--text3)">親情報なし</div>';
+
+    var bloodRow = (fBlood || mBlood)
+      ? '<div style="font-size:.72rem;color:var(--text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:1px">'
+        + [fBlood, mBlood].filter(Boolean).join(' × ') + '</div>'
+      : '';
+
+    var locRow = (line.locality || line.generation)
+      ? '<div style="font-size:.7rem;color:var(--text3);margin-top:2px">'
+        + [line.locality, line.generation].filter(Boolean).join(' / ') + '</div>'
+      : '';
+
+    return '<div class="card" style="padding:12px 14px;cursor:pointer;display:flex;align-items:center;gap:12px;margin-bottom:8px"'
+      + ' onclick="routeTo(\'line-detail\',{lineId:\'' + line.line_id + '\'})">'
+      + '<div style="min-width:48px;text-align:center;flex-shrink:0">'
+      +   '<div style="font-family:var(--font-mono);font-size:1.35rem;font-weight:800;color:var(--gold);line-height:1">' + lineCode + '</div>'
+      +   '<div style="font-size:.65rem;color:var(--text3);margin-top:3px">' + year + '</div>'
+      + '</div>'
+      + '<div style="flex:1;min-width:0">'
+      +   parentRow + bloodRow + locRow
+      + '</div>'
+      + '<div style="color:var(--text3);font-size:1.1rem">›</div>'
+      + '</div>';
+  } catch(e) {
+    var code = line.line_code || line.display_id || '?';
+    return '<div class="card" style="padding:12px 14px;cursor:pointer;margin-bottom:8px"'
+      + ' onclick="routeTo(\'line-detail\',{lineId:\'' + (line.line_id||'') + '\'})">'
+      + '<div style="font-size:1.1rem;font-weight:700;color:var(--gold)">' + code + '</div>'
+      + '</div>';
+  }
 }
 
 Pages._lineShowClosed = function () {
@@ -207,7 +264,7 @@ function _renderLineDetail(line, main) {
   // status='all' で dissolved/individualized も含めて取得
   // 【フォールバック】lot.line_id が空 / 不整合でも pairing_set_id 経由で拾う
   const _lotsById  = Store.filterLots({ line_id: line.line_id, status: 'all' });
-  const _pairingSetIds = new Set(pairings.map(p => p.set_id).filter(Boolean));
+  const _pairingSetIds = new Set((Store.getDB('pairings') || []).map(p => p.set_id).filter(Boolean));
   const _lotsByPairing = (Store.getDB('lots') || []).filter(l =>
     l.pairing_set_id && _pairingSetIds.has(l.pairing_set_id) &&
     !_lotsById.some(x => x.lot_id === l.lot_id)

@@ -188,15 +188,104 @@ function _sexFilters(active) {
 
 function _indCardHTML(ind) {
   try {
-    var vm = (typeof normalizeIndForView === 'function')
-      ? normalizeIndForView(ind) : null;
-    if (vm) return renderIndCard(vm);
-  } catch(e) { console.warn('[_indCardHTML]', e.message); }
-  // フォールバック
-  return '<div class="entity-card card" data-ind-id="' + (ind.ind_id||'') + '">'
-    + '<div class="entity-card__left"><div class="entity-card__code">' + (ind.sex||'?') + '</div></div>'
-    + '<div class="entity-card__main"><div style="font-size:.8rem">' + (ind.display_id||ind.ind_id||'') + '</div></div>'
-    + '<div class="entity-card__arrow">›</div></div>';
+    // ── ライン: display_id から抽出 ──────────────────────────
+    var lineCode = '';
+    var _lm = String(ind.display_id || '').match(/[A-Za-z]{1,4}\d{4}-([A-Za-z][0-9]+)-/i);
+    if (_lm) lineCode = _lm[1].toUpperCase();
+    if (!lineCode) {
+      var _ln = ind.line_id ? Store.getLine(ind.line_id) : null;
+      lineCode = _ln ? (_ln.line_code || _ln.display_id || '') : '';
+    }
+    // 年度
+    var _ym = String(ind.display_id || '').match(/\d{4}/);
+    var year = _ym ? _ym[0] : '';
+
+    // ── ステージ: stage_life 優先、IND_STATUS 値は除外 ────────
+    var IND_ST = new Set(['larva','prepupa','pupa','adult','alive','seed_candidate',
+      'seed_reserved','for_sale','reserved','listed','sold','dead','excluded']);
+    var OLD_TO_NEW = { T0:'L1', T1:'L2_EARLY', T2A:'L3_EARLY', T2B:'L3_MID', T3:'L3_LATE' };
+    var rawStage  = ind.stage_life || ind.current_stage || '';
+    if (IND_ST.has(rawStage)) rawStage = '';
+    var stageCode = OLD_TO_NEW[rawStage] || rawStage;
+    var stageLbl  = stageCode ? stageLabel(stageCode) : '';
+    var sColor    = stageCode ? stageColor(stageCode) : 'var(--text3)';
+
+    // ── マット ───────────────────────────────────────────────
+    var rawMat = ind.current_mat || '';
+    if (rawMat === 'T2A' || rawMat === 'T2B') rawMat = 'T2';
+    var isMolt = ind.mat_molt === true || ind.mat_molt === 'true';
+    var matLbl  = rawMat === 'T2' && isMolt ? 'T2(M)' : rawMat;
+
+    // ── ステータス ───────────────────────────────────────────
+    var ST_LBL = {
+      larva:'幼虫', prepupa:'前蛹', pupa:'蛹', adult:'成虫', alive:'飼育中',
+      seed_candidate:'種親候補', seed_reserved:'種親確保済',
+      for_sale:'販売候補', reserved:'予約済', listed:'出品中',
+      sold:'販売済', dead:'死亡', excluded:'除外',
+    };
+    var ST_CLR = {
+      larva:'var(--green)', prepupa:'var(--amber)', pupa:'#bf360c',
+      adult:'var(--green)', alive:'var(--green)',
+      seed_candidate:'var(--blue)', seed_reserved:'var(--blue)',
+      for_sale:'#9c27b0', reserved:'var(--blue)', listed:'#ff9800',
+      sold:'var(--amber)', dead:'var(--red,#e05050)', excluded:'var(--text3)',
+    };
+    var stLbl = ST_LBL[ind.status] || ind.status || '—';
+    var stClr = ST_CLR[ind.status] || 'var(--text3)';
+
+    // ── 体重・サイズ・容器・日齢 ─────────────────────────────
+    var w       = ind.latest_weight_g ? ind.latest_weight_g + 'g' : '';
+    var sz      = ind.adult_size_mm   ? ind.adult_size_mm + 'mm'  : '';
+    var container = ind.current_container || '';
+    var ageObj  = ind.hatch_date ? Store.calcAge(ind.hatch_date) : null;
+    var ageDays = (ageObj && ageObj.days != null) ? ageObj.days + '日' : '';
+
+    var icons = [
+      String(ind.guinness_flag) === 'true' ? '🏆' : '',
+      String(ind.parent_flag)   === 'true' ? '👑' : '',
+      String(ind.g200_flag)     === 'true' ? '💪' : '',
+    ].filter(Boolean).join('');
+
+    var sexColor = ind.sex === '♂' ? 'var(--male,#5ba8e8)' : ind.sex === '♀' ? 'var(--female,#e87fa0)' : 'var(--text3)';
+
+    // ── サブ情報 ──────────────────────────────────────────────
+    var sep = '<span style="font-size:.65rem;color:var(--border,rgba(255,255,255,.15));padding:0 2px">/</span>';
+    var parts = [];
+    if (stageLbl)  parts.push('<span style="font-weight:700;color:' + sColor + '">' + stageLbl + '</span>');
+    if (matLbl)    parts.push('<span>' + matLbl + '</span>');
+    if (container) parts.push('<span>' + container + '</span>');
+    if (w || sz)   parts.push('<span style="color:var(--green);font-weight:700">' + (w || sz) + '</span>');
+    if (ageDays)   parts.push('<span>' + ageDays + '</span>');
+    var subHtml = parts.join(sep);
+
+    return '<div class="card" style="padding:12px 14px;cursor:pointer;display:flex;align-items:center;gap:12px;margin-bottom:8px"'
+      + ' onclick="routeTo(\'ind-detail\',{indId:\'' + ind.ind_id + '\'})">'
+      // 左: 性別 + ライン/年度
+      + '<div style="min-width:40px;text-align:center;flex-shrink:0">'
+      +   '<div style="font-size:1.2rem;font-weight:800;color:' + sexColor + ';line-height:1">' + (ind.sex || '?') + '</div>'
+      +   (lineCode ? '<div style="font-size:.65rem;color:var(--text3);margin-top:2px">' + lineCode + '</div>' : '')
+      +   (year ? '<div style="font-size:.6rem;color:var(--text3)">' + year + '</div>' : '')
+      + '</div>'
+      // 右: ID + サブ情報 + ステータス
+      + '<div style="flex:1;min-width:0">'
+      +   '<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">'
+      +     '<span style="font-family:var(--font-mono);font-size:.83rem;font-weight:700;color:var(--text1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">' + (ind.display_id || '') + '</span>'
+      +     (icons ? '<span style="font-size:.75rem;flex-shrink:0">' + icons + '</span>' : '')
+      +   '</div>'
+      +   (subHtml ? '<div style="display:flex;align-items:center;gap:2px;flex-wrap:wrap;font-size:.78rem;color:var(--text2);margin-bottom:3px">' + subHtml + '</div>' : '')
+      +   '<div style="display:flex;align-items:center;justify-content:space-between">'
+      +     '<span style="font-size:.72rem;font-weight:700;color:' + stClr + '">' + stLbl + '</span>'
+      +     (ageDays ? '' : '')
+      +   '</div>'
+      + '</div>'
+      + '<div style="color:var(--text3);font-size:1.1rem;flex-shrink:0">›</div>'
+      + '</div>';
+  } catch(e) {
+    return '<div class="card" style="padding:12px 14px;cursor:pointer;margin-bottom:8px"'
+      + ' onclick="routeTo(\'ind-detail\',{indId:\'' + (ind.ind_id||'') + '\'})">'
+      + '<div style="font-size:.85rem">' + (ind.display_id || ind.ind_id || '') + '</div>'
+      + '</div>';
+  }
 }
 
 

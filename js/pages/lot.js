@@ -99,15 +99,67 @@ function _lotStageFilters(active) {
 // ════════════════════════════════════════════════════════════════
 function _lotCardHTML(lot) {
   try {
-    var vm = (typeof normalizeLotForView === 'function')
-      ? normalizeLotForView(lot) : null;
-    if (vm) return renderLotCard(vm);
-  } catch(e) { console.warn('[_lotCardHTML]', e.message); }
-  // フォールバック: 最小限の表示
-  return '<div class="entity-card card" data-lot-id="' + (lot.lot_id||'') + '">'
-    + '<div class="entity-card__left"><div class="entity-card__code">?</div></div>'
-    + '<div class="entity-card__main"><div style="font-size:.8rem">' + (lot.display_id||lot.lot_id||'') + '</div></div>'
-    + '<div class="entity-card__arrow">›</div></div>';
+    // ── ライン表示: display_id から直接抽出 ──────────────────
+    var lineCode = '';
+    var _lm = String(lot.display_id || '').match(/[A-Za-z]{1,4}\d{4}-([A-Za-z][0-9]+)-/i);
+    if (_lm) lineCode = _lm[1].toUpperCase();
+    if (!lineCode) {
+      var _ln = Store.getLine(lot.line_id);
+      lineCode = _ln ? (_ln.line_code || _ln.display_id || '') : '';
+    }
+
+    // ── ステージ: stage_life 優先、旧コード変換 ──────────────
+    var OLD_TO_NEW = { T0:'L1', T1:'L2_EARLY', T2A:'L3_EARLY', T2B:'L3_MID', T3:'L3_LATE' };
+    var rawStage  = lot.stage_life || lot.stage || '';
+    var stageCode = OLD_TO_NEW[rawStage] || rawStage;
+    var stageLbl  = stageCode ? stageLabel(stageCode) : '';
+    var sColor    = stageCode ? stageColor(stageCode) : 'var(--text3)';
+
+    // ── マット: T2A/T2B → T2、mat_molt 考慮 ──────────────────
+    var recs = Store.getGrowthRecords(lot.lot_id) || [];
+    var latestRec = recs.length
+      ? recs.slice().sort(function(a,b){ return String(b.record_date).localeCompare(String(a.record_date)); })[0]
+      : null;
+    var rawMat  = lot.mat_type || (latestRec && latestRec.mat_type) || '';
+    if (rawMat === 'T2A' || rawMat === 'T2B') rawMat = 'T2';
+    var isMolt  = lot.mat_molt === true || lot.mat_molt === 'true';
+    var matLbl  = rawMat === 'T2' && isMolt ? 'T2(M)' : rawMat;
+
+    // ── 各種情報 ─────────────────────────────────────────────
+    var count      = parseInt(lot.count, 10) || 0;
+    var container  = lot.container_size || (latestRec && latestRec.container) || '';
+    var weightG    = latestRec && latestRec.weight_g ? latestRec.weight_g + 'g' : '';
+    var ageObj     = lot.hatch_date ? Store.calcAge(lot.hatch_date) : null;
+    var ageDays    = (ageObj && ageObj.days != null) ? ageObj.days + '日' : '';
+
+    // ── サブ情報: ステージ / マット / 容器 / 体重 / 日齢 ────────
+    var parts = [];
+    if (stageLbl) parts.push('<span style="font-weight:700;color:' + sColor + '">' + stageLbl + '</span>');
+    if (matLbl)   parts.push('<span>' + matLbl + '</span>');
+    if (container)parts.push('<span>' + container + '</span>');
+    if (weightG)  parts.push('<span style="color:var(--green);font-weight:700">' + weightG + '</span>');
+    if (ageDays)  parts.push('<span>' + ageDays + '</span>');
+    var subHtml = parts.join('<span style="font-size:.65rem;color:var(--border,rgba(255,255,255,.15));padding:0 2px">/</span>');
+
+    return '<div class="card" style="padding:12px 14px;cursor:pointer;display:flex;align-items:center;gap:12px;margin-bottom:8px"'
+      + ' onclick="routeTo(\'lot-detail\',{lotId:\'' + lot.lot_id + '\'})">'
+      + '<div style="min-width:44px;text-align:center;flex-shrink:0">'
+      +   '<div style="font-family:var(--font-mono);font-size:1.2rem;font-weight:800;color:var(--gold);line-height:1">' + (lineCode || '—') + '</div>'
+      +   '<div style="font-size:.75rem;font-weight:700;color:var(--text2);margin-top:3px">' + count + '<span style="font-size:.62rem;color:var(--text3)">頭</span></div>'
+      + '</div>'
+      + '<div style="flex:1;min-width:0">'
+      +   '<div style="font-family:var(--font-mono);font-size:.85rem;font-weight:700;color:var(--text1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:3px">' + (lot.display_id || '') + '</div>'
+      +   (subHtml ? '<div style="display:flex;align-items:center;gap:3px;flex-wrap:wrap;font-size:.78rem;color:var(--text2)">' + subHtml + '</div>' : '')
+      + '</div>'
+      + '<div style="color:var(--text3);font-size:1.1rem;flex-shrink:0">›</div>'
+      + '</div>';
+  } catch(e) {
+    // 例外時も最低限のカードを返す（真っ白画面禁止）
+    return '<div class="card" style="padding:12px 14px;cursor:pointer;margin-bottom:8px"'
+      + ' onclick="routeTo(\'lot-detail\',{lotId:\'' + (lot.lot_id||'') + '\'})">'
+      + '<div style="font-size:.85rem">' + (lot.display_id || lot.lot_id || '') + '</div>'
+      + '</div>';
+  }
 }
 
 
@@ -1130,6 +1182,68 @@ Pages._blkQrBatch = function (createdLots) {
 };
 
 window.PAGES = window.PAGES || {};
+
+// ════════════════════════════════════════════════════════════════
+// ロット販売アクションUI（ロット詳細画面から呼ばれる）
+// ════════════════════════════════════════════════════════════════
+function _renderLotSaleActions(lot) {
+  var st = lot.status || 'active';
+  var id = lot.lot_id;
+
+  if (st === 'individualized' || st === 'dissolved') return '';
+
+  var STATUS_LABELS = {
+    active:   { label:'飼育中',   color:'var(--green)' },
+    for_sale: { label:'販売候補', color:'#9c27b0' },
+    reserved: { label:'予約中',   color:'var(--blue)' },
+    listed:   { label:'出品中',   color:'#ff9800' },
+    sold:     { label:'販売済み', color:'var(--gold)' },
+  };
+  var stInfo = STATUS_LABELS[st];
+  var badge = stInfo
+    ? '<span style="display:inline-block;padding:3px 10px;border-radius:20px;font-size:.75rem;font-weight:700;'
+      + 'color:' + stInfo.color + ';border:1px solid ' + stInfo.color + ';margin-bottom:8px">'
+      + stInfo.label + '</span>'
+    : '';
+
+  function btn(cls, icon, label, fn) {
+    return '<button class="btn-sale ' + cls + '" onclick="' + fn + '">' + icon + ' ' + label + '</button>';
+  }
+  window.__lotSoldId = id;
+  window.__lotPartId = id;
+  var setFn  = function(s) { return "Pages._lotSetSaleStatus('" + id + "','" + s + "')"; };
+  var soldFn = "Pages._lotMarkSoldModal(window.__lotSoldId)";
+  var partFn = "Pages._lotPartSaleModal(window.__lotPartId)";
+
+  var btns = '';
+  if (st === 'active') {
+    btns = btn('btn-sale-purple', '🛒', '販売候補にする', setFn('for_sale'));
+  } else if (st === 'for_sale') {
+    btns = btn('btn-sale-blue',   '📦', '予約する',     setFn('reserved'))
+      + btn('btn-sale-gold',  '💰', 'まとめて販売', soldFn)
+      + btn('btn-sale-orange','✂️', '一部販売',    partFn)
+      + btn('btn-sale-gray',  '↩',  '候補解除',    setFn('active'));
+  } else if (st === 'reserved') {
+    btns = btn('btn-sale-orange', '📢', '出品する',     setFn('listed'))
+      + btn('btn-sale-gold',  '💰', 'まとめて販売', soldFn)
+      + btn('btn-sale-gray',  '↩',  '予約解除',    setFn('for_sale'));
+  } else if (st === 'listed') {
+    btns = btn('btn-sale-gold', '💰', 'まとめて販売', soldFn)
+      + btn('btn-sale-gray', '↩', '出品解除', setFn('reserved'));
+  } else if (st === 'sold') {
+    return '<div style="margin-top:8px"><div class="ind-sale-done-msg">'
+      + '💰 販売済みです（' + (lot.count || '') + '頭）'
+      + '</div></div>';
+  }
+
+  if (!btns) return '';
+
+  return '<div class="ind-sale-actions" style="margin-top:8px">'
+    + badge
+    + '<div class="ind-sale-btn-grid">' + btns + '</div>'
+    + '</div>';
+}
+
 window.PAGES['lot-list']   = () => Pages.lotList();
 window.PAGES['lot-detail'] = () => Pages.lotDetail(Store.getParams().lotId || Store.getParams().id);
 window.PAGES['lot-new']    = () => Pages.lotNew(Store.getParams());
