@@ -121,11 +121,12 @@ const API = (() => {
 
   // ── システム ──────────────────────────────────────────────────
   const system = {
-    init:       ()        => call('init'),
-    getAllData:  ()        => call('getAllData'),
-    resetAllData:()        => call('resetAllData'),
-    getSettings:()        => call('getSettings'),
-    updateSetting:(key,v) => call('updateSetting', { key, value: v }),
+    init:         ()           => call('init'),
+    getAllData:    ()           => call('getAllData'),
+    resetAllData:  ()           => call('resetAllData'),
+    getSettings:  ()           => call('getSettings'),
+    updateSetting: (key,v)     => call('updateSetting',  { key, value: v }),
+    updateSettings:(updates)   => callPost('updateSettings', { updates }),  // Phase6: JSON一括保存はPOST必須
   };
 
   // ── ライン ────────────────────────────────────────────────────
