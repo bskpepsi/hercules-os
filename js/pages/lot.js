@@ -98,24 +98,49 @@ function _lotStageFilters(active) {
 // ロットカード — 3列レイアウト（コード | 頭数+情報 | ›）
 // ════════════════════════════════════════════════════════════════
 function _lotCardHTML(lot) {
-  const line = Store.getLine(lot.line_id);
-  const lineCode = line ? (line.line_code || line.display_id) : '';
+  // ── ライン表示 ──────────────────────────────────────────────────
+  // display_id から直接ライン部分を抽出するのが最も正確
+  // 例: "HM2026-B2-L01" → lineCode = "B2"
+  // _parseDisplayId は label.js にもある共通関数（lot.jsスコープ内で定義済み）
+  let lineCode = '';
+  if (typeof _parseDisplayId === 'function') {
+    lineCode = _parseDisplayId(lot.display_id || '').line || '';
+  }
+  if (!lineCode) {
+    // フォールバック: Store.getLine からライン台帳の line_code を使用
+    const line = Store.getLine(lot.line_id);
+    lineCode = line ? (line.line_code || line.display_id) : '';
+  }
 
-  // 最新成長記録から状態を取得
+  // ── 最新成長記録 ────────────────────────────────────────────────
   const recs = Store.getGrowthRecords(lot.lot_id) || [];
   const latestRec = recs.length > 0
     ? [...recs].sort((a,b) => String(b.record_date).localeCompare(String(a.record_date)))[0]
     : null;
-  const dispStage     = latestRec?.stage       || lot.stage           || '—';
-  const dispContainer = latestRec?.container   || lot.container_size  || '';
-  const dispMat       = latestRec?.mat_type    || lot.mat_type        || '';
-  const dispWeight    = latestRec?.weight_g    ? latestRec.weight_g + 'g' : null;
 
-  const stageDisp = stageLabel(dispStage === 'T2A' || dispStage === 'T2B' ? 'T2' : dispStage);
-  const sColor    = stageColor(dispStage);
+  // ── ステージ表示（新設計優先）──────────────────────────────────
+  // 優先順: stage_life（新）> lot.stage（旧）> latestRec.stage（成長記録）
+  const rawStage   = lot.stage_life || lot.stage || latestRec?.stage || '';
+  // 旧コード変換マップ（T0/T1/T2A/T2B/T3 → 新コード）
+  const OLD_TO_NEW = { T0:'L1', T1:'L2_EARLY', T2A:'L3_EARLY', T2B:'L3_MID', T3:'L3_LATE' };
+  const stageCode  = OLD_TO_NEW[rawStage] || rawStage;
+  // stageLabel() で人間向けラベルに変換。新コードなら "L1"/"L2前期" etc. が返る
+  const stageDisp  = stageCode ? stageLabel(stageCode) : '—';
+  const sColor     = stageColor(stageCode);
 
-  // 腐卵統一済み（表示のみ）
-  const count = +lot.count || 0;
+  // ── マット表示（新設計優先）──────────────────────────────────
+  // mat_type は T0/T1/T2/T3/MDカブト のいずれか（T2A/T2Bは旧設計）
+  const rawMat     = lot.mat_type || latestRec?.mat_type || '';
+  // 旧マットコード変換（T2A/T2B → T2）
+  const MAT_CONV   = { T2A:'T2', T2B:'T2' };
+  const matCode    = MAT_CONV[rawMat] || rawMat;
+  const isMatMolt  = lot.mat_molt === true || lot.mat_molt === 'true' || lot.mat_molt === '1';
+  // コンパクト表示: T2(M) / T2 / T0 etc.（フルラベル "T2マット" は長いのでコードのみ）
+  const matDisp    = matCode === 'T2' && isMatMolt ? 'T2(M)' : matCode;
+
+  const dispContainer = lot.container_size || latestRec?.container || '';
+  const dispWeight    = latestRec?.weight_g ? latestRec.weight_g + 'g' : null;
+  const count         = +lot.count || 0;
 
   return `<div class="lot-card" onclick="routeTo('lot-detail',{lotId:'${lot.lot_id}'})">
     <!-- 左列: ラインコード + ロットID -->
@@ -129,7 +154,7 @@ function _lotCardHTML(lot) {
       <div class="lot-card-sub">
         <span class="lot-card-stage" style="color:${sColor}">${stageDisp}</span>
         ${dispContainer ? `<span class="lot-card-sub-item">${dispContainer}</span>` : ''}
-        ${dispMat ? `<span class="lot-card-sub-item">${typeof matLabel === 'function' ? matLabel(dispMat, lot.mat_molt === true || lot.mat_molt === 'true') : dispMat}</span>` : ''}
+        ${matDisp       ? `<span class="lot-card-sub-item">${matDisp}</span>`        : ''}
         ${dispWeight    ? `<span class="lot-card-sub-item" style="color:var(--green)">${dispWeight}</span>` : ''}
       </div>
     </div>
