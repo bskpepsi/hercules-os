@@ -315,6 +315,12 @@ const API = (() => {
   };
 
   // ── Phase5.5: 公開ページ ─────────────────────────────────────────
+  // ── Phase5: 販売履歴 ─────────────────────────────────────────────
+  const sale = {
+    create:  (d)  => call('createSaleHist', d),
+    list:    (d)  => call('getSaleHists',   d || {}),
+  };
+
   const publicPage = {
     createOrUpdate: (d)     => call('createOrUpdatePublic', d),
     getByToken:     (token) => call('getPublicByToken',     { token }),
@@ -324,7 +330,7 @@ const API = (() => {
     uploadPhoto:    (d)     => callPost('uploadPhoto',      d),
   };
 
-return { system, line, lot, individual, growth, parent, bloodline, pairing, label, drive, gemini, backup, scan, phase2, integrity, publicPage };
+return { system, line, lot, individual, growth, parent, bloodline, pairing, label, drive, gemini, backup, scan, phase2, integrity, publicPage, sale };
 })();
 
 // ── Gemini プロンプト ──────────────────────────────────────────

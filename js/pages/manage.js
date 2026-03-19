@@ -51,6 +51,12 @@ Pages.manage = function () {
       sub: `完了 ${pairs.filter(p=>p.status==='completed').length}件`,
       color: '#a0c878',
     },
+    {
+      icon: '💰', label: '販売履歴', count: inds.filter(i=>i.status==='sold').length, unit: '件',
+      page: 'sale-list', newPage: '',
+      sub: '販売済み個体の履歴・売上確認',
+      color: 'var(--gold)',
+    },
   ];
 
   main.innerHTML = `

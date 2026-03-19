@@ -857,41 +857,78 @@ Pages._indSetStatus = async function (id, newStatus) {
 Pages._indMarkSoldModal = function (id) {
   const ind   = Store.getIndividual(id);
   const today = new Date().toISOString().split('T')[0];
-  _showModal('💰 販売済みとして記録', '<div class="form-section">'
+  _showModal('💰 販売情報を入力', '<div class="form-section">'
+
+    + '<div style="font-size:.72rem;font-weight:700;color:var(--text3);'
+    + 'letter-spacing:.06em;margin-bottom:8px">▼ 販売情報</div>'
     + UI.field('販売日', '<input type="date" id="sold-date" class="input" value="' + today + '">')
+    + UI.field('販売価格（円）', '<input type="number" id="sold-price" class="input" min="0" placeholder="例: 15000">')
+    + UI.field('販売経路', UI.select('sold-channel-sel', [
+        { code:'',       label:'— 選択 —' },
+        { code:'ヤフオク', label:'ヤフオク' },
+        { code:'メルカリ', label:'メルカリ' },
+        { code:'イベント', label:'イベント' },
+        { code:'直接',    label:'直接取引' },
+        { code:'その他',  label:'その他' },
+      ], ''))
+
+    + '<div style="font-size:.72rem;font-weight:700;color:var(--text3);'
+    + 'letter-spacing:.06em;margin:10px 0 8px">▼ 購入者情報（任意）</div>'
+    + UI.field('購入者名', '<input type="text" id="sold-buyer" class="input" placeholder="例: 田中様">')
+    + UI.field('メモ', '<input type="text" id="sold-note" class="input" placeholder="例: ヤフオク落札 送料込み">')
+
+    + '<div style="font-size:.72rem;font-weight:700;color:var(--text3);'
+    + 'letter-spacing:.06em;margin:10px 0 8px">▼ 個体情報（任意）</div>'
     + UI.field('販売時体重(g)', '<input type="number" id="sold-weight" class="input" placeholder="例: 85" step="0.1">')
-    + UI.field('販売時ステージ', UI.select('sold-stage-sel',
-        [
-          { code:'', label:'— 選択 —' },
-          { code:'T2A', label:'T2①' }, { code:'T2B', label:'T2②' },
-          { code:'T3', label:'T3' }, { code:'PREPUPA', label:'前蛹' },
-          { code:'PUPA', label:'蛹' }, { code:'ADULT', label:'成虫' },
-        ],
-        (ind && ind.current_stage) || ''))
-    + UI.field('販売理由（任意）', '<input type="text" id="sold-reason" class="input" placeholder="例: ヤフオク落札">')
+    + UI.field('販売時ステージ', UI.select('sold-stage-sel', [
+        { code:'', label:'— 選択 —' },
+        { code:'T2A', label:'T2①' }, { code:'T2B', label:'T2②' },
+        { code:'T3', label:'T3' }, { code:'PREPUPA', label:'前蛹' },
+        { code:'PUPA', label:'蛹' }, { code:'ADULT', label:'成虫' },
+      ], (ind && ind.current_stage) || ''))
+
     + '<div class="modal-footer">'
     + '<button class="btn btn-ghost" style="flex:1" onclick="_closeModal()">キャンセル</button>'
     + '<button class="btn btn-gold" style="flex:2" onclick="Pages._indMarkSoldExec(\'' + id + '\')">💰 販売済みにする</button>'
-    + '</div>'
-    + '</div>'
+    + '</div></div>'
   );
 };
 
 Pages._indMarkSoldExec = async function (id) {
-  const soldDate   = document.getElementById('sold-date')?.value   || '';
-  const soldWeight = document.getElementById('sold-weight')?.value || '';
-  const soldStage  = document.getElementById('sold-stage-sel')?.value || '';
-  const soldReason = document.getElementById('sold-reason')?.value  || '';
+  const ind        = Store.getIndividual(id);
+  const soldDate   = (document.getElementById('sold-date')?.value      || '').replace(/-/g, '/');
+  const soldPrice  = document.getElementById('sold-price')?.value      || '';
+  const soldChan   = document.getElementById('sold-channel-sel')?.value || '';
+  const soldBuyer  = document.getElementById('sold-buyer')?.value       || '';
+  const soldNote   = document.getElementById('sold-note')?.value        || '';
+  const soldWeight = document.getElementById('sold-weight')?.value      || '';
+  const soldStage  = document.getElementById('sold-stage-sel')?.value   || '';
   _closeModal();
   try {
-    // updateIndividual で status=sold と販売情報を一括更新
+    // ① 個体を sold 更新
     const updates = { ind_id: id, status: 'sold' };
-    if (soldDate)   updates.sold_date   = soldDate.replace(/-/g, '/');
+    if (soldDate)   updates.sold_date   = soldDate;
     if (soldWeight) updates.sold_weight = soldWeight;
     if (soldStage)  updates.sold_stage  = soldStage;
-    if (soldReason) updates.sold_reason = soldReason;
+    if (soldPrice)  updates.sold_reason = soldChan || '販売';
     await apiCall(() => API.individual.update(updates), '販売済みとして記録しました');
     Store.patchDBItem('individuals', 'ind_id', id, updates);
+
+    // ② 販売履歴を作成（API.sale が利用可能な場合）
+    if (API.sale && API.sale.create) {
+      API.sale.create({
+        ind_id:        id,
+        ind_display_id: (ind && ind.display_id) || id,
+        sold_at:       soldDate,
+        actual_price:  soldPrice,
+        platform:      soldChan,
+        buyer_name:    soldBuyer,
+        buyer_note:    soldNote,
+      }).catch(function(e) {
+        console.warn('[_indMarkSoldExec] 販売履歴保存失敗:', e.message);
+      });
+    }
+
     Pages.individualDetail(id);
   } catch(e) {}
 };
@@ -1180,6 +1217,11 @@ function _showModal(title, body) {
       ${body}
     </div>
   </div>`;
+  // モーダル内のスクロールを先頭に戻す（スクロール位置ズレ対策）
+  requestAnimationFrame(function() {
+    const m = ov.querySelector('.modal');
+    if (m) m.scrollTop = 0;
+  });
 }
 
 function _closeModal() {
