@@ -27,7 +27,18 @@ const LABEL_TYPE_DEFS = [
 //   "IND-HM2026-A1-L03-C" → { year:2026, line:'A1', lotNum:3, letter:'C' }
 //
 // ════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════
+// _parseDisplayId — display_id から構成要素を抽出（共通）
+//
+//   "HM2026-B2-L01"    → { year:2026, line:'B2', lot:'L01', lotNum:1 }
+//   "HM2026-B2-L01-A"  → { year:2026, line:'B2', lot:'L01', lotNum:1, letter:'A' }
+//
+// ★ チェック順序が重要 ★
+//   L01 は /^[A-Za-z][0-9]+$/ にもマッチするため、
+//   ロット判定（L+数字）を産卵セット判定より必ず先に行う。
+// ════════════════════════════════════════════════════════════════
 function _parseDisplayId(displayId) {
+  // スペース以降（T0, (5頭) など）と先頭プレフィックス(IND-/LOT-)を除去
   var s = String(displayId || '').replace(/^(IND|LOT|PAR|SET)-/i, '').split(' ')[0];
   var parts = s.split('-');
 
@@ -36,29 +47,34 @@ function _parseDisplayId(displayId) {
   for (var i = 0; i < parts.length; i++) {
     var p = parts[i];
 
-    // 年コード: "HM2026" など英字+4桁数字
+    // ① 年コード: "HM2026" — 英字1〜3文字 + 4桁数字
     if (/^[A-Za-z]{1,3}[0-9]{4}$/.test(p)) {
       year = parseInt(p.replace(/[^0-9]/g, ''), 10) || 0;
       continue;
     }
-    // 産卵セットコード: "A1" "B2" — 英字1文字+数字
-    if (/^[A-Za-z][0-9]+$/.test(p)) {
-      line = p.toUpperCase();
-      continue;
-    }
-    // ロット番号: "L01" "L02"
+
+    // ② ロット番号: "L01" "L02" — 必ずラインより先に判定する
+    //    ★ L01 は /^[A-Za-z][0-9]+$/ にもマッチするため順序が重要
     if (/^[Ll][0-9]+$/.test(p)) {
       lotNum = parseInt(p.slice(1), 10) || 0;
       continue;
     }
-    // 末尾枝番: "A" "B" "C" (1文字アルファベット)
+
+    // ③ 産卵セットコード: "A1" "B2" — 英字1文字 + 数字
+    //    L始まりは②で除外済みなのでここには来ない
+    if (/^[A-Za-z][0-9]+$/.test(p)) {
+      line = p.toUpperCase();
+      continue;
+    }
+
+    // ④ 末尾枝番: "A" "B" "C" — アルファベット1文字
     if (/^[A-Za-z]$/.test(p)) {
       letter = p.toUpperCase();
       continue;
     }
   }
 
-  // lot は "L01" 形式の文字列（ゼロ埋め2桁）で返す
+  // lot は "L01" 形式の文字列で返す（ゼロ埋め2桁）
   var lot = lotNum > 0 ? ('L' + ('00' + lotNum).slice(-2)) : '';
   return { year: year, line: line, lot: lot, lotNum: lotNum, letter: letter };
 }
