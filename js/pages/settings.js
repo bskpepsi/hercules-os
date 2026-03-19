@@ -52,8 +52,6 @@ function _renderSettings(main) {
   const guinW     = Store.getSetting('guinness_weight_g') || '170';
   const targetMm  = Store.getSetting('target_size_mm')    || '200';
   const largeMm   = Store.getSetting('large_male_threshold_mm') || '180';
-  const exchWarn  = Store.getSetting('exchange_warn_days')  || '60';
-  const exchAlert = Store.getSetting('exchange_alert_days') || '90';
   const lastSync  = localStorage.getItem(CONFIG.LS_KEYS.LAST_SYNC);
   const fmtSync   = lastSync
     ? new Date(lastSync).toLocaleString('ja-JP', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' })
@@ -138,32 +136,6 @@ function _renderSettings(main) {
         </div>
       </div>
 
-      <!-- マット交換サイクル警告設定 -->
-      <div class="card">
-        <div class="card-title">🔄 マット交換サイクル警告</div>
-        <div style="font-size:.78rem;color:var(--text2);margin-bottom:10px;line-height:1.6">
-          ロットカードの「最終交換日」からの経過日数で色が変わります。
-        </div>
-        <div class="form-section">
-          <div class="form-row-2">
-            ${UI.field('⚠️ 注意（日）',
-              `<input id="set-exch-warn" class="input" type="number" min="1" max="365"
-                value="${exchWarn}" placeholder="例: 60">`)}
-            ${UI.field('🔴 警告（日）',
-              `<input id="set-exch-alert" class="input" type="number" min="1" max="365"
-                value="${exchAlert}" placeholder="例: 90">`)}
-          </div>
-          <div style="font-size:.72rem;color:var(--text3);margin-bottom:10px;line-height:1.8">
-            <div>• <span style="color:var(--text2)">通常</span>　→ 設定日数未満</div>
-            <div>• <span style="color:var(--amber)">⚠️ オレンジ</span>　→ 注意日数以上</div>
-            <div>• <span style="color:var(--red,#e05555)">🔴 赤</span>　→ 警告日数以上</div>
-          </div>
-          <button class="btn btn-ghost btn-full" onclick="Pages._saveExchangeWarnSettings()">
-            交換警告日数を保存
-          </button>
-        </div>
-      </div>
-
       <!-- ステージ目安日齢 -->
       <div class="card">
         <div class="card-title">📅 ステージ目安日齢（デフォルト値）</div>
@@ -172,14 +144,15 @@ function _renderSettings(main) {
           変更はGASの設定シートから行ってください。
         </div>
         <div style="font-size:.8rem">
-          ${DEFAULT_STAGE_AGE_RULES.map(r =>
-            `<div style="display:flex;gap:8px;padding:5px 0;border-bottom:1px solid var(--border)">
-              <span style="min-width:80px;color:var(--text3)">
-                ${r.minDays}〜${r.maxDays === 9999 ? '∞' : r.maxDays}日
-              </span>
-              <span style="color:${stageColor(r.code)};font-weight:600">${r.label}</span>
-            </div>`
-          ).join('')}
+          ${DEFAULT_STAGE_AGE_RULES.map(r => {
+            const lbl   = (typeof stageLabel === 'function') ? stageLabel(r.code) : (r.label || r.code);
+            const color = (typeof stageColor === 'function') ? stageColor(r.code) : 'var(--text1)';
+            const maxStr = (r.maxDays === 9999 || r.maxDays === undefined) ? '∞' : r.maxDays;
+            return '<div style="display:flex;gap:8px;padding:5px 0;border-bottom:1px solid var(--border)">'
+              + '<span style="min-width:80px;color:var(--text3)">' + r.minDays + '〜' + maxStr + '日</span>'
+              + '<span style="color:' + color + ';font-weight:600">' + lbl + '</span>'
+              + '</div>';
+          }).join('')}
         </div>
       </div>
 
@@ -269,6 +242,79 @@ function _renderSettings(main) {
           <button class="btn btn-primary btn-full" style="margin-top:12px"
                   onclick="Pages._savePairingSettings()">後食・ペアリング設定を保存</button>
         </div>
+      </div>
+
+
+      <!-- Phase6: ステージ・マット・交換設定 -->
+      <div class="card">
+        <div class="card-title">🌱 ステージ・マット・交換設定</div>
+
+        <!-- アラート日数 -->
+        <div style="font-size:.82rem;font-weight:700;color:var(--text2);margin-bottom:8px">⚠️ 交換アラート日数</div>
+        <div class="form-group">
+          <label class="form-label">注意（期限前・後の許容日数）</label>
+          <input id="set-alert-caution" class="input" type="number" min="1" max="30"
+                 value="${Store.getSetting('alert_caution_days') || '7'}">
+          <div class="form-hint">交換期限の前後この日数以内で 🟡 注意を表示（初期: 7日）</div>
+          <label class="form-label" style="margin-top:12px">警告（超過からの日数しきい値）</label>
+          <input id="set-alert-warning" class="input" type="number" min="1" max="30"
+                 value="${Store.getSetting('alert_warning_days') || '7'}">
+          <div class="form-hint">期限超過後この日数を超えると 🔴 警告へ格上げ（初期: 7日）</div>
+        </div>
+
+        <!-- ステージ別交換日数（単独） -->
+        <div style="font-size:.82rem;font-weight:700;color:var(--text2);margin:14px 0 8px">📅 ステージ別交換日数（単独飼育）</div>
+        ${[
+          { code:'L1',       label:'L1'    },
+          { code:'L2_EARLY', label:'L2前期' },
+          { code:'L2_LATE',  label:'L2後期' },
+          { code:'L3_EARLY', label:'L3前期' },
+          { code:'L3_MID',   label:'L3中期' },
+          { code:'L3_LATE',  label:'L3後期' },
+        ].map(s => `
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+            <span style="min-width:64px;font-size:.82rem;color:var(--text2)">${s.label}</span>
+            <input type="number" class="input" min="1" max="365"
+                   id="set-exd-${s.code}-single"
+                   value="${Store.getSetting('exchange_days_' + s.code + '_single') || (typeof EXCHANGE_RULES !== 'undefined' && EXCHANGE_RULES[s.code] ? EXCHANGE_RULES[s.code].single : 90)}"
+                   style="width:72px;font-size:.82rem">
+            <span style="font-size:.78rem;color:var(--text3)">日</span>
+          </div>`).join('')}
+
+        <!-- ステージ別交換日数（多頭） -->
+        <div style="font-size:.82rem;font-weight:700;color:var(--text2);margin:14px 0 8px">📅 ステージ別交換日数（多頭飼育）</div>
+        ${[
+          { code:'L1',       label:'L1'    },
+          { code:'L2_EARLY', label:'L2前期' },
+          { code:'L2_LATE',  label:'L2後期' },
+          { code:'L3_EARLY', label:'L3前期' },
+          { code:'L3_MID',   label:'L3中期' },
+          { code:'L3_LATE',  label:'L3後期' },
+        ].map(s => `
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+            <span style="min-width:64px;font-size:.82rem;color:var(--text2)">${s.label}</span>
+            <input type="number" class="input" min="1" max="365"
+                   id="set-exd-${s.code}-multi"
+                   value="${Store.getSetting('exchange_days_' + s.code + '_multi') || (typeof EXCHANGE_RULES !== 'undefined' && EXCHANGE_RULES[s.code] ? EXCHANGE_RULES[s.code].multi : 60)}"
+                   style="width:72px;font-size:.82rem">
+            <span style="font-size:.78rem;color:var(--text3)">日</span>
+          </div>`).join('')}
+
+        <!-- モルト設定 -->
+        <div style="font-size:.82rem;font-weight:700;color:var(--text2);margin:14px 0 8px">🧪 モルト設定</div>
+        <div class="form-group">
+          <label style="display:flex;align-items:center;gap:8px;font-size:.82rem;cursor:pointer">
+            <input type="checkbox" id="set-molt-enabled"
+              ${Store.getSetting('molt_enabled') !== 'false' ? 'checked' : ''}>
+            T2マット交換時にモルト使用チェックを表示する
+          </label>
+          <div class="form-hint">チェックすると T2(M) として記録されます</div>
+        </div>
+
+        <button class="btn btn-primary btn-full" style="margin-top:12px"
+                onclick="Pages._saveExchangeSettings()">
+          交換・アラート設定を保存
+        </button>
       </div>
 
       <!-- バックアップ管理 -->
@@ -623,33 +669,42 @@ Pages._bkLoadHistory = async function () {
   }
 };
 
-// ── マット交換警告日数保存 ──────────────────────────────────────
-Pages._saveExchangeWarnSettings = async function () {
-  const warnDays  = parseInt(document.getElementById('set-exch-warn')?.value  || '60',  10);
-  const alertDays = parseInt(document.getElementById('set-exch-alert')?.value || '90', 10);
+// ── Phase6: 交換・アラート設定保存 ──────────────────────────────
+Pages._saveExchangeSettings = async function () {
+  const stages = ['L1', 'L2_EARLY', 'L2_LATE', 'L3_EARLY', 'L3_MID', 'L3_LATE'];
+  const updates = {};
 
-  if (isNaN(warnDays) || warnDays < 1) { UI.toast('注意日数を正しく入力してください', 'error'); return; }
-  if (isNaN(alertDays) || alertDays < 1) { UI.toast('警告日数を正しく入力してください', 'error'); return; }
-  if (warnDays >= alertDays) { UI.toast('警告日数は注意日数より大きくしてください', 'error'); return; }
+  const cautionEl = document.getElementById('set-alert-caution');
+  const warningEl = document.getElementById('set-alert-warning');
+  const moltEl    = document.getElementById('set-molt-enabled');
+  if (cautionEl) updates['alert_caution_days'] = cautionEl.value;
+  if (warningEl) updates['alert_warning_days'] = warningEl.value;
+  if (moltEl)    updates['molt_enabled']       = moltEl.checked ? 'true' : 'false';
 
-  Store.setSetting('exchange_warn_days',  String(warnDays));
-  Store.setSetting('exchange_alert_days', String(alertDays));
+  stages.forEach(code => {
+    const sEl = document.getElementById('set-exd-' + code + '-single');
+    const mEl = document.getElementById('set-exd-' + code + '-multi');
+    if (sEl) updates['exchange_days_' + code + '_single'] = sEl.value;
+    if (mEl) updates['exchange_days_' + code + '_multi']  = mEl.value;
+  });
 
+  // localStorageに保存
+  Object.entries(updates).forEach(([k, v]) => Store.setSetting(k, v));
+
+  // GASにも一括同期（updateSettings はバルク保存）
   const gasUrl = Store.getSetting('gas_url');
   if (gasUrl) {
     try {
-      await Promise.all([
-        API.system.updateSetting('exchange_warn_days',  String(warnDays)),
-        API.system.updateSetting('exchange_alert_days', String(alertDays)),
-      ]);
-      UI.toast(`交換警告日数を保存しました（注意: ${warnDays}日 / 警告: ${alertDays}日）`, 'success');
+      await API.system.updateSettings(updates);
+      UI.toast('交換・アラート設定を保存しました（GASにも反映済み）', 'success');
     } catch (e) {
-      UI.toast('ローカルに保存しました（GAS反映失敗）', 'info');
+      UI.toast('ローカルに保存しました（GAS反映失敗: ' + e.message + '）', 'info');
     }
   } else {
-    UI.toast(`ローカルに保存しました（注意: ${warnDays}日 / 警告: ${alertDays}日）`, 'success');
+    UI.toast('ローカルに保存しました', 'success');
   }
 };
+
 
 window.PAGES = window.PAGES || {};
 window.PAGES['settings'] = () => Pages.settings();
