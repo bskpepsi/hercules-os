@@ -10,10 +10,9 @@
 // ── 管理メニュー ─────────────────────────────────────────────────
 Pages.manage = function () {
   const main  = document.getElementById('main');
-  const lines = Store.getDB('lines')       || [];
-  const lots  = Store.getDB('lots')        || [];
-  const pars  = Store.getDB('parents')     || [];
-  const inds  = Store.getDB('individuals') || [];
+  const lines = Store.getDB('lines')     || [];
+  const lots  = Store.getDB('lots')      || [];
+  const pars  = Store.getDB('parents')   || [];
   const blds  = Store.getDB('bloodlines')|| [];
   const pairs = Store.getDB('pairings')  || [];
 
@@ -51,12 +50,6 @@ Pages.manage = function () {
       page: 'pairing-list', newPage: 'pairing-new',
       sub: `完了 ${pairs.filter(p=>p.status==='completed').length}件`,
       color: '#a0c878',
-    },
-    {
-      icon: '💰', label: '販売履歴', count: inds.filter(i=>i.status==='sold').length, unit: '件',
-      page: 'sale-list', newPage: '',
-      sub: '販売済み個体の履歴・売上確認',
-      color: 'var(--gold)',
     },
   ];
 
@@ -146,58 +139,17 @@ Pages.lineList = function () {
 };
 
 function _lineCardHTML(line) {
-  const f = Store.getParent(line.father_par_id);
-  const m = Store.getParent(line.mother_par_id);
-  const lineCode = line.line_code || line.display_id || '?';
-  const year     = line.hatch_year || '—';
-
-  // 父母の表示情報
-  const fName = f ? (f.parent_display_id || f.display_name || '') : '';
-  const mName = m ? (m.parent_display_id || m.display_name || '') : '';
-  const fSize = f && f.size_mm ? f.size_mm + 'mm' : '';
-  const mSize = m && m.size_mm ? m.size_mm + 'mm' : '';
-
-  // 血統情報: 父母の bloodline_raw を優先（なければタグ）
-  const fRaw  = f ? (f.bloodline_raw  || '') : '';
-  const mRaw  = m ? (m.bloodline_raw  || '') : '';
-  const _tags = t => { try { return (JSON.parse(t||'[]')||[]).slice(0,3).join(' '); } catch(e){ return ''; } };
-  const fTag  = f ? _tags(f.bloodline_tags) : '';
-  const mTag  = m ? _tags(m.maternal_tags  || f?.maternal_tags || '') : '';
-  // 血統表示文字列（最大40文字）
-  const bloodStr = (fRaw || fTag || mRaw || mTag)
-    ? (() => {
-        const left  = (fRaw || fTag || '?').slice(0, 20);
-        const right = (mRaw || mTag || '');
-        return right ? left + ' × ' + right.slice(0, 20) : left;
-      })()
-    : '';
-
-  return `<div class="card" style="padding:12px 14px;cursor:pointer;display:flex;align-items:center;gap:12px;margin-bottom:6px"
-    onclick="routeTo('line-detail',{lineId:'${line.line_id}'})">
-
-    <!-- 左：ラインコード＋年 -->
-    <div style="min-width:48px;text-align:center;flex-shrink:0">
-      <div style="font-family:var(--font-mono);font-size:1.35rem;font-weight:800;color:var(--gold);line-height:1">${lineCode}</div>
-      <div style="font-size:.65rem;color:var(--text3);margin-top:3px">${year}</div>
-    </div>
-
-    <!-- 右：親情報＋血統 -->
-    <div style="flex:1;min-width:0">
-      <!-- 親情報行 -->
-      ${(fName || mName) ? `
-      <div style="font-size:.8rem;margin-bottom:2px">
-        ${fName ? `<span style="color:var(--male)">♂</span> <span style="font-weight:600">${fName}</span>${fSize ? `<span style="color:var(--text3);font-size:.72rem"> ${fSize}</span>` : ''}` : ''}
-        ${(fName && mName) ? '<span style="color:var(--text3);margin:0 4px">×</span>' : ''}
-        ${mName ? `<span style="color:var(--female)">♀</span> <span style="font-weight:600">${mName}</span>${mSize ? `<span style="color:var(--text3);font-size:.72rem"> ${mSize}</span>` : ''}` : ''}
-      </div>` : '<div style="font-size:.8rem;color:var(--text3)">親情報なし</div>'}
-      <!-- 血統情報行 -->
-      ${bloodStr ? `<div style="font-size:.73rem;color:var(--text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${bloodStr}</div>` : ''}
-      <!-- 産地・累代 -->
-      ${(line.locality || line.generation) ? `<div style="font-size:.7rem;color:var(--text3);margin-top:2px">${[line.locality,line.generation].filter(Boolean).join(' / ')}</div>` : ''}
-    </div>
-
-    <div style="color:var(--text3);font-size:1.1rem">›</div>
-  </div>`;
+  try {
+    var vm = (typeof normalizeLineForView === 'function')
+      ? normalizeLineForView(line) : null;
+    if (vm) return renderLineCard(vm);
+  } catch(e) { console.warn('[_lineCardHTML]', e.message); }
+  // フォールバック: 最小限の表示
+  var code = line.line_code || line.display_id || '?';
+  return '<div class="entity-card card" data-line-id="' + (line.line_id||'') + '">'
+    + '<div class="entity-card__left"><div class="entity-card__code">' + code + '</div></div>'
+    + '<div class="entity-card__main"><div style="font-size:.8rem">' + (line.line_id||'') + '</div></div>'
+    + '<div class="entity-card__arrow">›</div></div>';
 }
 
 Pages._lineShowClosed = function () {
@@ -254,17 +206,6 @@ function _renderLineDetail(line, main) {
   // このラインに属する個体・ロット（全状態）
   // status='all' で dissolved/individualized も含めて取得
   // 【フォールバック】lot.line_id が空 / 不整合でも pairing_set_id 経由で拾う
-  // ※ TDZ修正: pairings を先に宣言してから _pairingSetIds で参照する
-  const allPairings = Store.getDB('pairings') || [];
-  const pairings = allPairings.filter(p => {
-    if (p.line_id === line.line_id) return true;
-    // 後方互換: line_id 未設定かつ父母IDが一致する場合
-    if (!p.line_id && line.father_par_id && line.mother_par_id) {
-      return (p.father_par_id === line.father_par_id && p.mother_par_id === line.mother_par_id);
-    }
-    return false;
-  });
-
   const _lotsById  = Store.filterLots({ line_id: line.line_id, status: 'all' });
   const _pairingSetIds = new Set(pairings.map(p => p.set_id).filter(Boolean));
   const _lotsByPairing = (Store.getDB('lots') || []).filter(l =>
@@ -275,6 +216,20 @@ function _renderLineDetail(line, main) {
   const activeLots = allLots.filter(l => l.status === 'active');
   const allInds    = Store.getIndividualsByLine(line.line_id);
   const aliveInds  = allInds.filter(i => i.status !== 'dead');
+
+  // 産卵セット紐づき: line_id で照合（正常ケース）
+  // line_id 未設定データの後方互換フォールバック:
+  //   createPairing は現在常に line_id を自動生成するため、新規データには発生しない
+  //   旧データ（自動生成前に登録されたもの）のみフォールバック照合
+  const allPairings = Store.getDB('pairings') || [];
+  const pairings = allPairings.filter(p => {
+    if (p.line_id === line.line_id) return true;
+    // 後方互換: line_id 未設定かつ父母IDが一致する場合
+    if (!p.line_id && line.father_par_id && line.mother_par_id) {
+      return (p.father_par_id === line.father_par_id && p.mother_par_id === line.mother_par_id);
+    }
+    return false;
+  });
 
   // ════════════════════════════════════════════════════
   // ライン集計 — 卵の流れに沿った定義

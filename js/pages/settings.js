@@ -262,45 +262,40 @@ function _renderSettings(main) {
       </div>
 
       <!-- Phase2: 後食・ペアリング設定 -->
-      <div class="card">
+      <div class="card settings-card">
         <div class="card-title">🍽️ 後食・ペアリング設定</div>
 
-        <!-- ♂後食待機日数 -->
-        <div style="margin-bottom:14px">
-          <label class="form-label">♂後食待機日数（日）</label>
-          <input id="set-male-wait" class="input" type="number" min="1" max="90"
-                 value="${Store.getSetting('male_pairing_wait_days') || '14'}"
-                 style="margin-top:4px">
+        <div class="setting-form-group">
+          <label class="setting-label">♂後食待機日数（日）</label>
+          <input id="set-male-wait" class="input setting-input" type="number" min="1" max="90"
+                 value="${Store.getSetting('male_pairing_wait_days') || '14'}">
         </div>
 
-        <!-- ♀後食待機日数 -->
-        <div style="margin-bottom:14px">
-          <label class="form-label">♀後食待機日数（日）</label>
-          <input id="set-female-wait" class="input" type="number" min="1" max="90"
-                 value="${Store.getSetting('female_pairing_wait_days') || '14'}"
-                 style="margin-top:4px">
+        <div class="setting-form-group">
+          <label class="setting-label">♀後食待機日数（日）</label>
+          <input id="set-female-wait" class="input setting-input" type="number" min="1" max="90"
+                 value="${Store.getSetting('female_pairing_wait_days') || '14'}">
         </div>
 
-        <!-- ♂ペアリング間隔 -->
-        <div style="margin-bottom:6px">
-          <label class="form-label">♂ペアリング間隔最小日数（日）</label>
-          <input id="set-pairing-interval" class="input" type="number" min="1" max="60"
-                 value="${Store.getSetting('male_pairing_interval_min_days') || '7'}"
-                 style="margin-top:4px">
-          <div style="font-size:.72rem;color:var(--text3);margin-top:5px;line-height:1.5">
-            この日数未満でペアリングすると<br>警告が表示されます
-          </div>
+        <div class="setting-form-group">
+          <label class="setting-label">♂ペアリング間隔最小日数（日）</label>
+          <input id="set-pairing-interval" class="input setting-input" type="number" min="1" max="60"
+                 value="${Store.getSetting('male_pairing_interval_min_days') || '7'}">
+        </div>
+        <div class="setting-desc">
+          この日数未満でペアリングすると<br>
+          警告が表示されます
         </div>
 
-        <!-- 産卵セット交換間隔 -->
-        <div style="margin-top:16px;margin-bottom:6px;padding-top:14px;border-top:1px solid var(--border)">
-          <label class="form-label">🥚 産卵セット交換間隔（日）</label>
-          <input id="set-exchange-days" class="input" type="number" min="1" max="30"
-                 value="${Store.getSetting('pairing_set_exchange_days') || '7'}"
-                 style="margin-top:4px">
-          <div style="font-size:.72rem;color:var(--text3);margin-top:5px;line-height:1.5">
-            セット開始からこの日数後に<br>交換リマインドを表示します（初期値: 7日）
-          </div>
+        <div class="setting-form-group" style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
+          <label class="setting-label">🥚 産卵セット交換間隔（日）</label>
+          <input id="set-exchange-days" class="input setting-input" type="number" min="1" max="30"
+                 value="${Store.getSetting('pairing_set_exchange_days') || '7'}">
+        </div>
+        <div class="setting-desc">
+          セット開始からこの日数後に<br>
+          交換リマインドを表示します<br>
+          （初期値: 7日）
         </div>
 
         <button class="btn btn-primary btn-full" style="margin-top:14px"
@@ -311,6 +306,33 @@ function _renderSettings(main) {
       <!-- Phase6: ステージ・マット・交換設定 -->
       <div class="card">
         <div class="card-title">🌱 ステージ・マット・交換設定</div>
+
+        <!-- 交換目安方式 -->
+        <div style="font-size:.82rem;font-weight:700;color:var(--text2);margin-bottom:8px">🔄 交換目安の計算方式</div>
+        <div class="setting-form-group">
+          <label class="setting-label">計算方式を選択</label>
+          <select id="set-exchange-mode" class="input setting-input"
+                  onchange="Pages._onExchangeModeChange(this.value)">
+            <option value="normal" ${Store.getSetting('mat_exchange_mode') !== 'hybrid' ? 'selected' : ''}>
+              通常版（マット基準のみ）
+            </option>
+            <option value="hybrid" ${Store.getSetting('mat_exchange_mode') === 'hybrid' ? 'selected' : ''}>
+              ハイブリッド版（マット基準 + 飼育補正）
+            </option>
+          </select>
+        </div>
+        <div id="set-mode-desc-normal"
+             style="font-size:.72rem;color:var(--text3);margin-bottom:12px;line-height:1.6;${Store.getSetting('mat_exchange_mode') === 'hybrid' ? 'display:none' : ''}">
+          次回交換日 = 最終交換日 + マット別交換日数<br>
+          シンプルで分かりやすい計算です。
+        </div>
+        <div id="set-mode-desc-hybrid"
+             style="font-size:.72rem;color:var(--text3);margin-bottom:12px;line-height:1.6;${Store.getSetting('mat_exchange_mode') === 'hybrid' ? '' : 'display:none'}">
+          基本: マット別交換日数<br>
+          + L3後期: × 1.2倍（長め）<br>
+          + 多頭飼育: × 0.85倍（早め）<br>
+          + 前蛹/蛹/成虫: 交換停止
+        </div>
 
         <!-- アラート日数 -->
         <div style="font-size:.82rem;font-weight:700;color:var(--text2);margin-bottom:8px">⚠️ 交換アラート日数</div>
@@ -325,40 +347,24 @@ function _renderSettings(main) {
           <div class="form-hint">期限超過後この日数を超えると 🔴 警告へ格上げ（初期: 7日）</div>
         </div>
 
-        <!-- ステージ別交換日数（単独） -->
-        <div style="font-size:.82rem;font-weight:700;color:var(--text2);margin:14px 0 8px">📅 ステージ別交換日数（単独飼育）</div>
+        <!-- マット別交換日数 -->
+        <div style="font-size:.82rem;font-weight:700;color:var(--text2);margin:14px 0 6px">📅 マット別交換日数</div>
+        <div style="font-size:.72rem;color:var(--text3);margin-bottom:10px;line-height:1.5">
+          次回交換日 = 最終交換日 + 下記日数<br>
+          ステージは交換周期に使いません
+        </div>
         ${[
-          { code:'L1',       label:'L1'    },
-          { code:'L2_EARLY', label:'L2前期' },
-          { code:'L2_LATE',  label:'L2後期' },
-          { code:'L3_EARLY', label:'L3前期' },
-          { code:'L3_MID',   label:'L3中期' },
-          { code:'L3_LATE',  label:'L3後期' },
-        ].map(s => `
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
-            <span style="min-width:64px;font-size:.82rem;color:var(--text2)">${s.label}</span>
+          { code:'T0',       label:'T0マット',      default: 60  },
+          { code:'T1',       label:'T1マット',      default: 90  },
+          { code:'T2',       label:'T2マット（M含）', default: 90  },
+          { code:'T3',       label:'T3マット',      default: 120 },
+          { code:'MDカブト', label:'MDカブトマット', default: 60  },
+        ].map(m => `
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+            <span style="min-width:110px;font-size:.82rem;color:var(--text2)">${m.label}</span>
             <input type="number" class="input" min="1" max="365"
-                   id="set-exd-${s.code}-single"
-                   value="${Store.getSetting('exchange_days_' + s.code + '_single') || (typeof EXCHANGE_RULES !== 'undefined' && EXCHANGE_RULES[s.code] ? EXCHANGE_RULES[s.code].single : 90)}"
-                   style="width:72px;font-size:.82rem">
-            <span style="font-size:.78rem;color:var(--text3)">日</span>
-          </div>`).join('')}
-
-        <!-- ステージ別交換日数（多頭） -->
-        <div style="font-size:.82rem;font-weight:700;color:var(--text2);margin:14px 0 8px">📅 ステージ別交換日数（多頭飼育）</div>
-        ${[
-          { code:'L1',       label:'L1'    },
-          { code:'L2_EARLY', label:'L2前期' },
-          { code:'L2_LATE',  label:'L2後期' },
-          { code:'L3_EARLY', label:'L3前期' },
-          { code:'L3_MID',   label:'L3中期' },
-          { code:'L3_LATE',  label:'L3後期' },
-        ].map(s => `
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
-            <span style="min-width:64px;font-size:.82rem;color:var(--text2)">${s.label}</span>
-            <input type="number" class="input" min="1" max="365"
-                   id="set-exd-${s.code}-multi"
-                   value="${Store.getSetting('exchange_days_' + s.code + '_multi') || (typeof EXCHANGE_RULES !== 'undefined' && EXCHANGE_RULES[s.code] ? EXCHANGE_RULES[s.code].multi : 60)}"
+                   id="set-exd-${m.code}"
+                   value="${Store.getSetting('exchange_days_' + m.code) || m.default}"
                    style="width:72px;font-size:.82rem">
             <span style="font-size:.78rem;color:var(--text3)">日</span>
           </div>`).join('')}
@@ -733,22 +739,31 @@ Pages._bkLoadHistory = async function () {
 };
 
 // ── Phase6: 交換・アラート設定保存 ──────────────────────────────
+Pages._onExchangeModeChange = function (mode) {
+  // 方式説明の表示切替
+  const normalDesc = document.getElementById('set-mode-desc-normal');
+  const hybridDesc = document.getElementById('set-mode-desc-hybrid');
+  if (normalDesc) normalDesc.style.display = mode === 'hybrid' ? 'none' : '';
+  if (hybridDesc) hybridDesc.style.display = mode === 'hybrid' ? '' : 'none';
+};
+
 Pages._saveExchangeSettings = async function () {
-  const stages = ['L1', 'L2_EARLY', 'L2_LATE', 'L3_EARLY', 'L3_MID', 'L3_LATE'];
+  // マット別交換日数（ステージ別は廃止）
+  const mats = ['T0', 'T1', 'T2', 'T3', 'MDカブト'];
   const updates = {};
 
+  const modeEl    = document.getElementById('set-exchange-mode');
   const cautionEl = document.getElementById('set-alert-caution');
   const warningEl = document.getElementById('set-alert-warning');
   const moltEl    = document.getElementById('set-molt-enabled');
+  if (modeEl)    updates['mat_exchange_mode'] = modeEl.value;
   if (cautionEl) updates['alert_caution_days'] = cautionEl.value;
   if (warningEl) updates['alert_warning_days'] = warningEl.value;
   if (moltEl)    updates['molt_enabled']       = moltEl.checked ? 'true' : 'false';
 
-  stages.forEach(code => {
-    const sEl = document.getElementById('set-exd-' + code + '-single');
-    const mEl = document.getElementById('set-exd-' + code + '-multi');
-    if (sEl) updates['exchange_days_' + code + '_single'] = sEl.value;
-    if (mEl) updates['exchange_days_' + code + '_multi']  = mEl.value;
+  mats.forEach(code => {
+    const el = document.getElementById('set-exd-' + code);
+    if (el) updates['exchange_days_' + code] = el.value;
   });
 
   // localStorageに保存

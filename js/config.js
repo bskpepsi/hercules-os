@@ -119,35 +119,93 @@ function recommendedMat(stageCode) {
 }
 
 // ════════════════════════════════════════════════════════════════
-// 交換周期ルール（ステージ×飼育タイプ）
+// 交換周期ルール（マットタイプ別）
+//
+// 設計方針:
+//   次回交換日 = last_mat_change_date + MAT_EXCHANGE_RULES[mat_type]
+//   ステージは交換周期には使わない（推奨マット・自動判定にのみ使用）
 // ════════════════════════════════════════════════════════════════
-const EXCHANGE_RULES = {
-  L1:       { single: 60,  multi: 60  },
-  L2_EARLY: { single: 60,  multi: 60  },
-  L2_LATE:  { single: 90,  multi: 75  },
-  L3_EARLY: { single: 90,  multi: 75  },
-  L3_MID:   { single: 90,  multi: 60  },
-  L3_LATE:  { single: 120, multi: 90  },
-  PREPUPA:  { single: 0,   multi: 0   },  // 0 = 交換なし
-  PUPA:     { single: 0,   multi: 0   },
-  ADULT:    { single: 0,   multi: 0   },
-  // 旧コード後方互換
-  T0:       { single: 60,  multi: 60  },
-  T1:       { single: 60,  multi: 60  },
-  T2A:      { single: 90,  multi: 75  },
-  T2B:      { single: 90,  multi: 60  },
-  T3:       { single: 120, multi: 90  },
+const MAT_EXCHANGE_RULES = {
+  T0:       60,   // T0マット: 60日
+  T1:       90,   // T1マット: 90日
+  T2:       90,   // T2マット（モルト含む）: 90日
+  T3:       120,  // T3マット: 120日
+  MDカブト: 60,   // MDカブトマット: 60日
+  // 旧コード後方互換（T2A/T2B → T2 と同じ扱い）
+  T2A:      90,
+  T2B:      90,
 };
 
-// 設定オーバーライドを考慮した交換日数を返す
-// settingsMap: Store.getSettings() の結果
-function getExchangeDays(stageCode, feedingType, settingsMap) {
-  const key    = 'exchange_days_' + stageCode + '_' + (feedingType || 'single');
-  const stored = settingsMap && settingsMap[key];
-  if (stored) return parseInt(stored, 10) || 0;
-  const rule = EXCHANGE_RULES[stageCode];
-  if (!rule) return 60;
-  return feedingType === 'multi' ? rule.multi : rule.single;
+// 後方互換: EXCHANGE_RULES を MAT_EXCHANGE_RULES の別名として定義
+// （既存コードが EXCHANGE_RULES を参照している場合のフォールバック）
+const EXCHANGE_RULES = MAT_EXCHANGE_RULES;
+
+// ════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════
+// 交換目安方式
+//   normal  — マット基準のみ（初期値）
+//   hybrid  — マット基準 + ステージ・飼育タイプ補正
+// ════════════════════════════════════════════════════════════════
+const MAT_EXCHANGE_MODE = {
+  NORMAL: 'normal',  // 通常版：マット基準のみ
+  HYBRID: 'hybrid',  // ハイブリッド版：マット基準 + 補正
+};
+
+// ハイブリッド版の補正係数テーブル
+const HYBRID_STAGE_MULTIPLIER = {
+  // 交換不要ステージ（0 = 交換なし）
+  PREPUPA: 0, PUPA: 0, ADULT: 0,
+  // 補正係数（1.0 = 補正なし）
+  L1:       1.0,
+  L2_EARLY: 1.0,
+  L2_LATE:  1.0,
+  L3_EARLY: 1.0,
+  L3_MID:   1.0,
+  L3_LATE:  1.2,  // L3後期は長め（120日→144日など）
+};
+
+// ════════════════════════════════════════════════════════════════
+// getExchangeDays — 交換目安日数を返す
+//
+// @param matType     string   'T0' | 'T1' | 'T2' | 'T3' | 'MDカブト'
+// @param settingsMap object   Store.getSettings() の返り値
+// @param stageCode   string   ステージコード（ハイブリッド時のみ使用）
+// @param lotCount    number   頭数（ハイブリッド時: 多頭補正に使用）
+// @returns number  交換目安日数（0 = 交換なし）
+// ════════════════════════════════════════════════════════════════
+function getExchangeDays(matType, settingsMap, stageCode, lotCount) {
+  // 旧コード変換（T2A/T2B → T2）
+  var normalizedMat = (matType === 'T2A' || matType === 'T2B') ? 'T2' : (matType || '');
+
+  // ── STEP1: 基底日数（設定上書き考慮）──────────────────────
+  var key    = 'exchange_days_' + normalizedMat;
+  var stored = settingsMap && settingsMap[key];
+  var base   = stored ? (parseInt(stored, 10) || 0)
+                      : (MAT_EXCHANGE_RULES[normalizedMat] !== undefined
+                          ? MAT_EXCHANGE_RULES[normalizedMat] : 60);
+
+  // ── STEP2: 方式取得（初期値 = normal）───────────────────────
+  var mode = (settingsMap && settingsMap['mat_exchange_mode']) || MAT_EXCHANGE_MODE.NORMAL;
+
+  // 通常版: 基底日数をそのまま返す
+  if (mode !== MAT_EXCHANGE_MODE.HYBRID) return base;
+
+  // ── STEP3: ハイブリッド補正 ────────────────────────────────
+  var OLD_TO_NEW = { T0:'L1', T1:'L2_EARLY', T2A:'L3_EARLY', T2B:'L3_MID', T3:'L3_LATE' };
+  var sc = stageCode ? (OLD_TO_NEW[stageCode] || stageCode) : '';
+
+  // 前蛹/蛹/成虫は交換なし
+  if (sc === 'PREPUPA' || sc === 'PUPA' || sc === 'ADULT') return 0;
+
+  // ステージ補正係数
+  var stageMult = HYBRID_STAGE_MULTIPLIER[sc];
+  if (stageMult === undefined) stageMult = 1.0;
+  if (stageMult === 0) return 0;
+
+  // 多頭補正: 頭数2頭以上 → 0.85倍（糞が早く増える）
+  var countMult = (lotCount && parseInt(lotCount, 10) > 1) ? 0.85 : 1.0;
+
+  return Math.round(base * stageMult * countMult);
 }
 
 // ════════════════════════════════════════════════════════════════

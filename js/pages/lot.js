@@ -98,75 +98,18 @@ function _lotStageFilters(active) {
 // ロットカード — 3列レイアウト（コード | 頭数+情報 | ›）
 // ════════════════════════════════════════════════════════════════
 function _lotCardHTML(lot) {
-  // ── ライン表示 ──────────────────────────────────────────────────
-  // display_id から直接ライン部分を抽出するのが最も正確
-  // 例: "HM2026-B2-L01" → lineCode = "B2"
-  // _parseDisplayId は label.js にもある共通関数（lot.jsスコープ内で定義済み）
-  let lineCode = '';
-  if (typeof _parseDisplayId === 'function') {
-    lineCode = _parseDisplayId(lot.display_id || '').line || '';
-  }
-  if (!lineCode) {
-    // フォールバック: Store.getLine からライン台帳の line_code を使用
-    const line = Store.getLine(lot.line_id);
-    lineCode = line ? (line.line_code || line.display_id) : '';
-  }
-
-  // ── 最新成長記録 ────────────────────────────────────────────────
-  const recs = Store.getGrowthRecords(lot.lot_id) || [];
-  const latestRec = recs.length > 0
-    ? [...recs].sort((a,b) => String(b.record_date).localeCompare(String(a.record_date)))[0]
-    : null;
-
-  // ── ステージ表示（新設計優先）──────────────────────────────────
-  // 優先順: stage_life（新）> lot.stage（旧）> latestRec.stage（成長記録）
-  const rawStage   = lot.stage_life || lot.stage || latestRec?.stage || '';
-  // 旧コード変換マップ（T0/T1/T2A/T2B/T3 → 新コード）
-  const OLD_TO_NEW = { T0:'L1', T1:'L2_EARLY', T2A:'L3_EARLY', T2B:'L3_MID', T3:'L3_LATE' };
-  const stageCode  = OLD_TO_NEW[rawStage] || rawStage;
-  // stageLabel() で人間向けラベルに変換。新コードなら "L1"/"L2前期" etc. が返る
-  const stageDisp  = stageCode ? stageLabel(stageCode) : '—';
-  const sColor     = stageColor(stageCode);
-
-  // ── マット表示（新設計優先）──────────────────────────────────
-  // mat_type は T0/T1/T2/T3/MDカブト のいずれか（T2A/T2Bは旧設計）
-  const rawMat     = lot.mat_type || latestRec?.mat_type || '';
-  // 旧マットコード変換（T2A/T2B → T2）
-  const MAT_CONV   = { T2A:'T2', T2B:'T2' };
-  const matCode    = MAT_CONV[rawMat] || rawMat;
-  const isMatMolt  = lot.mat_molt === true || lot.mat_molt === 'true' || lot.mat_molt === '1';
-  // コンパクト表示: T2(M) / T2 / T0 etc.（フルラベル "T2マット" は長いのでコードのみ）
-  const matDisp    = matCode === 'T2' && isMatMolt ? 'T2(M)' : matCode;
-
-  const dispContainer = lot.container_size || latestRec?.container || '';
-  const dispWeight    = latestRec?.weight_g ? latestRec.weight_g + 'g' : null;
-  const count         = +lot.count || 0;
-
-  // ライン一覧・産卵セット一覧と同じ .card スタイルで統一
-  return `<div class="card" style="padding:12px 14px;cursor:pointer;display:flex;align-items:center;gap:12px;margin-bottom:8px"
-    onclick="routeTo('lot-detail',{lotId:'${lot.lot_id}'})">
-
-    <!-- 左: ラインコード + 頭数 -->
-    <div style="min-width:44px;text-align:center;flex-shrink:0">
-      <div style="font-family:var(--font-mono);font-size:1.2rem;font-weight:800;color:var(--gold);line-height:1">${lineCode}</div>
-      <div style="font-size:.75rem;font-weight:700;color:var(--text2);margin-top:4px">${count}<span style="font-size:.65rem;color:var(--text3)">頭</span></div>
-    </div>
-
-    <!-- 右: ロットID + ステージ/マット/体重 -->
-    <div style="flex:1;min-width:0">
-      <div style="font-family:var(--font-mono);font-size:.85rem;font-weight:700;color:var(--text1);margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${lot.display_id}</div>
-      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-        <span style="font-size:.75rem;font-weight:700;color:${sColor}">${stageDisp}</span>
-        ${dispContainer ? `<span style="font-size:.72rem;color:var(--text3)">${dispContainer}</span>` : ''}
-        ${matDisp       ? `<span style="font-size:.72rem;color:var(--text3)">${matDisp}</span>` : ''}
-        ${dispWeight    ? `<span style="font-size:.78rem;font-weight:700;color:var(--green)">${dispWeight}</span>` : ''}
-      </div>
-    </div>
-
-    <!-- 矢印 -->
-    <div style="color:var(--text3);font-size:1.1rem;flex-shrink:0">›</div>
-  </div>`;
+  try {
+    var vm = (typeof normalizeLotForView === 'function')
+      ? normalizeLotForView(lot) : null;
+    if (vm) return renderLotCard(vm);
+  } catch(e) { console.warn('[_lotCardHTML]', e.message); }
+  // フォールバック: 最小限の表示
+  return '<div class="entity-card card" data-lot-id="' + (lot.lot_id||'') + '">'
+    + '<div class="entity-card__left"><div class="entity-card__code">?</div></div>'
+    + '<div class="entity-card__main"><div style="font-size:.8rem">' + (lot.display_id||lot.lot_id||'') + '</div></div>'
+    + '<div class="entity-card__arrow">›</div></div>';
 }
+
 
 Pages._lotShowDissolved = function () {
   const dissolved = (Store.getDB('lots') || []).filter(l =>
@@ -186,24 +129,43 @@ Pages._lotShowDissolved = function () {
 // ロット詳細
 // ════════════════════════════════════════════════════════════════
 Pages.lotDetail = async function (lotId) {
-  if (lotId && typeof lotId === 'object') lotId = lotId.id || lotId.lotId || '';
+  if (lotId && typeof lotId === 'object') lotId = lotId.id || lotId.lotId || lotId.lot_id || '';
   const main = document.getElementById('main');
-  if (!lotId) { main.innerHTML = UI.empty('IDが指定されていません'); return; }
+  if (!lotId) {
+    main.innerHTML = UI.header('ロット詳細', { back: true })
+      + '<div class="page-body">' + UI.empty('IDが指定されていません') + '</div>';
+    return;
+  }
 
+  // ローカルキャッシュから即時表示
   let lot = Store.getLot(lotId);
-  if (lot) _renderLotDetail(lot, main);
-  else main.innerHTML = UI.header('ロット詳細', {}) + UI.spinner();
+  if (lot) {
+    try { _renderLotDetail(lot, main); } catch(e) {
+      main.innerHTML = UI.header('ロット詳細', { back: true })
+        + '<div class="page-body">' + UI.empty('表示エラー: ' + e.message) + '</div>';
+    }
+  } else {
+    main.innerHTML = UI.header('ロット詳細', { back: true }) + UI.spinner();
+  }
 
+  // GASから最新データ取得
   try {
     const res = await API.lot.get(lotId);
     if (Store.getPage() !== 'lot-detail') return;
-    if (Store.getParams().lotId !== lotId && Store.getParams().id !== lotId) return;
-    lot = res.lot;
-    _renderLotDetail(lot, main);
+    const curId = Store.getParams().lotId || Store.getParams().id || Store.getParams().lot_id || '';
+    if (curId && curId !== lotId) return;
+    lot = res.lot || res;
+    try { _renderLotDetail(lot, main); } catch(e) {
+      main.innerHTML = UI.header('ロット詳細', { back: true })
+        + '<div class="page-body">' + UI.empty('表示エラー: ' + e.message) + '</div>';
+    }
   } catch (e) {
-    if (!lot && Store.getPage() === 'lot-detail') {
-      main.innerHTML = UI.header('エラー', {back:true}) +
-        `<div class="page-body">${UI.empty('取得失敗: ' + e.message)}</div>`;
+    if (Store.getPage() === 'lot-detail') {
+      if (!lot) {
+        main.innerHTML = UI.header('ロット詳細', { back: true })
+          + '<div class="page-body">' + UI.empty('取得失敗: ' + e.message) + '</div>';
+      }
+      // ローカルデータ表示中なら何もしない（ネットワークエラーでも表示を維持）
     }
   }
 };
@@ -230,15 +192,22 @@ function _renderLotDetail(lot, main) {
   const dispStage     = (latestRec?.stage) || lot.stage || '—';
   const lastMatDate   = lot.mat_changed_at || latestRec?.record_date || '';
   const override      = lot.next_change_override_date || '';
-  const feedingType   = parseInt(lot.count, 10) > 1 ? 'multi' : 'single';
-  const exDays        = (typeof getExchangeDays === 'function')
-    ? getExchangeDays(stageLife || dispStage, feedingType, settings) : 60;
+  // 交換日数: 設定方式に応じて計算（normal: マットのみ / hybrid: マット+補正）
+  const exDays = (typeof getExchangeDays === 'function')
+    ? getExchangeDays(dispMatType, settings, stageLife || dispStage, lot.count)
+    : 60;
   const exchAlert     = (typeof calcExchangeAlert === 'function')
     ? calcExchangeAlert(lastMatDate, exDays, override, settings) : null;
   const alertBadge    = (typeof exchangeAlertBadge === 'function' && exchAlert)
     ? exchangeAlertBadge(exchAlert) : '';
   const recMat        = (typeof recommendedMat === 'function')
     ? recommendedMat(stageLife || dispStage) : null;
+  // 計算方式バッジ（ハイブリッド時のみ表示）
+  const exchangeMode  = (settings && settings.mat_exchange_mode) || 'normal';
+  const modeBadge     = exchangeMode === 'hybrid'
+    ? '<span style="font-size:.65rem;color:var(--blue);border:1px solid rgba(91,168,232,.35);'
+      + 'border-radius:4px;padding:1px 5px;margin-left:4px">ハイブリッド</span>'
+    : '';
   const nextChangeLbl = override
     ? override + ' <span style="font-size:.68rem;color:var(--amber)">(延長)</span>'
     : (exchAlert && exchAlert.nextDate ? exchAlert.nextDate : '—');
@@ -297,7 +266,7 @@ function _renderLotDetail(lot, main) {
           ${recMat && recMat !== dispMatType ? _infoRow('推奨マット', `<span style="font-size:.78rem;color:var(--amber)">→ ${recMat}</span>`) : ''}
           ${_infoRow('孵化日', lot.hatch_date || '未設定')}
           ${_infoRow('最終交換', lastMatDate || '—')}
-          ${exDays > 0 ? _infoRow('次回交換予定', nextChangeLbl) : ''}
+          ${exDays > 0 ? _infoRow('次回交換予定', nextChangeLbl + modeBadge) : ''}
           ${override ? _infoRow('延長メモ', lot.mat_alert_note || '（延長中）') : ''}
           ${lot.parent_lot_id ? _infoRow('分割元', `<span style="color:var(--blue);cursor:pointer" onclick="routeTo('lot-detail',{lotId:'${lot.parent_lot_id}'})">${lot.parent_lot_id}</span>`) : ''}
           ${lot.note ? _infoRow('メモ', lot.note) : ''}

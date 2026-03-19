@@ -1,0 +1,147 @@
+/* ================================================================
+ * settings-patch.css — 設定画面 フォームUI修正
+ * 配置先: styles.css の末尾に追記、または別途 <link> で読み込む
+ * ================================================================ */
+
+/* 設定フォームグループ: 縦並びレイアウト */
+.setting-form-group {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 14px;
+}
+
+/* 設定ラベル */
+.setting-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #cfe8d8;
+  margin-bottom: 6px;
+  line-height: 1.4;
+}
+
+/* 設定input: 高さ・角丸を統一 */
+.setting-input {
+  height: 40px;
+  border-radius: 10px;
+  padding: 6px 12px;
+  font-size: 14px;
+}
+
+/* 補足説明文 */
+.setting-desc {
+  font-size: 12px;
+  color: #9fb5a7;
+  margin-top: -6px;
+  margin-bottom: 16px;
+  line-height: 1.6;
+}
+
+/* ================================================================
+ * ロット・個体カード統一スタイル
+ * ================================================================ */
+
+/* lot-card / ind-card の旧クラスが残っている場合の互換 */
+.lot-card,
+.ind-card {
+  background: var(--surface2, #1e2e28);
+  border: 1px solid var(--border, rgba(255,255,255,.08));
+  border-radius: var(--radius, 12px);
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  transition: background .15s;
+}
+.lot-card:active,
+.ind-card:active {
+  background: var(--surface3, #2a3e36);
+}
+
+/* ================================================================
+ * entity-card — normalize.js が生成する共通カード骨格
+ * lot.js / individual.js / manage.js 全ての一覧カードに適用
+ * ================================================================ */
+
+.entity-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  border-radius: var(--radius, 12px);
+  background: var(--surface2, #1e2e28);
+  border: 1px solid var(--border, rgba(255,255,255,.08));
+  transition: background .15s;
+  -webkit-tap-highlight-color: transparent;
+  outline: none;
+}
+.entity-card:active,
+.entity-card:focus-visible {
+  background: var(--surface3, #2a3e36);
+}
+
+/* 左列: コード・記号・性別など */
+.entity-card__left {
+  min-width: 44px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.entity-card__code {
+  font-family: var(--font-mono, monospace);
+  font-size: 1.2rem;
+  font-weight: 800;
+  color: var(--gold, #c8a84b);
+  line-height: 1;
+}
+.entity-card__year {
+  font-size: .65rem;
+  color: var(--text3);
+  margin-top: 3px;
+}
+
+/* 中央メイン */
+.entity-card__main {
+  flex: 1;
+  min-width: 0;
+}
+.entity-card__sub {
+  margin-top: 3px;
+}
+.entity-card__extra {
+  margin-top: 2px;
+}
+
+/* サブ情報（ステージ/マット/体重/日齢）区切り */
+.entity-card__info {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex-wrap: wrap;
+  font-size: .78rem;
+  color: var(--text2);
+}
+.entity-card__sep {
+  font-size: .65rem;
+  color: var(--border, rgba(255,255,255,.15));
+  padding: 0 1px;
+}
+
+/* 血統行 */
+.entity-card__blood {
+  font-size: .73rem;
+  color: var(--text3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 2px;
+}
+
+/* 右矢印 */
+.entity-card__arrow {
+  color: var(--text3);
+  font-size: 1.1rem;
+  flex-shrink: 0;
+}

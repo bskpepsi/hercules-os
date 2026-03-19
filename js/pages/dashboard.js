@@ -1,12 +1,5 @@
 // ════════════════════════════════════════════════════════════════
-// dashboard.js  v3 — 司令塔ダッシュボード
-// ブロック構成:
-//   1. 今日の最優先タスク
-//   2. クイックアクション
-//   3. 種親・ペアリング状況
-//   4. 産卵セット状況
-//   5. 有望個体エリア
-//   6. ライン・血統分析サマリー
+// dashboard.js  v4 — Phase6 交換アラート新仕様対応
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
@@ -30,24 +23,25 @@ function _renderDashboard(main) {
   const parents  = Store.getDB('parents')     || [];
   const pairings = Store.getDB('pairings')    || [];
 
-  // Phase B: 飼育中判定 — 終端ステータス（sold/dead/excluded）以外を全て含む
-  // alive は旧データ互換として残す
   const _TERMINAL = new Set(['sold', 'dead', 'excluded']);
   const alive    = inds.filter(i => !_TERMINAL.has(i.status));
   const actLot   = lots.filter(l => l.status === 'active');
-  const today    = new Date(); today.setHours(0,0,0,0);
+  const today    = new Date(); today.setHours(0, 0, 0, 0);
+
+  // config.js から設定を取得（Phase6共通関数）
+  const settings = (Store.getSettings ? Store.getSettings() : null) || {};
 
   // ────────────────────────────────────────────────
   // 1. 今日のタスク計算
   // ────────────────────────────────────────────────
-  const exchDays   = parseInt(Store.getSetting('pairing_set_exchange_days') || '7', 10);
-  const activePairs= pairings.filter(p => p.status === 'active' && (p.set_start || p.pairing_start));
+  const exchDays  = parseInt(Store.getSetting('pairing_set_exchange_days') || '7', 10);
+  const activePairs = pairings.filter(p => p.status === 'active' && (p.set_start || p.pairing_start));
 
   function _pairDue(p) {
     const base = p.set_start || p.pairing_start;
     const pts  = String(base).split(/[\/\-]/);
     if (pts.length < 3) return null;
-    const d = new Date(+pts[0], +pts[1]-1, +pts[2]);
+    const d = new Date(+pts[0], +pts[1] - 1, +pts[2]);
     d.setDate(d.getDate() + exchDays);
     return d;
   }
@@ -58,84 +52,81 @@ function _renderDashboard(main) {
   activePairs.forEach(p => {
     const due  = _pairDue(p);
     if (!due) return;
-    const diff = Math.floor((due - today) / 86400000);
+    const diff  = Math.floor((due - today) / 86400000);
     const label = p.set_name || p.display_id;
-    if (diff < 0)   tasks.red.push({ icon:'🥚', text:`${label} セット交換 ${Math.abs(diff)}日超過`, fn:`routeTo('pairing-detail',{pairingId:'${p.set_id}'})` });
-    else if(diff===0) tasks.red.push({ icon:'🔔', text:`${label} 今日セット交換日`, fn:`routeTo('pairing-detail',{pairingId:'${p.set_id}'})` });
-    else if(diff<=2)  tasks.yellow.push({ icon:'📅', text:`${label} セット交換まで${diff}日`, fn:`routeTo('pairing-detail',{pairingId:'${p.set_id}'})` });
-  });
-
-  // 次回採卵予定日アラート（next_collect_date が設定されている産卵セット）
-  activePairs.forEach(p => {
-    if (!p.next_collect_date) return;
-    const parts = String(p.next_collect_date).split(/[\/\-]/);
-    if (parts.length < 3) return;
-    const d = new Date(+parts[0], +parts[1] - 1, +parts[2]);
-    const diff = Math.floor((d - today) / 86400000);
-    const label = p.set_name || p.display_id;
-    const actionIcon = p.next_action === 'rest' ? '😴' : '♻️';
-    if (diff < 0)    tasks.red.push({ icon:'🥚', text:`${label} 採卵予定 ${Math.abs(diff)}日超過`, fn:`routeTo('pairing-detail',{pairingId:'${p.set_id}'})` });
-    else if(diff===0) tasks.red.push({ icon:'🥚', text:`${label} 今日採卵予定`, fn:`routeTo('pairing-detail',{pairingId:'${p.set_id}'})` });
-    else if(diff===1) tasks.yellow.push({ icon:actionIcon, text:`${label} 明日採卵予定`, fn:`routeTo('pairing-detail',{pairingId:'${p.set_id}'})` });
-    else if(diff<=3)  tasks.yellow.push({ icon:actionIcon, text:`${label} 採卵予定まで${diff}日`, fn:`routeTo('pairing-detail',{pairingId:'${p.set_id}'})` });
+    if (diff < 0)   tasks.red.push({ icon: '🥚', text: `${label} セット交換 ${Math.abs(diff)}日超過`, fn: `routeTo('pairing-detail',{pairingId:'${p.set_id}'})` });
+    else if (diff === 0) tasks.red.push({ icon: '🔔', text: `${label} 今日セット交換日`, fn: `routeTo('pairing-detail',{pairingId:'${p.set_id}'})` });
+    else if (diff <= 2)  tasks.yellow.push({ icon: '📅', text: `${label} セット交換まで${diff}日`, fn: `routeTo('pairing-detail',{pairingId:'${p.set_id}'})` });
   });
 
   // 種親ペアリング可能判定
   const maleWait   = parseInt(Store.getSetting('male_pairing_wait_days')   || '14', 10);
   const femaleWait = parseInt(Store.getSetting('female_pairing_wait_days') || '14', 10);
   parents.filter(p => p.status === 'active' && p.feeding_start_date).forEach(p => {
-    const wait  = p.sex === '♂' ? maleWait : femaleWait;
-    const fpts  = String(p.feeding_start_date).split(/[\/\-]/);
+    const wait = p.sex === '♂' ? maleWait : femaleWait;
+    const fpts = String(p.feeding_start_date).split(/[\/\-]/);
     if (fpts.length < 3) return;
-    const readyDate = new Date(+fpts[0], +fpts[1]-1, +fpts[2]);
+    const readyDate = new Date(+fpts[0], +fpts[1] - 1, +fpts[2]);
     readyDate.setDate(readyDate.getDate() + wait);
     const diff = Math.floor((readyDate - today) / 86400000);
-    if (diff <= 0)  tasks.green.push({ icon:'💕', text:`${p.display_name} ペアリング可能`, fn:`routeTo('parent-detail',{parId:'${p.par_id}'})` });
-    else if(diff<=7) tasks.yellow.push({ icon:'⏳', text:`${p.display_name} ペアリングまで${diff}日`, fn:`routeTo('parent-detail',{parId:'${p.par_id}'})` });
+    if (diff <= 0)  tasks.green.push({ icon: '💕', text: `${p.display_name} ペアリング可能`, fn: `routeTo('parent-detail',{parId:'${p.par_id}'})` });
+    else if (diff <= 7) tasks.yellow.push({ icon: '⏳', text: `${p.display_name} ペアリングまで${diff}日`, fn: `routeTo('parent-detail',{parId:'${p.par_id}'})` });
   });
 
   // 再ペアリング予定
-  const todayStr = today.toISOString().split('T')[0].replace(/-/g,'/');
   const phAll = Store.getDB('pairing_histories') || [];
   phAll.filter(h => h.status === 'planned' && h.planned_date).forEach(h => {
-    const parts = String(h.planned_date).replace(/-/g,'/').split('/');
+    const parts = String(h.planned_date).replace(/-/g, '/').split('/');
     if (parts.length < 3) return;
-    const planDate = new Date(+parts[0], +parts[1]-1, +parts[2]);
+    const planDate = new Date(+parts[0], +parts[1] - 1, +parts[2]);
     const diff = Math.floor((planDate - today) / 86400000);
     const male   = (Store.getDB('parents') || []).find(p => p.par_id === h.male_parent_id);
     const female = (Store.getDB('parents') || []).find(p => p.par_id === h.female_parent_id);
-    const mName  = male   ? (male.parent_display_id   || male.display_name)   : h.male_parent_id;
-    const fName  = female ? (female.parent_display_id || female.display_name) : h.female_parent_id;
-    const label  = mName + ' × ' + fName;
+    const label  = (male ? (male.parent_display_id || male.display_name) : h.male_parent_id)
+                 + ' × '
+                 + (female ? (female.parent_display_id || female.display_name) : h.female_parent_id);
     const parId  = h.male_parent_id || '';
-    if (diff < 0) {
-      tasks.red.push({ icon:'💕', text:`${label} 再ペアリング期限超過(${Math.abs(diff)}日)`, fn:`routeTo('parent-detail',{parId:'${parId}'})` });
-    } else if (diff === 0) {
-      tasks.red.push({ icon:'💕', text:`${label} 今日再ペアリング予定`, fn:`routeTo('parent-detail',{parId:'${parId}'})` });
-    } else if (diff <= 3) {
-      tasks.yellow.push({ icon:'💕', text:`${label} 再ペアリングまで${diff}日`, fn:`routeTo('parent-detail',{parId:'${parId}'})` });
-    }
+    if (diff < 0) tasks.red.push({ icon: '💕', text: `${label} 再ペアリング期限超過(${Math.abs(diff)}日)`, fn: `routeTo('parent-detail',{parId:'${parId}'})` });
+    else if (diff === 0) tasks.red.push({ icon: '💕', text: `${label} 今日再ペアリング予定`, fn: `routeTo('parent-detail',{parId:'${parId}'})` });
+    else if (diff <= 3)  tasks.yellow.push({ icon: '💕', text: `${label} 再ペアリングまで${diff}日`, fn: `routeTo('parent-detail',{parId:'${parId}'})` });
   });
 
-  // 150g超え個体（有望）
   const over150 = alive.filter(i => +i.latest_weight_g >= 150);
-  if (over150.length) tasks.green.push({ icon:'🏆', text:`150g超え ${over150.length}頭`, fn:"routeTo('ind-list')" });
+  if (over150.length) tasks.green.push({ icon: '🏆', text: `150g超え ${over150.length}頭`, fn: "routeTo('ind-list')" });
 
-  // ── カテゴリ別集計（③カテゴリセクションで使用）──────────────
-  // 採卵・セット交換: 産卵セット関連タスク
+  // カテゴリ別集計
   const catEgg     = [...tasks.red, ...tasks.yellow].filter(t => t.fn.includes('pairing-detail'));
-  // ペアリング: 種親ペアリング関連タスク
   const catPairing = [...tasks.red, ...tasks.yellow, ...tasks.green].filter(t => t.fn.includes('parent-detail'));
-  // マット交換: 個体の日齢推定
-  const matDays = parseInt(Store.getSetting('mat_change_interval_days') || '60', 10);
-  const matDue  = alive.filter(i => {
-    if (!i.hatch_date) return false;
-    const age = Store.calcAge(i.hatch_date);
-    if (!age) return false;
-    return age.days > 0 && age.days % matDays < 7;
+
+  // ── Phase6: ロット交換アラート（新仕様）─────────────────────
+  // 残り日数 > 7日 → 通常 / 前後7日以内 → 注意🟡 / 8日以上超過 → 警告🔴
+  const lotWarning = [];  // 🔴
+  const lotCaution = [];  // 🟡
+  // 計算方式をバッジ表示用に取得
+  const exchangeMode = (settings && settings.mat_exchange_mode) || 'normal';
+
+  actLot.forEach(lot => {
+    const matType    = lot.mat_type || '';
+    const stageCode  = lot.stage_life || lot.stage || '';
+    // 設定方式に応じて計算（hybrid時はステージ・頭数補正あり）
+    const exDays     = (typeof getExchangeDays === 'function')
+      ? getExchangeDays(matType, settings, stageCode, lot.count) : 60;
+    if (exDays === 0) return;
+    const lastChange = lot.mat_changed_at || '';
+    const override   = lot.next_change_override_date || '';
+    const alert      = (typeof calcExchangeAlert === 'function')
+      ? calcExchangeAlert(lastChange, exDays, override, settings) : null;
+    if (!alert || alert.level === 'normal' || alert.level === 'none') return;
+    const line     = Store.getLine(lot.line_id);
+    const lineCode = line ? (line.line_code || line.display_id) : '';
+    const isMatMolt = lot.mat_molt === true || lot.mat_molt === 'true';
+    const matDisp   = (typeof matLabel === 'function') ? matLabel(lot.mat_type || '', isMatMolt) : (lot.mat_type || '—');
+    const stageDisp = lot.stage_life ? stageLabel(lot.stage_life) : (lot.stage || '—');
+    const entry = { lot, lineCode, alert, matDisp, stageDisp };
+    if (alert.level === 'warning') lotWarning.push(entry);
+    else                           lotCaution.push(entry);
   });
-
-
+  const matDue = [...lotWarning, ...lotCaution];
 
   // ────────────────────────────────────────────────
   // 3. 種親・ペアリング状況
@@ -149,7 +140,7 @@ function _renderDashboard(main) {
     const wait = p.sex === '♂' ? maleWait : femaleWait;
     const pts  = String(p.feeding_start_date).split(/[\/\-]/);
     if (pts.length < 3) return null;
-    const d = new Date(+pts[0], +pts[1]-1, +pts[2]);
+    const d = new Date(+pts[0], +pts[1] - 1, +pts[2]);
     d.setDate(d.getDate() + wait);
     return Math.floor((d - today) / 86400000);
   }
@@ -177,7 +168,7 @@ function _renderDashboard(main) {
   // 5. 有望個体
   // ────────────────────────────────────────────────
   const withWeight = alive.filter(i => i.latest_weight_g);
-  const topWeight  = [...withWeight].sort((a,b) => +b.latest_weight_g - +a.latest_weight_g).slice(0,5);
+  const topWeight  = [...withWeight].sort((a, b) => +b.latest_weight_g - +a.latest_weight_g).slice(0, 5);
   const over170    = alive.filter(i => +i.latest_weight_g >= 170);
 
   // ────────────────────────────────────────────────
@@ -187,14 +178,13 @@ function _renderDashboard(main) {
   lines.forEach(l => { lineStats[l.line_id] = { label: l.display_id, weights: [], alive: 0, dead: 0 }; });
   inds.forEach(i => {
     if (!lineStats[i.line_id]) return;
-    // Phase B: 終端以外はすべて「飼育中」としてカウント（alive 互換含む）
     if (!_TERMINAL.has(i.status)) { lineStats[i.line_id].alive++; if (i.latest_weight_g) lineStats[i.line_id].weights.push(+i.latest_weight_g); }
-    if (i.status === 'dead')        lineStats[i.line_id].dead++;
+    if (i.status === 'dead') lineStats[i.line_id].dead++;
   });
   const lineRank = Object.values(lineStats)
     .filter(s => s.weights.length > 0)
-    .map(s => ({ ...s, avg: Math.round(s.weights.reduce((a,b)=>a+b,0)/s.weights.length*10)/10 }))
-    .sort((a,b) => b.avg - a.avg)
+    .map(s => ({ ...s, avg: Math.round(s.weights.reduce((a, b) => a + b, 0) / s.weights.length * 10) / 10 }))
+    .sort((a, b) => b.avg - a.avg)
     .slice(0, 3);
 
   const gasUrl = Store.getSetting('gas_url') || CONFIG.GAS_URL;
@@ -209,7 +199,7 @@ function _renderDashboard(main) {
           <span style="color:var(--blue);cursor:pointer" onclick="routeTo('settings')">設定画面へ</span>
         </div></div>` : ''}
 
-      <!-- ① 今日のタスク（色付き行表示） -->
+      <!-- ① 今日のタスク -->
       <div class="card" style="border-color:rgba(231,76,60,.25)">
         <div class="card-title" style="margin-bottom:8px">📋 今日のタスク</div>
         ${(tasks.red.length || tasks.yellow.length) ? `
@@ -226,7 +216,7 @@ function _renderDashboard(main) {
                 <span class="task-row-text">${t.text}</span>
                 <span style="color:var(--amber);font-size:.8rem">›</span>
               </div>`).join('')}
-            ${tasks.green.slice(0,3).map(t => `
+            ${tasks.green.slice(0, 3).map(t => `
               <div class="task-row-green" onclick="${t.fn}">
                 <span style="font-size:1.1rem">${t.icon}</span>
                 <span class="task-row-text">${t.text}</span>
@@ -256,7 +246,7 @@ function _renderDashboard(main) {
         </button>
       </div>
 
-      <!-- ③ カテゴリ -->
+      <!-- ③ カテゴリ（タスク集計） -->
       ${(catEgg.length || catPairing.length || matDue.length) ? `
       <div class="card">
         <div class="card-title" style="margin-bottom:8px">📂 カテゴリ</div>
@@ -284,15 +274,20 @@ function _renderDashboard(main) {
             <span style="font-size:1.2rem;font-weight:800;color:var(--amber)">${catPairing.length}件 ›</span>
           </div>` : ''}
           ${matDue.length ? `
-          <div onclick="routeTo('ind-list')"
+          <div onclick="routeTo('lot-list')"
             style="display:flex;justify-content:space-between;align-items:center;
               padding:11px 13px;background:rgba(52,152,219,.07);border-radius:9px;cursor:pointer;
               border:1px solid rgba(52,152,219,.18)">
             <div style="display:flex;align-items:center;gap:8px">
               <span style="font-size:1.2rem">🌱</span>
-              <span style="font-size:.88rem;font-weight:600">マット交換目安</span>
+              <div>
+                <div style="font-size:.88rem;font-weight:600">マット交換目安</div>
+                <div style="font-size:.68rem;color:var(--text3)">
+                  🔴 ${lotWarning.length}件 / 🟡 ${lotCaution.length}件
+                </div>
+              </div>
             </div>
-            <span style="font-size:1.2rem;font-weight:800;color:var(--blue)">${matDue.length}頭 ›</span>
+            <span style="font-size:1.2rem;font-weight:800;color:var(--blue)">${matDue.length}件 ›</span>
           </div>` : ''}
         </div>
       </div>` : ''}
@@ -300,16 +295,52 @@ function _renderDashboard(main) {
       <!-- KPIバー -->
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
         ${[
-          { val: alive.length, sub: `♂${alive.filter(i=>i.sex==='♂').length}/♀${alive.filter(i=>i.sex==='♀').length}`, label:'飼育個体数', fn:"routeTo('ind-list')" },
-          { val: actLot.length, sub:`総頭数 ${actLot.reduce((s,l)=>s+(+l.count||0),0)}頭`, label:'管理中ロット', fn:"routeTo('lot-list')" },
-          { val: alive.filter(i=>String(i.guinness_flag)==='true').length, sub:`${lines.length}ライン`, label:'ギネス候補🏆', fn:"routeTo('ind-list')" },
-          { val: topWeight[0] ? topWeight[0].latest_weight_g+'g' : '—', sub: topWeight[0] ? topWeight[0].display_id : '—', label:'最高体重', fn:"routeTo('ind-list')" },
-        ].map(k=>`<div class="kpi-card" onclick="${k.fn}" style="cursor:pointer">
+          { val: alive.length, sub: `♂${alive.filter(i => i.sex === '♂').length}/♀${alive.filter(i => i.sex === '♀').length}`, label: '飼育個体数', fn: "routeTo('ind-list')" },
+          { val: actLot.length, sub: `総頭数 ${actLot.reduce((s, l) => s + (+l.count || 0), 0)}頭`, label: '管理中ロット', fn: "routeTo('lot-list')" },
+          { val: alive.filter(i => String(i.guinness_flag) === 'true').length, sub: `${lines.length}ライン`, label: 'ギネス候補🏆', fn: "routeTo('ind-list')" },
+          { val: topWeight[0] ? topWeight[0].latest_weight_g + 'g' : '—', sub: topWeight[0] ? topWeight[0].display_id : '—', label: '最高体重', fn: "routeTo('ind-list')" },
+        ].map(k => `<div class="kpi-card" onclick="${k.fn}" style="cursor:pointer">
           <div class="kpi-value">${k.val}</div>
           <div style="font-size:.6rem;color:var(--text3);margin-bottom:1px">${k.sub}</div>
           <div class="kpi-label">${k.label}</div>
         </div>`).join('')}
       </div>
+
+      <!-- ⑤ ロット交換アラート一覧（Phase6新規） -->
+      ${matDue.length ? `
+      <div class="card">
+        <div class="card-title" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <span>🌱 マット交換アラート</span>
+          <span style="font-size:.68rem;color:var(--text3)">${exchangeMode === 'hybrid' ? 'ハイブリッド補正中' : 'マット基準'}</span>
+        </div>
+        ${[...lotWarning, ...lotCaution].slice(0, 8).map(entry => {
+          const al  = entry.alert;
+          const icoColor = al.level === 'warning' ? 'var(--red)' : 'var(--amber)';
+          const ico      = al.level === 'warning' ? '🔴' : '🟡';
+          const daysText = al.daysLeft < 0
+            ? `${Math.abs(al.daysLeft)}日超過`
+            : al.daysLeft === 0 ? '今日' : `残${al.daysLeft}日`;
+          return `<div onclick="routeTo('lot-detail',{lotId:'${entry.lot.lot_id}'})"
+            style="display:flex;align-items:center;gap:8px;padding:8px 0;
+              border-bottom:1px solid var(--border);cursor:pointer">
+            <span style="font-size:.9rem">${ico}</span>
+            <div style="flex:1;min-width:0">
+              <div style="font-size:.82rem;font-weight:600;color:var(--text1)">${entry.lot.display_id}</div>
+              <div style="font-size:.7rem;color:var(--text3)">
+                ${entry.stageDisp} / ${entry.matDisp}
+                ${entry.lot.mat_changed_at ? '/ 交換: ' + entry.lot.mat_changed_at : ''}
+                ${entry.lot.next_change_override_date ? '/ 延長中' : ''}
+              </div>
+            </div>
+            <div style="text-align:right;flex-shrink:0">
+              <div style="font-size:.78rem;font-weight:700;color:${icoColor}">${daysText}</div>
+              ${al.nextDate ? `<div style="font-size:.65rem;color:var(--text3)">${al.nextDate}</div>` : ''}
+            </div>
+          </div>`;
+        }).join('')}
+        ${matDue.length > 8 ? `<div style="font-size:.72rem;color:var(--text3);padding:6px 0">+${matDue.length - 8}件</div>` : ''}
+        <button class="btn btn-ghost btn-sm" style="margin-top:8px;width:100%" onclick="routeTo('lot-list')">ロット一覧を見る →</button>
+      </div>` : ''}
 
       <!-- ④ 種親・ペアリング状況 -->
       <div class="card">
@@ -320,61 +351,60 @@ function _renderDashboard(main) {
         ${readyToday.length ? `
           <div style="margin-bottom:8px">
             <div style="font-size:.72rem;color:var(--green);font-weight:700;margin-bottom:4px">✅ ペアリング可能（今日〜）</div>
-            ${readyToday.map(p=>`
+            ${readyToday.map(p => `
               <div onclick="routeTo('parent-detail',{parId:'${p.par_id}'})" style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;border-bottom:1px solid var(--border)">
                 <span style="font-size:.85rem">${p.sex}</span>
-                <span style="flex:1;font-size:.82rem;font-weight:600">${p.display_name}${p.size_mm?' '+p.size_mm+'mm':''}</span>
+                <span style="flex:1;font-size:.82rem;font-weight:600">${p.display_name}${p.size_mm ? ' ' + p.size_mm + 'mm' : ''}</span>
                 <span style="font-size:.7rem;color:var(--green)">可能 ›</span>
               </div>`).join('')}
           </div>` : ''}
         ${readySoon.length ? `
           <div style="margin-bottom:8px">
             <div style="font-size:.72rem;color:var(--amber);font-weight:700;margin-bottom:4px">⏳ 7日以内にペアリング可能</div>
-            ${readySoon.map(p=>{ const d=_parentReadyDiff(p); return `
+            ${readySoon.map(p => { const d = _parentReadyDiff(p); return `
               <div onclick="routeTo('parent-detail',{parId:'${p.par_id}'})" style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;border-bottom:1px solid var(--border)">
                 <span style="font-size:.85rem">${p.sex}</span>
-                <span style="flex:1;font-size:.82rem">${p.display_name}${p.size_mm?' '+p.size_mm+'mm':''}</span>
+                <span style="flex:1;font-size:.82rem">${p.display_name}${p.size_mm ? ' ' + p.size_mm + 'mm' : ''}</span>
                 <span style="font-size:.7rem;color:var(--amber)">あと${d}日 ›</span>
-              </div>`;}).join('')}
+              </div>`; }).join('')}
           </div>` : ''}
         ${noFeeding.length ? `
           <div>
             <div style="font-size:.72rem;color:var(--text3);font-weight:700;margin-bottom:4px">⚠️ 後食開始日未設定 (${noFeeding.length}頭)</div>
-            ${noFeeding.slice(0,3).map(p=>`
+            ${noFeeding.slice(0, 3).map(p => `
               <div onclick="routeTo('parent-detail',{parId:'${p.par_id}'})" style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;border-bottom:1px solid var(--border)">
                 <span style="font-size:.85rem">${p.sex}</span>
-                <span style="flex:1;font-size:.82rem;color:var(--text2)">${p.display_name}${p.size_mm?' '+p.size_mm+'mm':''}</span>
+                <span style="flex:1;font-size:.82rem;color:var(--text2)">${p.display_name}${p.size_mm ? ' ' + p.size_mm + 'mm' : ''}</span>
                 <span style="font-size:.7rem;color:var(--blue)">設定 ›</span>
               </div>`).join('')}
-            ${noFeeding.length>3?`<div style="font-size:.72rem;color:var(--text3);padding:4px 0">+${noFeeding.length-3}頭</div>`:''}
+            ${noFeeding.length > 3 ? `<div style="font-size:.72rem;color:var(--text3);padding:4px 0">+${noFeeding.length - 3}頭</div>` : ''}
           </div>` : ''}
         ${!readyToday.length && !readySoon.length && !noFeeding.length ? `<div style="font-size:.82rem;color:var(--text3);padding:8px 0">種親データがありません</div>` : ''}
         <button class="btn btn-ghost btn-sm" style="margin-top:8px;width:100%" onclick="routeTo('parent-list')">種親一覧を見る →</button>
       </div>
 
-      <!-- ⑤ 産卵セット状況 -->
+      <!-- ⑥ 産卵セット状況 -->
       <div class="card">
         <div class="card-title" style="display:flex;justify-content:space-between">
           <span>🥚 産卵セット状況</span>
           <span style="font-size:.72rem;font-weight:400;color:var(--text3)">${activePairs.length}セット進行中</span>
         </div>
         ${Object.keys(pairByLine).length ? Object.values(pairByLine).map(ls => {
-          const rate = ls.eggs > 0 ? Math.round(ls.hatch/ls.eggs*1000)/10 : null;
-          // 交換リマインド
+          const rate = ls.eggs > 0 ? Math.round(ls.hatch / ls.eggs * 1000) / 10 : null;
           let exchTag = '';
           ls.pairs.forEach(p => {
             const due = _pairDue(p);
             if (!due) return;
             const diff = Math.floor((due - today) / 86400000);
-            if (diff < 0)   exchTag = `<span style="font-size:.65rem;color:var(--red);font-weight:700">期限超過${Math.abs(diff)}日</span>`;
-            else if(diff===0) exchTag = `<span style="font-size:.65rem;color:var(--red);font-weight:700">今日交換</span>`;
-            else if(diff===1) exchTag = `<span style="font-size:.65rem;color:var(--amber);font-weight:700">明日交換</span>`;
-            else if(diff<=3)  exchTag = `<span style="font-size:.65rem;color:var(--amber)">交換まで${diff}日</span>`;
+            if (diff < 0)        exchTag = `<span style="font-size:.65rem;color:var(--red);font-weight:700">期限超過${Math.abs(diff)}日</span>`;
+            else if (diff === 0) exchTag = `<span style="font-size:.65rem;color:var(--red);font-weight:700">今日交換</span>`;
+            else if (diff === 1) exchTag = `<span style="font-size:.65rem;color:var(--amber);font-weight:700">明日交換</span>`;
+            else if (diff <= 3)  exchTag = `<span style="font-size:.65rem;color:var(--amber)">交換まで${diff}日</span>`;
           });
           return `<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer" onclick="routeTo('pairing-list')">
             <div>
               <div style="font-size:.83rem;font-weight:600">${ls.label}</div>
-              <div style="font-size:.72rem;color:var(--text3);margin-top:1px">採卵${ls.eggs}個 / 孵化${ls.hatch}頭 ${rate!==null?'/ 孵化率'+rate+'%':''}</div>
+              <div style="font-size:.72rem;color:var(--text3);margin-top:1px">採卵${ls.eggs}個 / 孵化${ls.hatch}頭 ${rate !== null ? '/ 孵化率' + rate + '%' : ''}</div>
             </div>
             ${exchTag}
           </div>`;
@@ -382,7 +412,7 @@ function _renderDashboard(main) {
         ${activePairs.length > 0 ? `<button class="btn btn-ghost btn-sm" style="margin-top:8px;width:100%" onclick="routeTo('pairing-list')">産卵セット一覧を見る →</button>` : ''}
       </div>
 
-      <!-- ⑥ 有望個体エリア -->
+      <!-- ⑦ 有望個体エリア -->
       ${topWeight.length ? `
       <div class="card">
         <div class="card-title" style="display:flex;justify-content:space-between">
@@ -391,27 +421,28 @@ function _renderDashboard(main) {
         </div>
         ${over170.length ? `<div style="background:rgba(202,164,48,.1);border:1px solid rgba(202,164,48,.3);border-radius:8px;padding:8px 12px;margin-bottom:8px;font-size:.82rem;color:var(--gold);font-weight:700">🏅 170g超え ${over170.length}頭</div>` : ''}
         ${over150.length ? `<div style="font-size:.75rem;color:var(--green);margin-bottom:6px">150g超え ${over150.length}頭</div>` : ''}
-        ${topWeight.map((ind,i) => {
+        ${topWeight.map((ind, i) => {
           const ageObj = Store.calcAge(ind.hatch_date);
+          const stageDisp = ind.stage_life ? stageLabel(ind.stage_life) : (ind.current_stage || '');
           return `<div onclick="routeTo('ind-detail',{indId:'${ind.ind_id}'})" style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer">
-            <span style="font-size:.78rem;color:var(--text3);min-width:18px">${i+1}</span>
+            <span style="font-size:.78rem;color:var(--text3);min-width:18px">${i + 1}</span>
             <div style="flex:1">
               <div style="font-family:var(--font-mono);font-size:.8rem;color:var(--gold)">${ind.display_id}</div>
-              <div style="font-size:.7rem;color:var(--text3)">${ind.sex||'?'} ${ageObj?ageObj.days+'日':'—'} ${ind.current_stage||''}</div>
+              <div style="font-size:.7rem;color:var(--text3)">${ind.sex || '?'} ${ageObj ? ageObj.days + '日' : '—'} ${stageDisp}</div>
             </div>
-            <div style="font-size:1rem;font-weight:700;color:${+ind.latest_weight_g>=170?'var(--gold)':+ind.latest_weight_g>=150?'var(--green)':'var(--text1)'}">${ind.latest_weight_g}g</div>
+            <div style="font-size:1rem;font-weight:700;color:${+ind.latest_weight_g >= 170 ? 'var(--gold)' : +ind.latest_weight_g >= 150 ? 'var(--green)' : 'var(--text1)'}">${ind.latest_weight_g}g</div>
           </div>`;
         }).join('')}
         <button class="btn btn-ghost btn-sm" style="margin-top:8px;width:100%" onclick="routeTo('ind-list')">個体一覧を見る →</button>
       </div>` : ''}
 
-      <!-- ⑦ ライン分析サマリー -->
+      <!-- ⑧ ライン分析サマリー -->
       ${lineRank.length ? `
       <div class="card">
         <div class="card-title">📊 ライン平均体重 TOP${lineRank.length}</div>
-        ${lineRank.map((ls,i) => `
+        ${lineRank.map((ls, i) => `
           <div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border)">
-            <span style="font-size:.78rem;color:var(--text3);min-width:18px">${i+1}</span>
+            <span style="font-size:.78rem;color:var(--text3);min-width:18px">${i + 1}</span>
             <div style="flex:1">
               <div style="font-size:.83rem;font-weight:600">${ls.label}</div>
               <div style="font-size:.7rem;color:var(--text3)">${ls.alive}頭飼育中 / 計測${ls.weights.length}頭</div>
@@ -421,15 +452,15 @@ function _renderDashboard(main) {
       </div>` : ''}
 
       <div style="text-align:center;padding:12px 0;font-size:.72rem;color:var(--text3)">
-        HerculesOS v1.0.0 — Phase 2
+        HerculesOS v1.1.0 — Phase 6
       </div>
     </div>`;
 }
 
 function _dashHeader() {
-  const now    = new Date();
-  const greet  = now.getHours() < 12 ? 'おはようございます' :
-                 now.getHours() < 18 ? 'こんにちは' : 'おつかれさまです';
+  const now   = new Date();
+  const greet = now.getHours() < 12 ? 'おはようございます' :
+                now.getHours() < 18 ? 'こんにちは' : 'おつかれさまです';
   return `<header class="page-header" style="justify-content:space-between">
     <div style="font-size:.85rem;color:var(--text2)">${greet}</div>
     <div style="font-family:var(--font-mono);font-size:.75rem;color:var(--gold)">HerculesOS</div>

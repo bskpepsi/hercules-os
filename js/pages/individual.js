@@ -187,96 +187,18 @@ function _sexFilters(active) {
 }
 
 function _indCardHTML(ind) {
-  const age      = ind._age || Store.calcAge(ind.hatch_date);
-  const w        = ind.latest_weight_g ? ind.latest_weight_g + 'g' : null;
-  const sz       = ind.adult_size_mm    ? ind.adult_size_mm + 'mm'  : null;
-
-  // ライン: display_id からライン部分を抽出するのが最も正確
-  let lineCode = '';
-  if (typeof _parseDisplayId === 'function') {
-    lineCode = _parseDisplayId(ind.display_id || '').line || '';
-  }
-  if (!lineCode) {
-    const line = ind.line_id ? Store.getLine(ind.line_id) : null;
-    lineCode = line ? (line.line_code || line.display_id || '') : '';
-  }
-
-  // ステージ表示（stage_life 優先）
-  const OLD_TO_NEW = { T0:'L1', T1:'L2_EARLY', T2A:'L3_EARLY', T2B:'L3_MID', T3:'L3_LATE' };
-  const rawStage   = ind.stage_life || ind.current_stage || '';
-  const stageCode  = OLD_TO_NEW[rawStage] || rawStage;
-  const stageDisp  = stageCode ? (typeof stageLabel === 'function' ? stageLabel(stageCode) : stageCode) : '';
-  const sColor     = typeof stageColor === 'function' ? stageColor(stageCode) : 'var(--text1)';
-
-  // マット表示（mat_molt 考慮）
-  const rawMat    = ind.current_mat || '';
-  const matCode   = rawMat === 'T2A' || rawMat === 'T2B' ? 'T2' : rawMat;
-  const isMatMolt = ind.mat_molt === true || ind.mat_molt === 'true';
-  const matDisp   = matCode === 'T2' && isMatMolt ? 'T2(M)' : matCode;
-
-  // ステータス
-  const stMap = {
-    larva:'幼虫', prepupa:'前蛹', pupa:'蛹', adult:'成虫', alive:'飼育中',
-    seed_candidate:'種親候補', seed_reserved:'種親確保済',
-    for_sale:'販売候補', reserved:'予約済', listed:'出品中',
-    sold:'販売済', dead:'死亡', excluded:'除外',
-  };
-  const stColorMap = {
-    larva:'var(--green)', prepupa:'var(--amber)', pupa:'#bf360c',
-    adult:'var(--green)', alive:'var(--green)',
-    seed_candidate:'var(--blue)', seed_reserved:'var(--blue)',
-    for_sale:'#9c27b0', reserved:'var(--blue)', listed:'#ff9800',
-    sold:'var(--amber)', dead:'var(--red,#e05050)', excluded:'var(--text3)',
-  };
-  const stLbl  = stMap[ind.status]      || ind.status      || '—';
-  const stClr  = stColorMap[ind.status] || 'var(--text3)';
-
-  // アイコン
-  const icons = [
-    String(ind.guinness_flag) === 'true' ? '🏆' : '',
-    String(ind.parent_flag)   === 'true' ? '👑' : '',
-    String(ind.g200_flag)     === 'true' ? '💪' : '',
-  ].filter(Boolean).join('');
-
-  // 性別色
-  const sexColor = ind.sex === '♂' ? 'var(--male,#5ba8e8)' : ind.sex === '♀' ? 'var(--female,#e87fa0)' : 'var(--text3)';
-
-  // サブ情報: ステージ / マット / 体重 / サイズ を整理して表示
-  const subParts = [
-    stageDisp  ? '<span style="font-size:.75rem;font-weight:700;color:' + sColor + '">' + stageDisp + '</span>' : '',
-    matDisp    ? '<span style="font-size:.72rem;color:var(--text3)">' + matDisp + '</span>' : '',
-    w          ? '<span style="font-size:.78rem;font-weight:700;color:var(--green)">' + w + '</span>' : '',
-    sz         ? '<span style="font-size:.72rem;color:var(--text3)">' + sz + '</span>' : '',
-  ].filter(Boolean).join('<span style="font-size:.65rem;color:var(--border)"> / </span>');
-
-  // ── .card スタイル（ロット一覧・ライン一覧と統一）─────────
-  return '<div class="card" style="padding:12px 14px;cursor:pointer;display:flex;align-items:center;gap:12px;margin-bottom:8px"'
-    + ' onclick="routeTo(\x27ind-detail\x27,{indId:\x27' + ind.ind_id + '\x27})">'
-
-    // 左: 性別記号 + ライン
-    + '<div style="min-width:36px;text-align:center;flex-shrink:0">'
-    +   '<div style="font-size:1.2rem;font-weight:800;color:' + sexColor + ';line-height:1">' + (ind.sex || '?') + '</div>'
-    +   (lineCode ? '<div style="font-size:.65rem;color:var(--text3);margin-top:3px">' + lineCode + '</div>' : '')
-    + '</div>'
-
-    // 右: ID + サブ情報行
-    + '<div style="flex:1;min-width:0">'
-    +   '<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">'
-    +     '<span style="font-family:var(--font-mono);font-size:.85rem;font-weight:700;color:var(--text1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">' + ind.display_id + '</span>'
-    +     (icons ? '<span style="font-size:.78rem;flex-shrink:0">' + icons + '</span>' : '')
-    +   '</div>'
-    +   (subParts ? '<div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-bottom:3px">' + subParts + '</div>' : '')
-    +   '<div style="display:flex;align-items:center;justify-content:space-between">'
-    +     '<span style="font-size:.72rem;font-weight:700;color:' + stClr + '">' + stLbl + '</span>'
-    +     (age ? '<span style="font-size:.68rem;color:var(--text3)">日齢 ' + age.days + '日</span>' : '')
-    +   '</div>'
-    + '</div>'
-
-    // 矢印
-    + '<div style="color:var(--text3);font-size:1.1rem;flex-shrink:0">›</div>'
-
-    + '</div>';
+  try {
+    var vm = (typeof normalizeIndForView === 'function')
+      ? normalizeIndForView(ind) : null;
+    if (vm) return renderIndCard(vm);
+  } catch(e) { console.warn('[_indCardHTML]', e.message); }
+  // フォールバック
+  return '<div class="entity-card card" data-ind-id="' + (ind.ind_id||'') + '">'
+    + '<div class="entity-card__left"><div class="entity-card__code">' + (ind.sex||'?') + '</div></div>'
+    + '<div class="entity-card__main"><div style="font-size:.8rem">' + (ind.display_id||ind.ind_id||'') + '</div></div>'
+    + '<div class="entity-card__arrow">›</div></div>';
 }
+
 
 // QRスキャン（カメラ起動→QR解析は別途実装。現状はID入力）
 // 修正④: 表示ID（HM2025-A1-001）でも遷移できる構造

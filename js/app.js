@@ -46,11 +46,6 @@ window.PAGES = {
   'qr-scan':     () => Pages.qrScan(Store.getParams()),
   'qr-diff':     () => Pages.qrDiff(Store.getParams()),
   'weight-mode': () => Pages.weightMode(Store.getParams()),
-  // ── Phase5: 販売履歴 ────────────────────────────────────────
-  'sale-list':   () => Pages.saleList(),
-  // ── Phase5.5: 公開ページ ─────────────────────────────────────
-  'public-edit': () => Pages.publicEdit(Store.getParams()),
-  'public-view': () => Pages.publicView(Store.getParams()),
 };
 
 // ── 起動（PAGES定義の後に配置することでPAGES参照を保証） ────────
@@ -163,13 +158,40 @@ function bindGlobalEvents() {
   });
   // 動的ナビ
   document.addEventListener('click', (e) => {
+    // ── data-nav による通常ルーティング ──────────────────────
     const nav = e.target.closest('[data-nav]');
     if (nav) {
       e.preventDefault();
       const page   = nav.dataset.nav;
       const params = nav.dataset.params ? JSON.parse(nav.dataset.params) : {};
       routeTo(page, params);
+      return;
     }
+
+    // ── entity-card イベント委譲 ──────────────────────────────
+    // normalize.js の renderEntityCard が付与する data-xxx-id を使用
+    // 詳細遷移は必ず内部IDベース
+    const card = e.target.closest('.entity-card');
+    if (card) {
+      e.preventDefault();
+      try {
+        const lotId  = card.dataset.lotId;
+        const indId  = card.dataset.indId;
+        const lineId = card.dataset.lineId;
+        if (lotId  && lotId  !== 'undefined') { routeTo('lot-detail',  { lotId  }); return; }
+        if (indId  && indId  !== 'undefined') { routeTo('ind-detail',  { indId  }); return; }
+        if (lineId && lineId !== 'undefined') { routeTo('line-detail', { lineId }); return; }
+      } catch(err) {
+        console.warn('[entity-card] routing error:', err.message);
+      }
+    }
+  });
+
+  // ── keyboard: entity-card は Enter / Space でも遷移 ─────────
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const card = e.target.closest('.entity-card');
+    if (card) { e.preventDefault(); card.click(); }
   });
 }
 
