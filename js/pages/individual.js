@@ -186,6 +186,15 @@ function _sexFilters(active) {
   ).join('');
 }
 
+// 日齢表示ヘルパー: 19日（2週） / 3日 / '-'
+function _formatAge(days) {
+  var n = Number(days);
+  if (!Number.isFinite(n) || n < 0) return '-';
+  var d = Math.floor(n);
+  var w = Math.floor(d / 7);
+  return w > 0 ? (d + '日（' + w + '週）') : (d + '日');
+}
+
 function _indCardHTML(ind) {
   try {
     // ── ライン: display_id から抽出 ──────────────────────────
@@ -238,7 +247,9 @@ function _indCardHTML(ind) {
     var sz      = ind.adult_size_mm   ? ind.adult_size_mm + 'mm'  : '';
     var container = ind.current_container || '';
     var ageObj  = ind.hatch_date ? Store.calcAge(ind.hatch_date) : null;
-    var ageDays = (ageObj && ageObj.days != null) ? ageObj.days + '日' : '';
+    // calcAge の days は既に '19日' という文字列なので totalDays を使う
+    var _ageDays = (ageObj && ageObj.totalDays != null) ? ageObj.totalDays : null;
+    var ageDays  = _ageDays != null ? _formatAge(_ageDays) : '';
 
     var icons = [
       String(ind.guinness_flag) === 'true' ? '🏆' : '',
@@ -263,8 +274,7 @@ function _indCardHTML(ind) {
       // 左: 性別 + ライン/年度
       + '<div style="min-width:40px;text-align:center;flex-shrink:0">'
       +   '<div style="font-size:1.2rem;font-weight:800;color:' + sexColor + ';line-height:1">' + (ind.sex || '?') + '</div>'
-      +   (lineCode ? '<div style="font-size:.65rem;color:var(--text3);margin-top:2px">' + lineCode + '</div>' : '')
-      +   (year ? '<div style="font-size:.6rem;color:var(--text3)">' + year + '</div>' : '')
+      +   ((lineCode || year) ? '<div style="font-size:.65rem;color:var(--text3);margin-top:2px">' + [lineCode, year].filter(Boolean).join(' / ') + '</div>' : '')
       + '</div>'
       // 右: ID + サブ情報 + ステータス
       + '<div style="flex:1;min-width:0">'
