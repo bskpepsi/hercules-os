@@ -415,11 +415,44 @@ Pages._qrRescanFromHistory = function (qrText) {
 };
 
 // ── カメラスキャン ────────────────────────────────────────────────
+// ── jsQR 動的ロード（未ロード時のリカバリ）────────────────────
+// index.html のローダーと同じ 4ソース順でリトライ
+const _JSQR_SRCS = [
+  'js/lib/jsQR.min.js',
+  'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js',
+  'https://unpkg.com/jsqr@1.4.0/dist/jsQR.min.js',
+];
+
+async function _ensureJsQR() {
+  if (typeof jsQR !== 'undefined') return true;  // 既にロード済み
+  if (window._jsQRLoadFailed) return false;      // 既に全失敗済み
+
+  // 順番に試みる
+  for (const url of _JSQR_SRCS) {
+    const ok = await new Promise((resolve) => {
+      const s = document.createElement('script');
+      s.src = url;
+      s.onload  = () => { console.log('[scan] jsQR loaded from: ' + url); resolve(true); };
+      s.onerror = () => { console.warn('[scan] jsQR failed: ' + url); resolve(false); };
+      document.head.appendChild(s);
+    });
+    if (ok && typeof jsQR !== 'undefined') return true;
+  }
+
+  window._jsQRLoadFailed = true;
+  return false;
+}
+
 Pages._qrStartCamera = async function () {
-  if (typeof jsQR === 'undefined') {
-    UI.toast('QRライブラリ未ロード。ページを再読み込みしてください', 'error');
+  // jsQR がまだロードされていない場合、動的ロードを試みる
+  const jsQRReady = await _ensureJsQR();
+  if (!jsQRReady) {
+    UI.toast('QRライブラリのロードに失敗。js/lib/jsQR.min.js を配置してください', 'error', 6000);
+    console.error('[scan] jsQR not available. Please place js/lib/jsQR.min.js');
     return;
   }
+
   const card = document.getElementById('camera-card');
   if (!card) return;
 
@@ -594,10 +627,11 @@ Pages._qrStopCamera = function () {
 };
 
 // ── QR画像ファイル読み取り ────────────────────────────────────────
-Pages._qrReadFromImage = function (input) {
+Pages._qrReadFromImage = async function (input) {
   const file = input?.files?.[0];
   if (!file) return;
-  if (typeof jsQR === 'undefined') { UI.toast('QRライブラリ未ロード', 'error'); return; }
+  const jsQRReady = await _ensureJsQR();
+  if (!jsQRReady) { UI.toast('QRライブラリ未ロード', 'error'); return; }
 
   const reader = new FileReader();
   reader.onload = function (e) {
@@ -646,6 +680,8 @@ Pages._qrReadLabelImage = async function (inputEl) {
     const imgBase64 = await _readFileAsBase64(file);
     const imgDataUrl = 'data:' + file.type + ';base64,' + imgBase64;
 
+    // ラベル全体読取でも jsQR が必要
+    await _ensureJsQR();
     let qrResult = null;
     try {
       qrResult = await _extractQRFromImage(imgDataUrl);
