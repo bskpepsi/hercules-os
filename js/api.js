@@ -325,6 +325,7 @@ const API = (() => {
     // ロット販売: SALE_HIST作成 + lot status=sold 更新を一括処理
     createLotSale:     (d) => call('createLotSaleHist',     d),  // 全売却: status=sold
     createPartLotSale: (d) => call('createPartLotSaleHist', d),  // 一部販売: statusそのまま
+    update:            (d) => call('updateSaleHist',         d),  // 販売履歴編集
   };
 
   const publicPage = {
