@@ -140,7 +140,7 @@ function renderNav() {
   const managePages = ['lot-list','line-list','parent-list','bloodline-list','pairing-list',
                        'line-new','lot-new','parent-new','bloodline-new','pairing-new',
                        'lot-detail','line-detail','parent-detail','bloodline-detail','pairing-detail',
-                       'label-gen'];
+                       'label-gen','sale-list'];
   document.querySelectorAll('.nav-tab').forEach(el => {
     const nav = el.dataset.nav;
     el.classList.toggle('active',

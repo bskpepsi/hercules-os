@@ -51,6 +51,19 @@ Pages.manage = function () {
       sub: `完了 ${pairs.filter(p=>p.status==='completed').length}件`,
       color: '#a0c878',
     },
+    {
+      icon: '💰', label: '販売管理', count: (() => {
+        const inds = Store.getDB('individuals') || [];
+        return inds.filter(i => i.status === 'sold').length;
+      })(), unit: '頭販売済',
+      page: 'sale-list', newPage: null,
+      sub: (() => {
+        const inds = Store.getDB('individuals') || [];
+        const selling = inds.filter(i => i.status === 'for_sale' || i.status === 'listed').length;
+        return selling ? `販売候補・出品中 ${selling}頭` : '販売候補なし';
+      })(),
+      color: 'var(--green)',
+    },
   ];
 
   main.innerHTML = `
