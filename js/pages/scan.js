@@ -415,8 +415,16 @@ Pages._qrRescanFromHistory = function (qrText) {
 };
 
 // ── カメラスキャン ────────────────────────────────────────────────
+// ── jsQR 共通アクセサ ────────────────────────────────────────
+// 裸の識別子 jsQR は strict mode や読込順で参照できない場合があるため
+// 必ず window / globalThis 経由で参照する
+function _getJsQR() {
+  return window.jsQR || (typeof globalThis !== 'undefined' && globalThis.jsQR) || null;
+}
+
 // ── jsQR 動的ロード（未ロード時のリカバリ）────────────────────
-// index.html のローダーと同じ 4ソース順でリトライ
+// ボタン押下時は毎回 _getJsQR() を確認し、なければ動的ロードを試みる
+// _jsQRLoadFailed で永久ブロックしない（ネットワーク回復後の再試行を許す）
 const _JSQR_SRCS = [
   'js/lib/jsQR.min.js',
   'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js',
@@ -425,22 +433,27 @@ const _JSQR_SRCS = [
 ];
 
 async function _ensureJsQR() {
-  if (typeof jsQR !== 'undefined') return true;  // 既にロード済み
-  if (window._jsQRLoadFailed) return false;      // 既に全失敗済み
+  // 既にロード済みなら即 true
+  if (_getJsQR()) {
+    console.log('[scan] jsQR already available:', typeof _getJsQR());
+    return true;
+  }
 
-  // 順番に試みる
+  console.log('[scan] jsQR not found, attempting dynamic load...');
+
+  // 順番に試みる（永久ブロックしない → ボタン押下のたびに再試行可能）
   for (const url of _JSQR_SRCS) {
     const ok = await new Promise((resolve) => {
       const s = document.createElement('script');
       s.src = url;
-      s.onload  = () => { console.log('[scan] jsQR loaded from: ' + url); resolve(true); };
-      s.onerror = () => { console.warn('[scan] jsQR failed: ' + url); resolve(false); };
+      s.onload  = () => { console.log('[scan] jsQR loaded from:', url); resolve(true); };
+      s.onerror = () => { console.warn('[scan] jsQR failed:', url); resolve(false); };
       document.head.appendChild(s);
     });
-    if (ok && typeof jsQR !== 'undefined') return true;
+    if (ok && _getJsQR()) return true;  // window.jsQR で確認
   }
 
-  window._jsQRLoadFailed = true;
+  console.error('[scan] jsQR: all sources failed');
   return false;
 }
 
@@ -568,7 +581,9 @@ Pages._qrScanLoop = function (video) {
     const cropY = Math.round((scaleH - cropH) / 2);
     const imageData = analyCtx.getImageData(cropX, cropY, cropW, cropH);
 
-    const code = jsQR(imageData.data, imageData.width, imageData.height, {
+    const _jsQRFn = _getJsQR();
+    if (!_jsQRFn) { requestAnimationFrame(scan); return; }
+    const code = _jsQRFn(imageData.data, imageData.width, imageData.height, {
       inversionAttempts: 'attemptBoth',
     });
 
@@ -642,7 +657,8 @@ Pages._qrReadFromImage = async function (input) {
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0);
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'attemptBoth' });
+      const _jsQRFn2 = _getJsQR();
+      const code = _jsQRFn2 ? _jsQRFn2(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'attemptBoth' }) : null;
       if (code?.data) {
         const qrInput = document.getElementById('qr-input');
         if (qrInput) { qrInput.value = code.data; Pages._qrPreviewInput(code.data); }
@@ -721,7 +737,8 @@ function _readFileAsBase64(file) {
 // ── 画像からQR抽出 ────────────────────────────────────────────────
 function _extractQRFromImage(dataUrl) {
   return new Promise((res, rej) => {
-    if (typeof jsQR === 'undefined') { rej(new Error('jsQR未ロード')); return; }
+    const _jsQRFn3 = _getJsQR();
+    if (!_jsQRFn3) { rej(new Error('jsQR未ロード (window.jsQR が null)')); return; }
     const img = new Image();
     img.onload = () => {
       const canvas = document.createElement('canvas');
@@ -729,7 +746,7 @@ function _extractQRFromImage(dataUrl) {
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0);
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'attemptBoth' });
+      const code = _jsQRFn3(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'attemptBoth' });
       if (code?.data) res(code.data);
       else rej(new Error('QR not found'));
     };
