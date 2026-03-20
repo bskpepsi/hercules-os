@@ -320,8 +320,11 @@ const API = (() => {
   // ── Phase5.5: 公開ページ ─────────────────────────────────────────
   // ── Phase5: 販売履歴 ─────────────────────────────────────────────
   const sale = {
-    create:  (d)  => call('createSaleHist', d),
-    list:    (d)  => call('getSaleHists',   d || {}),
+    create:       (d) => call('createSaleHist',  d),
+    list:         (d) => call('getSaleHists',    d || {}),
+    // ロット販売: SALE_HIST作成 + lot status=sold 更新を一括処理
+    createLotSale:     (d) => call('createLotSaleHist',     d),  // 全売却: status=sold
+    createPartLotSale: (d) => call('createPartLotSaleHist', d),  // 一部販売: statusそのまま
   };
 
   const publicPage = {

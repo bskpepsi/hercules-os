@@ -35,7 +35,8 @@ function _renderSaleList(main, hists, totalRevenue) {
   // 詳細遷移で hist_id → hist オブジェクトを引けるようにする
   window.__saleHistCache = {};
   hists.forEach(h => {
-    if (h.hist_id) window.__saleHistCache[h.hist_id] = h;
+    const key = h.hist_id || h.id || h.sale_id || '';
+    if (key) window.__saleHistCache[key] = h;
   });
 
   function filtered() {
@@ -111,28 +112,39 @@ function _renderSaleList(main, hists, totalRevenue) {
   render();
 }
 
+// ── 販売履歴 正規化（キー揺れ吸収）────────────────────────────────
+function _normalizeSaleHist(raw) {
+  return {
+    histId:    raw.hist_id   || raw.id       || raw.sale_id    || '',
+    targetType:raw.target_type || 'IND',
+    indId:     raw.ind_id    || (raw.target_type !== 'LOT' ? (raw.target_id || '') : ''),
+    lotId:     raw.lot_id    || (raw.target_type === 'LOT' ? (raw.target_id || '') : ''),
+    displayId: raw.display_id     || raw.ind_display_id || raw.lot_display_id || '',
+    soldAt:    raw.sold_at   || raw.sold_date || raw.date       || '',
+    price:     raw.actual_price || raw.price  || '',
+    platform:  raw.platform  || raw.channel   || '',
+    buyerName: raw.buyer_name || raw.customer_name || '',
+    buyerNote: raw.buyer_note || '',
+    soldCount: raw.sold_count || '1',
+  };
+}
+
 // ── 販売履歴カード ────────────────────────────────────────────────
 function _saleCard(h) {
   // ── 表示値の正規化 ─────────────────────────────────────────
-  const targetType = h.target_type || 'IND';
+  const n = _normalizeSaleHist(h);
+  const targetType = n.targetType;
 
-  // 販売対象名: display_id / ind_display_id が readable ID（HM2026-B2-L03-A 等）
-  // target_id / ind_id は内部ID（IND-xxx）なのでフォールバックのみ
-  const dispName   = h.display_id || h.ind_display_id || '—';
-
-  // 種別ラベル
+  const dispName   = n.displayId || '—';
   const typeLabel  = targetType === 'LOT' ? 'ロット' : '個体';
   const typeColor  = targetType === 'LOT' ? '#ff9800' : '#2196f3';
-
-  // 販売頭数（ロット販売時）
-  const soldCount  = parseInt(h.sold_count || '1', 10);
+  const soldCount  = parseInt(n.soldCount || '1', 10);
   const countLabel = targetType === 'LOT' && soldCount > 1 ? soldCount + '頭' : '';
-
-  const price      = h.actual_price ? '¥' + parseFloat(h.actual_price).toLocaleString() : '—';
-  const platform   = h.platform || '—';
-  const buyer      = h.buyer_name || '—';
-  const note       = h.buyer_note || '';
-  const date       = h.sold_at || h.created_at || '—';
+  const price      = n.price ? '¥' + parseFloat(n.price).toLocaleString() : '—';
+  const platform   = n.platform || '—';
+  const buyer      = n.buyerName || '—';
+  const note       = n.buyerNote || '';
+  const date       = n.soldAt || '—';
 
   const chanColor = {
     'ヤフオク':'#9c27b0','メルカリ':'#e91e63','イベント':'#ff9800',
@@ -140,16 +152,11 @@ function _saleCard(h) {
   };
   const cc = chanColor[platform] || '#607d8b';
 
-  // 詳細遷移:
-  //   IND: ind_id（内部ID IND-xxx）を優先 → display_id を渡すと NOT_FOUND になる
-  //   LOT: target_id / lot_id を使用
-  const rawTargetId = targetType === 'LOT'
-    ? (h.target_id || h.lot_id || '')
-    : (h.ind_id || '');  // IND は ind_id のみ
-  const detailFn  = targetType === 'LOT' && rawTargetId
-    ? "routeTo('lot-detail',{lotId:'" + rawTargetId + "'})"
-    : rawTargetId
-      ? "routeTo('ind-detail',{indId:'" + rawTargetId + "'})"
+  // 詳細遷移: 内部IDで遷移（display_id を渡すと NOT_FOUND になる）
+  const detailFn = targetType === 'LOT' && n.lotId
+    ? "routeTo('lot-detail',{lotId:'" + n.lotId + "'})"
+    : n.indId
+      ? "routeTo('ind-detail',{indId:'" + n.indId + "'})"
       : '';
   return '<div class="card" style="margin-bottom:8px">'
     + '<div style="display:flex;align-items:flex-start;gap:10px">'

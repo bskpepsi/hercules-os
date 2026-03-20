@@ -320,7 +320,16 @@ function _renderLotDetail(lot, main) {
           ${_infoRow('最終交換', lastMatDate || '—')}
           ${exDays > 0 ? _infoRow('次回交換予定', nextChangeLbl + modeBadge) : ''}
           ${override ? _infoRow('延長メモ', lot.mat_alert_note || '（延長中）') : ''}
-          ${lot.parent_lot_id ? _infoRow('分割元', `<span style="color:var(--blue);cursor:pointer" onclick="routeTo('lot-detail',{lotId:'${lot.parent_lot_id}'})">${lot.parent_lot_id}</span>`) : ''}
+          ${(() => {
+            if (!lot.parent_lot_id) return '';
+            const _pLot = Store.getLot(lot.parent_lot_id);
+            const _pDisp = _pLot ? (_pLot.display_id || '') : '';
+            const _pLabel = _pDisp || '—';
+            return _infoRow('分割元',
+              '<span style="color:var(--blue);cursor:pointer"'
+              + ' onclick="routeTo(' + "'lot-detail'" + ',{lotId:' + "'" + lot.parent_lot_id + "'" + '})">'
+              + _pLabel + '</span>');
+          })()}
           ${lot.note ? _infoRow('メモ', lot.note) : ''}
         </div>
       </div>
@@ -1243,6 +1252,146 @@ function _renderLotSaleActions(lot) {
     + '<div class="ind-sale-btn-grid">' + btns + '</div>'
     + '</div>';
 }
+
+
+// ════════════════════════════════════════════════════════════════
+// ロット 販売ステータス変更関数
+// ════════════════════════════════════════════════════════════════
+
+// 汎用ステータス変更（API.lot.update 経由）
+Pages._lotSetSaleStatus = async function (lotId, newStatus) {
+  try {
+    UI.loading(true);
+    await API.lot.update({ lot_id: lotId, status: newStatus });
+    Store.patchDBItem('lots', 'lot_id', lotId, { status: newStatus });
+    const msg = newStatus === 'for_sale' ? '販売候補にしました'
+      : newStatus === 'active'   ? '飼育中に戻しました'
+      : newStatus === 'reserved' ? '予約中にしました'
+      : newStatus === 'listed'   ? '出品中にしました'
+      : 'ステータスを変更しました';
+    UI.toast(msg, 'success');
+    Pages.lotDetail(lotId);
+  } catch(e) {
+    UI.toast('変更失敗: ' + e.message, 'error');
+  } finally {
+    UI.loading(false);
+  }
+};
+
+// まとめて販売モーダル
+Pages._lotMarkSoldModal = function (lotId) {
+  const lot   = Store.getLot(lotId);
+  const count = lot ? (lot.count || '?') : '?';
+  const today = new Date().toISOString().split('T')[0];
+  _showModal('まとめて販売（' + count + '頭）', '<div class="form-section">'
+    + UI.field('販売日 *', '<input type="date" id="lot-sell-date" class="input" value="' + today + '">')
+    + UI.field('販売チャネル', UI.select('lot-sell-channel', [
+        { code:'ヤフオク', label:'ヤフオク' },
+        { code:'イベント', label:'イベント' },
+        { code:'直接',     label:'直接取引' },
+        { code:'その他',   label:'その他'   },
+      ], 'ヤフオク'))
+    + UI.field('金額 (円)', '<input type="number" id="lot-sell-price" class="input" placeholder="例: 30000">')
+    + UI.field('購入者名', '<input type="text" id="lot-sell-buyer" class="input" placeholder="任意">')
+    + UI.field('備考', '<input type="text" id="lot-sell-note" class="input" placeholder="任意">')
+    + '<div class="modal-footer">'
+    +   '<button class="btn btn-ghost" style="flex:1" onclick="_closeModal()">キャンセル</button>'
+    +   '<button class="btn btn-primary" style="flex:2" onclick="Pages._lotMarkSoldSave(window.__lotSoldId)">販売済みにする</button>'
+    + '</div></div>');
+};
+
+Pages._lotMarkSoldSave = async function (lotId) {
+  const dateEl  = document.getElementById('lot-sell-date');
+  const chanEl  = document.getElementById('lot-sell-channel');
+  const priceEl = document.getElementById('lot-sell-price');
+  const buyerEl = document.getElementById('lot-sell-buyer');
+  const noteEl  = document.getElementById('lot-sell-note');
+  if (!dateEl || !dateEl.value) { UI.toast('販売日を入力してください', 'error'); return; }
+  const lot     = Store.getLot(lotId);
+  const payload = {
+    lot_id:      lotId,
+    status:      'sold',
+    sold_date:   dateEl.value.replace(/-/g, '/'),
+    actual_price: priceEl ? (priceEl.value || '') : '',
+    platform:    chanEl ? (chanEl.value || '') : '',
+    buyer_name:  buyerEl ? (buyerEl.value || '') : '',
+    buyer_note:  noteEl ? (noteEl.value || '') : '',
+    display_id:  lot ? (lot.display_id || '') : '',
+    sold_count:  lot ? (String(lot.count || '1')) : '1',
+  };
+  _closeModal();
+  try {
+    UI.loading(true);
+    // 販売履歴作成 + ロットstatus更新
+    await API.sale.createLotSale(payload);
+    Store.patchDBItem('lots', 'lot_id', lotId, { status: 'sold' });
+    UI.toast('販売済みにしました', 'success');
+    Pages.lotDetail(lotId);
+  } catch(e) {
+    UI.toast('販売失敗: ' + e.message, 'error');
+  } finally {
+    UI.loading(false);
+  }
+};
+
+// 一部販売モーダル（頭数指定）
+Pages._lotPartSaleModal = function (lotId) {
+  const lot   = Store.getLot(lotId);
+  const count = lot ? (parseInt(lot.count, 10) || 1) : 1;
+  const today = new Date().toISOString().split('T')[0];
+  _showModal('一部販売', '<div class="form-section">'
+    + UI.field('販売頭数 *', '<input type="number" id="lot-part-count" class="input" min="1" max="' + count + '" value="1" placeholder="1〜' + count + '">')
+    + UI.field('販売日 *', '<input type="date" id="lot-part-date" class="input" value="' + today + '">')
+    + UI.field('販売チャネル', UI.select('lot-part-channel', [
+        { code:'ヤフオク', label:'ヤフオク' },
+        { code:'イベント', label:'イベント' },
+        { code:'直接',     label:'直接取引' },
+        { code:'その他',   label:'その他'   },
+      ], 'ヤフオク'))
+    + UI.field('金額 (円)', '<input type="number" id="lot-part-price" class="input" placeholder="例: 10000">')
+    + UI.field('購入者名', '<input type="text" id="lot-part-buyer" class="input" placeholder="任意">')
+    + '<div class="modal-footer">'
+    +   '<button class="btn btn-ghost" style="flex:1" onclick="_closeModal()">キャンセル</button>'
+    +   '<button class="btn btn-primary" style="flex:2" onclick="Pages._lotPartSaleSave(window.__lotPartId,' + count + ')">一部販売する</button>'
+    + '</div></div>');
+};
+
+Pages._lotPartSaleSave = async function (lotId, totalCount) {
+  const cntEl   = document.getElementById('lot-part-count');
+  const dateEl  = document.getElementById('lot-part-date');
+  const chanEl  = document.getElementById('lot-part-channel');
+  const priceEl = document.getElementById('lot-part-price');
+  const buyerEl = document.getElementById('lot-part-buyer');
+  const partCount = parseInt(cntEl ? cntEl.value : '1', 10);
+  if (!partCount || partCount < 1) { UI.toast('頭数を入力してください', 'error'); return; }
+  if (!dateEl || !dateEl.value) { UI.toast('販売日を入力してください', 'error'); return; }
+  const lot     = Store.getLot(lotId);
+  const payload = {
+    lot_id:      lotId,
+    sold_count:  String(partCount),
+    sold_date:   dateEl.value.replace(/-/g, '/'),
+    actual_price: priceEl ? (priceEl.value || '') : '',
+    platform:    chanEl ? (chanEl.value || '') : '',
+    buyer_name:  buyerEl ? (buyerEl.value || '') : '',
+    display_id:  lot ? (lot.display_id || '') : '',
+  };
+  _closeModal();
+  try {
+    UI.loading(true);
+    // 一部販売: SALE_HIST作成のみ（status は sold にしない）
+    await API.sale.createPartLotSale(payload);
+    // 残頭数更新（GASでなくフロントで更新）
+    const remaining = (parseInt(totalCount, 10) || 1) - partCount;
+    await API.lot.update({ lot_id: lotId, count: String(Math.max(0, remaining)) });
+    await syncAll(true);
+    UI.toast('一部販売しました（' + partCount + '頭）', 'success');
+    Pages.lotDetail(lotId);
+  } catch(e) {
+    UI.toast('販売失敗: ' + e.message, 'error');
+  } finally {
+    UI.loading(false);
+  }
+};
 
 window.PAGES['lot-list']   = () => Pages.lotList();
 window.PAGES['lot-detail'] = () => Pages.lotDetail(Store.getParams().lotId || Store.getParams().id);
