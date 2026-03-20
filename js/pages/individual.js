@@ -279,6 +279,35 @@ function _sexFilters(active) {
   ).join('');
 }
 
+// 販売金額整形: 1500 → ¥1,500 / 空 → —
+function _fmtPrice(val) {
+  if (!val && val !== 0) return '—';
+  var n = parseFloat(val);
+  if (!isFinite(n)) return '—';
+  return '¥' + n.toLocaleString();
+}
+
+// 個体の最新販売履歴を SALE_HIST キャッシュから検索
+// 優先: ind_id 完全一致 → target_id → display_id → ind_display_id
+function _findLatestSaleHist(indId, displayId) {
+  var cache = window.__saleHistCache;
+  if (!cache) return null;
+  var hists = Object.values(cache).filter(function(h) {
+    return h.target_type !== 'LOT';
+  });
+  // 日付降順
+  hists.sort(function(a, b) {
+    return String(b.sold_at || b.created_at || '').localeCompare(
+           String(a.sold_at || a.created_at || ''));
+  });
+  return hists.find(function(h) {
+    return h.ind_id === indId
+        || h.target_id === indId
+        || (displayId && h.display_id === displayId)
+        || (displayId && h.ind_display_id === displayId);
+  }) || null;
+}
+
 // 日齢表示ヘルパー: 19日（2週） / 3日 / '-'
 function _formatAge(days) {
   var n = Number(days);
@@ -495,6 +524,9 @@ function _renderDetail(ind, main) {
   const originLot= ind.origin_lot_id ? Store.getLot(ind.origin_lot_id) : null;
   const line     = Store.getLine(ind.line_id);
 
+  // 販売済みなら対応する SALE_HIST を引いて金額・ルート・購入者名を補完
+  const soldHist = ind.status === 'sold' ? _findLatestSaleHist(ind.ind_id, ind.display_id) : null;
+
   const icons = [
     String(ind.guinness_flag) === 'true' ? '<span title="ギネス候補">🏆</span>' : '',
     String(ind.parent_flag)   === 'true' ? '<span title="種親候補">👑</span>'  : '',
@@ -656,10 +688,12 @@ function _renderDetail(ind, main) {
       <div class="card" style="border-color:rgba(52,152,219,.4)">
         <div class="card-title" style="color:var(--blue)">💰 販売済み</div>
         <div class="info-list">
-          ${_infoRow('販売日',      ind.sold_date   || '—')}
-          ${_infoRow('販売時体重',  ind.sold_weight ? ind.sold_weight+'g' : '—')}
-          ${_infoRow('販売時ステージ', ind.sold_stage || '—')}
-          ${ind.sold_reason ? _infoRow('理由', ind.sold_reason) : ''}
+          ${_infoRow('販売日',         ind.sold_date   || '—')}
+          ${_infoRow('販売時体重',     ind.sold_weight ? ind.sold_weight+'g' : '—')}
+          ${_infoRow('販売時ステージ', ind.sold_stage  || '—')}
+          ${_infoRow('販売金額',       _fmtPrice(soldHist?.actual_price ?? ind.actual_price))}
+          ${_infoRow('販売ルート',     soldHist?.platform  || ind.platform  || '—')}
+          ${_infoRow('購入者名',       soldHist?.buyer_name || ind.buyer_name || '—')}
         </div>
       </div>` : ''}
 
