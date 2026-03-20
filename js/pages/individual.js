@@ -279,6 +279,18 @@ function _sexFilters(active) {
   ).join('');
 }
 
+// 個体 display_id 正規化:
+//   旧形式 'IND-HM2026-B2-L03-F' → 'HM2026-B2-L03-F'
+//   新形式 'HM2026-B2-001'        → そのまま
+//   空文字 / undefined             → '—'
+function _cleanIndDisplay(raw) {
+  if (!raw) return '—';
+  var s = String(raw).trim();
+  // 旧形式: IND- プレフィクスを除去
+  if (s.startsWith('IND-')) s = s.slice(4);
+  return s || '—';
+}
+
 // 販売金額整形: 1500 → ¥1,500 / 空 → —
 function _fmtPrice(val) {
   if (!val && val !== 0) return '—';
@@ -402,7 +414,7 @@ function _indCardHTML(ind) {
       // 右: ID + サブ情報 + ステータス
       + '<div style="flex:1;min-width:0">'
       +   '<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">'
-      +     '<span style="font-family:var(--font-mono);font-size:.83rem;font-weight:700;color:var(--text1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">' + (ind.display_id || '') + '</span>'
+      +     '<span style="font-family:var(--font-mono);font-size:.83rem;font-weight:700;color:var(--text1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">' + _cleanIndDisplay(ind.display_id) + '</span>'
       +     (icons ? '<span style="font-size:.75rem;flex-shrink:0">' + icons + '</span>' : '')
       +   '</div>'
       +   (subHtml ? '<div style="display:flex;align-items:center;gap:2px;flex-wrap:wrap;font-size:.78rem;color:var(--text2);margin-bottom:3px">' + subHtml + '</div>' : '')
@@ -534,7 +546,7 @@ function _renderDetail(ind, main) {
   ].filter(Boolean).join(' ');
 
   main.innerHTML = `
-    ${UI.header(ind.display_id, { back: true, backFn: "routeTo('ind-list')" })}
+    ${UI.header(_cleanIndDisplay(ind.display_id), { back: true, backFn: "routeTo('ind-list')" })}
     <div class="page-body">
 
       <!-- ヘッダーカード -->
@@ -542,7 +554,7 @@ function _renderDetail(ind, main) {
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
           <span style="font-size:1.8rem;color:${ind.sex === '♂' ? 'var(--male,#5ba8e8)' : ind.sex === '♀' ? 'var(--female,#e87fa0)' : 'var(--text2)'}">${ind.sex || '?'}</span>
           <div>
-            <div style="font-family:var(--font-mono);font-size:.85rem;color:var(--gold)">${ind.display_id}</div>
+            <div style="font-family:var(--font-mono);font-size:.85rem;color:var(--gold)">${_cleanIndDisplay(ind.display_id)}</div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
               ${UI.stageBadge(ind.current_stage)}
               ${UI.statusBadge(ind.status)}
@@ -686,7 +698,13 @@ function _renderDetail(ind, main) {
       <!-- 販売情報 -->
       ${ind.status === 'sold' ? `
       <div class="card" style="border-color:rgba(52,152,219,.4)">
-        <div class="card-title" style="color:var(--blue)">💰 販売済み</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <div class="card-title" style="color:var(--blue);margin-bottom:0">💰 販売済み</div>
+          <button class="btn btn-ghost btn-sm"
+            onclick="Pages._indEditSoldModal('${ind.ind_id}','${ind.sold_date || ''}','${ind.sold_weight || ''}','${soldHist?.hist_id || ''}','${soldHist?.actual_price ?? ind.actual_price ?? ''}','${soldHist?.platform || ind.platform || ''}','${soldHist?.buyer_name || ind.buyer_name || ''}','${soldHist?.buyer_note || ''}','${ind.sold_stage || ''}')">
+            ✏️ 編集
+          </button>
+        </div>
         <div class="info-list">
           ${_infoRow('販売日',         ind.sold_date   || '—')}
           ${_infoRow('販売時体重',     ind.sold_weight ? ind.sold_weight+'g' : '—')}
@@ -914,6 +932,104 @@ Pages._indSellSave = async function (id) {
     Store.patchDBItem('individuals', 'ind_id', id, { status: 'sold', ...payload });
     Pages.individualDetail(id);
   } catch (e) {}
+};
+
+// ════════════════════════════════════════════════════════════════
+// 販売情報編集モーダル
+// ════════════════════════════════════════════════════════════════
+Pages._indEditSoldModal = function (indId, soldDate, soldWeight, histId, price, platform, buyerName, buyerNote, soldStage) {
+  // グローバルに保持（保存時に参照）
+  window.__editSoldIndId   = indId;
+  window.__editSoldHistId  = histId;
+
+  _showModal('販売情報を編集', '<div class="form-section">'
+    + UI.field('販売日', '<input type="date" id="es-date" class="input" value="' + (soldDate || '').replace(/\//g, '-') + '">')
+    + UI.field('販売チャネル', UI.select('es-channel', [
+        { code:'',        label:'— 未選択 —' },
+        { code:'ヤフオク', label:'ヤフオク' },
+        { code:'イベント', label:'イベント' },
+        { code:'直接',     label:'直接取引' },
+        { code:'その他',   label:'その他'   },
+      ], platform || ''))
+    + UI.field('金額 (円)', '<input type="number" id="es-price" class="input" value="' + (price || '') + '" placeholder="例: 15000">')
+    + UI.field('購入者名', '<input type="text" id="es-buyer" class="input" value="' + (buyerName || '') + '">')
+    + UI.field('販売時体重 (g)', '<input type="number" id="es-weight" class="input" value="' + (soldWeight || '') + '">')
+    + UI.field('販売時ステージ', UI.select('es-stage',
+        [{code:'',label:'— 未選択 —'}, ...(typeof STAGE_LIST_NEW !== 'undefined' ? STAGE_LIST_NEW : []).map(function(s){ return {code:s.code, label:s.label}; })],
+        soldStage || ''))
+    + UI.field('備考', '<input type="text" id="es-note" class="input" value="' + (buyerNote || '') + '">')
+    + '<div class="modal-footer">'
+    +   '<button class="btn btn-ghost" style="flex:1" onclick="_closeModal()">キャンセル</button>'
+    +   '<button class="btn btn-primary" style="flex:2" onclick="Pages._indEditSoldSave()">保存する</button>'
+    + '</div></div>');
+};
+
+Pages._indEditSoldSave = async function () {
+  const dateEl   = document.getElementById('es-date');
+  const chanEl   = document.getElementById('es-channel');
+  const priceEl  = document.getElementById('es-price');
+  const buyerEl  = document.getElementById('es-buyer');
+  const weightEl = document.getElementById('es-weight');
+  const noteEl   = document.getElementById('es-note');
+
+  const indId  = window.__editSoldIndId  || '';
+  const histId = window.__editSoldHistId || '';
+  if (!indId) { UI.toast('個体IDが取得できません', 'error'); return; }
+
+  const stageEl   = document.getElementById('es-stage');
+  const soldDate  = dateEl  ? (dateEl.value || '').replace(/-/g, '/') : '';
+  const platform  = chanEl  ? (chanEl.value  || '') : '';
+  const price     = priceEl ? (priceEl.value || '') : '';
+  const buyerName = buyerEl ? (buyerEl.value || '') : '';
+  const weight    = weightEl? (weightEl.value|| '') : '';
+  const soldStage = stageEl ? (stageEl.value || '') : '';
+  const note      = noteEl  ? (noteEl.value  || '') : '';
+
+  _closeModal();
+  try {
+    UI.loading(true);
+
+    // 個体本体の sold_date / sold_weight を更新
+    const indUpdates = { ind_id: indId };
+    if (soldDate)  indUpdates.sold_date   = soldDate;
+    if (weight)    indUpdates.sold_weight = weight;
+    if (soldStage) indUpdates.sold_stage  = soldStage;
+    await apiCall(() => API.individual.update(indUpdates), null);
+
+    // SALE_HIST レコードが存在すれば更新、なければ個体情報更新のみ
+    if (histId) {
+      const histUpdates = {
+        hist_id:      histId,
+        sold_at:      soldDate,
+        actual_price: price,
+        platform:     platform,
+        buyer_name:   buyerName,
+        buyer_note:   note,
+        sold_weight:  weight,
+        sold_stage:   soldStage,
+      };
+      await apiCall(() => API.sale.update(histUpdates), null);
+    }
+
+    // キャッシュ更新
+    Store.patchDBItem('individuals', 'ind_id', indId, {
+      sold_date: soldDate, sold_weight: weight, sold_stage: soldStage,
+    });
+    if (histId && window.__saleHistCache && window.__saleHistCache[histId]) {
+      Object.assign(window.__saleHistCache[histId], {
+        sold_at: soldDate, actual_price: price,
+        platform: platform, buyer_name: buyerName,
+        buyer_note: note, sold_weight: weight,
+      });
+    }
+
+    UI.toast('販売情報を更新しました', 'success');
+    Pages.individualDetail(indId);
+  } catch(e) {
+    UI.toast('更新失敗: ' + e.message, 'error');
+  } finally {
+    UI.loading(false);
+  }
 };
 
 Pages._indFlagMenu = function (id, guinness, parent, g200) {

@@ -10,6 +10,14 @@
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
+// display_id 正規化（個体カード・販売履歴で IND- プレフィクスを除去）
+function _saleCleanDisplay(raw) {
+  if (!raw) return '—';
+  var s = String(raw).trim();
+  if (s.startsWith('IND-')) s = s.slice(4);
+  return s || '—';
+}
+
 Pages.saleList = async function () {
   const main = document.getElementById('main');
   main.innerHTML = UI.header('販売履歴', {}) + UI.spinner();
@@ -135,7 +143,7 @@ function _saleCard(h) {
   const n = _normalizeSaleHist(h);
   const targetType = n.targetType;
 
-  const dispName   = n.displayId || '—';
+  const dispName   = _saleCleanDisplay(n.displayId);
   const typeLabel  = targetType === 'LOT' ? 'ロット' : '個体';
   const typeColor  = targetType === 'LOT' ? '#ff9800' : '#2196f3';
   const soldCount  = parseInt(n.soldCount || '1', 10);
