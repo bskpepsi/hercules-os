@@ -840,6 +840,8 @@ Pages._indSellModal = function (id) {
         { code:'直接',     label:'直接取引' },
         { code:'その他',   label:'その他'   },
       ], 'ヤフオク'))
+    + UI.field('金額 (円)', '<input type="number" id="sell-price" class="input" placeholder="例: 15000">')
+    + UI.field('購入者名', '<input type="text" id="sell-buyer" class="input" placeholder="任意">')
     + UI.field('販売時体重 (g)', '<input type="number" id="sell-weight" class="input" placeholder="例: 86">')
     + UI.field('メモ', '<input type="text" id="sell-note" class="input" placeholder="任意">')
     + '<div class="modal-footer">'
@@ -854,11 +856,22 @@ Pages._indSellSave = async function (id) {
   const weightEl  = document.getElementById('sell-weight');
   const noteEl    = document.getElementById('sell-note');
   if (!dateEl || !dateEl.value) { UI.toast('販売日を入力してください', 'error'); return; }
+  // payload: sellIndividual が SALE_HIST に保存するフィールドを揃える
+  const platform  = chanEl ? (chanEl.value || '') : '';
+  const note      = noteEl ? (noteEl.value || '') : '';
+  const priceEl   = document.getElementById('sell-price');
+  const buyerEl   = document.getElementById('sell-buyer');
+  const ind       = Store.getIndividual(id);
   const payload = {
-    ind_id:      id,
-    sold_date:   dateEl.value.replace(/-/g, '/'),
-    sold_weight: weightEl ? (weightEl.value || '') : '',
-    sold_reason: (chanEl ? (chanEl.value || '') : '') + (noteEl && noteEl.value ? ' ' + noteEl.value : ''),
+    ind_id:        id,
+    sold_date:     dateEl.value.replace(/-/g, '/'),
+    actual_price:  priceEl ? (priceEl.value || '') : '',
+    platform:      platform,
+    buyer_name:    buyerEl ? (buyerEl.value || '') : '',
+    buyer_note:    note,
+    sold_weight:   weightEl ? (weightEl.value || '') : '',
+    sold_reason:   platform + (note ? ' ' + note : ''),
+    display_id:    ind ? (ind.display_id || '') : '',
   };
   _closeModal();
   try {

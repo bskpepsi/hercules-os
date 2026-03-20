@@ -116,8 +116,9 @@ function _saleCard(h) {
   // ── 表示値の正規化 ─────────────────────────────────────────
   const targetType = h.target_type || 'IND';
 
-  // 販売対象名: display_id（Phase6新列）> ind_display_id（後方互換）> target_id > ind_id
-  const dispName   = h.display_id || h.ind_display_id || h.target_id || h.ind_id || '—';
+  // 販売対象名: display_id / ind_display_id が readable ID（HM2026-B2-L03-A 等）
+  // target_id / ind_id は内部ID（IND-xxx）なのでフォールバックのみ
+  const dispName   = h.display_id || h.ind_display_id || '—';
 
   // 種別ラベル
   const typeLabel  = targetType === 'LOT' ? 'ロット' : '個体';
@@ -139,15 +140,17 @@ function _saleCard(h) {
   };
   const cc = chanColor[platform] || '#607d8b';
 
-  // 詳細遷移先: ロットなら lot-detail、個体なら ind-detail
-  // hist_id があればキャッシュから引けるが、遷移はターゲット画面へ
-  const targetId   = h.target_id || h.ind_id || '';
-  const detailFn   = targetType === 'LOT' && targetId
-    ? 'routeTo(\'lot-detail\',{lotId:\'' + targetId + '\'})'
-    : targetId
-      ? 'routeTo(\'ind-detail\',{indId:\'' + targetId + '\'})'
+  // 詳細遷移:
+  //   IND: ind_id（内部ID IND-xxx）を優先 → display_id を渡すと NOT_FOUND になる
+  //   LOT: target_id / lot_id を使用
+  const rawTargetId = targetType === 'LOT'
+    ? (h.target_id || h.lot_id || '')
+    : (h.ind_id || '');  // IND は ind_id のみ
+  const detailFn  = targetType === 'LOT' && rawTargetId
+    ? "routeTo('lot-detail',{lotId:'" + rawTargetId + "'})"
+    : rawTargetId
+      ? "routeTo('ind-detail',{indId:'" + rawTargetId + "'})"
       : '';
-
   return '<div class="card" style="margin-bottom:8px">'
     + '<div style="display:flex;align-items:flex-start;gap:10px">'
     + '<div style="flex:1;min-width:0">'
