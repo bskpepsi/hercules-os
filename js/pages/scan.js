@@ -430,11 +430,32 @@ Pages._qrStartCamera = async function () {
       stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: { ideal: 'environment' },
-          width:  { ideal: 1920, min: 640 },
-          height: { ideal: 1080, min: 480 },
+          // 解析用に 640px あれば十分。高解像度は jsQR を重くするだけ
+          width:  { ideal: 1280, min: 480 },
+          height: { ideal: 720,  min: 360 },
         }
       });
       window._qrCameraStream = stream;
+
+      // ── focusMode / zoom を試みる（非対応端末は無視）──────────
+      try {
+        const track = stream.getVideoTracks()[0];
+        if (track && track.applyConstraints) {
+          const caps = track.getCapabilities ? track.getCapabilities() : {};
+          const adv = {};
+          // 連続オートフォーカス
+          if (caps.focusMode && caps.focusMode.includes('continuous')) {
+            adv.focusMode = 'continuous';
+          }
+          // ズーム: 2倍程度まで対応している場合のみ適用（読み取り補助）
+          if (caps.zoom && caps.zoom.max >= 1.5) {
+            adv.zoom = Math.min(1.5, caps.zoom.max);
+          }
+          if (Object.keys(adv).length) {
+            await track.applyConstraints({ advanced: [adv] }).catch(() => {});
+          }
+        }
+      } catch (_) { /* focusMode/zoom 非対応は完全無視 */ }
     }
 
     const video = document.getElementById('qr-video');
@@ -455,49 +476,102 @@ Pages._qrStartCamera = async function () {
   }
 };
 
+// ── 短い成功音（Web Audio API / 非対応端末は無視）─────────────
+function _qrBeep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.frequency.value = 1760; // 高めの「ピ」
+    gain.gain.setValueAtTime(0.25, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.12);
+  } catch (_) { /* Web Audio 非対応は無視 */ }
+}
+
 Pages._qrScanLoop = function (video) {
-  const canvas = document.getElementById('qr-canvas');
-  if (!canvas) return;
-  const ctx = canvas.getContext('2d');
-  let frameCount = 0;
-  let resolved = false;
+  // 解析専用の小さなcanvas（表示用videoとは別）
+  // jsQR は小さい画像ほど高速。640px幅あれば十分認識できる。
+  const SCAN_W = 640;
+  const analyCanvas = document.createElement('canvas');
+  const analyCtx    = analyCanvas.getContext('2d');
+
+  let frameCount  = 0;
+  let resolved    = false;
+  // 同一QRコードの連続誤検知防止
+  // { code: string, ts: number } — 同じコードを 1.2秒間は無視
+  let _lastSeen = { code: '', ts: 0 };
+  const DEDUP_MS = 1200;
 
   const scan = () => {
     if (!video.srcObject || resolved) return;
     frameCount++;
-    if (frameCount % 3 !== 0) { requestAnimationFrame(scan); return; }
+    // 2フレームに1回解析（毎フレームより軽く、3フレームより速い）
+    if (frameCount % 2 !== 0) { requestAnimationFrame(scan); return; }
 
-    if (video.readyState >= video.HAVE_ENOUGH_DATA && video.videoWidth > 0) {
-      canvas.width  = video.videoWidth;
-      canvas.height = video.videoHeight;
-      ctx.drawImage(video, 0, 0);
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const code = jsQR(imageData.data, imageData.width, imageData.height, {
-        inversionAttempts: 'attemptBoth',
-      });
+    if (video.readyState < video.HAVE_ENOUGH_DATA || video.videoWidth <= 0) {
+      requestAnimationFrame(scan); return;
+    }
 
-      if (code?.data) {
-        resolved = true;
-        if (!window._qrContinuousMode) Pages._qrStopCamera();
-        const input = document.getElementById('qr-input');
-        if (input) { input.value = code.data; Pages._qrPreviewInput(code.data); }
-        if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
-        const status = document.getElementById('scan-status');
-        if (status) { status.textContent = '✅ 読み取り成功！'; status.style.color = 'var(--green)'; }
+    // ── 解析用canvasにリサイズして描画 ──────────────────────────
+    // アスペクト比を維持して SCAN_W に縮小
+    const scaleW = SCAN_W;
+    const scaleH = Math.round(video.videoHeight * (SCAN_W / video.videoWidth));
+    if (analyCanvas.width !== scaleW || analyCanvas.height !== scaleH) {
+      analyCanvas.width  = scaleW;
+      analyCanvas.height = scaleH;
+    }
+    analyCtx.drawImage(video, 0, 0, scaleW, scaleH);
 
-        // 高速化: setTimeout 200ms → 即時
-        Pages._qrResolve();
+    // jsQR に渡す領域: canvasの中央付近をクロップして使う
+    // ユーザーがQRを少し外れた位置に持っていても読めるよう
+    // 全体の 85% 範囲を解析（厳密なセンター合わせ不要）
+    const cropW = Math.round(scaleW * 0.85);
+    const cropH = Math.round(scaleH * 0.85);
+    const cropX = Math.round((scaleW - cropW) / 2);
+    const cropY = Math.round((scaleH - cropH) / 2);
+    const imageData = analyCtx.getImageData(cropX, cropY, cropW, cropH);
 
-        // 連続モードなら短いフラッシュ後に再スキャン
-        if (window._qrContinuousMode) {
-          setTimeout(() => {
-            resolved = false;
-            if (status) { status.textContent = 'スキャン中…'; status.style.color = 'var(--green)'; }
-            requestAnimationFrame(scan);
-          }, 1500);
-        }
-        return;
+    const code = jsQR(imageData.data, imageData.width, imageData.height, {
+      inversionAttempts: 'attemptBoth',
+    });
+
+    if (code?.data) {
+      const now = Date.now();
+      // 同一コードを短時間で連続検知する場合はスキップ
+      if (code.data === _lastSeen.code && now - _lastSeen.ts < DEDUP_MS) {
+        requestAnimationFrame(scan); return;
       }
+      _lastSeen = { code: code.data, ts: now };
+
+      resolved = true;
+      if (!window._qrContinuousMode) Pages._qrStopCamera();
+
+      const input = document.getElementById('qr-input');
+      if (input) { input.value = code.data; Pages._qrPreviewInput(code.data); }
+
+      // 即フィードバック: バイブ + 成功音
+      if (navigator.vibrate) navigator.vibrate(80);
+      _qrBeep();
+
+      const status = document.getElementById('scan-status');
+      if (status) { status.textContent = '✅ 読み取り成功！'; status.style.color = 'var(--green)'; }
+
+      // キャッシュがあれば即処理（待ち時間ゼロ）
+      Pages._qrResolve();
+
+      // 連続モード: 1.2秒後にリセットして次のQRへ
+      if (window._qrContinuousMode) {
+        setTimeout(() => {
+          resolved = false;
+          if (status) { status.textContent = 'スキャン中…'; status.style.color = 'var(--green)'; }
+          requestAnimationFrame(scan);
+        }, DEDUP_MS);
+      }
+      return;
     }
     requestAnimationFrame(scan);
   };
