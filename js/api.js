@@ -155,7 +155,9 @@ const API = (() => {
     get:             (id) => call('getIndividual',    { ind_id: id }),
     update:          (d)  => call('updateIndividual', d),
     promoteToParent: (d)  => call('promoteToParent',  d),
-    // 論理削除: new_status='dead'|'sold'|'reserved', reason=任意
+    // 販売済みにして販売履歴を作成（for_sale / listed → sold 時のみ使う）
+    sell:            (d)  => call('sellIndividual',   d),
+    // 論理削除: new_status='dead' のみ（直接削除系は死亡のみに限定）
     changeStatus:    (id, newStatus, reason) =>
       call('deleteIndividual', { ind_id: id, new_status: newStatus, reason }),
   };
