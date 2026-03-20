@@ -23,8 +23,9 @@ Pages.individualList = function () {
   const fixedLine   = fixedLineId ? Store.getLine(fixedLineId) : null;
   const isLineLimited = !!fixedLineId;
 
-  // status='_all' は全件表示、未指定時は 'alive' がデフォルト
-  const initStatus = params.status !== undefined ? params.status : 'alive';
+  // 初期表示は全件（UI「全て」と内部フィルタを一致させる）
+  // params.status が明示された場合のみ絞り込む
+  const initStatus = params.status !== undefined ? params.status : '';
   let filters = {
     status:  initStatus,
     q:       params.q      || '',
@@ -430,13 +431,13 @@ function _renderDetail(ind, main) {
   ].filter(Boolean).join(' ');
 
   main.innerHTML = `
-    ${UI.header(ind.display_id, { back: true })}
+    ${UI.header(ind.display_id, { back: true, backFn: "routeTo('ind-list')" })}
     <div class="page-body">
 
       <!-- ヘッダーカード -->
       <div class="card card-gold">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-          <span style="font-size:1.8rem">${ind.sex || '?'}</span>
+          <span style="font-size:1.8rem;color:${ind.sex === '♂' ? 'var(--male,#5ba8e8)' : ind.sex === '♀' ? 'var(--female,#e87fa0)' : 'var(--text2)'}">${ind.sex || '?'}</span>
           <div>
             <div style="font-family:var(--font-mono);font-size:.85rem;color:var(--gold)">${ind.display_id}</div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
@@ -519,7 +520,13 @@ function _renderDetail(ind, main) {
               ' ' + UI.bloodlineBadge(ind.bloodline_status)
             )}
             ${_infoRow('親♂', father ? `${father.display_name} ${father.size_mm ? father.size_mm+'mm' : ''}` : (ind.father_par_id || '—'))}
+            ${father && (father.bloodline_raw || father.bloodline_text || '')
+              ? `<div style="padding:3px 8px 8px;font-size:.72rem;color:var(--text3);line-height:1.55;word-break:break-all">${father.bloodline_raw || father.bloodline_text || ''}</div>`
+              : ''}
             ${_infoRow('親♀', mother ? `${mother.display_name} ${mother.size_mm ? mother.size_mm+'mm' : ''}` : (ind.mother_par_id || '—'))}
+            ${mother && (mother.bloodline_raw || mother.bloodline_text || '')
+              ? `<div style="padding:3px 8px 8px;font-size:.72rem;color:var(--text3);line-height:1.55;word-break:break-all">${mother.bloodline_raw || mother.bloodline_text || ''}</div>`
+              : ''}
             ${line ? _infoRow('ライン',
               `<span style="cursor:pointer;color:var(--blue)" onclick="routeTo('line-detail',{lineId:'${line.line_id}'})">${line.display_id} ${line.line_name ? '/ '+line.line_name : ''}</span>`
             ) : ''}
@@ -823,10 +830,19 @@ Pages.individualNew = function (params = {}) {
   const v = (field, fallback = '') =>
     ind ? (ind[field] !== undefined ? ind[field] : fallback) : (params[field] || fallback);
 
+  window.__indEditId = params.editId || '';
   main.innerHTML = `
-    ${UI.header(isEdit ? '個体編集' : '個体登録', { back: true })}
+    ${UI.header(isEdit ? '個体編集' : '個体登録', {
+      back: true,
+      backFn: isEdit
+        ? "routeTo('ind-detail',{indId:'" + params.editId + "'})"
+        : "routeTo('ind-list')"
+    })}
     <div class="page-body">
       <form id="ind-form" class="form-section">
+
+        <!-- 現在のステータスを hidden で保持（保存時に参照用） -->
+        ${isEdit ? `<input type="hidden" id="ind-hidden-status" name="ind-hidden-status" value="${ind ? (ind.status || '') : ''}">` : ''}
 
         <div class="form-title">ライン情報</div>
         ${UI.field('ライン', UI.select('line_id',
@@ -842,7 +858,17 @@ Pages.individualNew = function (params = {}) {
           ], v('sex')))}
           ${UI.field('ステージ', UI.select('current_stage',
             STAGE_LIST_NEW.map(s => ({ code: s.code, label: s.label })),
-            v('current_stage', 'L1')), true)}
+            (() => {
+              // IND_STATUS値（larva等）や旧コード（T0/T1等）を新コードに変換
+              const _IND_ST = new Set(['larva','prepupa','pupa','adult','alive',
+                'seed_candidate','seed_reserved','for_sale','reserved','listed','sold','dead','excluded']);
+              const _O2N = { T0:'L1', T1:'L2_EARLY', T2A:'L3_EARLY', T2B:'L3_MID', T3:'L3_LATE' };
+              const _raw = ind
+                ? (ind.current_stage || ind.stage_life || '')
+                : (params.current_stage || '');
+              if (_IND_ST.has(_raw)) return 'L1'; // IND_STATUS値はL1に
+              return _O2N[_raw] || _raw || 'L1';  // 旧コード変換 or そのまま
+            })()), true)}
         </div>
         <div class="form-row-2">
           ${UI.field('孵化日', UI.input('hatch_date', 'date', v('hatch_date')))}
@@ -865,7 +891,7 @@ Pages.individualNew = function (params = {}) {
           v('father_par_id')))}
         ${(() => {
           const fp = v('father_par_id') ? parents.find(p => p.par_id === v('father_par_id')) : null;
-          const raw = fp ? (fp.bloodline_raw || '') : '';
+          const raw = fp ? (fp.bloodline_raw || fp.bloodline_text || '') : '';
           return raw
             ? `<div style="font-size:.72rem;color:var(--text3);padding:4px 8px 8px;line-height:1.5;word-break:break-all">${raw}</div>`
             : '';
@@ -875,7 +901,7 @@ Pages.individualNew = function (params = {}) {
           v('mother_par_id')))}
         ${(() => {
           const mp = v('mother_par_id') ? parents.find(p => p.par_id === v('mother_par_id')) : null;
-          const raw = mp ? (mp.bloodline_raw || '') : '';
+          const raw = mp ? (mp.bloodline_raw || mp.bloodline_text || '') : '';
           return raw
             ? `<div style="font-size:.72rem;color:var(--text3);padding:4px 8px 8px;line-height:1.5;word-break:break-all">${raw}</div>`
             : '';
@@ -905,7 +931,8 @@ Pages.individualNew = function (params = {}) {
         ${UI.field('購入者向けコメント', UI.textarea('note_public', v('note_public'), 2, '公開可能なコメント'))}
 
         <div style="display:flex;gap:10px;margin-top:4px">
-          <button type="button" class="btn btn-ghost" style="flex:1" onclick="Store.back()">キャンセル</button>
+          <button type="button" class="btn btn-ghost" style="flex:1"
+            onclick="window.__indEditId ? routeTo('ind-detail',{indId:window.__indEditId}) : routeTo('ind-list')">キャンセル</button>
           <button type="button" class="btn btn-primary" style="flex:2"
             onclick="Pages._indSave('${isEdit ? params.editId : ''}')">
             ${isEdit ? '更新する' : '登録する'}
@@ -925,10 +952,29 @@ Pages._indSave = async function (editId) {
   if (data.hatch_date) data.hatch_date = data.hatch_date.replace(/-/g, '/');
 
   // 予約チェックボックス：編集時のみ status に反映
+  // 注意: チェックなし = for_sale ではなく「元のステータスを維持」
   if (editId) {
     const chk = document.getElementById('chk-reserved');
     if (chk) {
-      data.status = chk.checked ? 'reserved' : 'for_sale';
+      if (chk.checked) {
+        // チェックあり → 予約中にする
+        data.status = 'reserved';
+      } else {
+        // チェックなし → 元の個体ステータスを引き継ぐ（UIから status を送らない）
+        // フォームの hidden status 値を使うか、現在の値をそのまま維持
+        const hiddenStatus = document.getElementById('ind-hidden-status');
+        const currentStatus = hiddenStatus ? hiddenStatus.value : '';
+        if (currentStatus === 'reserved') {
+          // 元が reserved でチェックを外した → 飼育中（alive）に戻す
+          data.status = 'alive';
+        } else if (currentStatus) {
+          // 元が reserved 以外なら変更しない（元ステータス維持）
+          data.status = currentStatus;
+        } else {
+          // currentStatus が空の場合は送らない（GAS側で維持）
+          delete data.status;
+        }
+      }
     }
   }
 
@@ -938,14 +984,20 @@ Pages._indSave = async function (editId) {
 
   try {
     if (editId) {
-      data.ind_id = editId;
+      data.ind_id   = editId;
+      data.stage_life = data.current_stage || data.stage_life || ''; // stage_life も同期
       const res = await apiCall(() => API.individual.update(data), '更新しました');
       Store.patchDBItem('individuals', 'ind_id', editId, data);
       routeTo('ind-detail', { indId: editId });
     } else {
       const res = await apiCall(() => API.individual.create(data), '登録しました');
       await syncAll(true); // 一覧を最新化
-      routeTo('ind-detail', { indId: res.ind_id });
+      const newId = (res && (res.ind_id || res.id)) || '';
+      if (newId) {
+        routeTo('ind-detail', { indId: newId });
+      } else {
+        routeTo('ind-list'); // ind_id が取れない場合は一覧へ
+      }
     }
   } catch (e) {}
 };

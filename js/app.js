@@ -81,35 +81,42 @@ function routeTo(pageId, params = {}) {
   // 文字列で渡された場合は { id: '...' } に正規化（後方互換）
   if (typeof params === 'string') params = { id: params };
   if (!params || typeof params !== 'object') params = {};
+
+  // Store.navigate が nav イベントを発火 → nav ハンドラが fn() を実行するため
+  // ここで fn() を直接呼ぶ必要はない（二重実行防止）
   if (Object.keys(params).length) Store.navigate(pageId, params);
   else Store.navigate(pageId);
 
-  // ④ URLハッシュ更新（リロード時に復元できるよう）
+  // URLハッシュ更新（リロード時に復元できるよう）
   const hashParts = { page: pageId, ...(params || {}) };
   const hashStr = new URLSearchParams(hashParts).toString();
   history.replaceState(null, '', '#' + hashStr);
 
-  const main = document.getElementById('main');
-  if (!main) return;
-
-  const fn = PAGES[pageId];
-  if (fn) {
-    main.innerHTML = '';
-    fn();
-  } else {
-    main.innerHTML = UI.empty('ページが見つかりません: ' + pageId);
+  // PAGES に未登録ページの場合のみフォールバック表示
+  if (!PAGES[pageId]) {
+    const main = document.getElementById('main');
+    if (main) main.innerHTML = UI.empty('ページが見つかりません: ' + pageId);
   }
-  renderNav();
-  main.scrollTop = 0;
 }
 
 // Store のナビイベントを購読
 Store.on('nav', () => {
-  const fn = PAGES[Store.getPage()];
-  const main = document.getElementById('main');
-  if (!main || !fn) return;
+  const pageId = Store.getPage();
+  const fn     = PAGES[pageId];
+  const main   = document.getElementById('main');
+  if (!main) return;
+  if (!fn) {
+    main.innerHTML = UI.empty('ページが見つかりません: ' + pageId);
+    renderNav();
+    return;
+  }
   main.innerHTML = '';
-  fn();
+  try {
+    fn();
+  } catch (e) {
+    console.error('[nav] page render error:', e);
+    main.innerHTML = UI.empty('表示エラー: ' + e.message);
+  }
   renderNav();
   main.scrollTop = 0;
 });
@@ -254,8 +261,11 @@ const UI = {
 
   // ── ページヘッダー ──────────────────────────────────────────
   header(title, opts = {}) {
-    const back = opts.back === true || (opts.back && opts.back !== false)
-      ? `<button class="btn-icon btn-back" onclick="${opts.backFn || 'Store.back()'}">←</button>` : '';
+    // backFn が指定された場合は必ず backFn を使う / なければ Store.back()
+    // 例: { back: true, backFn: "routeTo('ind-list')" }
+    const backOnClick = opts.backFn ? opts.backFn : 'Store.back()';
+    const back = (opts.back === true || (opts.back && opts.back !== false))
+      ? `<button class="btn-icon btn-back" onclick="${backOnClick}">←</button>` : '';
     const action = opts.action
       ? `<button class="btn-icon btn-action" onclick="${opts.action.fn}">${opts.action.icon || '＋'}</button>` : '';
     return `<header class="page-header">

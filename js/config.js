@@ -287,13 +287,13 @@ function exchangeAlertBadge(alert) {
 // ステージ自動判定（日齢ベース・体重補正対応構造）
 // ════════════════════════════════════════════════════════════════
 const DEFAULT_STAGE_AGE_RULES = [
-  { minDays:   0, maxDays:  30, code: 'L1'       },
-  { minDays:  30, maxDays:  90, code: 'L2_EARLY'  },
-  { minDays:  90, maxDays: 150, code: 'L2_LATE'   },
-  { minDays: 150, maxDays: 240, code: 'L3_EARLY'  },
-  { minDays: 240, maxDays: 330, code: 'L3_MID'    },
-  { minDays: 330, maxDays: 450, code: 'L3_LATE'   },
-  { minDays: 450, maxDays:9999, code: 'PREPUPA'   },
+  { minDays:   0, maxDays:  30,  code: 'L1',       label: 'L1'     },
+  { minDays:  30, maxDays:  90,  code: 'L2_EARLY',  label: 'L2前期' },
+  { minDays:  90, maxDays: 150,  code: 'L2_LATE',   label: 'L2後期' },
+  { minDays: 150, maxDays: 240,  code: 'L3_EARLY',  label: 'L3前期' },
+  { minDays: 240, maxDays: 330,  code: 'L3_MID',    label: 'L3中期' },
+  { minDays: 330, maxDays: 450,  code: 'L3_LATE',   label: 'L3後期' },
+  { minDays: 450, maxDays: 9999, code: 'PREPUPA',   label: '前蛹'   },
 ];
 
 // 日齢から自動ステージを推定する
