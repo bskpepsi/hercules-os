@@ -19,6 +19,15 @@
 window._qrContinuousMode = window._qrContinuousMode || false;
 window._qrCameraStream   = window._qrCameraStream   || null;
 
+// 体重測定モードの前回入力値引継ぎ（連続スキャン用）
+window._wmLastInput = window._wmLastInput || {
+  mat:       '',   // マット種別
+  molt:      '',   // モルト
+  stage:     '',   // ステージ
+  container: '',   // 容器サイズ
+  exchange:  '',   // 交換種別
+};
+
 // ════════════════════════════════════════════════════════════════
 // QRスキャン画面 (qr-scan)
 // ════════════════════════════════════════════════════════════════
@@ -1350,33 +1359,78 @@ Pages.weightMode = function (params = {}) {
         <div id="wm-attrition" class="count-attrition"></div>
       </div>` : ''}
 
-      <div style="margin-top:8px">
-        <div class="collapse-toggle" onclick="Pages._wmToggleExtra(this)">
-          <span>📝 追加メモ（任意）</span>
-          <span style="font-size:.7rem;transition:transform .2s">▼</span>
+      <!-- ─── 測定・更新入力（デフォルト展開） ─── -->
+      <div class="card" style="margin-top:8px;padding:12px 14px">
+        <div style="font-size:.72rem;font-weight:700;color:var(--text2);margin-bottom:10px">
+          📋 同時更新（任意）
         </div>
-        <div id="wm-extra" class="collapse-body closed">
-          <div class="card" style="border-radius:0 0 var(--radius) var(--radius);margin-top:-1px">
-            <div class="form-section">
-              <div class="field">
-                <label class="field-label">頭幅 (mm)</label>
-                <input id="wm-head" class="input" type="number" inputmode="decimal" step="0.1" min="0" max="99" placeholder="例: 38.5">
-              </div>
-              <div class="field">
-                <label class="field-label">観察メモ</label>
-                <textarea id="wm-note" class="input" rows="2" placeholder="幼虫の状態、色艶、活動性など"></textarea>
-              </div>
-              <div class="field">
-                <label class="field-label">交換種別</label>
-                <select id="wm-exchange" class="input">
-                  <option value="">体重測定のみ</option>
-                  <option value="マット交換">マット交換</option>
-                  <option value="容器交換">容器交換</option>
-                  <option value="マット+容器交換">マット+容器交換</option>
-                </select>
+        <div class="form-section">
+
+          <!-- マット -->
+          <div class="field">
+            <label class="field-label">マット種別</label>
+            <select id="wm-mat" class="input">
+              <option value="">変更なし</option>
+              ${MAT_TYPES.map(m => `<option value="${m.code}" ${window._wmLastInput.mat===m.code?'selected':''}>${m.label}</option>`).join('')}
+            </select>
+          </div>
+
+          <!-- モルト -->
+          <div class="field">
+            <label class="field-label">モルト処理</label>
+            <div style="display:flex;gap:8px">
+              <button id="wm-molt-none" class="btn btn-ghost btn-sm" style="flex:1;${window._wmLastInput.molt===''?'border-color:var(--green);color:var(--green)':''}"
+                onclick="Pages._wmSetMolt('')">変更なし</button>
+              <button id="wm-molt-on"   class="btn btn-ghost btn-sm" style="flex:1;${window._wmLastInput.molt==='on'?'border-color:var(--green);color:var(--green)':''}"
+                onclick="Pages._wmSetMolt('on')">ON</button>
+              <button id="wm-molt-off"  class="btn btn-ghost btn-sm" style="flex:1;${window._wmLastInput.molt==='off'?'border-color:var(--green);color:var(--green)':''}"
+                onclick="Pages._wmSetMolt('off')">OFF</button>
+            </div>
+          </div>
+
+          <!-- ステージ -->
+          <div class="field">
+            <label class="field-label">ステージ変更</label>
+            <select id="wm-stage" class="input">
+              <option value="">変更なし</option>
+              ${(typeof STAGE_LIST_NEW !== 'undefined' ? STAGE_LIST_NEW : []).map(s => `<option value="${s.code}" ${window._wmLastInput.stage===s.code?'selected':''}>${s.label}</option>`).join('')}
+            </select>
+          </div>
+
+          <!-- 容器 -->
+          <div class="field">
+            <label class="field-label">容器サイズ変更</label>
+            <select id="wm-container" class="input">
+              <option value="">変更なし</option>
+              ${(typeof CONTAINER_SIZES !== 'undefined' ? CONTAINER_SIZES : ['1.8L','2.7L','4.8L']).map(s => `<option value="${s}" ${window._wmLastInput.container===s?'selected':''}>${s}</option>`).join('')}
+            </select>
+          </div>
+
+          <!-- 交換種別 -->
+          <div class="field">
+            <label class="field-label">交換種別</label>
+            <select id="wm-exchange" class="input">
+              <option value="" ${window._wmLastInput.exchange===''?'selected':''}>測定のみ</option>
+              <option value="マット交換" ${window._wmLastInput.exchange==='マット交換'?'selected':''}>マット交換</option>
+              <option value="容器交換" ${window._wmLastInput.exchange==='容器交換'?'selected':''}>容器交換</option>
+              <option value="マット+容器交換" ${window._wmLastInput.exchange==='マット+容器交換'?'selected':''}>マット+容器交換</option>
+            </select>
+          </div>
+
+          <!-- 頭幅 + メモ（折りたたみ） -->
+          <div>
+            <div class="collapse-toggle" onclick="Pages._wmToggleExtra(this)" style="margin-top:4px">
+              <span style="font-size:.78rem;color:var(--text3)">📝 頭幅 / メモ（任意）</span>
+              <span style="font-size:.7rem;transition:transform .2s">▼</span>
+            </div>
+            <div id="wm-extra" class="collapse-body closed">
+              <div style="margin-top:6px">
+                <input id="wm-head" class="input" type="number" inputmode="decimal" step="0.1" min="0" max="99" placeholder="頭幅 (mm)" style="margin-bottom:6px">
+                <textarea id="wm-note" class="input" rows="2" placeholder="観察メモ（状態・色艶など）"></textarea>
               </div>
             </div>
           </div>
+
         </div>
       </div>
 
@@ -1454,40 +1508,104 @@ Pages._wmSave = async function () {
   if (!state?.entityId) { UI.toast('対象IDが不明です。再スキャンしてください', 'error'); return; }
   const btn = document.getElementById('wm-save-btn');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ 保存中...'; }
+
   try {
+    // ── 入力値の収集 ─────────────────────────────────────────
     const headVal     = parseFloat(document.getElementById('wm-head')?.value);
     const noteVal     = document.getElementById('wm-note')?.value?.trim() || '';
     const exchangeVal = document.getElementById('wm-exchange')?.value || '';
+    const matVal      = document.getElementById('wm-mat')?.value       || '';  // 空='変更なし'
+    const stageVal    = document.getElementById('wm-stage')?.value     || '';  // 空='変更なし'
+    const containerVal= document.getElementById('wm-container')?.value || '';  // 空='変更なし'
+    const moltVal     = window._wmCurrentMolt || '';                           // 'on'/'off'/''
+
+    // 使用するステージ・容器・マット（入力 > 前回状態 の優先順）
+    const effectiveStage    = stageVal     || state.stage     || '';
+    const effectiveContainer= containerVal || state.container || '';
+    const effectiveMat      = matVal       || state.matType   || '';
+
     const beforeRaw   = document.getElementById('wm-before')?.value;
     const afterRaw    = document.getElementById('wm-after')?.value;
     const beforeCount = beforeRaw !== undefined && beforeRaw !== '' ? parseInt(beforeRaw, 10) : undefined;
     const afterCount  = afterRaw  !== undefined && afterRaw  !== '' ? parseInt(afterRaw,  10) : undefined;
-    const growthData  = {
-      target_type: state.entityType, target_id: state.entityId,
-      stage: state.stage || '', weight_g: weightVal,
-      container: state.container || '', mat_type: state.matType || '',
-      before_count: beforeCount, after_count: afterCount,
+
+    // ── 1. growth record 作成（体重 + 状態スナップショット）──────
+    const growthData = {
+      target_type: state.entityType,
+      target_id:   state.entityId,
+      stage:       effectiveStage,
+      weight_g:    weightVal,
+      container:   effectiveContainer,
+      mat_type:    effectiveMat,
+      before_count: beforeCount,
+      after_count:  afterCount,
     };
     if (!isNaN(headVal) && headVal > 0) growthData.head_width_mm = headVal;
     if (noteVal)     growthData.note_private  = noteVal;
     if (exchangeVal) growthData.exchange_type = exchangeVal;
     await API.growth.create(growthData);
+
+    // ── 2. 本体（IND / LOT）への反映 ─────────────────────────
+    const entityUpdates = {};
     if (state.entityType === 'IND') {
-      Store.patchDBItem('individuals', 'ind_id', state.entityId, { latest_weight_g: weightVal, current_stage: state.stage });
+      entityUpdates.latest_weight_g = weightVal;
+      if (stageVal)      entityUpdates.current_stage     = stageVal;
+      if (containerVal)  entityUpdates.current_container = containerVal;
+      if (matVal)        entityUpdates.current_mat       = matVal;
+      if (moltVal)       entityUpdates.mat_molt          = (moltVal === 'on');
+      if (Object.keys(entityUpdates).length) {
+        await API.individual.update({ ind_id: state.entityId, ...entityUpdates }).catch(e => {
+          console.warn('[wmSave] individual update failed:', e.message);
+        });
+        Store.patchDBItem('individuals', 'ind_id', state.entityId, entityUpdates);
+      }
       await Store.syncEntityType('individuals').catch(() => {});
     }
     if (state.entityType === 'LOT') {
-      const lotUpdates = {};
-      if (state.stage) lotUpdates.stage = state.stage;
-      if (afterCount !== undefined) { lotUpdates.count = afterCount; if (afterCount === 0) lotUpdates.status = 'individualized'; }
-      if (Object.keys(lotUpdates).length) Store.patchDBItem('lots', 'lot_id', state.entityId, lotUpdates);
+      if (stageVal)      entityUpdates.stage          = stageVal;
+      if (containerVal)  entityUpdates.container_size = containerVal;
+      if (matVal)        entityUpdates.mat_type       = matVal;
+      if (moltVal)       entityUpdates.mat_molt       = (moltVal === 'on');
+      if (afterCount !== undefined) {
+        entityUpdates.count = afterCount;
+        if (afterCount === 0) entityUpdates.status = 'individualized';
+      }
+      if (Object.keys(entityUpdates).length) {
+        await API.lot.update({ lot_id: state.entityId, ...entityUpdates }).catch(e => {
+          console.warn('[wmSave] lot update failed:', e.message);
+        });
+        Store.patchDBItem('lots', 'lot_id', state.entityId, entityUpdates);
+      }
     }
     await Store.syncEntityType('growth').catch(() => {});
+
+    // ── 3. 前回入力値を引継ぎ用に保存 ────────────────────────
+    window._wmLastInput = {
+      mat:       matVal,
+      molt:      moltVal,
+      stage:     stageVal,
+      container: containerVal,
+      exchange:  exchangeVal,
+    };
+    window._wmCurrentMolt = '';  // モルトは保存後リセット（連続時に誤引継ぎ防止）
+
     Pages._wmShowComplete(state.entityType, state.entityId, weightVal);
   } catch (e) {
     UI.toast('❌ 保存失敗: ' + (e.message || '不明なエラー'), 'error');
     if (btn) { btn.disabled = false; btn.textContent = '💾 成長記録を保存'; }
   }
+};
+
+// ── モルトボタントグル ────────────────────────────────────────
+Pages._wmSetMolt = function (val) {
+  window._wmCurrentMolt = val;
+  ['none','on','off'].forEach(k => {
+    const b = document.getElementById('wm-molt-' + k);
+    if (!b) return;
+    const active = (k === val) || (k === 'none' && val === '');
+    b.style.borderColor = active ? 'var(--green)' : '';
+    b.style.color       = active ? 'var(--green)' : '';
+  });
 };
 
 Pages._wmShowComplete = function (entityType, entityId, weight) {
