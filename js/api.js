@@ -222,7 +222,9 @@ const API = (() => {
       const key = CONFIG.GEMINI_KEY || localStorage.getItem(CONFIG.LS_KEYS.GEMINI_KEY) || '';
       if (!key) throw new Error('Gemini APIキーが未設定です。');
 
-      const prompt = promptType === 'label' ? GEMINI_PROMPTS.label : GEMINI_PROMPTS.scale;
+      const prompt = promptType === 'label_full' ? GEMINI_PROMPTS.label_full
+                   : promptType === 'label'      ? GEMINI_PROMPTS.label
+                   : GEMINI_PROMPTS.scale;  // default: scale（体重計読み取り）
       const ctrl   = new AbortController();
       const tid    = setTimeout(() => ctrl.abort(), 40000);
 
@@ -342,6 +344,23 @@ return { system, line, lot, individual, growth, parent, bloodline, pairing, labe
 
 // ── Gemini プロンプト ──────────────────────────────────────────
 const GEMINI_PROMPTS = {
+  // ラベル全体読取用（ラベルスキャン機能で使用）
+  label_full: `この画像はヘラクレスオオカブト飼育管理ラベルです。
+以下をJSONのみで返してください（コードブロック不要）:
+{
+  "qr_detected": QRコードが画像内にあるか(true/false),
+  "sex": "♂ または ♀ または 不明",
+  "size_categories": ["大","中","小" のうち該当するもの（複数可）],
+  "mat_type": "T0/T1/T2/T2A/T2B/T3 のいずれか、または null",
+  "mat_molt": モルト処理済みかどうか(true/false/null),
+  "stage_label": "L1/L2/L2前期/L2後期/L3/L3前期/L3中期/L3後期/前蛹/蛹/成虫 または null",
+  "records": [
+    {"date": "YYYY/MM/DD または MM/DD", "weight_g": 体重の数値, "memo": "メモ文字列または null"}
+  ],
+  "notes": "その他読み取れた文字列（任意）"
+}
+読み取れない項目はnullにしてください。体重は整数または小数。日付はラベルに記載の形式で。`,
+
   label: `この画像はヘラクレスオオカブト飼育容器の手書きラベルです。
 以下をJSONのみで返してください（コードブロック不要）:
 {

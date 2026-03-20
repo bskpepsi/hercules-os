@@ -375,8 +375,8 @@ let _splitContext = {};
 Pages._showSplitModal = function (lotId, totalCount, stage, lineId, hatchDate, displayId) {
   _splitContext = { lotId, totalCount: +totalCount, stage, lineId, hatchDate, displayId };
   _splitCards = [
-    { count: Math.floor(totalCount/2), container:'', mat:'', size_category:'', sex_hint:'', note:'' },
-    { count: totalCount - Math.floor(totalCount/2), container:'', mat:'', size_category:'', sex_hint:'', note:'' },
+    { count: Math.floor(totalCount/2), container:'', mat:'', size_category:'', sex_hint:'', weight:'', note:'' },
+    { count: totalCount - Math.floor(totalCount/2), container:'', mat:'', size_category:'', sex_hint:'', weight:'', note:'' },
   ];
   _renderSplitModal();
 };
@@ -428,6 +428,12 @@ function _renderSplitModal() {
           </select>
         </div>
         <div>
+          <div style="font-size:.72rem;color:var(--text3);margin-bottom:2px">分割時体重 (g)</div>
+          <input type="number" class="input" step="0.1" min="0" value="${c.weight||''}"
+            placeholder="任意" style="width:100%"
+            oninput="_splitCards[${i}].weight=this.value">
+        </div>
+        <div>
           <div style="font-size:.72rem;color:var(--text3);margin-bottom:2px">メモ</div>
           <input type="text" class="input" value="${c.note||''}" style="width:100%"
             oninput="_splitCards[${i}].note=this.value">
@@ -445,7 +451,7 @@ function _renderSplitModal() {
     </div>
     <div style="max-height:50vh;overflow-y:auto" id="split-cards-wrap">${cardHtml}</div>
     <button class="btn btn-ghost btn-full" style="margin-top:4px"
-      onclick="_splitCards.push({count:1,container:'',mat:'',size_category:'',sex_hint:'',note:''});_renderSplitModal()">
+      onclick="_splitCards.push({count:1,container:'',mat:'',size_category:'',sex_hint:'',weight:'',note:''});_renderSplitModal()">
       ＋ 分割先を追加
     </button>
     <div class="modal-footer">
@@ -461,11 +467,12 @@ function _renderSplitModal() {
 Pages._execSplit = async function (lotId, maxCount) {
   const counts  = _splitCards.map(c => c.count||0);
   const details = _splitCards.map(c => ({
-    container_size: c.container || '',
-    mat_type:       c.mat       || '',
-    size_category:  c.size_category || '',
-    sex_hint:       c.sex_hint  || '',
-    note:           c.note      || '',
+    container_size:  c.container || '',
+    mat_type:        c.mat       || '',
+    size_category:   c.size_category || '',
+    sex_hint:        c.sex_hint  || '',
+    note:            c.note      || '',
+    initial_weight:  c.weight    || '',  // 分割時最新体重（履歴コピーの末尾に追加される）
   }));
   const total = counts.reduce((s,n) => s+n, 0);
 

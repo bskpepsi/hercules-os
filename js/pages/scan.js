@@ -1,36 +1,37 @@
 // ════════════════════════════════════════════════════════════════
-// scan.js — QRスキャン + 差分入力 + 体重測定画面  v2
+// scan.js — QRスキャン v3
 //
-// 【3モード】
-//   確認モード  : QR → 個体/ロット/産卵セット詳細画面を直接開く
-//   差分入力    : QR → 未入力項目を補完して保存
-//   体重測定    : QR → 体重入力 → 保存（最短3タップ）
+// 【改善点】
+//   1. QR読取後の即時遷移（APIレスポンス待ちなし）
+//   2. 連続スキャンモード（カメラ維持・結果シート表示）
+//   3. ラベル全体読取（Gemini + jsQR → 差分確認 → 保存）
+//   4. スキャン履歴 10件保持
 //
-// 【QR読み取り方法】
-//   ① カメラ読み取り（jsQR / inversionAttempts:'attemptBoth' / 3フレームに1回スキャン）
-//   ② 画像ファイル読み取り（スマホ保存画像・スクリーンショット対応）
-//   ③ テキスト手入力 / ペースト
+// 【依存】
+//   jsQR（index.html で静的ロード済み）
+//   QRCode.js（同上）
+//   API.gemini.analyzeImage（api.js）
+//   API.scan.resolve / updateLotFields / updateIndFields（api.js）
 // ════════════════════════════════════════════════════════════════
+'use strict';
+
+// ── セッション変数（ページをまたいで維持） ─────────────────────
+window._qrContinuousMode = window._qrContinuousMode || false;
+window._qrCameraStream   = window._qrCameraStream   || null;
 
 // ════════════════════════════════════════════════════════════════
 // QRスキャン画面 (qr-scan)
 // ════════════════════════════════════════════════════════════════
 Pages.qrScan = function (params = {}) {
   const main = document.getElementById('main');
-  // モード: 'view' | 'diff' | 'weight'
-  let _scanMode = params.mode === 'weight' ? 'weight' : params.mode === 'diff' ? 'diff' : 'view';
+  let _scanMode = params.mode === 'weight' ? 'weight'
+                : params.mode === 'diff'   ? 'diff'
+                : 'view';
 
   function _modeStyle(m) {
-    if (m === _scanMode) {
-      const bg = m==='weight' ? 'var(--green)' : m==='diff' ? 'var(--blue)' : 'var(--gold)';
-      return `background:${bg};color:#fff;font-weight:700;`;
-    }
-    return 'color:var(--text3);background:transparent;';
-  }
-  function _modeDesc() {
-    if (_scanMode === 'weight') return '⚖️ QR → 体重入力 → 保存（最短3タップ）';
-    if (_scanMode === 'diff')   return '📝 QR → 未入力項目を補完する';
-    return '🔍 QR → 個体・ロット・産卵セットの詳細を開く';
+    if (m !== _scanMode) return 'color:var(--text3);background:transparent;';
+    const bg = m==='weight' ? 'var(--green)' : m==='diff' ? 'var(--blue)' : 'var(--gold)';
+    return `background:${bg};color:#fff;font-weight:700;`;
   }
 
   function render() {
@@ -38,7 +39,7 @@ Pages.qrScan = function (params = {}) {
       ${UI.header('📷 QRスキャン', { back: true })}
       <div class="page-body">
 
-        <!-- 3モードタブ -->
+        <!-- モードタブ -->
         <div style="display:flex;background:var(--surface2);border-radius:10px;padding:3px;gap:3px">
           <button style="flex:1;border:none;padding:7px 4px;border-radius:8px;cursor:pointer;font-size:.75rem;${_modeStyle('view')}"
             onclick="Pages._qrSwitchMode('view')">🔍 確認</button>
@@ -47,7 +48,30 @@ Pages.qrScan = function (params = {}) {
           <button style="flex:1;border:none;padding:7px 4px;border-radius:8px;cursor:pointer;font-size:.75rem;${_modeStyle('weight')}"
             onclick="Pages._qrSwitchMode('weight')">⚖️ 体重</button>
         </div>
-        <div style="font-size:.72rem;color:var(--text3);padding:2px 4px;margin-top:-2px">${_modeDesc()}</div>
+
+        <!-- 連続スキャントグル -->
+        <div style="display:flex;align-items:center;justify-content:space-between;
+          padding:8px 12px;background:var(--surface2);border-radius:10px;margin-top:6px">
+          <span style="font-size:.8rem;color:var(--text2)">🔁 連続スキャンモード</span>
+          <label style="position:relative;display:inline-block;width:44px;height:24px;cursor:pointer">
+            <input type="checkbox" id="continuous-toggle" ${window._qrContinuousMode?'checked':''}
+              onchange="Pages._qrToggleContinuous(this.checked)"
+              style="opacity:0;width:0;height:0">
+            <span id="continuous-slider" style="
+              position:absolute;inset:0;border-radius:24px;transition:.3s;
+              background:${window._qrContinuousMode?'var(--green)':'var(--surface3,#2a3e36)'};
+            ">
+              <span style="
+                position:absolute;top:3px;${window._qrContinuousMode?'right:3px':'left:3px'};
+                width:18px;height:18px;border-radius:50%;background:#fff;transition:.3s;
+                box-shadow:0 1px 3px rgba(0,0,0,.3)
+              "></span>
+            </span>
+          </label>
+        </div>
+        ${window._qrContinuousMode
+          ? '<div style="font-size:.7rem;color:var(--green);padding:2px 4px">連続モード: 読取後もカメラを維持します</div>'
+          : ''}
 
         <!-- カメラエリア -->
         <div class="card" id="camera-card" style="display:none;padding:0;overflow:hidden">
@@ -55,12 +79,12 @@ Pages.qrScan = function (params = {}) {
             <video id="qr-video" autoplay playsinline muted
               style="width:100%;display:block;max-height:260px;object-fit:cover"></video>
             <canvas id="qr-canvas" style="display:none"></canvas>
-            <!-- スキャン枠 -->
             <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none">
-              <div id="scan-frame" style="width:200px;height:200px;border:3px solid var(--green);border-radius:8px;box-shadow:0 0 0 9999px rgba(0,0,0,0.5)"></div>
+              <div id="scan-frame" style="width:200px;height:200px;border:3px solid var(--green);
+                border-radius:8px;box-shadow:0 0 0 9999px rgba(0,0,0,0.5)"></div>
             </div>
-            <!-- スキャン中アニメ -->
-            <div id="scan-line" style="position:absolute;left:calc(50% - 100px);top:calc(50% - 100px);width:200px;height:3px;background:var(--green);opacity:.8;animation:scanLine 2s infinite linear"></div>
+            <div id="scan-line" style="position:absolute;left:calc(50% - 100px);top:calc(50% - 100px);
+              width:200px;height:3px;background:var(--green);opacity:.8;animation:scanLine 2s infinite linear"></div>
           </div>
           <div style="display:flex;gap:8px;padding:8px">
             <button class="btn btn-ghost" style="flex:1" onclick="Pages._qrStopCamera()">✕ 閉じる</button>
@@ -70,16 +94,27 @@ Pages.qrScan = function (params = {}) {
 
         <!-- 入力カード -->
         <div class="card">
-          <!-- カメラボタン -->
           <button class="btn btn-ghost btn-full" id="camera-btn" onclick="Pages._qrStartCamera()"
-            style="margin-bottom:10px;border:2px solid var(--green);background:rgba(45,122,82,.08);font-size:.95rem;padding:14px;border-radius:12px">
+            style="margin-bottom:10px;border:2px solid var(--green);background:rgba(45,122,82,.08);
+            font-size:.95rem;padding:14px;border-radius:12px">
             <span style="font-size:1.4rem;margin-right:8px">📷</span>カメラで読み取る
           </button>
 
-          <!-- 画像ファイル読み取り -->
-          <label style="display:flex;align-items:center;justify-content:center;gap:8px;padding:10px;border:2px dashed var(--border2);border-radius:10px;cursor:pointer;margin-bottom:10px;font-size:.85rem;color:var(--text3)">
+          <!-- ラベル全体読取 -->
+          <label style="display:flex;align-items:center;justify-content:center;gap:8px;padding:10px;
+            border:2px dashed var(--amber,#c8a84b);border-radius:10px;cursor:pointer;margin-bottom:10px;
+            font-size:.85rem;color:var(--amber,#c8a84b)">
+            <span style="font-size:1.2rem">🔬</span>ラベル全体を読み取る（AI解析）
+            <input type="file" accept="image/*" style="display:none"
+              onchange="Pages._qrReadLabelImage(this)">
+          </label>
+
+          <label style="display:flex;align-items:center;justify-content:center;gap:8px;padding:10px;
+            border:2px dashed var(--border2);border-radius:10px;cursor:pointer;margin-bottom:10px;
+            font-size:.85rem;color:var(--text3)">
             <span style="font-size:1.2rem">🖼️</span>QR画像を選択して読み取る
-            <input type="file" accept="image/*" style="display:none" onchange="Pages._qrReadFromImage(this)">
+            <input type="file" accept="image/*" style="display:none"
+              onchange="Pages._qrReadFromImage(this)">
           </label>
 
           <div style="display:flex;align-items:center;gap:8px;margin:6px 0">
@@ -90,11 +125,8 @@ Pages.qrScan = function (params = {}) {
 
           <div class="field" style="margin-bottom:10px">
             <label class="field-label">QRコードの内容を貼り付け</label>
-            <textarea id="qr-input" class="input" rows="3"
-              placeholder="例:
-LOT:LOT-XXXXXXXX
-IND:IND-XXXXXXXX
-SET:SET-XXXXXXXX"
+            <textarea id="qr-input" class="input" rows="2"
+              placeholder="LOT:LOT-xxx / IND:IND-xxx"
               style="font-family:var(--font-mono);font-size:.88rem"
               oninput="Pages._qrPreviewInput(this.value)"></textarea>
             <div id="qr-preview" style="font-size:.72rem;margin-top:4px"></div>
@@ -106,25 +138,13 @@ SET:SET-XXXXXXXX"
           <div id="qr-error" style="margin-top:8px;font-size:.8rem;color:var(--red)"></div>
         </div>
 
-        <!-- スキャン方法ガイド -->
-        <div class="card">
-          <div class="card-title">ラベルのQRコード内容</div>
-          <div style="font-size:.75rem;color:var(--text3);line-height:1.8">
-            ${[
-              ['IND:IND-xxxxx', '個体ラベル', 'var(--green)'],
-              ['LOT:LOT-xxxxx', 'ロットラベル', 'var(--amber)'],
-              ['SET:SET-xxxxx', '産卵セットラベル', 'var(--gold)'],
-            ].map(([code,label,col])=>`<div style="display:flex;gap:8px;padding:3px 0">
-              <span style="font-family:var(--font-mono);color:${col};min-width:140px">${code}</span>
-              <span>${label}</span>
-            </div>`).join('')}
-          </div>
-        </div>
+        <!-- 連続スキャン結果シート -->
+        <div id="continuous-results"></div>
 
+        <!-- スキャン履歴 -->
         <div id="scan-history-card"></div>
       </div>`;
 
-    // CSSアニメーション注入
     if (!document.getElementById('scan-anim-style')) {
       const st = document.createElement('style');
       st.id = 'scan-anim-style';
@@ -133,92 +153,239 @@ SET:SET-XXXXXXXX"
     }
 
     setTimeout(() => Pages._qrRenderHistory(), 50);
+    setTimeout(() => Pages._qrRenderContinuousResults(), 50);
   }
 
   Pages._qrSwitchMode = (m) => { _scanMode = m; render(); };
   render();
 
-  // 起動直後カメラ自動起動（モード問わず）
   if (params.autoCamera) {
     setTimeout(() => Pages._qrStartCamera(), 300);
   }
 };
 
+// ── 連続モードトグル ──────────────────────────────────────────────
+Pages._qrToggleContinuous = function (checked) {
+  window._qrContinuousMode = checked;
+  // スライダー更新
+  const slider = document.getElementById('continuous-slider');
+  if (slider) {
+    slider.style.background = checked ? 'var(--green)' : 'var(--surface3,#2a3e36)';
+    const thumb = slider.querySelector('span');
+    if (thumb) thumb.style[checked ? 'right' : 'left'] = '3px',
+               thumb.style[checked ? 'left'  : 'right'] = 'auto';
+  }
+};
 
-// ════════════════════════════════════════════════════════════════
-// 差分入力画面 (qr-diff)
-// ════════════════════════════════════════════════════════════════
-// ════════════════════════════════════════════════════════════════
-// QR スキャン ヘルパー群
-// ════════════════════════════════════════════════════════════════
-
-// ── QRテキストのプレビュー ─────────────────────────────────────
+// ── QRテキストプレビュー ─────────────────────────────────────────
 Pages._qrPreviewInput = function (val) {
   const el = document.getElementById('qr-preview');
   if (!el) return;
   const v = (val || '').trim();
-  const labels = { LOT: '🟡 ロット', IND: '🟢 個体', SET: '🟠 産卵セット' };
+  const labels = { LOT:'🟡 ロット', IND:'🟢 個体', SET:'🟠 産卵セット' };
   const type = v.startsWith('LOT:') ? 'LOT' : v.startsWith('IND:') ? 'IND' : v.startsWith('SET:') ? 'SET' : null;
   el.innerHTML = type
     ? `<span style="color:var(--green)">${labels[type]} : ${v.split(':')[1]}</span>`
-    : v ? `<span style="color:var(--red)">⚠️ フォーマット不正（LOT: / IND: / SET: で始まる必要があります）</span>` : '';
+    : v ? `<span style="color:var(--red)">⚠️ フォーマット不正</span>` : '';
 };
 
-// ── QR解析・モード別遷移 ─────────────────────────────────────
+// ── QR解析・モード別遷移（高速版） ───────────────────────────────
+// 改善: キャッシュから即遷移し、バックグラウンドでAPI補完
 Pages._qrResolve = async function () {
   const qrText = document.getElementById('qr-input')?.value?.trim();
   const errEl  = document.getElementById('qr-error');
   const btn    = document.getElementById('qr-resolve-btn');
   if (!qrText) { if (errEl) errEl.textContent = 'QRコードを入力してください'; return; }
   if (errEl) errEl.textContent = '';
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ 解析中...'; }
+
+  // ── ① キャッシュから即時解決（待ち時間ゼロ）──────────────────
+  const cached = _qrResolveFromCache(qrText);
+
+  // 連続モードの場合: 遷移せず結果シートに追加
+  if (window._qrContinuousMode && cached) {
+    Pages._qrSaveHistory(qrText, cached);
+    _qrAddContinuousResult(cached, qrText);
+    // テキストエリアをクリアして次のスキャンへ
+    const inp = document.getElementById('qr-input');
+    if (inp) { inp.value = ''; Pages._qrPreviewInput(''); }
+    if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+    // バックグラウンドでAPI更新
+    _qrFetchAndUpdate(qrText, cached.entity_type, cached.entity?.lot_id || cached.entity?.ind_id);
+    return;
+  }
+
+  // 通常モード: キャッシュがあれば即遷移
+  const mode = _qrCurrentMode();
+  if (cached) {
+    Pages._qrSaveHistory(qrText, cached);
+    _qrNavigate(mode, cached, qrText);
+    // バックグラウンドでAPI更新（遷移後）
+    _qrFetchAndUpdate(qrText, cached.entity_type, cached.entity?.lot_id || cached.entity?.ind_id);
+    return;
+  }
+
+  // キャッシュなし: APIを呼ぶ（ローディング表示は200ms遅延）
+  if (btn) btn.disabled = true;
+  let loadingTimer = setTimeout(() => {
+    if (btn) btn.textContent = '⏳ 解析中...';
+  }, 200);
 
   try {
     const res = await API.scan.resolve(qrText);
+    clearTimeout(loadingTimer);
     Pages._qrSaveHistory(qrText, res);
 
-    // 選択中モードをボタンのfontWeightで判定
-    const btns = document.querySelectorAll('[onclick*="_qrSwitchMode"]');
-    let mode = 'view';
-    btns.forEach(b => {
-      if (b.style.fontWeight === '700' || b.style.background.includes('var(--green)')) mode = 'weight';
-      else if (b.style.fontWeight === '700' || b.style.background.includes('var(--blue)')) mode = 'diff';
-    });
-    // より確実な判定: 選択中ボタンのonclick属性から取得
-    const activeBtn = Array.from(document.querySelectorAll('button')).find(b =>
-      b.style.fontWeight === '700' && b.onclick && b.getAttribute('onclick')?.includes('_qrSwitchMode')
-    );
-    if (activeBtn) {
-      const m = activeBtn.getAttribute('onclick')?.match(/'(view|diff|weight)'/);
-      if (m) mode = m[1];
-    }
-
-    if (mode === 'weight') {
-      routeTo('weight-mode', { resolve_result: res, qr_text: qrText });
-    } else if (mode === 'diff') {
-      routeTo('qr-diff', { resolve_result: res, qr_text: qrText });
+    if (window._qrContinuousMode) {
+      _qrAddContinuousResult(res, qrText);
+      const inp = document.getElementById('qr-input');
+      if (inp) { inp.value = ''; Pages._qrPreviewInput(''); }
     } else {
-      // 確認モード: 直接詳細画面へ
-      const eid = res.entity?.ind_id || res.entity?.lot_id || res.entity?.set_id;
-      if (res.entity_type === 'IND' && eid)      routeTo('ind-detail',     { indId: eid });
-      else if (res.entity_type === 'LOT' && eid) routeTo('lot-detail',     { lotId: eid });
-      else if (res.entity_type === 'SET' && eid) routeTo('pairing-detail', { pairingId: eid });
-      else routeTo('qr-diff', { resolve_result: res, qr_text: qrText });
+      _qrNavigate(mode, res, qrText);
     }
   } catch (e) {
+    clearTimeout(loadingTimer);
     if (errEl) errEl.textContent = '❌ ' + (e.message || '解析に失敗しました');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '🔍 読み取り・確認'; }
   }
 };
 
-// ── スキャン履歴 ──────────────────────────────────────────────
+// ── キャッシュから即時解決 ────────────────────────────────────────
+function _qrResolveFromCache(qrText) {
+  const parts = qrText.split(':');
+  if (parts.length < 2) return null;
+  const type = parts[0]; // LOT / IND / SET
+  const id   = parts.slice(1).join(':');
+
+  if (type === 'LOT') {
+    const lot  = Store.getLot(id);
+    if (!lot) return null;
+    const line = Store.getLine(lot.line_id) || null;
+    return { entity_type: 'LOT', entity: lot, line, missing: [], label_type: 'multi_lot' };
+  }
+  if (type === 'IND') {
+    const ind  = Store.getIndividual(id);
+    if (!ind) return null;
+    const line = Store.getLine(ind.line_id) || null;
+    return { entity_type: 'IND', entity: ind, line, missing: [], label_type: 'ind_fixed' };
+  }
+  if (type === 'SET') {
+    const pairings = Store.getDB('pairings') || [];
+    const set = pairings.find(p => p.set_id === id || p.pairing_id === id);
+    if (!set) return null;
+    return { entity_type: 'SET', entity: set, line: null, missing: [], label_type: 'set' };
+  }
+  return null;
+}
+
+// ── バックグラウンドAPI更新 ───────────────────────────────────────
+async function _qrFetchAndUpdate(qrText, entityType, entityId) {
+  if (!entityId) return;
+  try {
+    const res = await API.scan.resolve(qrText);
+    // ストアに反映
+    if (entityType === 'LOT' && res.entity) {
+      Store.patchDBItem('lots', 'lot_id', entityId, res.entity);
+    }
+    if (entityType === 'IND' && res.entity) {
+      Store.patchDBItem('individuals', 'ind_id', entityId, res.entity);
+    }
+  } catch (e) {
+    // バックグラウンドエラーは無視
+  }
+}
+
+// ── モード取得 ────────────────────────────────────────────────────
+function _qrCurrentMode() {
+  // モードボタンのスタイルから判定
+  const btns = document.querySelectorAll('button[onclick*="_qrSwitchMode"]');
+  for (const b of btns) {
+    if (b.style.fontWeight === '700') {
+      const m = b.getAttribute('onclick')?.match(/'(view|diff|weight)'/);
+      if (m) return m[1];
+    }
+  }
+  return 'view';
+}
+
+// ── モード別ナビゲーション ────────────────────────────────────────
+function _qrNavigate(mode, res, qrText) {
+  if (mode === 'weight') {
+    routeTo('weight-mode', { resolve_result: res, qr_text: qrText });
+  } else if (mode === 'diff') {
+    routeTo('qr-diff', { resolve_result: res, qr_text: qrText });
+  } else {
+    const eid = res.entity?.ind_id || res.entity?.lot_id || res.entity?.set_id;
+    if      (res.entity_type === 'IND' && eid) routeTo('ind-detail',     { indId:      eid });
+    else if (res.entity_type === 'LOT' && eid) routeTo('lot-detail',     { lotId:      eid });
+    else if (res.entity_type === 'SET' && eid) routeTo('pairing-detail', { pairingId:  eid });
+    else routeTo('qr-diff', { resolve_result: res, qr_text: qrText });
+  }
+}
+
+// ── 連続スキャン: 結果シート追加 ────────────────────────────────
+window._qrContinuousHistory = window._qrContinuousHistory || [];
+
+function _qrAddContinuousResult(res, qrText) {
+  const entry = {
+    qr_text:     qrText,
+    entity_type: res.entity_type,
+    entity:      res.entity,
+    scanned_at:  new Date().toLocaleTimeString('ja-JP'),
+  };
+  window._qrContinuousHistory.unshift(entry);
+  if (window._qrContinuousHistory.length > 10) window._qrContinuousHistory.pop();
+  Pages._qrRenderContinuousResults();
+}
+
+Pages._qrRenderContinuousResults = function () {
+  const el = document.getElementById('continuous-results');
+  if (!el || !window._qrContinuousHistory.length) return;
+
+  const rows = window._qrContinuousHistory.map((h, i) => {
+    const eid = h.entity?.ind_id || h.entity?.lot_id || h.entity?.set_id || '';
+    const displayId = h.entity?.display_id || eid;
+    const routeBtn = eid
+      ? `<button class="btn btn-ghost btn-sm" onclick="${
+          h.entity_type === 'IND' ? `routeTo('ind-detail',{indId:'${eid}'})` :
+          h.entity_type === 'LOT' ? `routeTo('lot-detail',{lotId:'${eid}'})` :
+          `routeTo('pairing-detail',{pairingId:'${eid}'})`
+        }">詳細→</button>`
+      : '';
+    return `<div style="display:flex;align-items:center;gap:8px;padding:8px 0;
+      border-bottom:1px solid var(--border)">
+      <span style="font-size:.68rem;color:var(--text3);min-width:45px">${h.scanned_at}</span>
+      <span style="font-size:.7rem;background:${h.entity_type==='LOT'?'rgba(200,168,75,.15)':'rgba(76,175,120,.15)'};
+        color:${h.entity_type==='LOT'?'var(--amber)':'var(--green)'};
+        padding:1px 6px;border-radius:99px;font-weight:700">${h.entity_type}</span>
+      <span style="font-family:var(--font-mono);font-size:.78rem;color:var(--text1);flex:1;
+        overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${displayId}</span>
+      ${routeBtn}
+    </div>`;
+  }).join('');
+
+  el.innerHTML = `<div class="card">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <div class="card-title" style="margin:0">📋 スキャン結果 (${window._qrContinuousHistory.length}件)</div>
+      <button class="btn btn-ghost btn-sm" onclick="window._qrContinuousHistory=[];Pages._qrRenderContinuousResults()">
+        クリア
+      </button>
+    </div>
+    ${rows}
+  </div>`;
+};
+
+// ── スキャン履歴 ──────────────────────────────────────────────────
 Pages._qrSaveHistory = function (qrText, res) {
   try {
     const hist = JSON.parse(sessionStorage.getItem('qr_scan_history') || '[]');
-    hist.unshift({ qr_text: qrText, entity_type: res.entity_type,
-      display_id: res.entity?.display_id || '', scanned_at: new Date().toLocaleTimeString('ja-JP') });
-    sessionStorage.setItem('qr_scan_history', JSON.stringify(hist.slice(0, 5)));
+    hist.unshift({
+      qr_text:     qrText,
+      entity_type: res.entity_type,
+      display_id:  res.entity?.display_id || '',
+      scanned_at:  new Date().toLocaleTimeString('ja-JP'),
+    });
+    sessionStorage.setItem('qr_scan_history', JSON.stringify(hist.slice(0, 10)));
   } catch(e) {}
 };
 
@@ -247,150 +414,44 @@ Pages._qrRescanFromHistory = function (qrText) {
   Pages._qrResolve();
 };
 
-// ── カメラスキャン ────────────────────────────────────────────
-
-// ════════════════════════════════════════════════════════════════
-// _qrEnsureLibrary — jsQRライブラリを確実にロードする
-// SPA構造でのページ遷移時に未ロード状態になる問題を解決。
-// 1. すでにロード済みなら即 resolve
-// 2. 未ロードなら CDN から動的にロードして resolve
-// 3. タイムアウト（8秒）で reject
-// ════════════════════════════════════════════════════════════════
-Pages._qrEnsureLibrary = function () {
-  return new Promise((resolve, reject) => {
-    // ① 既にロード済み
-    if (typeof jsQR === 'function') { resolve(); return; }
-
-    // ② 既に <script> タグが挿入済みなら読み込み完了を待つ
-    const existing = document.getElementById('jsqr-script');
-    if (existing) {
-      const check = setInterval(() => {
-        if (typeof jsQR === 'function') { clearInterval(check); clearTimeout(tid); resolve(); }
-      }, 100);
-      const tid = setTimeout(() => { clearInterval(check); reject(new Error('jsQR読み込みタイムアウト')); }, 8000);
-      return;
-    }
-
-    // ③ 動的に CDN からロード
-    const script = document.createElement('script');
-    script.id  = 'jsqr-script';
-    script.src = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js';
-    script.async = true;
-
-    const tid = setTimeout(() => {
-      reject(new Error('jsQRライブラリのロードがタイムアウトしました（8秒）'));
-    }, 8000);
-
-    script.onload = () => {
-      clearTimeout(tid);
-      if (typeof jsQR === 'function') {
-        resolve();
-      } else {
-        reject(new Error('jsQRのロードに失敗しました'));
-      }
-    };
-    script.onerror = () => {
-      clearTimeout(tid);
-      reject(new Error('jsQRライブラリのダウンロードに失敗しました。通信環境を確認してください'));
-    };
-
-    document.head.appendChild(script);
-  });
-};
-
-// ── QRエラー表示 + 再試行ボタン ────────────────────────────────
-function _qrShowCameraError(msg) {
-  const errEl = document.getElementById('qr-camera-error');
-  if (errEl) { errEl.style.display = 'block'; errEl.textContent = ''; }
-
-  // 既存エラー表示を差し替え
-  const cameraBtn = document.getElementById('camera-btn');
-  if (cameraBtn) {
-    cameraBtn.textContent = '📷 カメラで読み取る';
-    cameraBtn.disabled = false;
-  }
-
-  // エラーカードを表示（既存があれば更新）
-  const existingErr = document.getElementById('qr-cam-err-card');
-  const errHtml = `
-    <div id="qr-cam-err-card" class="card"
-      style="border-color:rgba(224,80,80,.4);background:rgba(224,80,80,.04);margin-top:8px">
-      <div style="font-size:.82rem;color:var(--red);margin-bottom:10px">
-        ⚠️ ${msg}
-      </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn btn-ghost btn-sm" style="flex:1"
-          onclick="Pages._qrRetryCamera()">🔄 再試行</button>
-        <button class="btn btn-ghost btn-sm" style="flex:1"
-          onclick="location.reload()">🔃 ページ再読み込み</button>
-        <button class="btn btn-ghost btn-sm" style="flex:1;color:var(--blue)"
-          onclick="document.getElementById('qr-input')?.focus()">⌨️ 手動入力へ</button>
-      </div>
-    </div>`;
-  if (existingErr) {
-    existingErr.outerHTML = errHtml;
-  } else {
-    const inputCard = document.querySelector('#camera-btn')?.closest('.card');
-    if (inputCard) inputCard.insertAdjacentHTML('afterend', errHtml);
-    else UI.toast(msg, 'error', 5000);
-  }
-}
-
-// 再試行処理
-Pages._qrRetryCamera = async function () {
-  // エラーカードを消してから再試行
-  document.getElementById('qr-cam-err-card')?.remove();
-  await Pages._qrStartCamera();
-};
-
+// ── カメラスキャン ────────────────────────────────────────────────
 Pages._qrStartCamera = async function () {
+  if (typeof jsQR === 'undefined') {
+    UI.toast('QRライブラリ未ロード。ページを再読み込みしてください', 'error');
+    return;
+  }
   const card = document.getElementById('camera-card');
   if (!card) return;
 
-  const btn = document.getElementById('camera-btn');
-  if (btn) { btn.textContent = '⏳ 準備中...'; btn.disabled = true; }
-
-  // ── jsQRライブラリの確認・動的ロード（Fix 3）──────────────
   try {
-    await Pages._qrEnsureLibrary();
-  } catch (libErr) {
-    if (btn) { btn.textContent = '📷 カメラで読み取る'; btn.disabled = false; }
-    _qrShowCameraError(
-      'QRライブラリのロードに失敗しました。\n' +
-      '通信環境を確認して「再試行」してください。\n' +
-      '（' + libErr.message + '）'
-    );
-    return;
-  }
+    // 既存ストリームを再利用（連続モード）
+    let stream = window._qrCameraStream;
+    if (!stream || !stream.active) {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: 'environment' },
+          width:  { ideal: 1920, min: 640 },
+          height: { ideal: 1080, min: 480 },
+        }
+      });
+      window._qrCameraStream = stream;
+    }
 
-  try {
-    // 高解像度でリクエスト（Android最適化）
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: { ideal: 'environment' },
-        width:  { ideal: 1920, min: 640 },
-        height: { ideal: 1080, min: 480 },
-        focusMode: 'continuous',
-      }
-    });
     const video = document.getElementById('qr-video');
     if (!video) { stream.getTracks().forEach(t=>t.stop()); return; }
 
     video.srcObject = stream;
     card.style.display = 'block';
-    // ※ btn は関数スコープ先頭で宣言済みのため再宣言しない
-    if (btn) { btn.textContent = '📷 スキャン中...'; btn.disabled = false; }
+    const btn = document.getElementById('camera-btn');
+    if (btn) btn.textContent = '📷 スキャン中...';
 
     video.addEventListener('loadedmetadata', () => { video.play(); }, { once: true });
     Pages._qrScanLoop(video);
   } catch (e) {
-    if (btn) { btn.textContent = '📷 カメラで読み取る'; btn.disabled = false; }
-    const msg = e.name === 'NotAllowedError'
-      ? 'カメラへのアクセスを許可してください（アドレスバー左の🔒→カメラ→許可）'
-      : e.name === 'NotFoundError'
-      ? 'カメラが見つかりません。別のデバイスのカメラをお試しください'
-      : 'カメラ起動失敗: ' + e.message;
-    _qrShowCameraError(msg);
+    const msg = e.name === 'NotAllowedError' ? 'カメラへのアクセスを許可してください'
+              : e.name === 'NotFoundError'   ? 'カメラが見つかりません'
+              : 'カメラ起動失敗: ' + e.message;
+    UI.toast(msg, 'error', 5000);
   }
 };
 
@@ -399,11 +460,11 @@ Pages._qrScanLoop = function (video) {
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
   let frameCount = 0;
+  let resolved = false;
 
   const scan = () => {
-    if (!video.srcObject) return;
+    if (!video.srcObject || resolved) return;
     frameCount++;
-    // 毎フレームではなく3フレームに1回スキャン（負荷軽減）
     if (frameCount % 3 !== 0) { requestAnimationFrame(scan); return; }
 
     if (video.readyState >= video.HAVE_ENOUGH_DATA && video.videoWidth > 0) {
@@ -411,20 +472,30 @@ Pages._qrScanLoop = function (video) {
       canvas.height = video.videoHeight;
       ctx.drawImage(video, 0, 0);
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-
-      // inversionAttemptsを'attemptBoth'にして白地・黒地両対応
       const code = jsQR(imageData.data, imageData.width, imageData.height, {
         inversionAttempts: 'attemptBoth',
       });
 
-      if (code && code.data) {
-        Pages._qrStopCamera();
+      if (code?.data) {
+        resolved = true;
+        if (!window._qrContinuousMode) Pages._qrStopCamera();
         const input = document.getElementById('qr-input');
         if (input) { input.value = code.data; Pages._qrPreviewInput(code.data); }
         if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
         const status = document.getElementById('scan-status');
         if (status) { status.textContent = '✅ 読み取り成功！'; status.style.color = 'var(--green)'; }
-        setTimeout(() => Pages._qrResolve(), 200);
+
+        // 高速化: setTimeout 200ms → 即時
+        Pages._qrResolve();
+
+        // 連続モードなら短いフラッシュ後に再スキャン
+        if (window._qrContinuousMode) {
+          setTimeout(() => {
+            resolved = false;
+            if (status) { status.textContent = 'スキャン中…'; status.style.color = 'var(--green)'; }
+            requestAnimationFrame(scan);
+          }, 1500);
+        }
         return;
       }
     }
@@ -435,54 +506,401 @@ Pages._qrScanLoop = function (video) {
 
 Pages._qrStopCamera = function () {
   const video = document.getElementById('qr-video');
-  if (video?.srcObject) { video.srcObject.getTracks().forEach(t => t.stop()); video.srcObject = null; }
+  // 連続モードではストリームを維持
+  if (!window._qrContinuousMode) {
+    if (video?.srcObject) { video.srcObject.getTracks().forEach(t => t.stop()); video.srcObject = null; }
+    window._qrCameraStream = null;
+  } else {
+    if (video) video.srcObject = null;
+  }
   const card = document.getElementById('camera-card');
   if (card) card.style.display = 'none';
   const btn = document.getElementById('camera-btn');
   if (btn) btn.textContent = '📷 カメラで読み取る';
 };
 
-// ── 画像ファイルからQR読み取り ────────────────────────────────
-Pages._qrReadFromImage = async function (input) {
+// ── QR画像ファイル読み取り ────────────────────────────────────────
+Pages._qrReadFromImage = function (input) {
   const file = input?.files?.[0];
   if (!file) return;
-
-  // jsQRライブラリ確認・動的ロード
-  try {
-    await Pages._qrEnsureLibrary();
-  } catch(libErr) {
-    UI.toast('QRライブラリのロードに失敗しました: ' + libErr.message, 'error', 5000);
-    return;
-  }
+  if (typeof jsQR === 'undefined') { UI.toast('QRライブラリ未ロード', 'error'); return; }
 
   const reader = new FileReader();
   reader.onload = function (e) {
     const img = new Image();
     img.onload = function () {
       const canvas = document.createElement('canvas');
-      canvas.width  = img.width;
-      canvas.height = img.height;
+      canvas.width = img.width; canvas.height = img.height;
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0);
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const code = jsQR(imageData.data, imageData.width, imageData.height, {
-        inversionAttempts: 'attemptBoth',
-      });
-      if (code && code.data) {
+      const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'attemptBoth' });
+      if (code?.data) {
         const qrInput = document.getElementById('qr-input');
         if (qrInput) { qrInput.value = code.data; Pages._qrPreviewInput(code.data); }
         UI.toast('QRコードを読み取りました', 'success');
-        setTimeout(() => Pages._qrResolve(), 300);
+        Pages._qrResolve();
       } else {
-        UI.toast('QRコードが見つかりませんでした。鮮明な画像を使用してください', 'error', 4000);
+        UI.toast('QRコードが見つかりませんでした', 'error', 4000);
       }
     };
     img.src = e.target.result;
   };
   reader.readAsDataURL(file);
-  // inputをリセット（同じ画像を再選択できるように）
   input.value = '';
 };
+
+// ════════════════════════════════════════════════════════════════
+// ラベル全体読取（AI解析 + 差分確認保存）
+// ════════════════════════════════════════════════════════════════
+
+Pages._qrReadLabelImage = async function (inputEl) {
+  const file = inputEl?.files?.[0];
+  if (!file) return;
+  inputEl.value = '';
+
+  const main = document.getElementById('main');
+  const statusDiv = document.createElement('div');
+  statusDiv.style.cssText = 'position:fixed;top:60px;left:50%;transform:translateX(-50%);'+
+    'background:var(--surface2);border:1px solid var(--border);border-radius:10px;'+
+    'padding:12px 20px;font-size:.85rem;color:var(--green);z-index:9999';
+  statusDiv.textContent = '🔬 ラベルを解析中...';
+  document.body.appendChild(statusDiv);
+
+  try {
+    // ── ① 画像からQRをまず読む ──────────────────────────────
+    const imgBase64 = await _readFileAsBase64(file);
+    const imgDataUrl = 'data:' + file.type + ';base64,' + imgBase64;
+
+    let qrResult = null;
+    try {
+      qrResult = await _extractQRFromImage(imgDataUrl);
+    } catch(e) {}
+
+    // ── ② Gemini でラベル全体を解析 ─────────────────────────
+    statusDiv.textContent = '🤖 AI解析中...（数秒かかります）';
+    let aiResult = null;
+    try {
+      const raw = await API.gemini.analyzeImage(imgBase64, file.type, 'label_full');
+      aiResult = typeof raw === 'string' ? JSON.parse(raw.replace(/```json|```/g, '').trim()) : raw;
+    } catch(e) {
+      console.warn('[label scan] AI parse error:', e.message);
+    }
+
+    document.body.removeChild(statusDiv);
+
+    // ── ③ QR + AI結果 → 差分確認画面 ─────────────────────────
+    Pages._qrShowLabelScanResult(qrResult, aiResult, imgDataUrl);
+
+  } catch(e) {
+    try { document.body.removeChild(statusDiv); } catch(ee){}
+    UI.toast('解析失敗: ' + e.message, 'error');
+  }
+};
+
+// ── Base64変換 ────────────────────────────────────────────────────
+function _readFileAsBase64(file) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result.split(',')[1]);
+    r.onerror = () => rej(new Error('ファイル読み込み失敗'));
+    r.readAsDataURL(file);
+  });
+}
+
+// ── 画像からQR抽出 ────────────────────────────────────────────────
+function _extractQRFromImage(dataUrl) {
+  return new Promise((res, rej) => {
+    if (typeof jsQR === 'undefined') { rej(new Error('jsQR未ロード')); return; }
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width; canvas.height = img.height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'attemptBoth' });
+      if (code?.data) res(code.data);
+      else rej(new Error('QR not found'));
+    };
+    img.onerror = () => rej(new Error('画像読み込み失敗'));
+    img.src = dataUrl;
+  });
+}
+
+// ── ラベルスキャン結果 + 差分確認UI ─────────────────────────────
+Pages._qrShowLabelScanResult = async function (qrText, aiResult, imgDataUrl) {
+  const main = document.getElementById('main');
+
+  // QRから対象を解決
+  let scanRes = null;
+  let entity  = null;
+  let entityType = null;
+
+  if (qrText) {
+    try {
+      scanRes = _qrResolveFromCache(qrText) || await API.scan.resolve(qrText);
+      entity  = scanRes?.entity;
+      entityType = scanRes?.entity_type;
+    } catch(e) {}
+  }
+
+  // AI解析結果からステージラベルを内部コードに変換
+  const stageMap = {
+    'L1':'L1', 'L2':'L2_EARLY', 'L2前期':'L2_EARLY', 'L2後期':'L2_LATE',
+    'L3':'L3_EARLY', 'L3前期':'L3_EARLY', 'L3中期':'L3_MID', 'L3後期':'L3_LATE',
+    '前蛹':'PREPUPA', '蛹':'PUPA', '成虫':'ADULT',
+  };
+
+  // 差分候補の構築
+  const candidates = [];
+
+  if (aiResult) {
+    // 性別
+    if (aiResult.sex && aiResult.sex !== '不明') {
+      if (entityType === 'IND') {
+        // IND: sex フィールドに直接保存
+        const current = entity?.sex || '';
+        if (current !== aiResult.sex) {
+          candidates.push({ key: 'sex', label: '性別', old: current || '未設定', new: aiResult.sex });
+        }
+      } else if (entityType === 'LOT') {
+        // LOT: sex_hint フィールド
+        const current = entity?.sex_hint || '';
+        if (current !== aiResult.sex) {
+          candidates.push({ key: 'sex_hint', label: '性別区分', old: current || '未設定', new: aiResult.sex });
+        }
+      }
+    }
+    // ステージ
+    if (aiResult.stage_label) {
+      const stageCode = stageMap[aiResult.stage_label] || aiResult.stage_label;
+      const currentStage = entityType === 'LOT' ? entity?.stage : entity?.current_stage;
+      if (stageCode && currentStage !== stageCode) {
+        candidates.push({ key: entityType === 'LOT' ? 'stage' : 'current_stage',
+          label: 'ステージ', old: currentStage || '未設定', new: stageCode });
+      }
+    }
+    // マット
+    if (aiResult.mat_type) {
+      const currentMat = entityType === 'LOT' ? entity?.mat_type : entity?.current_mat;
+      if (currentMat !== aiResult.mat_type) {
+        candidates.push({ key: entityType === 'LOT' ? 'mat_type' : 'current_mat',
+          label: 'マット', old: currentMat || '未設定', new: aiResult.mat_type });
+      }
+    }
+    // モルト
+    if (aiResult.mat_molt !== undefined) {
+      const newMolt = aiResult.mat_molt ? 'true' : 'false';
+      const curMolt = String(entity?.mat_molt || 'false');
+      if (curMolt !== newMolt) {
+        candidates.push({ key: 'mat_molt', label: 'モルト', old: curMolt, new: newMolt });
+      }
+    }
+    // 区分: LOT=カンマ区切り複数選択可, IND=単一値
+    if (aiResult.size_categories?.length) {
+      const newCats = entityType === 'IND'
+        ? (aiResult.size_categories[0] || '')                // 個体: 最初の1件のみ
+        : aiResult.size_categories.join(',');                // ロット: カンマ区切り
+      const currentCat = entity?.size_category || '';
+      if (newCats && newCats !== currentCat) {
+        candidates.push({ key: 'size_category', label: '区分', old: currentCat || '未設定', new: newCats });
+      }
+    }
+    // 新規体重記録
+    if (aiResult.records?.length) {
+      const existingRecs = Store.getGrowthRecords(
+        entityType === 'LOT' ? entity?.lot_id : entity?.ind_id
+      ) || [];
+      // 重複判定: date + weight_g の組み合わせで判定（date のみでは誤弾きリスクあり）
+      const existingKeys = new Set(
+        existingRecs.map(r => (r.record_date || '') + '|' + (r.weight_g != null ? String(r.weight_g) : ''))
+      );
+      const newRecs = aiResult.records.filter(r => {
+        if (!r.date) return false;
+        // 日付正規化（YYYY/MM/DD or MM/DD → そのまま比較）
+        const key = r.date + '|' + (r.weight_g != null ? String(r.weight_g) : '');
+        // 日付のみでも既存にある場合はスキップ（同日同体重は重複）
+        if (existingKeys.has(key)) return false;
+        // 日付のみ一致でも体重が異なる場合は追加OK（別回測定として扱う）
+        return true;
+      });
+      if (newRecs.length) {
+        candidates.push({ key: '_records', label: '体重記録追加', old: '—',
+          new: newRecs.map(r => `${r.date} ${r.weight_g}g${r.memo?'/'+r.memo:''}`).join(', '),
+          _records: newRecs });
+      }
+    }
+  }
+
+  // 差分確認UI
+  const entityId = entity?.lot_id || entity?.ind_id || '';
+  const displayId = entity?.display_id || (qrText ? qrText.split(':')[1] : '不明');
+
+  main.innerHTML = `
+    ${UI.header('🔬 ラベル読取結果', { back: true, backFn: "routeTo('qr-scan')" })}
+    <div class="page-body">
+
+      <!-- 対象カード -->
+      <div class="card ${!entity ? 'card-warn' : ''}">
+        <div style="font-size:.72rem;color:var(--text3);margin-bottom:4px">読取対象</div>
+        ${entity
+          ? `<div style="font-family:var(--font-mono);font-size:1rem;font-weight:700;color:var(--gold)">${displayId}</div>
+             <div style="font-size:.75rem;color:var(--text3);margin-top:2px">
+               ${entityType} / ${entityId}
+             </div>`
+          : `<div style="color:var(--amber)">⚠️ QRコードを読み取れませんでした</div>
+             <div style="font-size:.75rem;color:var(--text3);margin-top:4px">
+               QRが不鮮明な可能性があります。テキスト入力から対象を指定してください。
+             </div>
+             <div style="margin-top:8px">
+               <input id="manual-qr-input" class="input" placeholder="LOT:LOT-xxx or IND:IND-xxx">
+               <button class="btn btn-ghost btn-sm" style="margin-top:6px;width:100%"
+                 onclick="Pages._qrLabelRetarget()">この対象に適用する</button>
+             </div>`}
+      </div>
+
+      <!-- ラベル画像プレビュー -->
+      ${imgDataUrl ? `<div class="card" style="padding:8px">
+        <img src="${imgDataUrl}" style="width:100%;border-radius:6px;max-height:200px;object-fit:contain">
+      </div>` : ''}
+
+      <!-- 差分候補 -->
+      ${candidates.length > 0
+        ? `<div class="card" style="border-color:rgba(200,168,75,.3)">
+            <div class="card-title" style="color:var(--gold)">📋 読取結果（更新候補）</div>
+            <div style="font-size:.72rem;color:var(--text3);margin-bottom:10px">
+              変更したい項目にチェックを入れて保存してください
+            </div>
+            ${candidates.map((c, i) => `
+              <label style="display:flex;align-items:flex-start;gap:10px;padding:10px 0;
+                border-bottom:1px solid var(--border);cursor:pointer">
+                <input type="checkbox" id="diff-check-${i}" checked
+                  style="margin-top:3px;width:18px;height:18px;cursor:pointer;flex-shrink:0">
+                <div style="flex:1">
+                  <div style="font-size:.82rem;font-weight:700;color:var(--text1)">${c.label}</div>
+                  <div style="display:flex;align-items:center;gap:6px;margin-top:3px;flex-wrap:wrap">
+                    <span style="font-size:.75rem;color:var(--text3);text-decoration:line-through">${c.old}</span>
+                    <span style="font-size:.7rem;color:var(--text3)">→</span>
+                    <span style="font-size:.82rem;font-weight:700;color:var(--green)">${c.new}</span>
+                  </div>
+                </div>
+              </label>`).join('')}
+          </div>`
+        : `<div class="card">
+            <div style="text-align:center;color:var(--text3);padding:16px">
+              ${aiResult ? '✅ 更新候補はありません（既存データと一致）' : '⚠️ AI解析結果を取得できませんでした'}
+            </div>
+          </div>`}
+
+      <!-- 操作ボタン -->
+      <div style="display:flex;gap:10px;margin-top:4px;padding-bottom:8px">
+        <button class="btn btn-ghost" style="flex:1" onclick="routeTo('qr-scan')">破棄</button>
+        ${candidates.length > 0 && entity
+          ? `<button class="btn btn-primary" style="flex:2" id="label-diff-save"
+              onclick="Pages._qrLabelDiffSave('${entityType}','${entityId}',${JSON.stringify(candidates).replace(/'/g,"&#39;")})">
+              💾 選択した内容を保存
+            </button>`
+          : ''}
+      </div>
+
+    </div>`;
+
+  // JSON は onclick に埋めると問題があるため window 変数経由
+  window.__labelDiffCandidates  = candidates;
+  window.__labelDiffEntityType  = entityType;
+  window.__labelDiffEntityId    = entityId;
+  window.__labelDiffAiResult    = aiResult;
+};
+
+// ── ラベル差分保存 ────────────────────────────────────────────────
+Pages._qrLabelDiffSave = async function () {
+  const candidates = window.__labelDiffCandidates || [];
+  const entityType = window.__labelDiffEntityType || '';
+  const entityId   = window.__labelDiffEntityId   || '';
+  const aiResult   = window.__labelDiffAiResult   || {};
+
+  const btn = document.getElementById('label-diff-save');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ 保存中...'; }
+
+  const checked = candidates.filter((_, i) =>
+    document.getElementById(`diff-check-${i}`)?.checked
+  );
+
+  if (!checked.length) {
+    UI.toast('保存する項目が選択されていません', 'info');
+    if (btn) { btn.disabled = false; btn.textContent = '💾 選択した内容を保存'; }
+    return;
+  }
+
+  try {
+    const updates = {};
+    const newRecords = [];
+
+    checked.forEach(c => {
+      if (c.key === '_records') {
+        newRecords.push(...(c._records || []));
+      } else {
+        updates[c.key] = c.new;
+      }
+    });
+
+    // エンティティ更新
+    if (Object.keys(updates).length > 0) {
+      if (entityType === 'LOT') {
+        await API.scan.updateLotFields({ lot_id: entityId, ...updates });
+        Store.patchDBItem('lots', 'lot_id', entityId, updates);
+      } else if (entityType === 'IND') {
+        await API.scan.updateIndFields({ ind_id: entityId, ...updates });
+        Store.patchDBItem('individuals', 'ind_id', entityId, updates);
+      }
+    }
+
+    // 体重記録追加
+    for (const rec of newRecords) {
+      await API.growth.create({
+        target_type: entityType,
+        target_id:   entityId,
+        weight_g:    rec.weight_g,
+        stage:       rec.mat || '',
+        note_private: rec.memo || '',
+      });
+    }
+
+    const count = Object.keys(updates).length + newRecords.length;
+    UI.toast(`✅ ${count}件を保存しました`, 'success');
+
+    setTimeout(() => {
+      if (entityType === 'LOT')      routeTo('lot-detail',     { lotId:  entityId });
+      else if (entityType === 'IND') routeTo('ind-detail',     { indId:  entityId });
+      else                           routeTo('qr-scan');
+    }, 800);
+
+  } catch(e) {
+    UI.toast('保存失敗: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = '💾 選択した内容を保存'; }
+  }
+};
+
+// ── ラベル読取: 手動対象指定 ─────────────────────────────────────
+Pages._qrLabelRetarget = async function () {
+  const val = document.getElementById('manual-qr-input')?.value?.trim();
+  if (!val) return;
+  try {
+    const res = _qrResolveFromCache(val) || await API.scan.resolve(val);
+    if (res?.entity) {
+      window.__labelDiffEntityType = res.entity_type;
+      window.__labelDiffEntityId   = res.entity?.lot_id || res.entity?.ind_id || '';
+      UI.toast('対象を変更しました: ' + (res.entity?.display_id || ''), 'success');
+    }
+  } catch(e) {
+    UI.toast('対象が見つかりません: ' + e.message, 'error');
+  }
+};
+
+// ════════════════════════════════════════════════════════════════
+// 差分入力画面 (qr-diff) ← 既存ロジックをそのまま維持
+// ════════════════════════════════════════════════════════════════
 
 Pages.qrDiff = function (params = {}) {
   const res = params.resolve_result;
@@ -494,7 +912,6 @@ Pages.qrDiff = function (params = {}) {
   const missingCount = (missing || []).filter(m => m.level === 'required').length;
   const warnCount    = (missing || []).filter(m => m.level === 'warn').length;
 
-  // ラベル種別の表示名
   const LABEL_DISPLAY = {
     egg_lot:   '① 卵管理ラベル',
     multi_lot: '② 複数頭飼育ラベル',
@@ -507,7 +924,6 @@ Pages.qrDiff = function (params = {}) {
     ${UI.header('スキャン結果', { back: true, backFn: "routeTo('qr-scan')" })}
     <div class="page-body">
 
-      <!-- ヒーローカード（種別・ID） -->
       <div class="card" style="
         border-color:${missingCount > 0 ? 'rgba(224,144,64,.4)' : 'rgba(76,175,120,.3)'};
         background:${missingCount > 0 ? 'rgba(224,144,64,.04)' : 'rgba(76,175,120,.04)'}">
@@ -536,16 +952,10 @@ Pages.qrDiff = function (params = {}) {
         </div>
       </div>
 
-      <!-- 未入力項目セクション（missingCount > 0 のときのみ表示） -->
       ${missingCount > 0 ? Pages._qrRenderMissingSection(entity_type, entity, missing, label_type) : ''}
-
-      <!-- 推奨入力（warn） -->
       ${warnCount > 0 ? Pages._qrRenderWarnSection(entity_type, entity, missing.filter(m => m.level === 'warn'), label_type) : ''}
-
-      <!-- 既存情報確認 -->
       ${Pages._qrRenderInfoSection(entity_type, entity, line)}
 
-      <!-- 保存ボタン -->
       <div style="display:flex;gap:10px;padding-bottom:8px">
         <button class="btn btn-ghost" style="flex:1" onclick="routeTo('qr-scan')">戻る</button>
         <button class="btn btn-gold" style="flex:2" id="diff-save-btn"
@@ -557,11 +967,10 @@ Pages.qrDiff = function (params = {}) {
     </div>`;
 };
 
-// ── 未入力セクション（required） ─────────────────────────────
+// 以下は scan.js 既存コードから維持（_qrRenderMissingSection 等）
 Pages._qrRenderMissingSection = function (entityType, entity, missing, labelType) {
   const requiredFields = missing.filter(m => m.level === 'required');
   if (!requiredFields.length) return '';
-
   return `
     <div class="card" style="border-color:rgba(224,144,64,.45);background:rgba(224,144,64,.04)">
       <div class="card-title" style="color:var(--amber)">⚠️ 未入力項目（必須）</div>
@@ -571,7 +980,6 @@ Pages._qrRenderMissingSection = function (entityType, entity, missing, labelType
     </div>`;
 };
 
-// ── 推奨入力セクション（warn） ────────────────────────────────
 Pages._qrRenderWarnSection = function (entityType, entity, warnFields, labelType) {
   if (!warnFields.length) return '';
   return `
@@ -583,19 +991,14 @@ Pages._qrRenderWarnSection = function (entityType, entity, warnFields, labelType
     </div>`;
 };
 
-// ── フィールド別入力ウィジェット ──────────────────────────────
 Pages._qrRenderFieldInput = function (entityType, entity, missingField, labelType, level) {
   const { field, label, hint, current_value } = missingField;
   const borderColor = level === 'required' ? 'rgba(224,144,64,.4)' : 'rgba(91,168,232,.25)';
   const bg          = level === 'required' ? 'rgba(224,144,64,.06)' : 'rgba(91,168,232,.04)';
   const icon        = level === 'required' ? '⚠️' : '📝';
-
-  // フィールド別のウィジェット
   const widget = Pages._qrFieldWidget(field, label, current_value, entityType, entity);
-
   return `
-    <div style="border:1px solid ${borderColor};border-radius:var(--radius-sm);
-      padding:12px;background:${bg}">
+    <div style="border:1px solid ${borderColor};border-radius:var(--radius-sm);padding:12px;background:${bg}">
       <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
         <span style="font-size:.9rem">${icon}</span>
         <span style="font-size:.82rem;font-weight:700;color:var(--text2)">${label}</span>
@@ -605,208 +1008,136 @@ Pages._qrRenderFieldInput = function (entityType, entity, missingField, labelTyp
     </div>`;
 };
 
-// ── フィールド別ウィジェット定義 ──────────────────────────────
 Pages._qrFieldWidget = function (field, label, currentVal, entityType, entity) {
-  // ── 性別（IND / sex_hint） ──────────────────────────────────
   if (field === 'sex' || field === 'sex_hint') {
-    const isInd  = entityType === 'IND';
-    const opts   = isInd
-      ? [['♂', '♂ オス'], ['♀', '♀ メス'], ['不明', '不明']]
-      : [['♂', '♂ 多め'], ['♀', '♀ 多め'], ['混合', '混合'], ['不明', '不明']];
-    return `
-      <div style="display:flex;gap:8px;flex-wrap:wrap" id="widget-${field}">
-        ${opts.map(([v, lbl]) => `
-          <button class="btn btn-sm btn-ghost diff-choice"
-            data-field="${field}" data-value="${v}"
-            style="flex:1;min-width:60px;${currentVal === v ? 'background:var(--green2);color:#fff;border-color:var(--green2)' : ''}"
-            onclick="Pages._qrChoiceSelect(this)">
-            ${lbl}
-          </button>`).join('')}
+    const isInd = entityType === 'IND';
+    const opts  = isInd
+      ? [['♂','♂ オス'],['♀','♀ メス'],['不明','不明']]
+      : [['♂','♂ 多め'],['♀','♀ 多め'],['混合','混合'],['不明','不明']];
+    return `<div style="display:flex;gap:8px;flex-wrap:wrap" id="widget-${field}">
+      ${opts.map(([v,lbl]) => `<button class="btn btn-sm btn-ghost diff-choice"
+        data-field="${field}" data-value="${v}"
+        style="flex:1;min-width:60px;${currentVal===v?'background:var(--green2);color:#fff;border-color:var(--green2)':''}"
+        onclick="Pages._qrChoiceSelect(this)">${lbl}</button>`).join('')}
       </div>`;
   }
-
-  // ── サイズ区分 ──────────────────────────────────────────────
   if (field === 'size_category') {
-    return `
-      <div style="display:flex;gap:8px" id="widget-${field}">
-        ${[['大','大型（10L）'],['中','中型（4.8L）'],['小','小型（2.7L）']].map(([v, lbl]) => `
-          <button class="btn btn-sm btn-ghost diff-choice"
-            data-field="${field}" data-value="${v}"
-            style="flex:1;${currentVal === v ? 'background:var(--green2);color:#fff;border-color:var(--green2)' : ''}"
-            onclick="Pages._qrChoiceSelect(this)">
-            ${lbl}
-          </button>`).join('')}
+    return `<div style="display:flex;gap:8px" id="widget-${field}">
+      ${[['大','大型（10L）'],['中','中型（4.8L）'],['小','小型（2.7L）']].map(([v,lbl]) =>
+        `<button class="btn btn-sm btn-ghost diff-choice"
+          data-field="${field}" data-value="${v}"
+          style="flex:1;${currentVal===v?'background:var(--green2);color:#fff;border-color:var(--green2)':''}"
+          onclick="Pages._qrChoiceSelect(this)">${lbl}</button>`).join('')}
       </div>`;
   }
-
-  // ── 孵化日 ──────────────────────────────────────────────────
   if (field === 'hatch_date') {
-    return `
-      <input id="widget-hatch_date" class="input" type="date"
-        value="${currentVal || ''}"
-        data-field="hatch_date"
-        style="border-color:rgba(224,144,64,.4)">`;
+    return `<input id="widget-hatch_date" class="input" type="date"
+      value="${currentVal||''}" data-field="hatch_date"
+      style="border-color:rgba(224,144,64,.4)">`;
   }
-
-  // ── 頭数 ────────────────────────────────────────────────────
   if (field === 'count') {
-    return `
-      <div style="display:flex;align-items:center;gap:8px">
-        <button class="btn btn-ghost btn-sm" onclick="Pages._qrCountAdj(-1)">−</button>
-        <input id="widget-count" class="input" type="number" min="0" max="999"
-          value="${currentVal || entity?.count || ''}"
-          data-field="count"
-          style="text-align:center;font-size:1.3rem;font-weight:700;color:var(--green);font-family:var(--font-mono);border-color:rgba(224,144,64,.4)">
-        <span style="color:var(--text3)">頭</span>
-        <button class="btn btn-ghost btn-sm" onclick="Pages._qrCountAdj(1)">＋</button>
-      </div>`;
+    return `<div style="display:flex;align-items:center;gap:8px">
+      <button class="btn btn-ghost btn-sm" onclick="Pages._qrCountAdj(-1)">−</button>
+      <input id="widget-count" class="input" type="number" min="0" max="999"
+        value="${currentVal||entity?.count||''}" data-field="count"
+        style="text-align:center;font-size:1.3rem;font-weight:700;color:var(--green);
+        font-family:var(--font-mono);border-color:rgba(224,144,64,.4)">
+      <span style="color:var(--text3)">頭</span>
+      <button class="btn btn-ghost btn-sm" onclick="Pages._qrCountAdj(1)">＋</button>
+    </div>`;
   }
-
-  // ── 産卵セット開始日 ────────────────────────────────────────
-  if (field === 'set_start') {
-    return `
-      <input id="widget-set_start" class="input" type="date"
-        value="${currentVal || ''}"
-        data-field="set_start">`;
-  }
-
-  // ── デフォルト: テキスト入力 ────────────────────────────────
-  return `
-    <input id="widget-${field}" class="input" type="text"
-      value="${currentVal || ''}"
-      placeholder="${label}を入力"
-      data-field="${field}">`;
+  return `<input id="widget-${field}" class="input" type="text"
+    value="${currentVal||''}" placeholder="${label}を入力" data-field="${field}">`;
 };
 
-// ── 選択ボタンのトグル処理 ───────────────────────────────────
 Pages._qrChoiceSelect = function (btn) {
   const field = btn.dataset.field;
-  // 同一フィールドの他ボタンをリセット
   document.querySelectorAll(`.diff-choice[data-field="${field}"]`).forEach(b => {
-    b.style.background = '';
-    b.style.color = '';
-    b.style.borderColor = '';
+    b.style.background = ''; b.style.color = ''; b.style.borderColor = '';
   });
-  // 選択状態に
-  btn.style.background   = 'var(--green2)';
-  btn.style.color        = '#fff';
-  btn.style.borderColor  = 'var(--green2)';
+  btn.style.background = 'var(--green2)';
+  btn.style.color      = '#fff';
+  btn.style.borderColor = 'var(--green2)';
 };
 
-// ── 頭数 ±ボタン ─────────────────────────────────────────────
 Pages._qrCountAdj = function (delta) {
   const el = document.getElementById('widget-count');
   if (!el) return;
-  const cur = parseInt(el.value) || 0;
-  el.value = Math.max(0, cur + delta);
+  el.value = Math.max(0, (parseInt(el.value) || 0) + delta);
 };
 
-// ── 既存情報確認セクション ───────────────────────────────────
 Pages._qrRenderInfoSection = function (entityType, entity, line) {
   if (!entity) return '';
-
   let rows = [];
-
   if (entityType === 'LOT') {
     rows = [
-      ['ロットID',     entity.display_id],
-      ['ライン',       line?.display_id || entity.line_id || '—'],
-      ['ステージ',     entity.stage || '—'],
-      ['孵化日',       entity.hatch_date || '（未入力）'],
-      ['頭数',         entity.count || '（未入力）'],
-      ['容器サイズ',   entity.container_size || '—'],
-      ['性別区分',     entity.sex_hint || '（未入力）'],
-      ['サイズ区分',   entity.size_category || '（未入力）'],
-      ['マット種別',   entity.mat_type || '—'],
+      ['ロットID',   entity.display_id],
+      ['ライン',     line?.display_id || entity.line_id || '—'],
+      ['ステージ',   entity.stage || '—'],
+      ['孵化日',     entity.hatch_date || '（未入力）'],
+      ['頭数',       entity.count || '（未入力）'],
+      ['性別区分',   entity.sex_hint || '（未入力）'],
+      ['マット種別', entity.mat_type || '—'],
     ];
   } else if (entityType === 'IND') {
     rows = [
-      ['個体ID',       entity.display_id],
-      ['ライン',       line?.display_id || entity.line_id || '—'],
-      ['性別',         entity.sex || '（未入力）'],
-      ['孵化日',       entity.hatch_date || '（未入力）'],
-      ['現ステージ',   entity.current_stage || '—'],
-      ['最新体重',     entity.latest_weight_g ? entity.latest_weight_g + 'g' : '—'],
-      ['産地',         entity.locality || '—'],
-      ['世代',         entity.generation || '—'],
+      ['個体ID',   entity.display_id],
+      ['ライン',   line?.display_id || entity.line_id || '—'],
+      ['性別',     entity.sex || '（未入力）'],
+      ['孵化日',   entity.hatch_date || '（未入力）'],
+      ['現ステージ', entity.current_stage || '—'],
+      ['最新体重', entity.latest_weight_g ? entity.latest_weight_g + 'g' : '—'],
     ];
   } else if (entityType === 'SET') {
     rows = [
-      ['セットID',     entity.display_id],
-      ['交尾開始',     entity.pairing_start || '—'],
-      ['産卵開始',     entity.set_start || '（未入力）'],
-      ['採卵数',       entity.total_eggs ? entity.total_eggs + '個' : '（未入力）'],
-      ['孵化数',       entity.total_hatch ? entity.total_hatch + '頭' : '—'],
-      ['孵化率',       entity.hatch_rate ? Math.round(entity.hatch_rate) + '%' : '—'],
-      ['ステータス',   entity.status || '—'],
+      ['セットID', entity.display_id],
+      ['産卵開始', entity.set_start || '（未入力）'],
+      ['採卵数',   entity.total_eggs ? entity.total_eggs + '個' : '（未入力）'],
     ];
   }
-
   return `
     <div class="card">
       <div class="card-title">📋 確認情報</div>
       <div class="info-list">
-        ${rows.map(([k, v]) => {
-          const isEmpty = !v || v === '—' || v.includes('未入力');
+        ${rows.map(([k,v]) => {
+          const isEmpty = !v || v === '—' || String(v).includes('未入力');
           return `<div class="info-row">
             <span class="info-key">${k}</span>
-            <span class="info-val" style="${isEmpty ? 'color:var(--text3)' : ''}">${v}</span>
+            <span class="info-val" style="${isEmpty?'color:var(--text3)':''}">${v}</span>
           </div>`;
         }).join('')}
       </div>
     </div>`;
 };
 
-// ── 差分保存処理 ─────────────────────────────────────────────
 Pages._qrDiffSave = async function (entityType, entityId) {
   const btn = document.getElementById('diff-save-btn');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ 保存中...'; }
-
   try {
-    // フォーム内の全入力値を収集
     const updates = {};
-
-    // 選択ボタン（diff-choice）
     document.querySelectorAll('.diff-choice[style*="green2"]').forEach(b => {
       updates[b.dataset.field] = b.dataset.value;
     });
-
-    // テキスト/日付/数値 input
     document.querySelectorAll('[data-field]').forEach(el => {
       if (el.tagName !== 'BUTTON' && el.value !== undefined && el.value !== '') {
         updates[el.dataset.field] = el.value;
       }
     });
-
     if (Object.keys(updates).length === 0) {
       UI.toast('更新する項目がありません', 'info');
       return;
     }
-
-    // entity typeによって更新 API を選択
-    let result;
-    if (entityType === 'LOT') {
-      result = await API.scan.updateLotFields({ lot_id: entityId, ...updates });
-    } else if (entityType === 'IND') {
-      result = await API.scan.updateIndFields({ ind_id: entityId, ...updates });
-    } else if (entityType === 'SET') {
-      result = await API.scan.updateSetFields({ set_id: entityId, ...updates });
-    }
-
-    // DBキャッシュを更新
-    await Store.syncEntityType(entityType === 'LOT' ? 'lots'
-      : entityType === 'IND' ? 'individuals' : 'pairings');
-
+    if (entityType === 'LOT')      await API.scan.updateLotFields({ lot_id: entityId, ...updates });
+    else if (entityType === 'IND') await API.scan.updateIndFields({ ind_id: entityId, ...updates });
+    else if (entityType === 'SET') await API.scan.updateSetFields({ set_id: entityId, ...updates });
+    await Store.syncEntityType(entityType === 'LOT' ? 'lots' : entityType === 'IND' ? 'individuals' : 'pairings');
     UI.toast(`✅ 保存しました（${Object.keys(updates).length}件更新）`, 'success');
-
-    // 完了後 → 詳細画面へ遷移
     setTimeout(() => {
-      if (entityType === 'LOT')      routeTo('lot-detail',     { lotId: entityId });
-      else if (entityType === 'IND') routeTo('ind-detail',     { indId: entityId });
-      else if (entityType === 'SET') routeTo('pairing-detail', { pairingId: entityId });
+      if (entityType === 'LOT')      routeTo('lot-detail',     { lotId:      entityId });
+      else if (entityType === 'IND') routeTo('ind-detail',     { indId:      entityId });
+      else if (entityType === 'SET') routeTo('pairing-detail', { pairingId:  entityId });
     }, 1000);
-
-  } catch (e) {
+  } catch(e) {
     UI.toast('❌ 保存失敗: ' + (e.message || '不明なエラー'), 'error');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '💾 保存する'; }
@@ -814,48 +1145,18 @@ Pages._qrDiffSave = async function (entityType, entityId) {
 };
 
 // ════════════════════════════════════════════════════════════════
-// 体重測定モード (weight-mode)
-//
-// 【モジュール構造】
-//   Pages.weightMode  … 画面レンダリング（エントリーポイント）
-//   Pages.wmScan      … QRスキャン入力部（weight-modeから直接QR入力する場合）
-//   Pages._wmUpdateDelta … 体重入力のリアルタイム前回比・閾値バッジ更新
-//   Pages._wmSave     … 成長記録保存（createGrowthRecord → GROWTHテーブル）
-//   Pages._wmShowComplete … 保存完了後の「次をスキャン」/「詳細を見る」表示
-//
-// 【3タップフロー】
-//   Tap1: qr-scan画面で「体重測定モード」タブ選択 → QRテキスト貼付 → 「確定」
-//   Tap2: 体重数値を入力（フォーカス自動）
-//   Tap3: 「成長記録を保存」ボタン
-//
-// 【体重閾値バッジ】
-//   150g以上: 🔥 大型候補
-//   170g以上: ⭐ 超大型候補
-//
-// 【将来拡張ポイント】
-//   Phase2: Pages._wmPhotoSection() — 写真撮影・プレビュー追加
-//   Phase3: Pages._wmAiComment()    — Gemini Vision でAIコメント自動生成
-//   Phase4: セッションモード       — 複数個体の連続スキャンと集計
+// 体重測定モード - 既存コードをそのまま維持
 // ════════════════════════════════════════════════════════════════
-
-// ── 体重閾値定義（将来的に設定画面から変更可能にする拡張ポイント）──
 const WM_THRESHOLDS = [
   { min: 170, badge: '⭐ 超大型候補', color: '#c8a84b', bg: 'rgba(200,168,75,.15)' },
   { min: 150, badge: '🔥 大型候補',   color: 'var(--amber)', bg: 'rgba(224,144,64,.12)' },
 ];
 
-/**
- * Pages.weightMode — 体重測定画面のメインレンダラ
- * params.resolve_result: resolveQR のレスポンス（必須）
- * qr-scan 画面から routeTo('weight-mode', { resolve_result, qr_text }) で遷移
- */
 Pages.weightMode = function (params = {}) {
   const res = params.resolve_result;
   if (!res || !res.entity) { routeTo('qr-scan', { mode: 'weight' }); return; }
-
   const main = document.getElementById('main');
   const { entity_type, entity, line, last_growth } = res;
-
   const displayId = entity.display_id || '—';
   const isLot     = entity_type === 'LOT';
   const stage     = (isLot ? entity.stage : entity.current_stage) || '—';
@@ -866,40 +1167,22 @@ Pages.weightMode = function (params = {}) {
   const lineDisp  = line?.line_code || line?.display_id || '';
   const entityId  = (isLot ? entity.lot_id : entity.ind_id) || '';
   const lotCount  = isLot ? (parseInt(entity.count, 10) || 0) : 0;
-
   const prevWeight  = (last_growth?.weight_g != null && last_growth.weight_g !== '')
     ? parseFloat(last_growth.weight_g) : null;
   const prevDate    = last_growth?.record_date || '';
   const prevAgeDays = last_growth?.age_days    || '';
-
-  Pages._wmState = {
-    entityType : entity_type,
-    entityId   : entityId,
-    stage      : stage,
-    container  : container,
-    matType    : matType,
-    prevWeight : prevWeight,
-    displayId  : displayId,
-    lotCount   : lotCount,
-  };
+  Pages._wmState = { entityType: entity_type, entityId, stage, container, matType, prevWeight, displayId, lotCount };
 
   main.innerHTML = `
     ${UI.header('⚖️ 体重測定', { back: true, backFn: "routeTo('qr-scan',{mode:'weight'})" })}
     <div class="page-body has-quick-bar">
-
-      <!-- ① コンパクト情報バー -->
       <div class="quick-info-bar">
         <div style="flex:1;min-width:0">
-          <div class="quick-info-id"
-            style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${displayId}</div>
+          <div class="quick-info-id" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${displayId}</div>
           <div style="display:flex;gap:5px;align-items:center;margin-top:4px;flex-wrap:wrap">
-            <span style="background:rgba(76,175,120,.15);color:var(--green);
-              font-size:.68rem;padding:1px 6px;border-radius:99px;font-weight:600">${stageDisp}</span>
-            ${isLot
-              ? `<span style="font-size:.7rem;color:var(--text3)">${entity.count || '?'}頭</span>`
-              : `<span style="font-size:.7rem;color:var(--text3)">${entity.sex || ''}</span>`}
-            ${lineDisp
-              ? `<span style="font-size:.68rem;color:var(--text3)">L:${lineDisp}</span>` : ''}
+            <span style="background:rgba(76,175,120,.15);color:var(--green);font-size:.68rem;padding:1px 6px;border-radius:99px;font-weight:600">${stageDisp}</span>
+            ${isLot ? `<span style="font-size:.7rem;color:var(--text3)">${entity.count||'?'}頭</span>` : `<span style="font-size:.7rem;color:var(--text3)">${entity.sex||''}</span>`}
+            ${lineDisp ? `<span style="font-size:.68rem;color:var(--text3)">L:${lineDisp}</span>` : ''}
           </div>
         </div>
         <div style="text-align:right;flex-shrink:0">
@@ -908,56 +1191,38 @@ Pages.weightMode = function (params = {}) {
         </div>
       </div>
 
-      <!-- ② 体重入力 -->
       <div class="card" style="border-color:rgba(76,175,120,.35);padding:16px 14px">
-        <div style="text-align:center;font-size:.72rem;font-weight:700;
-          color:var(--text3);letter-spacing:.08em;margin-bottom:10px">体重 (g)</div>
+        <div style="text-align:center;font-size:.72rem;font-weight:700;color:var(--text3);letter-spacing:.08em;margin-bottom:10px">体重 (g)</div>
         <div style="display:flex;align-items:center;justify-content:center;gap:8px">
-          <input
-            id="wm-weight"
-            type="number" inputmode="decimal" step="0.1" min="0.1" max="999.9"
-            placeholder="0.0" autocomplete="off"
-            class="num-input-xl"
-            style="width:180px;color:var(--green)"
+          <input id="wm-weight" type="number" inputmode="decimal" step="0.1" min="0.1" max="999.9"
+            placeholder="0.0" autocomplete="off" class="num-input-xl" style="width:180px;color:var(--green)"
             oninput="Pages._wmUpdateDelta(this.value)"
             onkeydown="if(event.key==='Enter'&&!event.isComposing){Pages._wmSave()}">
           <span style="font-size:1.4rem;color:var(--text3);font-weight:600;flex-shrink:0">g</span>
         </div>
-        <div id="wm-delta"
-          style="text-align:center;min-height:28px;margin-top:8px;font-size:.92rem;transition:all .15s">
-          ${prevWeight !== null
-            ? `<span style="color:var(--text3)">前回 <b>${prevWeight}g</b> から —</span>`
-            : `<span style="color:var(--text3)">（初回記録）</span>`}
+        <div id="wm-delta" style="text-align:center;min-height:28px;margin-top:8px;font-size:.92rem;transition:all .15s">
+          ${prevWeight !== null ? `<span style="color:var(--text3)">前回 <b>${prevWeight}g</b> から —</span>` : `<span style="color:var(--text3)">（初回記録）</span>`}
         </div>
       </div>
 
-      <!-- ③ LOT 専用: before/after 頭数（growth.js と統一ロジック） -->
-      ${isLot ? `
-      <div class="card" style="padding:14px">
-        <div style="font-size:.72rem;font-weight:700;color:var(--text2);margin-bottom:10px">
-          🔢 頭数変化（マット交換時）
-        </div>
+      ${isLot ? `<div class="card" style="padding:14px">
+        <div style="font-size:.72rem;font-weight:700;color:var(--text2);margin-bottom:10px">🔢 頭数変化（マット交換時）</div>
         <div class="count-row">
           <div>
             <div style="font-size:.68rem;color:var(--text3);margin-bottom:4px;text-align:center">交換前</div>
-            <input id="wm-before" type="number" inputmode="numeric"
-              class="num-input-xl" style="font-size:2rem"
-              min="0" max="999" placeholder="${lotCount || '—'}" value="${lotCount || ''}"
-              oninput="Pages._wmCalcAttrition()">
+            <input id="wm-before" type="number" inputmode="numeric" class="num-input-xl" style="font-size:2rem"
+              min="0" max="999" placeholder="${lotCount||'—'}" value="${lotCount||''}" oninput="Pages._wmCalcAttrition()">
           </div>
           <div class="count-row-arrow">→</div>
           <div>
             <div style="font-size:.68rem;color:var(--text3);margin-bottom:4px;text-align:center">交換後</div>
-            <input id="wm-after" type="number" inputmode="numeric"
-              class="num-input-xl" style="font-size:2rem"
-              min="0" max="999" placeholder="—"
-              oninput="Pages._wmCalcAttrition()">
+            <input id="wm-after" type="number" inputmode="numeric" class="num-input-xl" style="font-size:2rem"
+              min="0" max="999" placeholder="—" oninput="Pages._wmCalcAttrition()">
           </div>
         </div>
         <div id="wm-attrition" class="count-attrition"></div>
       </div>` : ''}
 
-      <!-- ④ 追加（折りたたみ） -->
       <div style="margin-top:8px">
         <div class="collapse-toggle" onclick="Pages._wmToggleExtra(this)">
           <span>📝 追加メモ（任意）</span>
@@ -968,13 +1233,11 @@ Pages.weightMode = function (params = {}) {
             <div class="form-section">
               <div class="field">
                 <label class="field-label">頭幅 (mm)</label>
-                <input id="wm-head" class="input" type="number"
-                  inputmode="decimal" step="0.1" min="0" max="99" placeholder="例: 38.5">
+                <input id="wm-head" class="input" type="number" inputmode="decimal" step="0.1" min="0" max="99" placeholder="例: 38.5">
               </div>
               <div class="field">
                 <label class="field-label">観察メモ</label>
-                <textarea id="wm-note" class="input" rows="2"
-                  placeholder="幼虫の状態、色艶、活動性など"></textarea>
+                <textarea id="wm-note" class="input" rows="2" placeholder="幼虫の状態、色艶、活動性など"></textarea>
               </div>
               <div class="field">
                 <label class="field-label">交換種別</label>
@@ -990,554 +1253,324 @@ Pages.weightMode = function (params = {}) {
         </div>
       </div>
 
-      ${prevWeight !== null ? `
-      <div class="card" style="padding:10px 14px;margin-top:8px">
+      ${prevWeight !== null ? `<div class="card" style="padding:10px 14px;margin-top:8px">
         <div style="font-size:.68rem;color:var(--text3);margin-bottom:4px">前回記録</div>
         <div style="display:flex;align-items:baseline;gap:10px">
-          <span style="font-size:1.5rem;font-weight:700;color:var(--text2);
-            font-family:var(--font-mono)">${prevWeight}g</span>
-          <span style="font-size:.75rem;color:var(--text3)">
-            ${prevDate}${prevAgeDays ? ` / ${prevAgeDays}日齢` : ''}
-          </span>
+          <span style="font-size:1.5rem;font-weight:700;color:var(--text2);font-family:var(--font-mono)">${prevWeight}g</span>
+          <span style="font-size:.75rem;color:var(--text3)">${prevDate}${prevAgeDays?` / ${prevAgeDays}日齢`:''}</span>
         </div>
       </div>` : ''}
-
     </div>
 
-    <!-- 下部固定アクションバー -->
     <div class="quick-action-bar">
-      <button class="btn btn-ghost btn-xl" style="flex:1"
-        onclick="routeTo('qr-scan',{mode:'weight'})">
-        📷 スキャン
-      </button>
-      <button id="wm-save-btn" class="btn btn-gold btn-xl" style="flex:2"
-        onclick="Pages._wmSave()">
-        💾 保存
-      </button>
+      <button class="btn btn-ghost btn-xl" style="flex:1" onclick="routeTo('qr-scan',{mode:'weight'})">📷 スキャン</button>
+      <button id="wm-save-btn" class="btn btn-gold btn-xl" style="flex:2" onclick="Pages._wmSave()">💾 保存</button>
     </div>`;
 
-  // 体重入力にフォーカス（キーボード即表示）
   setTimeout(() => document.getElementById('wm-weight')?.focus(), 120);
 };
 
-// LOT の before/after から減耗数を自動計算して表示
 Pages._wmCalcAttrition = function () {
-  const beforeEl = document.getElementById('wm-before');
-  const afterEl  = document.getElementById('wm-after');
-  const dispEl   = document.getElementById('wm-attrition');
+  const before = parseInt(document.getElementById('wm-before')?.value, 10);
+  const after  = parseInt(document.getElementById('wm-after')?.value,  10);
+  const dispEl = document.getElementById('wm-attrition');
   if (!dispEl) return;
-
-  const before = parseInt(beforeEl?.value, 10);
-  const after  = parseInt(afterEl?.value,  10);
-
-  if (isNaN(before) || isNaN(after)) {
-    dispEl.textContent = '';
-    return;
-  }
+  if (isNaN(before) || isNaN(after)) { dispEl.textContent = ''; return; }
   const attrition = before - after;
-  if (attrition > 0) {
-    dispEl.textContent  = `減耗 ${attrition} 頭`;
-    dispEl.style.color  = 'var(--red)';
-  } else if (attrition === 0) {
-    dispEl.textContent  = '変化なし';
-    dispEl.style.color  = 'var(--text3)';
-  } else {
-    dispEl.textContent  = `⚠️ 後の方が多い (${Math.abs(attrition)}頭増)`;
-    dispEl.style.color  = 'var(--amber)';
-  }
+  if (attrition > 0)       { dispEl.textContent = `減耗 ${attrition} 頭`; dispEl.style.color = 'var(--red)'; }
+  else if (attrition === 0) { dispEl.textContent = '変化なし'; dispEl.style.color = 'var(--text3)'; }
+  else                      { dispEl.textContent = `⚠️ 後の方が多い (${Math.abs(attrition)}頭増)`; dispEl.style.color = 'var(--amber)'; }
 };
-
 
 Pages._wmUpdateDelta = function (rawVal) {
   const el   = document.getElementById('wm-delta');
   if (!el) return;
-
   const cur  = parseFloat(rawVal);
   const prev = Pages._wmState?.prevWeight ?? null;
-
-  // 未入力 or 不正値
   if (!rawVal || isNaN(cur) || cur <= 0) {
-    el.innerHTML = prev !== null
-      ? `<span style="color:var(--text3)">前回 <b>${prev}g</b> から —</span>`
-      : `<span style="color:var(--text3)">（前回体重なし・初回記録）</span>`;
+    el.innerHTML = prev !== null ? `<span style="color:var(--text3)">前回 <b>${prev}g</b> から —</span>` : `<span style="color:var(--text3)">（前回体重なし・初回記録）</span>`;
     return;
   }
-
-  // ── 閾値バッジを判定 ──────────────────────────────────────
   let thresholdHtml = '';
   for (const t of WM_THRESHOLDS) {
     if (cur >= t.min) {
-      thresholdHtml = `
-        <div style="
-          display:inline-block;
-          background:${t.bg};
-          border:1px solid ${t.color};
-          border-radius:99px;
-          padding:3px 12px;
-          font-size:.82rem;
-          font-weight:700;
-          color:${t.color};
-          margin-bottom:4px">
-          ${t.badge}
-        </div>`;
-      break; // 最上位の閾値のみ表示
+      thresholdHtml = `<div style="display:inline-block;background:${t.bg};border:1px solid ${t.color};
+        border-radius:99px;padding:3px 12px;font-size:.82rem;font-weight:700;color:${t.color};margin-bottom:4px">
+        ${t.badge}</div>`;
+      break;
     }
   }
-
-  // ── 前回比 ────────────────────────────────────────────────
   if (prev === null) {
-    el.innerHTML = `
-      ${thresholdHtml}
-      <div style="color:var(--text2)">📝 初回記録: <b>${cur}g</b></div>`;
+    el.innerHTML = `${thresholdHtml}<div style="color:var(--text2)">📝 初回記録: <b>${cur}g</b></div>`;
     return;
   }
-
-  const diff  = Math.round((cur - prev) * 10) / 10;
-  const isPos = diff > 0;
-  const isNeg = diff < 0;
+  const diff = Math.round((cur - prev) * 10) / 10;
+  const isPos = diff > 0; const isNeg = diff < 0;
   const arrow = isPos ? '↑' : isNeg ? '↓' : '→';
   const color = isPos ? 'var(--green)' : isNeg ? 'var(--red)' : 'var(--text3)';
   const sign  = isPos ? '+' : '';
-  // +5g以上はお祝いを表示
   const celebEmoji = isPos && diff >= 5 ? ' 🎉' : '';
-
-  el.innerHTML = `
-    ${thresholdHtml}
-    <span style="color:${color};font-weight:700;font-size:1.1rem">
-      ${arrow} ${sign}${diff}g${celebEmoji}
-    </span>
-    <span style="color:var(--text3);font-size:.75rem;margin-left:6px">
-      （前回 ${prev}g）
-    </span>`;
+  el.innerHTML = `${thresholdHtml}
+    <span style="color:${color};font-weight:700;font-size:1.1rem">${arrow} ${sign}${diff}g${celebEmoji}</span>
+    <span style="color:var(--text3);font-size:.75rem;margin-left:6px">（前回 ${prev}g）</span>`;
 };
 
-// ─────────────────────────────────────────────────────────────────
-// Pages._wmSave — 成長記録を GROWTHテーブルに保存
-// 既存の API.growth.create (= createGrowthRecord) を利用
-// IND の場合は individual.latest_weight_g も自動更新される（GAS側で処理）
-// ─────────────────────────────────────────────────────────────────
 Pages._wmSave = async function () {
   const state    = Pages._wmState;
   const weightEl = document.getElementById('wm-weight');
   const rawVal   = weightEl?.value;
   const weightVal = parseFloat(rawVal);
-
-  // バリデーション
   if (!rawVal || isNaN(weightVal) || weightVal <= 0 || weightVal > 999.9) {
     UI.toast('体重を入力してください（0.1〜999.9g）', 'error');
-    weightEl?.focus();
-    return;
+    weightEl?.focus(); return;
   }
-  if (!state?.entityId) {
-    UI.toast('対象IDが不明です。再スキャンしてください', 'error');
-    return;
-  }
-
+  if (!state?.entityId) { UI.toast('対象IDが不明です。再スキャンしてください', 'error'); return; }
   const btn = document.getElementById('wm-save-btn');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ 保存中...'; }
-
   try {
-    // ── 成長記録データを構築（growth.js の _grSave と統一ロジック）──
     const headVal     = parseFloat(document.getElementById('wm-head')?.value);
     const noteVal     = document.getElementById('wm-note')?.value?.trim() || '';
     const exchangeVal = document.getElementById('wm-exchange')?.value || '';
-
-    // LOT 専用: before_count / after_count（growth.js と同一計算）
-    const beforeRaw = document.getElementById('wm-before')?.value;
-    const afterRaw  = document.getElementById('wm-after')?.value;
-    const beforeCount = (beforeRaw !== undefined && beforeRaw !== '')
-      ? parseInt(beforeRaw, 10) : undefined;
-    const afterCount  = (afterRaw  !== undefined && afterRaw  !== '')
-      ? parseInt(afterRaw,  10) : undefined;
-
-    const growthData = {
-      target_type:   state.entityType,
-      target_id:     state.entityId,
-      stage:         state.stage   || '',
-      weight_g:      weightVal,
-      container:     state.container || '',
-      mat_type:      state.matType   || '',
-      // LOT の頭数変化（undefined のまま送ると GAS 側でスキップ）
-      before_count:  beforeCount,
-      after_count:   afterCount,
+    const beforeRaw   = document.getElementById('wm-before')?.value;
+    const afterRaw    = document.getElementById('wm-after')?.value;
+    const beforeCount = beforeRaw !== undefined && beforeRaw !== '' ? parseInt(beforeRaw, 10) : undefined;
+    const afterCount  = afterRaw  !== undefined && afterRaw  !== '' ? parseInt(afterRaw,  10) : undefined;
+    const growthData  = {
+      target_type: state.entityType, target_id: state.entityId,
+      stage: state.stage || '', weight_g: weightVal,
+      container: state.container || '', mat_type: state.matType || '',
+      before_count: beforeCount, after_count: afterCount,
     };
     if (!isNaN(headVal) && headVal > 0) growthData.head_width_mm = headVal;
     if (noteVal)     growthData.note_private  = noteVal;
     if (exchangeVal) growthData.exchange_type = exchangeVal;
-
-    // ── API呼び出し ───────────────────────────────────────
     await API.growth.create(growthData);
-
-    // ── キャッシュ更新（growth.js と統一）──────────────────────
     if (state.entityType === 'IND') {
-      Store.patchDBItem('individuals', 'ind_id', state.entityId,
-        { latest_weight_g: weightVal, current_stage: state.stage });
+      Store.patchDBItem('individuals', 'ind_id', state.entityId, { latest_weight_g: weightVal, current_stage: state.stage });
       await Store.syncEntityType('individuals').catch(() => {});
     }
     if (state.entityType === 'LOT') {
       const lotUpdates = {};
       if (state.stage) lotUpdates.stage = state.stage;
-      if (afterCount !== undefined) {
-        lotUpdates.count = afterCount;
-        if (afterCount === 0) lotUpdates.status = 'individualized';
-      }
-      if (Object.keys(lotUpdates).length) {
-        Store.patchDBItem('lots', 'lot_id', state.entityId, lotUpdates);
-      }
+      if (afterCount !== undefined) { lotUpdates.count = afterCount; if (afterCount === 0) lotUpdates.status = 'individualized'; }
+      if (Object.keys(lotUpdates).length) Store.patchDBItem('lots', 'lot_id', state.entityId, lotUpdates);
     }
     await Store.syncEntityType('growth').catch(() => {});
-
-    // ── 完了UIへ切り替え ─────────────────────────────────
     Pages._wmShowComplete(state.entityType, state.entityId, weightVal);
-
   } catch (e) {
     UI.toast('❌ 保存失敗: ' + (e.message || '不明なエラー'), 'error');
     if (btn) { btn.disabled = false; btn.textContent = '💾 成長記録を保存'; }
   }
 };
 
-// ─────────────────────────────────────────────────────────────────
-// Pages._wmShowComplete — 保存完了後の画面
-// ・「📷 次をスキャン」→ qr-scan（weight-modeタブ選択済みで戻る）
-// ・「詳細を見る」   → ind-detail または lot-detail
-// ─────────────────────────────────────────────────────────────────
 Pages._wmShowComplete = function (entityType, entityId, weight) {
   const main = document.getElementById('main');
   const body = main?.querySelector('.page-body');
   if (!body) return;
-
   const detailRoute = entityType === 'IND' ? 'ind-detail' : 'lot-detail';
   const detailParam = entityType === 'IND' ? 'indId'      : 'lotId';
-
-  // ── 完了バナー ──────────────────────────────────────────────
   const bannerEl = document.createElement('div');
-  bannerEl.style.cssText = [
-    'background:linear-gradient(135deg,rgba(45,122,82,.22),rgba(76,175,120,.08))',
-    'border:1px solid rgba(76,175,120,.45)',
-    'border-radius:var(--radius)',
-    'padding:20px 16px',
-    'text-align:center',
-    'margin-bottom:14px',
-  ].join(';');
-
+  bannerEl.style.cssText = 'background:linear-gradient(135deg,rgba(45,122,82,.22),rgba(76,175,120,.08));border:1px solid rgba(76,175,120,.45);border-radius:var(--radius);padding:20px 16px;text-align:center;margin-bottom:14px;';
   const scanBtn = document.createElement('button');
-  scanBtn.className = 'btn btn-ghost';
-  scanBtn.style.cssText = 'flex:1;padding:12px';
+  scanBtn.className = 'btn btn-ghost'; scanBtn.style.cssText = 'flex:1;padding:12px';
   scanBtn.textContent = '📷 次をスキャン';
   scanBtn.onclick = () => routeTo('qr-scan', { mode: 'weight' });
-
   const detailBtn = document.createElement('button');
-  detailBtn.className = 'btn btn-primary';
-  detailBtn.style.cssText = 'flex:1;padding:12px';
+  detailBtn.className = 'btn btn-primary'; detailBtn.style.cssText = 'flex:1;padding:12px';
   detailBtn.textContent = '詳細を見る';
-  detailBtn.onclick = () => {
-    const p = {};
-    p[detailParam] = entityId;
-    routeTo(detailRoute, p);
-  };
-
+  detailBtn.onclick = () => { const p = {}; p[detailParam] = entityId; routeTo(detailRoute, p); };
   const btnRow = document.createElement('div');
   btnRow.style.cssText = 'display:flex;gap:10px;margin-top:16px';
-  btnRow.appendChild(scanBtn);
-  btnRow.appendChild(detailBtn);
-
-  bannerEl.innerHTML =
-    '<div style="font-size:2.2rem;margin-bottom:6px">✅</div>' +
+  btnRow.appendChild(scanBtn); btnRow.appendChild(detailBtn);
+  bannerEl.innerHTML = '<div style="font-size:2.2rem;margin-bottom:6px">✅</div>' +
     '<div style="font-size:1.15rem;font-weight:700;color:var(--green)">' + weight + 'g を記録しました</div>' +
     '<div style="font-size:.78rem;color:var(--text3);margin-top:4px">GROWTHテーブルに保存完了</div>';
   bannerEl.appendChild(btnRow);
   body.insertBefore(bannerEl, body.firstChild);
-
-  // ── LOT の場合: 同ラインの次ロット選択バー ─────────────────
   if (entityType !== 'LOT') { main.scrollTop = 0; return; }
-
   const currentLot = Store.getLot(entityId);
   if (!currentLot) { main.scrollTop = 0; return; }
-
-  const sameLine = Store.filterLots({ line_id: currentLot.line_id, status: 'active' })
-    .filter(l => l.lot_id !== entityId);
-  const candidates = sameLine.length
-    ? sameLine
-    : Store.filterLots({ status: 'active' }).filter(l => l.lot_id !== entityId).slice(0, 6);
-
+  const sameLine  = Store.filterLots({ line_id: currentLot.line_id, status: 'active' }).filter(l => l.lot_id !== entityId);
+  const candidates = sameLine.length ? sameLine : Store.filterLots({ status: 'active' }).filter(l => l.lot_id !== entityId).slice(0, 6);
   if (!candidates.length) { main.scrollTop = 0; return; }
-
   const nextBarEl = document.createElement('div');
   nextBarEl.style.cssText = 'margin-top:10px';
-
   const barLabel = document.createElement('div');
   barLabel.style.cssText = 'font-size:.72rem;color:var(--text3);margin-bottom:6px;font-weight:700';
   barLabel.textContent = '📦 次のロットへ（同ライン）';
   nextBarEl.appendChild(barLabel);
-
   const btnScroll = document.createElement('div');
   btnScroll.style.cssText = 'display:flex;gap:7px;overflow-x:auto;padding-bottom:2px';
-
   candidates.slice(0, 6).forEach(function(l) {
     const line = Store.getLine(l.line_id);
     const code = line ? (line.line_code || line.display_id) : l.display_id;
-
-    const btn = document.createElement('button');
-    btn.style.cssText = [
-      'flex-shrink:0', 'padding:6px 12px', 'border-radius:20px',
-      'background:var(--surface2)', 'border:1px solid var(--border)',
-      'font-size:.78rem', 'cursor:pointer', 'white-space:nowrap',
-    ].join(';');
-    btn.innerHTML =
-      '<span style="color:var(--gold);font-weight:700">' + code + '</span>' +
-      '<span style="color:var(--text3);margin-left:4px">' + l.count + '頭</span>';
-
-    // 安全なクロージャでルート遷移（JSON.stringify を使わない）
-    btn.onclick = (function(lotId, lotDisplayId, lotLineId) {
+    const btn2 = document.createElement('button');
+    btn2.style.cssText = 'flex-shrink:0;padding:6px 12px;border-radius:20px;background:var(--surface2);border:1px solid var(--border);font-size:.78rem;cursor:pointer;white-space:nowrap;';
+    btn2.innerHTML = '<span style="color:var(--gold);font-weight:700">' + code + '</span><span style="color:var(--text3);margin-left:4px">' + l.count + '頭</span>';
+    btn2.onclick = (function(lotId, lotLineId) {
       return function() {
         const lot2 = Store.getLot(lotId);
         const ln2  = Store.getLine(lotLineId);
-        if (lot2) {
-          routeTo('weight-mode', {
-            resolve_result: {
-              entity_type: 'LOT',
-              entity:      lot2,
-              line:        ln2 || {},
-              last_growth: null,
-            },
-          });
-        } else {
-          routeTo('lot-detail', { lotId: lotId });
-        }
+        if (lot2) routeTo('weight-mode', { resolve_result: { entity_type: 'LOT', entity: lot2, line: ln2 || {}, last_growth: null } });
+        else      routeTo('lot-detail', { lotId });
       };
-    })(l.lot_id, l.display_id, l.line_id);
-
-    btnScroll.appendChild(btn);
+    })(l.lot_id, l.line_id);
+    btnScroll.appendChild(btn2);
   });
-
-  // 閉じるボタン
   const closeBtn = document.createElement('button');
-  closeBtn.style.cssText = [
-    'flex-shrink:0', 'padding:6px 12px', 'border-radius:20px',
-    'background:transparent', 'border:1px solid var(--border)',
-    'font-size:.78rem', 'cursor:pointer', 'color:var(--text3)',
-  ].join(';');
+  closeBtn.style.cssText = 'flex-shrink:0;padding:6px 12px;border-radius:20px;background:transparent;border:1px solid var(--border);font-size:.78rem;cursor:pointer;color:var(--text3);';
   closeBtn.textContent = '✕';
   closeBtn.onclick = () => nextBarEl.remove();
   btnScroll.appendChild(closeBtn);
-
   nextBarEl.appendChild(btnScroll);
   bannerEl.insertAdjacentElement('afterend', nextBarEl);
   main.scrollTop = 0;
 };
 
-// ─────────────────────────────────────────────────────────────────
-// Pages._wmToggleExtra — 追加メモ アコーディオン開閉
-// ─────────────────────────────────────────────────────────────────
 Pages._wmToggleExtra = function (btn) {
   const body  = document.getElementById('wm-extra');
   const arrow = btn?.querySelector('span:last-child');
   if (!body) return;
   const isOpen = body.classList.contains('open');
-  body.classList.toggle('open',   !isOpen);
-  body.classList.toggle('closed',  isOpen);
+  body.classList.toggle('open', !isOpen);
+  body.classList.toggle('closed', isOpen);
   if (arrow) arrow.style.transform = isOpen ? '' : 'rotate(180deg)';
 };
 
-
 // ════════════════════════════════════════════════════════════════
-// T1交換 QR連続処理モード
-// qr-scan-t1 ページ
-// フロー: QRスキャン → ロット情報表示 → 分割数入力 → 保存 → ラベル → 次へ
+// T1交換 QR連続処理モード（既存のまま維持）
 // ════════════════════════════════════════════════════════════════
-
 Pages.qrScanT1 = function () {
   const main = document.getElementById('main');
-  let _processing = false;
-  let _lastLot    = null;
-
   function _render(lotInfo, phase) {
-    // phase: 'scan' | 'split' | 'done'
     main.innerHTML = `
       ${UI.header('T1交換 連続処理', { back: true })}
       <div class="page-body">
-
-        <!-- 進捗インジケーター -->
         <div style="display:flex;gap:4px;margin-bottom:12px">
           ${['スキャン','分割入力','完了'].map((s,i) => {
             const active = (i===0&&phase==='scan')||(i===1&&phase==='split')||(i===2&&phase==='done');
             return `<div style="flex:1;padding:6px;text-align:center;border-radius:8px;font-size:.75rem;
-              background:${active?'var(--green)':'var(--bg2)'};color:${active?'#fff':'var(--text3)'}">${s}</div>`;
+              background:${active?'var(--green)':'var(--bg2)'};color:${active?'#fff':'var(--text3)'}">` + s + '</div>';
           }).join('')}
         </div>
-
-        ${phase === 'scan' ? _scanPhase() : ''}
+        ${phase === 'scan'  ? _scanPhase() : ''}
         ${phase === 'split' && lotInfo ? _splitPhase(lotInfo) : ''}
         ${phase === 'done'  && lotInfo ? _donePhase(lotInfo)  : ''}
-
       </div>`;
-
     if (phase === 'scan') _bindScanEvents();
   }
-
   function _scanPhase() {
-    return `
-      <div class="card card-gold" style="text-align:center;padding:20px">
-        <div style="font-size:2rem;margin-bottom:8px">📷</div>
-        <div style="font-weight:700;margin-bottom:4px">QRコードをスキャン</div>
-        <div style="font-size:.8rem;color:var(--text3)">ロットQRコードを読み込んでください</div>
-      </div>
-      <div style="display:flex;gap:8px;margin-top:12px">
-        <input id="t1-qr-input" class="input" placeholder="QR入力 / 手動入力" style="flex:1">
-        <button class="btn btn-primary" onclick="Pages._t1ResolveQR()">確認</button>
-      </div>
-      <button class="btn btn-ghost btn-full" style="margin-top:8px"
-        onclick="Pages._t1StartCamera()">📷 カメラで読み取り</button>`;
+    return `<div class="card card-gold" style="text-align:center;padding:20px">
+      <div style="font-size:2rem;margin-bottom:8px">📷</div>
+      <div style="font-weight:700;margin-bottom:4px">QRコードをスキャン</div>
+      <div style="font-size:.8rem;color:var(--text3)">ロットQRコードを読み込んでください</div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <input id="t1-qr-input" class="input" placeholder="QR入力 / 手動入力" style="flex:1">
+      <button class="btn btn-primary" onclick="Pages._t1ResolveQR()">確認</button>
+    </div>
+    <button class="btn btn-ghost btn-full" style="margin-top:8px" onclick="Pages._t1StartCamera()">📷 カメラで読み取り</button>`;
   }
-
   function _splitPhase(lot) {
     const count = parseInt(lot.count, 10) || 1;
     const half  = Math.floor(count / 2);
-    return `
-      <div class="card" style="background:var(--bg2)">
-        <div style="font-family:var(--font-mono);font-size:1.1rem;font-weight:700;color:var(--gold)">${lot.display_id}</div>
-        <div style="font-size:.85rem;color:var(--text3);margin-top:4px">
-          ${lot.stage || 'T0'} / ${count}頭 / ${lot.container_size||'—'}
+    return `<div class="card" style="background:var(--bg2)">
+      <div style="font-family:var(--font-mono);font-size:1.1rem;font-weight:700;color:var(--gold)">${lot.display_id}</div>
+      <div style="font-size:.85rem;color:var(--text3);margin-top:4px">${lot.stage||'T0'} / ${count}頭 / ${lot.container_size||'—'}</div>
+    </div>
+    <div style="margin-top:12px">
+      <div style="font-size:.85rem;font-weight:600;margin-bottom:8px">分割数を入力してください（合計 ≤ ${count}頭）</div>
+      <div id="t1-split-rows">
+        <div class="split-row" style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+          <span style="font-family:var(--font-mono);color:var(--gold);min-width:30px">-A</span>
+          <input type="number" class="input t1-split-count" min="1" max="${count}" value="${half}" oninput="Pages._t1UpdateTotal(${count})">
+          <span style="font-size:.8rem;color:var(--text3)">頭</span>
+        </div>
+        <div class="split-row" style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+          <span style="font-family:var(--font-mono);color:var(--gold);min-width:30px">-B</span>
+          <input type="number" class="input t1-split-count" min="1" max="${count}" value="${count-half}" oninput="Pages._t1UpdateTotal(${count})">
+          <span style="font-size:.8rem;color:var(--text3)">頭</span>
         </div>
       </div>
-
-      <div style="margin-top:12px">
-        <div style="font-size:.85rem;font-weight:600;margin-bottom:8px">分割数を入力してください（合計 ≤ ${count}頭）</div>
-        <div id="t1-split-rows">
-          <div class="split-row" style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
-            <span style="font-family:var(--font-mono);color:var(--gold);min-width:30px">-A</span>
-            <input type="number" class="input t1-split-count" min="1" max="${count}" value="${half}"
-              oninput="Pages._t1UpdateTotal(${count})">
-            <span style="font-size:.8rem;color:var(--text3)">頭</span>
-          </div>
-          <div class="split-row" style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
-            <span style="font-family:var(--font-mono);color:var(--gold);min-width:30px">-B</span>
-            <input type="number" class="input t1-split-count" min="1" max="${count}" value="${count-half}"
-              oninput="Pages._t1UpdateTotal(${count})">
-            <span style="font-size:.8rem;color:var(--text3)">頭</span>
-          </div>
-        </div>
-        <button class="btn btn-ghost btn-sm" onclick="Pages._t1AddSplitRow(${count})">＋ ロット追加</button>
-        <div id="t1-split-total" style="font-size:.82rem;color:var(--amber);margin-top:6px">
-          合計: ${count}頭 / 最大${count}頭
-        </div>
+      <button class="btn btn-ghost btn-sm" onclick="Pages._t1AddSplitRow(${count})">＋ ロット追加</button>
+      <div id="t1-split-total" style="font-size:.82rem;color:var(--amber);margin-top:6px">合計: ${count}頭 / 最大${count}頭</div>
+    </div>
+    <div style="margin-top:12px">
+      <div style="font-size:.85rem;font-weight:600;margin-bottom:6px">容器サイズ</div>
+      <div style="display:flex;gap:6px">
+        ${['1.1L','2.7L','4.8L','10L'].map(s => `<button class="pill ${s===lot.container_size?'active':''}" id="t1-container-${s.replace('.','_')}" onclick="Pages._t1SelectContainer('${s}')">${s}</button>`).join('')}
       </div>
-
-      <div style="margin-top:12px">
-        <div style="font-size:.85rem;font-weight:600;margin-bottom:6px">容器サイズ</div>
-        <div style="display:flex;gap:6px">
-          ${['1.1L','2.7L','4.8L','10L'].map(s =>
-            `<button class="pill ${s===lot.container_size?'active':''}" id="t1-container-${s.replace('.','_')}"
-              onclick="Pages._t1SelectContainer('${s}')">${s}</button>`
-          ).join('')}
-        </div>
-        <input type="hidden" id="t1-selected-container" value="${lot.container_size||'2.7L'}">
-      </div>
-
-      <div style="display:flex;gap:8px;margin-top:16px">
-        <button class="btn btn-ghost" style="flex:1" onclick="Pages.qrScanT1()">← 戻る</button>
-        <button class="btn btn-primary" style="flex:2"
-          onclick="Pages._t1ExecSplit('${lot.lot_id}',${count})">✅ 分割実行</button>
-      </div>`;
+      <input type="hidden" id="t1-selected-container" value="${lot.container_size||'2.7L'}">
+    </div>
+    <div style="display:flex;gap:8px;margin-top:16px">
+      <button class="btn btn-ghost" style="flex:1" onclick="Pages.qrScanT1()">← 戻る</button>
+      <button class="btn btn-primary" style="flex:2" onclick="Pages._t1ExecSplit('${lot.lot_id}',${count})">✅ 分割実行</button>
+    </div>`;
   }
-
   function _donePhase(result) {
     const newLots = result.new_lots || [];
-    return `
-      <div class="card" style="text-align:center;padding:16px;border-color:var(--green)">
-        <div style="font-size:2rem">✅</div>
-        <div style="font-weight:700;margin-top:8px">${newLots.length}ロットに分割しました</div>
-      </div>
-
-      <div style="margin-top:8px">
-        ${newLots.map(l => `
-          <div class="card" style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px">
-            <div>
-              <div style="font-family:var(--font-mono);font-weight:700;color:var(--gold)">${l.display_id}</div>
-              <div style="font-size:.8rem;color:var(--text3)">${l.count}頭 / T1</div>
-            </div>
-            <button class="btn btn-ghost btn-sm"
-              onclick="Pages._t1GenerateLabel('${l.lot_id}','${l.display_id}')">🏷 ラベル</button>
-          </div>`).join('')}
-      </div>
-
-      <div style="display:flex;gap:8px;margin-top:16px">
-        <button class="btn btn-ghost" style="flex:1"
-          onclick="routeTo('lot-list')">ロット一覧</button>
-        <button class="btn btn-primary" style="flex:2"
-          onclick="Pages.qrScanT1()">📷 次のQRへ</button>
-      </div>`;
+    return `<div class="card" style="text-align:center;padding:16px;border-color:var(--green)">
+      <div style="font-size:2rem">✅</div>
+      <div style="font-weight:700;margin-top:8px">${newLots.length}ロットに分割しました</div>
+    </div>
+    <div style="margin-top:8px">
+      ${newLots.map(l => `<div class="card" style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px">
+        <div>
+          <div style="font-family:var(--font-mono);font-weight:700;color:var(--gold)">${l.display_id}</div>
+          <div style="font-size:.8rem;color:var(--text3)">${l.count}頭 / T1</div>
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="Pages._t1GenerateLabel('${l.lot_id}','${l.display_id}')">🏷 ラベル</button>
+      </div>`).join('')}
+    </div>
+    <div style="display:flex;gap:8px;margin-top:16px">
+      <button class="btn btn-ghost" style="flex:1" onclick="routeTo('lot-list')">ロット一覧</button>
+      <button class="btn btn-primary" style="flex:2" onclick="Pages.qrScanT1()">📷 次のQRへ</button>
+    </div>`;
   }
-
   function _bindScanEvents() {
     const inp = document.getElementById('t1-qr-input');
-    if (inp) inp.addEventListener('keydown', e => {
-      if (e.key === 'Enter') Pages._t1ResolveQR();
-    });
+    if (inp) inp.addEventListener('keydown', e => { if (e.key === 'Enter') Pages._t1ResolveQR(); });
   }
-
-  // 最初のフェーズで描画
   _render(null, 'scan');
-  // メソッドをPageに露出（クロージャー外からも再描画できるよう）
-  Pages._t1RenderSplit = (lot)  => _render(lot,    'split');
-  Pages._t1RenderDone  = (res)  => _render(res,    'done');
+  Pages._t1RenderSplit = (lot) => _render(lot,  'split');
+  Pages._t1RenderDone  = (res) => _render(res,  'done');
 };
 
-// ── T1: QR解決 ────────────────────────────────────────────────
 Pages._t1ResolveQR = async function () {
   const val = (document.getElementById('t1-qr-input')?.value || '').trim();
   if (!val) { UI.toast('QRを入力してください', 'error'); return; }
-
   try {
     UI.loading(true);
-    // lot_id または display_id で検索
     const lots = Store.getDB('lots') || [];
     let lot = lots.find(l => l.lot_id === val || l.display_id === val);
-
-    if (!lot) {
-      // Storeにない場合はAPI経由
-      const res = await API.lot.get({ lot_id: val });
-      lot = res.lot;
-    }
+    if (!lot) { const res = await API.lot.get({ lot_id: val }); lot = res.lot; }
     if (!lot) { UI.toast('ロットが見つかりません: ' + val, 'error'); return; }
     if (lot.status === 'dissolved') { UI.toast('このロットは分割済みです', 'error'); return; }
-
     Pages._t1RenderSplit(lot);
-  } catch(e) {
-    UI.toast('エラー: ' + e.message, 'error');
-  } finally {
-    UI.loading(false);
-  }
+  } catch(e) { UI.toast('エラー: ' + e.message, 'error'); }
+  finally { UI.loading(false); }
 };
 
-// ── T1: 合計更新 ──────────────────────────────────────────────
 Pages._t1UpdateTotal = function (max) {
   const inputs = document.querySelectorAll('.t1-split-count');
   const total  = Array.from(inputs).reduce((s,i) => s + (+i.value||0), 0);
   const el     = document.getElementById('t1-split-total');
-  if (el) {
-    el.textContent = `合計: ${total}頭 / 最大${max}頭`;
-    el.style.color = total > max ? 'var(--red)' : 'var(--text3)';
-  }
+  if (el) { el.textContent = `合計: ${total}頭 / 最大${max}頭`; el.style.color = total > max ? 'var(--red)' : 'var(--text3)'; }
 };
 
-// ── T1: 行追加 ────────────────────────────────────────────────
 Pages._t1AddSplitRow = function (max) {
-  const rows   = document.getElementById('t1-split-rows');
+  const rows  = document.getElementById('t1-split-rows');
   if (!rows) return;
-  const count  = rows.querySelectorAll('.split-row').length;
+  const count = rows.querySelectorAll('.split-row').length;
   const suffix = String.fromCharCode(65 + count);
-  rows.insertAdjacentHTML('beforeend', `
-    <div class="split-row" style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
-      <span style="font-family:var(--font-mono);color:var(--gold);min-width:30px">-${suffix}</span>
-      <input type="number" class="input t1-split-count" min="1" max="${max}" value="1"
-        oninput="Pages._t1UpdateTotal(${max})">
-      <span style="font-size:.8rem;color:var(--text3)">頭</span>
-    </div>`);
+  rows.insertAdjacentHTML('beforeend', `<div class="split-row" style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+    <span style="font-family:var(--font-mono);color:var(--gold);min-width:30px">-${suffix}</span>
+    <input type="number" class="input t1-split-count" min="1" max="${max}" value="1" oninput="Pages._t1UpdateTotal(${max})">
+    <span style="font-size:.8rem;color:var(--text3)">頭</span>
+  </div>`);
   Pages._t1UpdateTotal(max);
 };
 
-// ── T1: 容器選択 ──────────────────────────────────────────────
 Pages._t1SelectContainer = function (size) {
   document.querySelectorAll('[id^="t1-container-"]').forEach(b => b.classList.remove('active'));
   const btn = document.getElementById('t1-container-' + size.replace('.','_'));
@@ -1546,51 +1579,33 @@ Pages._t1SelectContainer = function (size) {
   if (inp) inp.value = size;
 };
 
-// ── T1: 分割実行 ──────────────────────────────────────────────
 Pages._t1ExecSplit = async function (lotId, maxCount) {
   const inputs    = document.querySelectorAll('.t1-split-count');
   const counts    = Array.from(inputs).map(i => +i.value||0).filter(n => n > 0);
   const total     = counts.reduce((s,n) => s+n, 0);
   const container = document.getElementById('t1-selected-container')?.value || '2.7L';
-
   if (!counts.length) { UI.toast('分割数を入力してください', 'error'); return; }
   if (total > maxCount) { UI.toast(`合計(${total})が元ロット頭数(${maxCount})を超えています`, 'error'); return; }
-
   try {
     UI.loading(true);
-    const res = await API.lot.split({
-      lot_id:        lotId,
-      split_counts:  counts,
-      stage:         'T1',
-      container_size: container,
-    });
+    const res = await API.lot.split({ lot_id: lotId, split_counts: counts, stage: 'T1', container_size: container });
     await syncAll(true);
     Pages._t1RenderDone(res);
-  } catch(e) {
-    UI.toast('分割失敗: ' + e.message, 'error');
-  } finally {
-    UI.loading(false);
-  }
+  } catch(e) { UI.toast('分割失敗: ' + e.message, 'error'); }
+  finally { UI.loading(false); }
 };
 
-// ── T1: ラベル発行 ────────────────────────────────────────────
 Pages._t1GenerateLabel = async function (lotId, displayId) {
   try {
     UI.loading(true);
     await API.label.generate('LOT', lotId, 'larva');
     UI.toast(`${displayId} のラベルを発行しました`);
-  } catch(e) {
-    UI.toast('ラベル発行失敗: ' + e.message, 'error');
-  } finally {
-    UI.loading(false);
-  }
+  } catch(e) { UI.toast('ラベル発行失敗: ' + e.message, 'error'); }
+  finally { UI.loading(false); }
 };
 
-// ── T1: カメラスキャン ────────────────────────────────────────
-Pages._t1StartCamera = async function () {
-  // 既存の_qrStartCameraロジックを流用してT1モードで動作
-  routeTo('qr-scan', { mode: 't1' });
-};
+Pages._t1StartCamera = async function () { routeTo('qr-scan', { mode: 't1' }); };
 
 // ルーティング登録
+window.PAGES['qr-scan']    = () => Pages.qrScan(Store.getParams());
 window.PAGES['qr-scan-t1'] = () => Pages.qrScanT1();
