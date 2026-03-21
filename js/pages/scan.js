@@ -26,7 +26,7 @@ window._qrVibrateOn = (function(){ return localStorage.getItem('qr_vibrate') !==
 Pages.qrScan = function (params = {}) {
   const main = document.getElementById('main');
   // モード: 'view' | 'diff' | 'weight'
-  let _scanMode = ['weight','diff','t1','t2'].includes(params.mode) ? params.mode : 'view';
+  let _scanMode = ['view','weight','diff','t1','t2'].includes(params.mode) ? params.mode : 'view';
 
   function _modeStyle(m) {
     if (m === _scanMode) {
@@ -187,10 +187,53 @@ SET:SET-XXXXXXXX"
     if (params.lastQrText) {
       window._qrLastAutoIgnore = {
         text: params.lastQrText,
-        until: Date.now() + 2000,  // 2秒間無視
+        until: Date.now() + 2000,
       };
     }
-    setTimeout(() => Pages._qrStartCamera(), 200);
+    // 「自動起動中...」インジケータを表示
+    const _autoCamMsg = document.createElement('div');
+    _autoCamMsg.id = 'qr-autocam-msg';
+    _autoCamMsg.style.cssText = [
+      'position:fixed', 'top:56px', 'left:50%', 'transform:translateX(-50%)',
+      'background:rgba(45,122,82,.92)', 'color:#fff',
+      'padding:6px 16px', 'border-radius:20px', 'font-size:.78rem',
+      'z-index:9000', 'pointer-events:none', 'white-space:nowrap',
+      'box-shadow:0 2px 8px rgba(0,0,0,.25)',
+    ].join(';');
+    _autoCamMsg.textContent = '📷 カメラを自動起動中...';
+    document.body.appendChild(_autoCamMsg);
+
+    setTimeout(async () => {
+      try {
+        await Pages._qrStartCamera();
+        // 起動成功 → インジケータを消す
+        const msg = document.getElementById('qr-autocam-msg');
+        if (msg) msg.remove();
+      } catch (e) {
+        // 起動失敗 → エラー表示 + 再試行ボタン
+        const msg = document.getElementById('qr-autocam-msg');
+        if (msg) {
+          msg.style.background = 'rgba(200,50,50,.92)';
+          msg.style.pointerEvents = 'auto';
+          msg.style.cursor = 'pointer';
+          msg.innerHTML =
+            '⚠️ カメラ起動失敗 — '
+            + '<span style="text-decoration:underline;font-weight:700">再試行</span>';
+          msg.onclick = async () => {
+            msg.textContent = '📷 再試行中...';
+            msg.onclick = null;
+            try {
+              await Pages._qrStartCamera();
+              msg.remove();
+            } catch (e2) {
+              msg.textContent = '❌ カメラを起動できません（' + (e2.name || e2.message) + '）';
+              setTimeout(() => { if (msg.parentNode) msg.remove(); }, 5000);
+            }
+          };
+        }
+        console.warn('[autoCamera] start failed:', e.message);
+      }
+    }, 200);
   }
 };
 
@@ -1403,7 +1446,195 @@ Pages._wmUpdateDelta = function (rawVal) {
     perDayHtml;
 };
 
-Pages._wmSave = async function () {
+// ═══════════════════════════════════════════════════════════════
+// 楽観的保存インフラ
+//   _wmPendingQueue: 保存待ち/失敗レコードの一覧
+//   _wmEnqueue:      保存ジョブを登録して即バックグラウンド送信
+//   _wmRetry:        失敗レコードの再送
+// ═══════════════════════════════════════════════════════════════
+// ── pending キュー永続化（localStorage バックアップ）──────────────
+const _WM_QUEUE_KEY = 'wm_pending_queue';
+
+function _wmQueueLoad() {
+  try {
+    const s = localStorage.getItem(_WM_QUEUE_KEY);
+    return s ? JSON.parse(s) : [];
+  } catch(_) { return []; }
+}
+function _wmQueueSave(q) {
+  try {
+    // synced は localStorage には残さず、pending / failed のみ永続化
+    const persisted = q.filter(j => j.status !== 'synced');
+    localStorage.setItem(_WM_QUEUE_KEY, JSON.stringify(persisted));
+  } catch(_) {}
+}
+
+// ページ起動時に localStorage から復元（前回の失敗分を引き継ぐ）
+window._wmPendingQueue = (function () {
+  const stored = _wmQueueLoad();
+  // pending は再起動後は failed に降格（送信中断扱い）
+  return stored.map(j => j.status === 'pending' ? { ...j, status: 'failed', error: '再起動により中断' } : j);
+})();
+
+function _wmGenReqId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
+// 保存ジョブを非同期でバックグラウンド送信
+// growthData, entityType, entityId, entityUpdates を受け取る
+async function _wmBackgroundSave(job) {
+  const { id, growthData, entityType, entityId, entityUpdates } = job;
+
+  try {
+    // growth + entity 更新を並列で送信
+    const tasks = [API.growth.create(growthData)];
+    if (Object.keys(entityUpdates).length) {
+      if (entityType === 'IND') {
+        tasks.push(API.individual.update({ ind_id: entityId, ...entityUpdates }));
+      } else if (entityType === 'LOT') {
+        tasks.push(API.lot.update({ lot_id: entityId, ...entityUpdates }));
+      }
+    }
+    await Promise.all(tasks);
+
+    // 成功
+    const entry = window._wmPendingQueue.find(q => q.id === id);
+    if (entry) entry.status = 'synced';
+    UI.toast('✅ ' + growthData.weight_g + 'g を保存しました', 'success', 2500);
+    _wmUpdatePendingBadge();
+  } catch (e) {
+    const entry = window._wmPendingQueue.find(q => q.id === id);
+    if (entry) {
+      entry.status  = 'failed';
+      entry.error   = e.message || '不明なエラー';
+      entry.retries = (entry.retries || 0) + 1;
+    }
+    console.error('[wmSave] background save failed:', e.message);
+    UI.toast('❌ 保存失敗 (' + growthData.weight_g + 'g) — 再送ボタンを確認してください', 'error', 6000);
+    _wmUpdatePendingBadge();
+  }
+}
+
+// QR画面のヘッダー付近に失敗バッジを表示
+function _wmUpdatePendingBadge() {
+  // 更新のたびに localStorage へ書き戻す（永続化）
+  _wmQueueSave(window._wmPendingQueue);
+
+  const failed  = window._wmPendingQueue.filter(q => q.status === 'failed');
+  const pending = window._wmPendingQueue.filter(q => q.status === 'pending');
+
+  // 既存バッジを更新 or 作成
+  let badge = document.getElementById('wm-pending-badge');
+  if (!badge) {
+    badge = document.createElement('div');
+    badge.id = 'wm-pending-badge';
+    badge.style.cssText = [
+      'position:fixed', 'bottom:80px', 'right:12px', 'z-index:9999',
+      'padding:8px 12px', 'border-radius:10px', 'font-size:.78rem',
+      'cursor:pointer', 'box-shadow:0 2px 8px rgba(0,0,0,.3)',
+    ].join(';');
+    badge.onclick = () => Pages._wmShowPendingPanel();
+    document.body.appendChild(badge);
+  }
+
+  if (failed.length) {
+    badge.style.background   = 'var(--red, #e05555)';
+    badge.style.color        = '#fff';
+    badge.style.display      = 'block';
+    badge.textContent        = '❌ ' + failed.length + '件 保存失敗 → タップして再送';
+  } else if (pending.length) {
+    badge.style.background   = 'rgba(200,168,75,.9)';
+    badge.style.color        = '#1a1200';
+    badge.style.display      = 'block';
+    badge.textContent        = '⏳ ' + pending.length + '件 保存中...';
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+// 失敗レコードの再送パネル
+Pages._wmShowPendingPanel = function () {
+  const failed = window._wmPendingQueue.filter(q => q.status === 'failed');
+  if (!failed.length) { UI.toast('失敗した記録はありません', 'info'); return; }
+
+  const panel = document.createElement('div');
+  panel.style.cssText = [
+    'position:fixed', 'inset:0', 'z-index:10000',
+    'background:rgba(0,0,0,.6)',
+    'display:flex', 'align-items:flex-end',
+  ].join(';');
+
+  const inner = document.createElement('div');
+  inner.style.cssText = [
+    'background:var(--surface1, #1e1e2e)',
+    'border-radius:16px 16px 0 0',
+    'padding:20px 16px', 'width:100%',
+    'max-height:70vh', 'overflow-y:auto',
+  ].join(';');
+  inner.innerHTML = '<div style="font-size:.9rem;font-weight:700;margin-bottom:12px;color:var(--amber)">❌ 保存失敗 — 再送</div>';
+
+  failed.forEach(job => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)';
+    row.innerHTML =
+      '<div style="flex:1;font-size:.82rem">'
+      + '<b>' + job.growthData.weight_g + 'g</b>'
+      + ' <span style="color:var(--text3)">' + (job.growthData.target_id || '') + ' / ' + (job.growthData.record_date || '') + '</span>'
+      + '<br><span style="font-size:.72rem;color:var(--red)">' + (job.error || '不明なエラー') + '</span>'
+      + '</div>'
+      + '<button class="btn btn-primary btn-sm" style="flex-shrink:0" data-job-id="' + job.id + '">再送</button>';
+    row.querySelector('button').onclick = async function () {
+      const jid = this.dataset.jobId;
+      const entry = window._wmPendingQueue.find(q => q.id === jid);
+      if (!entry) return;
+      entry.status  = 'pending';
+      entry.error   = '';
+      this.disabled = true;
+      this.textContent = '送信中...';
+      panel.remove();
+      _wmUpdatePendingBadge();
+      await _wmBackgroundSave(entry);
+    };
+    inner.appendChild(row);
+  });
+
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'btn btn-ghost btn-full';
+  closeBtn.style.marginTop = '12px';
+  closeBtn.textContent = '閉じる';
+  closeBtn.onclick = () => panel.remove();
+  inner.appendChild(closeBtn);
+
+  panel.appendChild(inner);
+  panel.onclick = (e) => { if (e.target === panel) panel.remove(); };
+  document.body.appendChild(panel);
+};
+
+// キューのクリーンアップ（synced を古いものから削除）
+function _wmCleanQueue() {
+  const limit = 20;
+  const synced = window._wmPendingQueue.filter(q => q.status === 'synced');
+  if (synced.length > limit) {
+    const ids = synced.slice(0, synced.length - limit).map(q => q.id);
+    window._wmPendingQueue = window._wmPendingQueue.filter(q => !ids.includes(q.id));
+  }
+  _wmQueueSave(window._wmPendingQueue);  // 整理後も永続化
+}
+
+
+// 起動時: localStorage に失敗/未送信があればバッジ復元
+(function _wmRestoreBadgeOnLoad() {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _wmUpdatePendingBadge);
+  } else {
+    // 少し遅延してDOMが安定してから
+    setTimeout(_wmUpdatePendingBadge, 800);
+  }
+})();
+
+
+Pages._wmSave = function () {
+  // 楽観的UI: バリデーション → ローカル即反映 → 即遷移 → 裏でAPI保存
   const state     = Pages._wmState;
   const weightEl  = document.getElementById('wm-weight');
   const rawVal    = weightEl?.value;
@@ -1415,7 +1646,8 @@ Pages._wmSave = async function () {
   if (!state?.entityId) { UI.toast('対象IDが不明です。再スキャンしてください', 'error'); return; }
 
   const btn = document.getElementById('wm-save-btn');
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ 保存中...'; }
+  // 楽観的UIのため即遷移 → btn の disabled 表示は短時間で消える
+  if (btn) { btn.disabled = true; btn.textContent = '⏳...'; }
 
   try {
     const headVal      = parseFloat(document.getElementById('wm-head')?.value);
@@ -1441,50 +1673,46 @@ Pages._wmSave = async function () {
     const beforeCount = beforeRaw !== undefined && beforeRaw !== '' ? parseInt(beforeRaw,10) : undefined;
     const afterCount  = afterRaw  !== undefined && afterRaw  !== '' ? parseInt(afterRaw, 10) : undefined;
 
+    // ── growthData 構築 ────────────────────────────────────────
+    const client_request_id = _wmGenReqId();
     const growthData = {
-      target_type:  state.entityType,
-      target_id:    state.entityId,
-      record_date:  recordDateVal,
-      stage:        effectiveStage,
-      weight_g:     weightVal,
-      container:    effectiveContainer,
-      mat_type:     effectiveMat,
-      before_count: beforeCount,
-      after_count:  afterCount,
+      target_type:        state.entityType,
+      target_id:          state.entityId,
+      record_date:        recordDateVal,
+      stage:              effectiveStage,
+      weight_g:           weightVal,
+      container:          effectiveContainer,
+      mat_type:           effectiveMat,
+      before_count:       beforeCount,
+      after_count:        afterCount,
+      client_request_id,            // 重複防止 ID
     };
     if (!isNaN(headVal) && headVal > 0) growthData.head_width_mm = headVal;
     if (noteVal || matNote) growthData.note_private = (noteVal+matNote).trim();
     if (exchangeVal) growthData.exchange_type = exchangeVal;
-    await API.growth.create(growthData);
 
+    // ── entityUpdates 構築 ────────────────────────────────────
     const entityUpdates = {};
     if (state.entityType === 'IND') {
       entityUpdates.latest_weight_g = weightVal;
-      if (stageVal)        entityUpdates.current_stage     = stageVal;
-      if (containerVal)    entityUpdates.current_container = containerVal;
-      if (matVal)          entityUpdates.current_mat       = matVal;
-      if (sizeCatVal)      entityUpdates.size_category     = sizeCatVal;
+      if (stageVal)     entityUpdates.current_stage     = stageVal;
+      if (containerVal) entityUpdates.current_container = containerVal;
+      if (matVal)       entityUpdates.current_mat       = matVal;
+      if (sizeCatVal)   entityUpdates.size_category     = sizeCatVal;
       entityUpdates.mat_molt = moltChecked;
-      if (Object.keys(entityUpdates).length) {
-        await API.individual.update({ ind_id: state.entityId, ...entityUpdates }).catch(e => console.warn('[wmSave]',e.message));
-        Store.patchDBItem('individuals', 'ind_id', state.entityId, entityUpdates);
-      }
-    }
-    if (state.entityType === 'LOT') {
-      if (stageVal)        entityUpdates.stage          = stageVal;
-      if (containerVal)    entityUpdates.container_size = containerVal;
-      if (matVal)          entityUpdates.mat_type       = matVal;
-      if (sizeCatVal)      entityUpdates.size_category  = sizeCatVal;
+    } else if (state.entityType === 'LOT') {
+      if (stageVal)     entityUpdates.stage          = stageVal;
+      if (containerVal) entityUpdates.container_size = containerVal;
+      if (matVal)       entityUpdates.mat_type       = matVal;
+      if (sizeCatVal)   entityUpdates.size_category  = sizeCatVal;
       entityUpdates.mat_molt = moltChecked;
       if (afterCount !== undefined) {
         entityUpdates.count = afterCount;
         if (afterCount === 0) entityUpdates.status = 'individualized';
       }
-      if (Object.keys(entityUpdates).length) {
-        await API.lot.update({ lot_id: state.entityId, ...entityUpdates }).catch(e => console.warn('[wmSave]',e.message));
-        Store.patchDBItem('lots', 'lot_id', state.entityId, entityUpdates);
-      }
     }
+
+    // ── ① ローカル即時反映（画面遷移前に完了） ─────────────────
     try {
       Store.addGrowthRecord(state.entityId, {
         target_type: state.entityType, target_id: state.entityId,
@@ -1492,23 +1720,54 @@ Pages._wmSave = async function () {
         stage: effectiveStage, mat_type: effectiveMat, container: effectiveContainer,
       });
     } catch(_) {}
-
+    if (Object.keys(entityUpdates).length) {
+      if (state.entityType === 'IND') {
+        Store.patchDBItem('individuals', 'ind_id', state.entityId, entityUpdates);
+      } else if (state.entityType === 'LOT') {
+        Store.patchDBItem('lots', 'lot_id', state.entityId, entityUpdates);
+      }
+    }
     _wmSaveLastInput({ mat:matVal, molt:moltChecked, stage:stageVal,
                        container:containerVal, exchange:exchangeVal, sizeCat:sizeCatVal });
-    UI.toast('✅ ' + weightVal + 'g を保存しました', 'success');
+
+    // ── ② ペンディングキューに積む ───────────────────────────────
+    const job = {
+      id:            client_request_id,
+      growthData,
+      entityType:    state.entityType,
+      entityId:      state.entityId,
+      entityUpdates,
+      status:        'pending',
+      retries:       0,
+      error:         '',
+    };
+    window._wmPendingQueue.push(job);
+    _wmUpdatePendingBadge();
+    _wmCleanQueue();
+
+    // ══════════════════════════════════════════════════════════
+    // ── ③ 即遷移（ユーザーを待たせない） ─────────────────────────
+    // ⚠️  この行より前に以下を入れてはいけない:
+    //   - syncAll() / API 呼び出し / 重い await
+    //   - 再計算・通信を伴う処理
+    // 許容: Store 更新・lastInput 保存・queue 追加（同期・軽量）のみ
+    // ══════════════════════════════════════════════════════════
     if (state.fromDirect && state.fromId) {
-      // 個体詳細からの直遷移 → 個体詳細に戻す
       routeTo('ind-detail', { indId: state.fromId });
     } else {
-      // QRスキャン連続作業 → カメラ自動起動 + 直前QRの再読取を一時無視
       routeTo('qr-scan', {
-        mode:        'weight',
+        mode:       'weight',
         autoCamera:  true,
-        lastQrText:  state.lastQrText || '',  // 同一QR dedup 用
+        lastQrText:  state.lastQrText || '',
       });
     }
+
+    // ── ④ バックグラウンドでAPI保存（遷移後に非同期実行）──────────
+    _wmBackgroundSave(job);
+
   } catch (e) {
-    UI.toast('❌ 保存失敗: ' + (e.message||'不明なエラー'), 'error');
+    // バリデーション後の同期エラー（ほぼ起きないが念のため）
+    UI.toast('❌ 保存処理エラー: ' + (e.message||'不明なエラー'), 'error');
     if (btn) { btn.disabled = false; btn.textContent = '💾 保存して次へ'; }
   }
 };
