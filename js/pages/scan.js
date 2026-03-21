@@ -93,7 +93,14 @@ Pages.qrScan = function (params = {}) {
             <span style="font-size:1.4rem;margin-right:8px">📷</span>カメラで読み取る
           </button>
 
-          <!-- 画像ファイル読み取り -->
+          <!-- ラベル全体読み取り（AI解析）-->
+          <label id="qr-ai-label-btn" style="display:flex;align-items:center;justify-content:center;gap:8px;padding:12px;border:2px solid rgba(200,168,75,.5);border-radius:12px;cursor:pointer;margin-bottom:10px;font-size:.92rem;color:var(--amber);background:rgba(200,168,75,.06)">
+            <span style="font-size:1.3rem">🤖</span>
+            ラベル全体を読み取る（AI解析）
+            <input type="file" accept="image/*" capture="environment" style="display:none" onchange="Pages._qrReadLabelImage(this)">
+          </label>
+
+          <!-- QR画像ファイル読み取り -->
           <label style="display:flex;align-items:center;justify-content:center;gap:8px;padding:10px;border:2px dashed var(--border2);border-radius:10px;cursor:pointer;margin-bottom:10px;font-size:.85rem;color:var(--text3)">
             <span style="font-size:1.2rem">🖼️</span>QR画像を選択して読み取る
             <input type="file" accept="image/*" style="display:none" onchange="Pages._qrReadFromImage(this)">
@@ -201,60 +208,112 @@ Pages._qrPreviewInput = function (val) {
 };
 
 // ── QR解析・モード別遷移 ─────────────────────────────────────
+// ── モード取得ヘルパー（_qrResolve / カメラスキャン共用）──────
+function _qrGetMode() {
+  const activeBtn = Array.from(document.querySelectorAll('button')).find(b =>
+    b.style.fontWeight === '700' && b.getAttribute('onclick')?.includes('_qrSwitchMode')
+  );
+  if (activeBtn) {
+    const m = activeBtn.getAttribute('onclick')?.match(/'(view|diff|weight|t1|t2)'/);
+    if (m) return m[1];
+  }
+  return 'view';
+}
+
+// ── QRテキストから Store キャッシュで即解決 ─────────────────────
+function _qrResolveFromCache(qrText) {
+  if (!qrText) return null;
+  const v = qrText.trim();
+  // IND:xxx / LOT:xxx / SET:xxx 形式
+  const [prefix, rawId] = v.split(':');
+  if (!rawId) return null;
+  const id = rawId.trim();
+  if (prefix === 'IND') {
+    const ind  = Store.getIndividual(id) ||
+                 (Store.getDB('individuals') || []).find(i => i.display_id === id);
+    if (!ind) return null;
+    const line = Store.getLine(ind.line_id) || {};
+    const lg   = _getLastGrowthFromStore('IND', ind.ind_id, ind.latest_weight_g);
+    return { entity_type:'IND', entity:ind, line, last_growth:lg, missing:[], label_type:'ind_fixed' };
+  }
+  if (prefix === 'LOT') {
+    const lot  = Store.getLot(id) ||
+                 (Store.getDB('lots') || []).find(l => l.display_id === id);
+    if (!lot) return null;
+    const line = Store.getLine(lot.line_id) || {};
+    const lg   = _getLastGrowthFromStore('LOT', lot.lot_id, lot.latest_weight_g);
+    return { entity_type:'LOT', entity:lot, line, last_growth:lg, missing:[], label_type:'multi_lot' };
+  }
+  if (prefix === 'SET') {
+    const sets = Store.getDB('pairings') || [];
+    const set  = sets.find(s => s.set_id === id || s.display_id === id);
+    if (!set) return null;
+    return { entity_type:'SET', entity:set, line:null, last_growth:null, missing:[], label_type:'set' };
+  }
+  return null;
+}
+
+// ── モード別遷移（キャッシュ解決結果 or API結果を共用）──────────
+function _qrNavigate(mode, res, qrText) {
+  if (mode === 'weight') {
+    routeTo('weight-mode', { resolve_result: res, qr_text: qrText });
+  } else if (mode === 't1') {
+    if (res.entity_type === 'LOT') {
+      routeTo('t1-weight', { resolve_result: res, qr_text: qrText });
+    } else {
+      UI.toast('T1移行モードはロットQRを読み取ってください', 'info', 3000);
+    }
+  } else if (mode === 't2') {
+    if (res.entity_type === 'LOT') {
+      routeTo('t2-weight', { resolve_result: res, qr_text: qrText });
+    } else {
+      UI.toast('T2初回モードはロットQRを読み取ってください', 'info', 3000);
+    }
+  } else if (mode === 'diff') {
+    routeTo('qr-diff', { resolve_result: res, qr_text: qrText });
+  } else {
+    // 確認モード: 直接詳細画面へ
+    const eid = res.entity?.ind_id || res.entity?.lot_id || res.entity?.set_id;
+    if (res.entity_type === 'IND' && eid)      routeTo('ind-detail',     { indId: eid });
+    else if (res.entity_type === 'LOT' && eid) routeTo('lot-detail',     { lotId: eid });
+    else if (res.entity_type === 'SET' && eid) routeTo('pairing-detail', { pairingId: eid });
+    else routeTo('qr-diff', { resolve_result: res, qr_text: qrText });
+  }
+}
+
 Pages._qrResolve = async function () {
   const qrText = document.getElementById('qr-input')?.value?.trim();
   const errEl  = document.getElementById('qr-error');
   const btn    = document.getElementById('qr-resolve-btn');
   if (!qrText) { if (errEl) errEl.textContent = 'QRコードを入力してください'; return; }
   if (errEl) errEl.textContent = '';
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ 解析中...'; }
 
+  const mode = _qrGetMode();
+
+  // ── STEP1: Storeキャッシュで即解決して即遷移（体感速度ゼロ）──
+  const cached = _qrResolveFromCache(qrText);
+  if (cached) {
+    Pages._qrSaveHistory(qrText, cached);
+    _qrNavigate(mode, cached, qrText);
+    // バックグラウンドでAPIを叩いてキャッシュ更新（遷移には影響しない）
+    API.scan.resolve(qrText).then(res => {
+      if (res?.entity) {
+        if (res.entity_type === 'IND') {
+          Store.patchDBItem('individuals', 'ind_id', res.entity.ind_id, res.entity);
+        } else if (res.entity_type === 'LOT') {
+          Store.patchDBItem('lots', 'lot_id', res.entity.lot_id, res.entity);
+        }
+      }
+    }).catch(() => {}); // バックグラウンド失敗は無視
+    return;
+  }
+
+  // ── STEP2: キャッシュになければAPIを叩く（200ms以上かかることを示す）──
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ 解析中...'; }
   try {
     const res = await API.scan.resolve(qrText);
     Pages._qrSaveHistory(qrText, res);
-
-    // 選択中モードをボタンのfontWeightで判定
-    const btns = document.querySelectorAll('[onclick*="_qrSwitchMode"]');
-    let mode = 'view';
-    btns.forEach(b => {
-      if (b.style.fontWeight === '700' || b.style.background.includes('var(--green)')) mode = 'weight';
-      else if (b.style.fontWeight === '700' || b.style.background.includes('var(--blue)')) mode = 'diff';
-    });
-    // より確実な判定: 選択中ボタンのonclick属性から取得
-    const activeBtn = Array.from(document.querySelectorAll('button')).find(b =>
-      b.style.fontWeight === '700' && b.onclick && b.getAttribute('onclick')?.includes('_qrSwitchMode')
-    );
-    if (activeBtn) {
-      const m = activeBtn.getAttribute('onclick')?.match(/'(view|diff|weight|t1|t2)'/);
-      if (m) mode = m[1];
-    }
-
-    if (mode === 'weight') {
-      routeTo('weight-mode', { resolve_result: res, qr_text: qrText });
-    } else if (mode === 't1') {
-      // T1移行: LOTのみ有効
-      if (res.entity_type === 'LOT') {
-        routeTo('t1-weight', { resolve_result: res, qr_text: qrText });
-      } else {
-        UI.toast('T1移行モードはロットQRを読み取ってください', 'info', 3000);
-      }
-    } else if (mode === 't2') {
-      // T2初回: LOTのみ有効
-      if (res.entity_type === 'LOT') {
-        routeTo('t2-weight', { resolve_result: res, qr_text: qrText });
-      } else {
-        UI.toast('T2初回モードはロットQRを読み取ってください', 'info', 3000);
-      }
-    } else if (mode === 'diff') {
-      routeTo('qr-diff', { resolve_result: res, qr_text: qrText });
-    } else {
-      // 確認モード: 直接詳細画面へ
-      const eid = res.entity?.ind_id || res.entity?.lot_id || res.entity?.set_id;
-      if (res.entity_type === 'IND' && eid)      routeTo('ind-detail',     { indId: eid });
-      else if (res.entity_type === 'LOT' && eid) routeTo('lot-detail',     { lotId: eid });
-      else if (res.entity_type === 'SET' && eid) routeTo('pairing-detail', { pairingId: eid });
-      else routeTo('qr-diff', { resolve_result: res, qr_text: qrText });
-    }
+    _qrNavigate(mode, res, qrText);
   } catch (e) {
     if (errEl) errEl.textContent = '❌ ' + (e.message || '解析に失敗しました');
   } finally {
@@ -418,7 +477,22 @@ Pages._qrScanLoop = function (video) {
       if (window._qrSoundOn) _qrBeep();
       const status = document.getElementById('scan-status');
       if (status) { status.textContent = '✅ 読み取り成功！'; status.style.color = 'var(--green)'; }
-      Pages._qrResolve();
+      // キャッシュ即解決 → 即遷移
+      const _qrData = code.data;
+      const _mode   = _qrGetMode();
+      const _cached = _qrResolveFromCache(_qrData);
+      if (_cached) {
+        Pages._qrSaveHistory(_qrData, _cached);
+        _qrNavigate(_mode, _cached, _qrData);
+        API.scan.resolve(_qrData).then(res => {
+          if (res?.entity) {
+            if (res.entity_type === 'IND') Store.patchDBItem('individuals','ind_id',res.entity.ind_id,res.entity);
+            else if (res.entity_type === 'LOT') Store.patchDBItem('lots','lot_id',res.entity.lot_id,res.entity);
+          }
+        }).catch(() => {});
+      } else {
+        Pages._qrResolve();
+      }
       if (window._qrContinuousMode) {
         setTimeout(() => {
           resolved = false;
@@ -476,6 +550,93 @@ Pages._qrReadFromImage = async function (input) {
   // inputをリセット（同じ画像を再選択できるように）
   input.value = '';
 };
+
+// ── ラベル全体を読み取る（AI解析）────────────────────────────────
+Pages._qrReadLabelImage = async function (input) {
+  const file = input?.files?.[0];
+  if (!file) return;
+  input.value = '';
+
+  const geminiKey = Store.getSetting('gemini_key') || localStorage.getItem('gemini_key') || '';
+  if (!geminiKey) {
+    UI.toast('Gemini APIキーが未設定です。設定画面で登録してください。', 'error', 5000);
+    return;
+  }
+
+  UI.toast('🤖 AI解析中...（最大40秒）', 'info', 5000);
+  const resultEl = document.getElementById('qr-ai-result');
+
+  try {
+    // ① 画像圧縮 → base64
+    const compressed = await compressImageToBase64(file, 1280, 0.85);
+
+    // ② まず同じ画像からQRコードを読んで対象を特定
+    const img = new Image();
+    await new Promise(res => { img.onload = res; img.src = compressed.dataUrl; });
+    const tmpCanvas = document.createElement('canvas');
+    tmpCanvas.width = img.width; tmpCanvas.height = img.height;
+    tmpCanvas.getContext('2d').drawImage(img, 0, 0);
+    const imgData = tmpCanvas.getContext('2d').getImageData(0, 0, tmpCanvas.width, tmpCanvas.height);
+    const _fn = _getJsQR();
+    let qrData = null;
+    if (_fn) {
+      const code = _fn(imgData.data, imgData.width, imgData.height, { inversionAttempts: 'attemptBoth' });
+      if (code?.data) qrData = code.data;
+    }
+
+    // ③ GeminiでAI解析
+    const aiResult = await API.gemini.analyzeImage(compressed.base64, compressed.mimeType, 'label');
+
+    // ④ 結果を表示（qr-input / ai-result エリアに反映）
+    let displayText = '';
+    if (qrData) {
+      displayText = qrData;
+      const inp = document.getElementById('qr-input');
+      if (inp) { inp.value = qrData; Pages._qrPreviewInput(qrData); }
+    }
+
+    // AI解析結果カードを表示
+    const historyCard = document.getElementById('scan-history-card');
+    if (historyCard) {
+      const aiCard = document.createElement('div');
+      aiCard.className = 'card';
+      aiCard.style.cssText = 'border-color:rgba(200,168,75,.4);background:rgba(200,168,75,.06);margin-top:8px';
+      const rows = [
+        ['🏷 ID',        aiResult.individual_id || '—'],
+        ['性別',          aiResult.sex           || '—'],
+        ['孵化',          [aiResult.hatch_year, aiResult.hatch_month, aiResult.hatch_period].filter(Boolean).join('/') || '—'],
+        ['現在体重',       aiResult.current_weight ? aiResult.current_weight + 'g' : '—'],
+        ['現在マット',     aiResult.current_mat   || '—'],
+        ['ライン/メモ',   aiResult.line           || '—'],
+      ].filter(([,v]) => v !== '—');
+      let innerHtml = '<div style="font-size:.72rem;font-weight:700;color:var(--amber);margin-bottom:6px">🤖 AI解析結果</div>';
+      rows.forEach(([k,v]) => {
+        innerHtml += '<div style="display:flex;gap:8px;font-size:.78rem;padding:2px 0">'
+          + '<span style="color:var(--text3);min-width:70px">' + k + '</span>'
+          + '<span style="color:var(--text1)">' + v + '</span></div>';
+      });
+      if (aiResult.weight_history?.length) {
+        innerHtml += '<div style="font-size:.72rem;color:var(--text3);margin-top:6px">体重履歴: ' +
+          aiResult.weight_history.map(h => h.date + ' ' + h.weight + 'g').join(' / ') + '</div>';
+      }
+      if (qrData) {
+        innerHtml += '<button class="btn btn-amber btn-full" style="margin-top:8px;font-size:.82rem" onclick="Pages._qrResolve()">🔍 このQRで解析・遷移</button>';
+      }
+      innerHtml += '<button class="btn btn-ghost btn-sm" style="margin-top:4px;width:100%;font-size:.72rem" onclick="this.parentElement.parentElement.remove()">✕ 閉じる</button>';
+      aiCard.innerHTML = innerHtml;
+      historyCard.insertAdjacentElement('beforebegin', aiCard);
+    }
+
+    if (qrData) {
+      UI.toast('✅ AI解析完了。QRコードも検出しました。', 'success', 3000);
+    } else {
+      UI.toast('✅ AI解析完了。QRコードは未検出です。', 'success', 3000);
+    }
+  } catch (e) {
+    UI.toast('❌ AI解析失敗: ' + (e.message || '不明なエラー'), 'error', 5000);
+  }
+};
+
 
 Pages.qrDiff = function (params = {}) {
   const res = params.resolve_result;
