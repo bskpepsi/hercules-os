@@ -8,58 +8,14 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#0d1a0d">
   <title>HerculesOS</title>
-  <link rel="stylesheet" href="css/styles.css">
+  <link rel="stylesheet" href="css/styles.css?v=20260322a">
 
   <!-- qrcode.js (ラベル用QRコード生成) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
   <!-- Chart.js (体重推移グラフ) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-  <!-- ══════════════════════════════════════════════════════════
-       jsQR (カメラQRスキャン用) — 多段フォールバックローダー
-       
-       最優先: js/lib/jsQR.min.js （ローカル同梱）
-         取得: curl -L "https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js" \
-                    -o js/lib/jsQR.min.js
-         または: https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js を
-                 ブラウザで開いて js/lib/jsQR.min.js として保存
-
-       フォールバック順: ローカル → jsDelivr → cdnjs → unpkg
-       いずれかが成功すれば QR スキャンが動作します
-       ════════════════════════════════════════════════════════════ -->
-  <script>
-    (function() {
-      'use strict';
-      var CDNS = [
-        'js/lib/jsQR.min.js',                                                         // ① ローカル（最速・オフライン対応）
-        'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js',                  // ② jsDelivr（GitHub CDN）
-        'https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js',             // ③ cdnjs
-        'https://unpkg.com/jsqr@1.4.0/dist/jsQR.min.js',                             // ④ unpkg
-      ];
-      var tried = 0;
-
-      function tryNext() {
-        if (tried >= CDNS.length) {
-          console.error('[HerculesOS] jsQR: 全ての読込元で失敗しました。QRスキャン機能は使用できません。');
-          window._jsQRLoadFailed = true;
-          return;
-        }
-        var url = CDNS[tried++];
-        var s = document.createElement('script');
-        s.src = url;
-        s.onload = function() {
-          console.log('[HerculesOS] jsQR loaded from: ' + url);
-          window._jsQRLoadFailed = false;
-        };
-        s.onerror = function() {
-          console.warn('[HerculesOS] jsQR failed from: ' + url + '  → trying next...');
-          tryNext();
-        };
-        document.head.appendChild(s);
-      }
-
-      tryNext();
-    })();
-  </script>
+  <!-- jsQR (カメラQRスキャン用) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js"></script>
 </head>
 <body>
 
@@ -108,26 +64,32 @@
 <div id="toast"></div>
 
 <!-- ════ JS 読み込み（順序厳守） ════ -->
-<script src="js/config.js"></script>
-<script src="js/api.js"></script>
-<script src="js/store.js"></script>
-<script src="js/app.js"></script>
+<!-- バージョンクエリ ?v=20260322a でキャッシュを強制更新         -->
+<!-- デプロイ時に値を変えるだけでよい（例: 20260322b, 20260323a） -->
+<script src="js/config.js?v=20260322a"></script>
+<script src="js/api.js?v=20260322a"></script>
+<script src="js/store.js?v=20260322a"></script>
+<!-- normalize.js: 表示正規化（config.js の後・app.js の前に必須） -->
+<script src="js/normalize.js?v=20260322a"></script>
+<script src="js/app.js?v=20260322a"></script>
 <!-- pages/ — 読み込み順: individual → lot → growth → dashboard → manage系 -->
-<script src="js/pages/individual.js"></script>
-<script src="js/pages/lot.js"></script>
-<script src="js/pages/growth.js"></script>
-<script src="js/pages/dashboard.js"></script>
-<script src="js/pages/parent.js"></script>
-<script src="js/pages/bloodline.js"></script>
-<script src="js/pages/pairing.js"></script>
-<script src="js/pages/label.js"></script>
-<script src="js/pages/manage.js"></script>
-<script src="js/pages/settings.js"></script>
-<script src="js/pages/scan.js"></script>
+<script src="js/pages/individual.js?v=20260322a"></script>
+<script src="js/pages/lot.js?v=20260322a"></script>
+<script src="js/pages/growth.js?v=20260322a"></script>
+<script src="js/pages/dashboard.js?v=20260322a"></script>
+<script src="js/pages/parent.js?v=20260322a"></script>
+<script src="js/pages/bloodline.js?v=20260322a"></script>
+<script src="js/pages/pairing.js?v=20260322a"></script>
+<script src="js/pages/label.js?v=20260322a"></script>
+<script src="js/pages/manage.js?v=20260322a"></script>
+<script src="js/pages/settings.js?v=20260322a"></script>
+<script src="js/pages/scan.js?v=20260322a"></script>
 <!-- Phase2 拡張（v2ページ：parent_v2 / bloodline_v2 が v1 のルーティングを上書き） -->
-<script src="js/pages/bloodline_v2.js"></script>
-<script src="js/pages/parent_v2.js"></script>
-<script src="js/pages/analysis.js"></script>
+<script src="js/pages/bloodline_v2.js?v=20260322a"></script>
+<script src="js/pages/parent_v2.js?v=20260322a"></script>
+<script src="js/pages/analysis.js?v=20260322a"></script>
+<!-- Phase5/6: 販売管理（sale.js は manage.js より後に読む） -->
+<script src="js/pages/sale.js?v=20260322a"></script>
 
 </body>
 </html>

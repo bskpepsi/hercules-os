@@ -3,13 +3,18 @@
 // 役割: アプリの起動・ルーティング・ローディング・トースト・
 //       共通UIユーティリティを担う。各画面JSの呼び出し元。
 //       画面ごとのrender関数を呼び分けるシンプルなSPAルーター。
+//
+// P0-1修正: routeTo の二重実行を解消
+//   Store.navigate() に第3引数 _skipNavEvent=true を追加。
+//   routeTo 経由では nav イベントを発火させず、
+//   _renderPage を routeTo 内で1回だけ呼ぶ。
+//   Store.on('nav') は Store.back() などの内部遷移専用として残す。
+//
+// P0-2修正: sale-list を PAGES に追加、managePages に sale-list を追加。
 // ════════════════════════════════════════════════════════════════
 
 'use strict';
 
-// ── 起動 ──────────────────────────────────────────────────────
-
-// ── ルーター ──────────────────────────────────────────────────
 // ── ID解決ヘルパー（params.id / params.lineId / params.lotId など全キーをフォールバック）
 function _pid() {
   const p = Store.getParams();
@@ -46,6 +51,10 @@ window.PAGES = {
   'qr-scan':     () => Pages.qrScan(Store.getParams()),
   'qr-diff':     () => Pages.qrDiff(Store.getParams()),
   'weight-mode': () => Pages.weightMode(Store.getParams()),
+  // ── 販売管理（sale.js でも window.PAGES['sale-list'] を自己登録するが、ここにも定義して確実に接続）
+  'sale-list':   () => (typeof Pages.saleList === 'function'
+    ? Pages.saleList()
+    : document.getElementById('main').innerHTML = UI.empty('sale.js が読み込まれていません')),
 };
 
 // ── 起動（PAGES定義の後に配置することでPAGES参照を保証） ────────
@@ -64,9 +73,9 @@ document.addEventListener('DOMContentLoaded', () => {
       if (page && PAGES[page]) {
         delete hashParams.page;
         const params = Object.keys(hashParams).length ? hashParams : {};
-        Store.navigate(page, params);
-        PAGES[page]();
-        renderNav();
+        // hash復元時: nav event を発火せず状態を直接設定してから描画
+        Store.navigate(page, params, true);
+        _renderPage(page);
         syncIfNeeded();
         return;
       }
@@ -77,21 +86,14 @@ document.addEventListener('DOMContentLoaded', () => {
   syncIfNeeded();
 });
 
-function routeTo(pageId, params = {}) {
-  // 文字列で渡された場合は { id: '...' } に正規化（後方互換）
-  if (typeof params === 'string') params = { id: params };
-  if (!params || typeof params !== 'object') params = {};
-  if (Object.keys(params).length) Store.navigate(pageId, params);
-  else Store.navigate(pageId);
-
-  // ④ URLハッシュ更新（リロード時に復元できるよう）
-  const hashParts = { page: pageId, ...(params || {}) };
-  const hashStr = new URLSearchParams(hashParts).toString();
-  history.replaceState(null, '', '#' + hashStr);
-
+// ────────────────────────────────────────────────────────────────
+// _renderPage — DOM描画を担う内部関数
+// ページ関数を呼び出し、ナビを更新する。
+// routeTo と Store.on('nav') の両方から呼ばれる。
+// ────────────────────────────────────────────────────────────────
+function _renderPage(pageId) {
   const main = document.getElementById('main');
   if (!main) return;
-
   const fn = PAGES[pageId];
   if (fn) {
     main.innerHTML = '';
@@ -103,15 +105,36 @@ function routeTo(pageId, params = {}) {
   main.scrollTop = 0;
 }
 
-// Store のナビイベントを購読
+// ────────────────────────────────────────────────────────────────
+// routeTo — 外部から呼ぶ唯一の遷移関数
+//
+// 【P0-1修正の核心】
+//   Store.navigate(pageId, params, true) の第3引数 true が
+//   nav イベント発火をスキップさせる（store.js 側で対応済み）。
+//   これにより Store.on('nav') と routeTo 自身の二重描画が解消される。
+// ────────────────────────────────────────────────────────────────
+function routeTo(pageId, params = {}) {
+  // 文字列で渡された場合は { id: '...' } に正規化（後方互換）
+  if (typeof params === 'string') params = { id: params };
+  if (!params || typeof params !== 'object') params = {};
+
+  // 状態更新（_skipNavEvent=true で nav event は発火しない）
+  Store.navigate(pageId, params, true);
+
+  // URLハッシュ更新（リロード時に復元できるよう）
+  const hashParts = { page: pageId, ...(params || {}) };
+  const hashStr = new URLSearchParams(hashParts).toString();
+  history.replaceState(null, '', '#' + hashStr);
+
+  // 描画は1回だけここで実行
+  _renderPage(pageId);
+}
+
+// Store.on('nav') — Store.back() など内部遷移専用ハンドラ
+// routeTo 経由では nav event が発火しないため二重描画は起きない。
+// Store.back() → navigate() → _notify('nav') → ここが動く、という経路のみ。
 Store.on('nav', () => {
-  const fn = PAGES[Store.getPage()];
-  const main = document.getElementById('main');
-  if (!main || !fn) return;
-  main.innerHTML = '';
-  fn();
-  renderNav();
-  main.scrollTop = 0;
+  _renderPage(Store.getPage());
 });
 
 // ── ナビゲーション ─────────────────────────────────────────────
@@ -129,11 +152,15 @@ function bindNav() {
 function renderNav() {
   const cur = Store.getPage();
   // QR系ページ → QRタブをアクティブに
-  const qrPages     = ['qr-scan','qr-diff','weight-mode'];
-  const managePages = ['lot-list','line-list','parent-list','bloodline-list','pairing-list',
-                       'line-new','lot-new','parent-new','bloodline-new','pairing-new',
-                       'lot-detail','line-detail','parent-detail','bloodline-detail','pairing-detail',
-                       'label-gen'];
+  const qrPages = ['qr-scan','qr-diff','weight-mode'];
+  // 管理系ページ → 管理タブをアクティブに（sale-list を追加）
+  const managePages = [
+    'lot-list','line-list','parent-list','bloodline-list','pairing-list',
+    'line-new','lot-new','parent-new','bloodline-new','pairing-new',
+    'lot-detail','line-detail','parent-detail','bloodline-detail','pairing-detail',
+    'label-gen',
+    'sale-list',   // 販売管理も管理タブ配下
+  ];
   document.querySelectorAll('.nav-tab').forEach(el => {
     const nav = el.dataset.nav;
     el.classList.toggle('active',
@@ -151,12 +178,7 @@ function bindGlobalEvents() {
     const el = document.getElementById('loading-overlay');
     if (el) el.style.display = Store.isLoading() ? 'flex' : 'none';
   });
-  // トースト
-  Store.on('toast', () => {
-    const t = Store._state?.toast;
-    showToast(Store.getDB('_lastToast'));
-  });
-  // 動的ナビ
+  // 動的ナビ（data-nav 属性クリック委譲）
   document.addEventListener('click', (e) => {
     const nav = e.target.closest('[data-nav]');
     if (nav) {
@@ -268,8 +290,6 @@ const UI = {
   },
 
   // ── 日齢表示 ────────────────────────────────────────────────
-  // simple: 一覧用、full: 詳細用
-  // isCurrent: true=現在の日齢, false=記録時点の日齢（区別して表示）
   ageSimple(hatchDate) {
     const a = Store.calcAge(hatchDate);
     if (!a) return '—';
@@ -291,8 +311,7 @@ const UI = {
     </div>`;
   },
 
-  // 記録時点の日齢（成長記録リスト用）
-  ageAtRecord(ageDays, recordDate) {
+  ageAtRecord(ageDays) {
     if (!ageDays && ageDays !== 0) return '';
     return `<span class="age-rec" title="記録時点の日齢">記録時: ${ageDays}日</span>`;
   },
@@ -365,7 +384,7 @@ const UI = {
       .sort((a,b) => a.record_date.localeCompare(b.record_date));
     if (!wts.length) return UI.empty('体重記録なし');
 
-    const showEdit = opts.showEdit !== false; // デフォルトtrue
+    const showEdit = opts.showEdit !== false;
 
     const rows = wts.map((r, i) => {
       const prev  = i > 0 ? +wts[i-1].weight_g : null;
@@ -375,7 +394,6 @@ const UI = {
         : '—';
       const recAge  = r.age_days ? Store.formatRecordAge(r.age_days) : '';
       const contStr = r.container  || '';
-      // exchange_type は文字列そのまま or 旧コードマッピング
       const exchStr = r.exchange_type === 'FULL'    ? '全交換'
                     : r.exchange_type === 'PARTIAL'  ? '追加'
                     : (r.exchange_type && r.exchange_type !== '交換なし') ? r.exchange_type : '';
@@ -431,11 +449,8 @@ async function apiCall(fn, successMsg, opts = {}) {
 // ════════════════════════════════════════════════════════════════
 // Phase2 UI拡張 — modal / actionSheet / detailRow など
 // ════════════════════════════════════════════════════════════════
-
-// UIオブジェクトに追加
 Object.assign(UI, {
 
-  // ── モーダル ────────────────────────────────────────────────
   modal(html) {
     let wrap = document.getElementById('modal-wrap');
     if (!wrap) {
@@ -461,9 +476,7 @@ Object.assign(UI, {
     document.body.style.overflow = '';
   },
 
-  // ── アクションシート ─────────────────────────────────────────
   actionSheet(items) {
-    // fn.toString()はクロージャを失うため、関数をグローバル一時登録してインデックスで呼ぶ
     window.__actionCallbacks = items.map(item => item.fn);
     const btns = items.map((item, i) =>
       `<button class="action-sheet-btn" style="pointer-events:auto" onclick="event.stopPropagation();UI.closeModal();setTimeout(()=>{window.__actionCallbacks[${i}]&&window.__actionCallbacks[${i}]()},30)">${item.label}</button>`
@@ -475,7 +488,6 @@ Object.assign(UI, {
       </div>`);
   },
 
-  // ── 詳細行 ──────────────────────────────────────────────────
   detailRow(label, value) {
     return `<div class="detail-row">
       <span class="detail-label">${label}</span>
@@ -486,10 +498,8 @@ Object.assign(UI, {
 
 // Phase2 ルート追加
 Object.assign(PAGES, {
-
   'line-analysis':   () => Pages.lineAnalysis(),
   'mother-ranking':  () => Pages.motherRanking(),
   'heatmap':         () => Pages.bloodlineHeatmap(),
   'parent-dashboard':() => Pages.parentDashboard(),
 });
-

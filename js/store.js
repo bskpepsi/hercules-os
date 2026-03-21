@@ -4,6 +4,11 @@
 //       GASへの通信結果をここに保存し、画面はここから読む。
 //       ページ遷移用の currentPage / currentId もここで管理する。
 //       DB はシンプルなオブジェクトで、localStorageに定期保存する。
+//
+// P0-1修正: navigate() に第3引数 _skipNavEvent を追加。
+//   routeTo() は _skipNavEvent=true で呼び出し、nav event を発火させない。
+//   Store.back() は従来通り _skipNavEvent 未指定（false）で nav event を発火し、
+//   Store.on('nav') ハンドラが描画を担う。
 // ════════════════════════════════════════════════════════════════
 
 'use strict';
@@ -12,20 +17,13 @@ const Store = (() => {
 
   // ── 状態 ──────────────────────────────────────────────────────
   let _state = {
-    // ページ遷移
-    page:     'dashboard',   // 現在の画面ID
+    page:     'dashboard',
     prevPage: null,
-    pageParams: {},          // 画面に渡すパラメータ { id, mode, ... }
-
-    // UI
+    pageParams: {},
     navOpen:  false,
     loading:  false,
-    toast:    null,          // { msg, type:'success'|'error'|'info', ts }
-
-    // フォーム下書き（画面離脱時に保持）
+    toast:    null,
     draft:    {},
-
-    // 最終同期日時
     lastSync: null,
   };
 
@@ -39,23 +37,26 @@ const Store = (() => {
     pairings:          [],
     pairing_histories: [],
     egg_records:       [],
-    growthMap:   {},  // target_id → records[]
+    growthMap:   {},
     settings:    {},
-    labelHistory:{},  // target_id → labels[]
+    labelHistory:{},
   };
 
   // ── ページ遷移 ─────────────────────────────────────────────────
-  function navigate(pageId, params = {}) {
-    _state.prevPage  = _state.page;
-    _state.page      = pageId;
+  // _skipNavEvent=true: nav イベントを発火しない（routeTo経由専用）
+  // _skipNavEvent=false(デフォルト): nav イベントを発火する（Store.back()等）
+  function navigate(pageId, params = {}, _skipNavEvent = false) {
+    _state.prevPage   = _state.page;
+    _state.page       = pageId;
     _state.pageParams = params;
-    _state.draft     = {};   // 下書きクリア
-    _notify('nav');
+    _state.draft      = {};
+    if (!_skipNavEvent) _notify('nav');
   }
 
   function back() {
-    if (_state.prevPage) navigate(_state.prevPage);
-    else navigate('dashboard');
+    // back() は nav event を発火して Store.on('nav') に描画させる
+    if (_state.prevPage) navigate(_state.prevPage, {}, false);
+    else navigate('dashboard', {}, false);
   }
 
   function getPage()   { return _state.page; }
@@ -93,7 +94,7 @@ const Store = (() => {
 
   function addDBItem(key, item) {
     if (!Array.isArray(_db[key])) _db[key] = [];
-    _db[key].unshift(item);   // 新しいものを先頭に
+    _db[key].unshift(item);
     _notify('db_' + key);
     _scheduleSave();
   }
@@ -101,46 +102,36 @@ const Store = (() => {
   // ── DB 読み込み ────────────────────────────────────────────────
   function getDB(key) { return _db[key]; }
 
-  // 個体1件
   function getIndividual(id) {
     return _db.individuals.find(i => i.ind_id === id) || null;
   }
-  // ライン1件
   function getLine(id) {
     return _db.lines.find(l => l.line_id === id) || null;
   }
-  // ロット1件
   function getLot(id) {
     return _db.lots.find(l => l.lot_id === id) || null;
   }
-  // 種親1件
   function getParent(id) {
     return _db.parents.find(p => p.par_id === id) || null;
   }
-  // 血統1件
   function getBloodline(id) {
     return _db.bloodlines.find(b => b.bloodline_id === id) || null;
   }
 
-  // ライン別個体リスト
   function getIndividualsByLine(lineId) {
     return _db.individuals.filter(i => i.line_id === lineId);
   }
-  // ロット別個体リスト（元ロット含む）
   function getIndividualsByLot(lotId) {
     return _db.individuals.filter(i => i.lot_id === lotId || i.origin_lot_id === lotId);
   }
 
   // ── 日齢計算（フロント版） ─────────────────────────────────────
-  // hatchDate: 'YYYY/MM/DD' 文字列
-  // targetDate: 計算基準日（省略時=今日）→「現在の日齢」と「記録時点の日齢」を区別
   function calcAge(hatchDate, targetDate) {
     if (!hatchDate) return null;
-    // DateオブジェクトやISO形式('2026-03-15')も受け付けるよう正規化
     let hdStr = hatchDate instanceof Date
       ? hatchDate.toISOString().split('T')[0]
       : String(hatchDate);
-    hdStr = hdStr.replace(/-/g, '/').trim();  // '2026-03-15' → '2026/03/15'
+    hdStr = hdStr.replace(/-/g, '/').trim();
     const parts = hdStr.split('/');
     if (parts.length < 3) return null;
     const hatch = new Date(+parts[0], +parts[1] - 1, +parts[2]);
@@ -157,7 +148,6 @@ const Store = (() => {
     const remYM      = Math.floor((totalDays - years * 365.25) / 30.44);
     const remYD      = Math.round(totalDays - years * 365.25 - remYM * 30.44);
 
-    // ステージ目安
     const rules  = (() => {
       try { return JSON.parse(_db.settings['stage_age_rules'] || ''); }
       catch { return DEFAULT_STAGE_AGE_RULES; }
@@ -167,11 +157,9 @@ const Store = (() => {
 
     return {
       totalDays,
-      isCurrent:   !targetDate,   // targetDate省略=現在の日齢
+      isCurrent:   !targetDate,
       baseDate:    targetDate || null,
-      // 一覧用（簡易）
       simple:  `${totalDays}日 / ${weeks}週 / ${(totalDays/30.44).toFixed(1)}ヶ月`,
-      // 詳細用（フル）
       days:    `${totalDays}日`,
       weeks:   `${weeks}週${remDays}日`,
       months:  `${months}ヶ月${remMDays}日`,
@@ -180,12 +168,10 @@ const Store = (() => {
     };
   }
 
-  // 「記録時点の日齢」を文字列で返す（成長記録詳細表示用）
   function formatRecordAge(ageDays) {
     if (!ageDays && ageDays !== 0) return '—';
     const d = +ageDays;
     const w = Math.floor(d / 7);
-    // 短縮表示: 79日 / 11週
     return w > 0 ? `${d}日 / ${w}週` : `${d}日`;
   }
 
@@ -211,7 +197,7 @@ const Store = (() => {
     _scheduleSave();
   }
   function getGrowthRecords(targetId) {
-    return _db.growthMap[targetId] || null;  // null = 未取得
+    return _db.growthMap[targetId] || null;
   }
   function addGrowthRecord(targetId, record) {
     if (!_db.growthMap[targetId]) _db.growthMap[targetId] = [];
@@ -237,16 +223,30 @@ const Store = (() => {
   }
   function _persist() {
     try {
-      // growthMap は容量が大きくなるので最新100件のみ保持
       const trimmed = {};
       Object.entries(_db.growthMap).forEach(([k,v]) => {
         trimmed[k] = v.slice(-100);
       });
       const payload = { ..._db, growthMap: trimmed };
-      localStorage.setItem(CONFIG.LS_KEYS.DB,       JSON.stringify(payload));
+      const json    = JSON.stringify(payload);
+      // 容量超過対策: 4MB超ならgrowthMapをさらに削減して再試行
+      if (json.length > 4 * 1024 * 1024) {
+        const slim = {};
+        Object.entries(_db.growthMap).forEach(([k,v]) => { slim[k] = v.slice(-20); });
+        localStorage.setItem(CONFIG.LS_KEYS.DB, JSON.stringify({ ..._db, growthMap: slim, labelHistory: {} }));
+      } else {
+        localStorage.setItem(CONFIG.LS_KEYS.DB, json);
+      }
       localStorage.setItem(CONFIG.LS_KEYS.LAST_SYNC, new Date().toISOString());
     } catch (e) {
       console.warn('Store: localStorage書き込み失敗', e);
+      // 緊急: growthMap・labelHistory を捨てて最小限だけ保存
+      try {
+        localStorage.setItem(CONFIG.LS_KEYS.DB,
+          JSON.stringify({ ..._db, growthMap: {}, labelHistory: {} }));
+      } catch(e2) {
+        console.error('Store: 緊急保存も失敗', e2);
+      }
     }
   }
 
@@ -295,42 +295,35 @@ const Store = (() => {
   // ── フィルタ・ソートヘルパー ───────────────────────────────────
   function filterIndividuals(filters = {}) {
     let list = [..._db.individuals];
-    if (filters.line_id)  list = list.filter(i => i.line_id       === filters.line_id);
+    if (filters.line_id)      list = list.filter(i => i.line_id       === filters.line_id);
     if (filters.lot_id)       list = list.filter(i => i.lot_id        === filters.lot_id || i.origin_lot_id === filters.lot_id);
     if (filters.bloodline_id) list = list.filter(i => i.bloodline_id  === filters.bloodline_id);
     if (filters.stage) {
       if (filters._larvaGroup || filters.stage === 'larva') {
-        // 幼虫ステージをまとめてフィルタ
-        const larvaStages = ['T0','T1','T2A','T2B','T3','EGG'];
-        list = list.filter(i => larvaStages.includes(i.current_stage));
+        // 幼虫ステージをまとめてフィルタ（新・旧コード両対応）
+        const larvaStages = new Set([
+          'T0','T1','T2A','T2B','T3','EGG',
+          'L1','L2_EARLY','L2_LATE','L3_EARLY','L3_MID','L3_LATE',
+        ]);
+        list = list.filter(i => larvaStages.has(i.current_stage));
       } else {
         list = list.filter(i => i.current_stage === filters.stage);
       }
     }
-    if (filters.sex)      list = list.filter(i => i.sex           === filters.sex);
-    // statusフィルター
-    // '_all'   = 全件表示（フィルタなし）
-    // 'active' = 飼育中グループ（larva/prepupa/pupa/adult/alive/seed_candidate/seed_reserved）
-    // 'selling'= 販売フロー（for_sale/reserved/listed）
-    // 'sold'   = 販売済みのみ
-    // 'dead'   = 死亡のみ
-    // 'excluded'= 除外のみ
-    // その他の文字列 = 完全一致
-    // 空文字/未指定 = 終端（dead/sold/excluded）以外を表示
+    if (filters.sex) list = list.filter(i => i.sex === filters.sex);
+
     const _ACTIVE_STATUSES  = new Set(['larva','prepupa','pupa','adult','alive','seed_candidate','seed_reserved']);
     const _SELLING_STATUSES = new Set(['for_sale','reserved','listed']);
     const _TERMINAL_STATUSES= new Set(['dead','sold','excluded']);
     if (filters.status === '_all') {
-      // 全件：フィルタなし
+      // 全件
     } else if (filters.status === 'active' || filters.status === 'alive') {
-      // 後方互換: alive も active グループに含める
       list = list.filter(i => _ACTIVE_STATUSES.has(i.status));
     } else if (filters.status === 'selling') {
       list = list.filter(i => _SELLING_STATUSES.has(i.status));
     } else if (filters.status) {
       list = list.filter(i => i.status === filters.status);
     } else {
-      // status 未指定：終端以外を表示（デフォルト）
       list = list.filter(i => !_TERMINAL_STATUSES.has(i.status));
     }
     if (filters.guinness) list = list.filter(i => String(i.guinness_flag) === 'true');
@@ -344,24 +337,18 @@ const Store = (() => {
     return list;
   }
 
-  // ── ペアリング統計（par_idごとのサマリー） ────────────────────
   function getPairingStats(parId) {
     if (!parId) return { total: 0, lastDate: null, nextReadyDate: null, scheduledCount: 0 };
     try {
       const all = (_db.pairing_histories || []).filter(
         h => h && (h.male_parent_id === parId || h.female_parent_id === parId)
       );
-      // 実施済み: status='done' または status未設定（旧データ互換）
-      const done = all.filter(h => !h.status || h.status === 'done');
-      // 予定: status='planned'
+      const done    = all.filter(h => !h.status || h.status === 'done');
       const planned = all.filter(h => h.status === 'planned');
-
-      const sorted = [...done].sort(
+      const sorted  = [...done].sort(
         (a, b) => String(b.pairing_date||'').localeCompare(String(a.pairing_date||''))
       );
       const lastDate = sorted.length ? (sorted[0].pairing_date || null) : null;
-
-      // 次回可能目安日: 最終ペアリング日 + 設定値(male_pairing_interval_min_days, デフォルト7日)
       let nextReadyDate = null;
       if (lastDate) {
         const minDays = parseInt(_db.settings?.male_pairing_interval_min_days || '7', 10);
@@ -372,14 +359,7 @@ const Store = (() => {
           nextReadyDate = d.toISOString().split('T')[0].replace(/-/g,'/');
         }
       }
-
-      return {
-        total:          sorted.length,
-        lastDate,
-        nextReadyDate,
-        scheduledCount: planned.length,
-        planned,
-      };
+      return { total: sorted.length, lastDate, nextReadyDate, scheduledCount: planned.length, planned };
     } catch(e) {
       return { total: 0, lastDate: null, nextReadyDate: null, scheduledCount: 0, planned: [] };
     }
@@ -389,9 +369,6 @@ const Store = (() => {
     let list = [..._db.lots];
     if (filters.line_id) list = list.filter(l => l.line_id === filters.line_id);
     if (filters.stage)   list = list.filter(l => l.stage   === filters.stage);
-    // status:'all' → 全ステータス取得（dissolved/individualized を含む）
-    // status未指定  → active のみ
-    // status指定    → そのステータスのみ
     if (filters.status !== 'all') {
       list = list.filter(l => l.status === (filters.status || 'active'));
     }
@@ -399,29 +376,18 @@ const Store = (() => {
   }
 
   return {
-    // ページ
     navigate, back, getPage, getParams, getPrev,
-    // UI
     setLoading, isLoading, toast,
-    // DB
     setDB, patchDBItem, addDBItem, getDB,
     getIndividual, getLine, getLot, getParent, getBloodline,
     getIndividualsByLine, getIndividualsByLot,
-    // 日齢
     calcAge, formatRecordAge,
-    // 判定
     getVerdict,
-    // 成長記録
     setGrowthRecords, getGrowthRecords, addGrowthRecord,
-    // 設定
     setSetting, getSetting,
-    // 永続化
     loadFromStorage, clearCache,
-    // イベント
     on, off,
-    // 下書き
     setDraft, getDraft, clearDraft,
-    // フィルタ
     filterIndividuals, filterLots,
     getPairingStats,
   };

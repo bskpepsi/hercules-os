@@ -4,6 +4,11 @@
 //       フロントの他のコードはこのファイルのメソッドのみを通してGASと通信する。
 //       成功時は data を返し、失敗時は Error をスローする。
 //       リトライ・タイムアウト・エラー整形もここで行う。
+//
+// P0-3修正: API.individual.changeStatus の責務分離
+//   - dead / sold / excluded（終端） → deleteIndividual（StatusRulesで強制終端）
+//   - for_sale / reserved / listed / alive 等（中間） → updateIndividual（StatusRulesを経由）
+//   これにより「予約する」「予約解除」が常にGASエラーになる問題を解消。
 // ════════════════════════════════════════════════════════════════
 
 'use strict';
@@ -11,12 +16,11 @@
 const API = (() => {
   const TIMEOUT_MS = 30000;
 
-  // ── 基底通信 ──────────────────────────────────────────────────
+  // ── 基底通信（GET） ────────────────────────────────────────────
   async function call(action, payload = {}) {
     const url = CONFIG.GAS_URL || localStorage.getItem(CONFIG.LS_KEYS.GAS_URL) || '';
     if (!url) throw new Error('GAS URLが設定されていません。設定画面から入力してください。');
 
-    // GASはGETリクエストでCORSを回避する
     const params = new URLSearchParams({
       action,
       payload: JSON.stringify(payload),
@@ -46,12 +50,7 @@ const API = (() => {
     }
   }
 
-  // ── POST専用通信（画像アップロード用）────────────────────────
-  // 【GASリダイレクト問題の回避】
-  // GASのウェブアプリURLはPOSTを302リダイレクトする。
-  // redirect:'follow' だとリダイレクト先でPOST→GETに変換されボディが失われる。
-  // 解決: まず redirect:'manual' で302レスポンスを受け取り、
-  //       Location ヘッダーのリダイレクト先URLに同じボディで再POST する。
+  // ── POST専用通信（画像アップロード・大容量データ用）────────────
   async function callPost(action, payload = {}) {
     const gasUrl = CONFIG.GAS_URL || localStorage.getItem(CONFIG.LS_KEYS.GAS_URL) || '';
     if (!gasUrl) throw new Error('GAS URLが設定されていません。');
@@ -61,7 +60,6 @@ const API = (() => {
     const tid  = setTimeout(() => ctrl.abort(), 90000);
 
     try {
-      // Step1: GAS URLへPOST → 302が返ってくる（ボディは無視）
       let postUrl = gasUrl;
       try {
         const probe = await fetch(gasUrl, {
@@ -70,25 +68,21 @@ const API = (() => {
           redirect: 'manual',
           body:     body,
         });
-        // 302の場合: Location ヘッダーのリダイレクト先を取得
         if (probe.type === 'opaqueredirect' || probe.status === 0) {
-          // opaqueredirectの場合はヘッダーが読めないため元URLにそのまま送る
+          // opaqueredirect: ヘッダー読めないのでそのまま
         } else if (probe.status >= 300 && probe.status < 400) {
           const loc = probe.headers.get('location');
           if (loc) postUrl = loc;
         } else if (probe.ok) {
-          // リダイレクトなしで直接レスポンスが返った（開発環境等）
           clearTimeout(tid);
           const json = await probe.json();
           if (!json.ok) throw new Error(json.error || '不明なエラー');
           return json.data;
         }
       } catch (probeErr) {
-        // probe自体のエラーは無視して元URLに直接POSTを試みる
         console.warn('[callPost] probe failed, trying direct POST:', probeErr.message);
       }
 
-      // Step2: リダイレクト先（またはオリジナルURL）に再POST
       const res = await fetch(postUrl, {
         method:   'POST',
         headers:  { 'Content-Type': 'text/plain' },
@@ -100,7 +94,6 @@ const API = (() => {
 
       if (!res.ok) throw new Error('HTTP ' + res.status);
 
-      // GASがHTMLを返した場合に備えてテキストで受け取りパース
       const text = await res.text();
       let json;
       try {
@@ -121,12 +114,12 @@ const API = (() => {
 
   // ── システム ──────────────────────────────────────────────────
   const system = {
-    init:         ()           => call('init'),
-    getAllData:    ()           => call('getAllData'),
-    resetAllData:  ()           => call('resetAllData'),
-    getSettings:  ()           => call('getSettings'),
-    updateSetting: (key,v)     => call('updateSetting',  { key, value: v }),
-    updateSettings:(updates)   => callPost('updateSettings', { updates }),  // Phase6: JSON一括保存はPOST必須
+    init:          ()          => call('init'),
+    getAllData:     ()          => call('getAllData'),
+    resetAllData:  ()          => call('resetAllData'),
+    getSettings:   ()          => call('getSettings'),
+    updateSetting: (key, v)    => call('updateSetting',   { key, value: v }),
+    updateSettings: (updates)  => callPost('updateSettings', { updates }),
   };
 
   // ── ライン ────────────────────────────────────────────────────
@@ -140,12 +133,12 @@ const API = (() => {
   // ── ロット ────────────────────────────────────────────────────
   const lot = {
     create:       (d)  => call('createLot',        d),
-    createBulk:   (d)  => call('createLotBulk',    d),   // { line_id, stage, lots:[{count,...}] }
+    createBulk:   (d)  => call('createLotBulk',    d),
     list:         (f)  => call('getLots',           f || {}),
     get:          (id) => call('getLot',            { lot_id: id }),
     update:       (d)  => call('updateLot',         d),
-    split:        (d)  => call('splitLot',          d),  // { lot_id, split_counts:[n,n] }
-    individualize:(d)  => call('individualizeLot',  d),  // { lot_id, count, stage }
+    split:        (d)  => call('splitLot',          d),
+    individualize:(d)  => call('individualizeLot',  d),
   };
 
   // ── 個体 ──────────────────────────────────────────────────────
@@ -155,19 +148,40 @@ const API = (() => {
     get:             (id) => call('getIndividual',    { ind_id: id }),
     update:          (d)  => call('updateIndividual', d),
     promoteToParent: (d)  => call('promoteToParent',  d),
+
     // 販売済みにして販売履歴を作成（for_sale / listed → sold 時のみ使う）
-    sell:            (d)  => call('sellIndividual',   d),
-    // 論理削除: new_status='dead' のみ（直接削除系は死亡のみに限定）
-    changeStatus:    (id, newStatus, reason) =>
-      call('deleteIndividual', { ind_id: id, new_status: newStatus, reason }),
+    sell: (d) => call('sellIndividual', d),
+
+    // ────────────────────────────────────────────────────────────
+    // changeStatus — P0-3修正: 終端と中間を分離
+    //
+    // 終端ステータス（dead / sold / excluded）
+    //   → deleteIndividual: GAS側が StatusRules で終端処理を強制
+    //
+    // 中間ステータス（for_sale / reserved / listed / alive / その他）
+    //   → updateIndividual: GAS側が StatusRules でバリデーション済み
+    //
+    // 以前は for_sale / reserved を deleteIndividual に送っていたため
+    // GAS側が「dead/sold/excluded のみ受け付ける」エラーを返していた。
+    // ────────────────────────────────────────────────────────────
+    changeStatus: (id, newStatus, reason) => {
+      const terminalStatuses = ['dead', 'sold', 'excluded'];
+      if (terminalStatuses.includes(newStatus)) {
+        // 終端遷移: deleteIndividual 経由（StatusRulesによる強制終端）
+        return call('deleteIndividual', { ind_id: id, new_status: newStatus, reason });
+      }
+      // 中間遷移: updateIndividual 経由（GAS側の validateStatusTransition を通る）
+      const payload = { ind_id: id, status: newStatus };
+      if (reason) payload.note_private = reason;
+      return call('updateIndividual', payload);
+    },
   };
 
   // ── 成長記録 ──────────────────────────────────────────────────
-  // getGrowthRecords は target_type + target_id を必ず両方指定する
   const growth = {
-    create: (d)          => call('createGrowthRecord', d),
-    list:   (type, id)   => call('getGrowthRecords', { target_type: type, target_id: id }),
-    update: (d)          => call('updateGrowthRecord', d),
+    create: (d)        => call('createGrowthRecord', d),
+    list:   (type, id) => call('getGrowthRecords',   { target_type: type, target_id: id }),
+    update: (d)        => call('updateGrowthRecord', d),
   };
 
   // ── 種親 ──────────────────────────────────────────────────────
@@ -188,43 +202,40 @@ const API = (() => {
 
   // ── 産卵セット ────────────────────────────────────────────────
   const pairing = {
-    create:    (d) => call('createPairing', d),
-    list:      (f) => call('getPairings',   f || {}),
-    get:       (id)=> call('getPairing',    { set_id: id }),
-    update:    (d) => call('updatePairing', d),
-    getWithEggs:   (d) => call('getPairingWithEggs', d),
-    addEgg:        (d) => call('addEggRecord',    d),
-    getEggRecords: (d) => call('getEggRecords',  d),
-    updateEgg:     (d) => call('updateEggRecord', d),
-    deleteEgg:     (d) => call('deleteEggRecord', d),
+    create:      (d)  => call('createPairing', d),
+    list:        (f)  => call('getPairings',   f || {}),
+    get:         (id) => call('getPairing',    { set_id: id }),
+    update:      (d)  => call('updatePairing', d),
+    getWithEggs: (d)  => call('getPairingWithEggs', d),
+    addEgg:      (d)  => call('addEggRecord',    d),
+    getEggRecords:(d) => call('getEggRecords',   d),
+    updateEgg:   (d)  => call('updateEggRecord', d),
+    deleteEgg:   (d)  => call('deleteEggRecord', d),
   };
 
   // ── ラベル ────────────────────────────────────────────────────
   const label = {
-    // type: 'IND'|'LOT'|'SET', id: 内部ID, labelType: 'larva'等
     generate: (type, id, labelType) =>
       call('generateLabel', { target_type: type, target_id: id, label_type: labelType }),
-    history: (id) => call('getLabelHistory', { target_id: id }),
+    history:  (id) => call('getLabelHistory', { target_id: id }),
   };
 
   // ── Drive ─────────────────────────────────────────────────────
   const drive = {
-    // base64アップロード: { base64, mime_type, filename, line_display_id, folder_type }
-    uploadPhoto:    (d) => call('uploadPhoto',       d),
-    getFolderUrl:   (lineDisplayId, folderType) =>
+    uploadPhoto:  (d)                    => call('uploadPhoto',       d),
+    getFolderUrl: (lineDisplayId, folderType) =>
       call('getDriveFolderUrl', { line_display_id: lineDisplayId, folder_type: folderType }),
   };
 
   // ── Gemini AI（直接呼び出し） ──────────────────────────────────
   const gemini = {
-    // 画像解析（ラベル読み取り or 体重計読み取り）
     analyzeImage: async (base64, mimeType, promptType) => {
       const key = CONFIG.GEMINI_KEY || localStorage.getItem(CONFIG.LS_KEYS.GEMINI_KEY) || '';
       if (!key) throw new Error('Gemini APIキーが未設定です。');
 
       const prompt = promptType === 'label_full' ? GEMINI_PROMPTS.label_full
                    : promptType === 'label'      ? GEMINI_PROMPTS.label
-                   : GEMINI_PROMPTS.scale;  // default: scale（体重計読み取り）
+                   : GEMINI_PROMPTS.scale;
       const ctrl   = new AbortController();
       const tid    = setTimeout(() => ctrl.abort(), 40000);
 
@@ -264,87 +275,81 @@ const API = (() => {
 
   // ── バックアップ ──────────────────────────────────────────────
   const backup = {
-    run:           (note) => call('runBackup',              { note: note || '' }),
-    list:          (f)    => call('getBackupList',          f || {}),
-    getSettings:   ()     => call('getBackupSettings'),
-    initTriggers:  ()     => call('initBackupTriggers'),
-    removeTriggers:()     => call('removeBackupTriggers'),
-    getTriggerStatus: ()  => call('getBackupTriggerStatus'),
+    run:             (note) => call('runBackup',              { note: note || '' }),
+    list:            (f)    => call('getBackupList',          f || {}),
+    getSettings:     ()     => call('getBackupSettings'),
+    initTriggers:    ()     => call('initBackupTriggers'),
+    removeTriggers:  ()     => call('removeBackupTriggers'),
+    getTriggerStatus:()     => call('getBackupTriggerStatus'),
   };
 
   // ── QRスキャン解決 ────────────────────────────────────────────
-  // QR文字列 → entity取得 + missing判定を1回で返す
   const scan = {
-    /** QR文字列を送り entity + missing を返す
-     *  qrText: "LOT:LOT-xxxxx" | "IND:IND-xxxxx" | "SET:SET-xxxxx" */
     resolve:         (qrText) => call('resolveQR',       { qr_text: qrText }),
-    /** ロット差分更新（hatch_date / count / sex_hint / size_category） */
     updateLotFields: (d)      => call('updateLotFields', d),
-    /** 個体差分更新（sex など） */
     updateIndFields: (d)      => call('updateIndividual', d),
-    /** 産卵セット差分更新 */
     updateSetFields: (d)      => call('updatePairing',   d),
   };
 
   // ── Phase2 拡張API ──────────────────────────────────────────
   const phase2 = {
-    // 血統
-    extractTags:      (raw)      => call('extractBloodlineTags', { bloodline_raw: raw }),
-    createBloodline:  (d)        => call('createBloodlineV2', d),
-    // 種親V2
-    createParent:     (d)        => call('createParentV2', d),
-    sellIndividual:   (d)        => call('sellIndividual', d),
-    analyzeLineStats: (d)        => call('analyzeLineStats', d),
-    updateParent:     (d)        => call('updateParentV2', d),
-    getPairingReady:  ()         => call('getPairingReadyStatus', {}),
-    // ペアリング履歴
-    createPairingHistory: (d)    => call('createPairingHistory', d),
-    updatePairingHistory: (d)    => call('updatePairingHistory', d),
-    getPairingHistories:  (d)    => call('getPairingHistories', d || {}),
-    getMalePairingStats:  (mid)  => call('getMalePairingStats', { male_parent_id: mid }),
-    // ラインV2
-    createLine:       (d)        => call('createLineV2', d),
-    // 分析
-    getLineAnalysis:  ()         => call('getLineAnalysis', {}),
-    getMotherRanking: ()         => call('getMotherRanking', {}),
-    getHeatmap:       ()         => call('getBloodlineHeatmap', {}),
-    getDashboardExt:  ()         => call('getDashboardExtended', {}),
+    extractTags:          (raw) => call('extractBloodlineTags', { bloodline_raw: raw }),
+    createBloodline:      (d)   => call('createBloodlineV2', d),
+    createParent:         (d)   => call('createParentV2', d),
+    sellIndividual:       (d)   => call('sellIndividual', d),
+    analyzeLineStats:     (d)   => call('analyzeLineStats', d),
+    updateParent:         (d)   => call('updateParentV2', d),
+    getPairingReady:      ()    => call('getPairingReadyStatus', {}),
+    createPairingHistory: (d)   => call('createPairingHistory', d),
+    updatePairingHistory: (d)   => call('updatePairingHistory', d),
+    getPairingHistories:  (d)   => call('getPairingHistories', d || {}),
+    getMalePairingStats:  (mid) => call('getMalePairingStats', { male_parent_id: mid }),
+    createLine:           (d)   => call('createLineV2', d),
+    getLineAnalysis:      ()    => call('getLineAnalysis', {}),
+    getMotherRanking:     ()    => call('getMotherRanking', {}),
+    getHeatmap:           ()    => call('getBloodlineHeatmap', {}),
+    getDashboardExt:      ()    => call('getDashboardExtended', {}),
   };
 
-    // ── Phase A: データ安定化 ─────────────────────────────────────
+  // ── Phase A: データ安定化 ─────────────────────────────────────
   const integrity = {
-    check:             ()  => call('checkDataIntegrity', {}),
-    recalculateLot:    (d) => call('recalculateLot',    d),
-    recalculateAll:    ()  => call('recalculateAllLots', {}),
-    getLotEvents:      (d) => call('getLotEvents',       d || {}),
+    check:          ()  => call('checkDataIntegrity', {}),
+    recalculateLot: (d) => call('recalculateLot',    d),
+    recalculateAll: ()  => call('recalculateAllLots', {}),
+    getLotEvents:   (d) => call('getLotEvents',       d || {}),
   };
 
-  // ── Phase5.5: 公開ページ ─────────────────────────────────────────
-  // ── Phase5: 販売履歴 ─────────────────────────────────────────────
+  // ── Phase5/6: 販売履歴 ────────────────────────────────────────
   const sale = {
-    create:       (d) => call('createSaleHist',  d),
-    list:         (d) => call('getSaleHists',    d || {}),
-    // ロット販売: SALE_HIST作成 + lot status=sold 更新を一括処理
-    createLotSale:     (d) => call('createLotSaleHist',     d),  // 全売却: status=sold
-    createPartLotSale: (d) => call('createPartLotSaleHist', d),  // 一部販売: statusそのまま
-    update:            (d) => call('updateSaleHist',         d),  // 販売履歴編集
+    // 個体販売履歴作成（ind_id ベース）
+    create:            (d) => call('createSaleHist',        d),
+    // 一覧取得
+    list:              (d) => call('getSaleHists',           d || {}),
+    // ロット全売却: SALE_HIST作成 + lot status=sold 更新を一括
+    createLotSale:     (d) => call('createLotSaleHist',     d),
+    // ロット一部販売: SALE_HIST作成のみ（status は変えない）
+    createPartLotSale: (d) => call('createPartLotSaleHist', d),
+    // 販売履歴編集（P0-4で Code.gs ルーターに追加済み）
+    update:            (d) => call('updateSaleHist',         d),
   };
 
+  // ── Phase5.5: 公開ページ ─────────────────────────────────────
   const publicPage = {
     createOrUpdate: (d)     => call('createOrUpdatePublic', d),
     getByToken:     (token) => call('getPublicByToken',     { token }),
     getByIndId:     (indId) => call('getPublicByIndId',     { ind_id: indId }),
     incrementView:  (token) => call('incrementViewCount',   { token }),
-    // 画像アップロードはPOSTで送信（GETのURLパラメータ長さ制限を回避）
     uploadPhoto:    (d)     => callPost('uploadPhoto',      d),
   };
 
-return { system, line, lot, individual, growth, parent, bloodline, pairing, label, drive, gemini, backup, scan, phase2, integrity, publicPage, sale };
+  return {
+    system, line, lot, individual, growth, parent, bloodline, pairing,
+    label, drive, gemini, backup, scan, phase2, integrity, publicPage, sale,
+  };
 })();
 
 // ── Gemini プロンプト ──────────────────────────────────────────
 const GEMINI_PROMPTS = {
-  // ラベル全体読取用（ラベルスキャン機能で使用）
   label_full: `この画像はヘラクレスオオカブト飼育管理ラベルです。
 以下をJSONのみで返してください（コードブロック不要）:
 {
@@ -408,8 +413,8 @@ async function compressImageToBase64(file, maxPx = 1280, quality = 0.85) {
         c.getContext('2d').drawImage(img, 0, 0, w, h);
         const dataUrl = c.toDataURL('image/jpeg', quality);
         resolve({
-          base64:    dataUrl.split(',')[1],
-          mimeType:  'image/jpeg',
+          base64:   dataUrl.split(',')[1],
+          mimeType: 'image/jpeg',
           dataUrl,
         });
       };

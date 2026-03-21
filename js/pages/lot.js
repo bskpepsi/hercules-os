@@ -1404,3 +1404,4 @@ window.PAGES['lot-list']   = () => Pages.lotList();
 window.PAGES['lot-detail'] = () => Pages.lotDetail(Store.getParams().lotId || Store.getParams().id);
 window.PAGES['lot-new']    = () => Pages.lotNew(Store.getParams());
 window.PAGES['lot-bulk']   = () => Pages.lotBulk(Store.getParams());
+

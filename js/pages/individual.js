@@ -3,6 +3,10 @@
 // 役割: 個体の一覧・詳細・新規登録・編集・ステータス変更を担う。
 //       個体台帳の中心画面。ロット・成長記録・ラベルへの導線も持つ。
 //       「3タップ以内で成長記録に飛べる」ことを最優先に設計。
+//
+// P0-5修正:
+//   - 元ロット（origin_lot_id）の表示ラベルを内部IDから display_id に変更
+//   - 種親昇格済み表示（promoted_par_id）のラベルを内部IDから display_name に変更
 // ════════════════════════════════════════════════════════════════
 
 'use strict';
@@ -11,19 +15,15 @@ const Pages = window.Pages || {};
 
 // ────────────────────────────────────────────────────────────────
 // 個体一覧
-// 将来の分割方針: list/detail/form の3ファイルに分離可能。
-// 外部参照関数はすべて Pages.xxx に配置済み。
 // ────────────────────────────────────────────────────────────────
 Pages.individualList = function () {
   const main   = document.getElementById('main');
   const params = Store.getParams() || {};
 
-  // ライン詳細から来た場合は固定フィルタ（ライン限定モード）
   const fixedLineId = params.line_id || '';
   const fixedLine   = fixedLineId ? Store.getLine(fixedLineId) : null;
   const isLineLimited = !!fixedLineId;
 
-  // status='_all' は全件表示、未指定時は 'alive' がデフォルト
   const initStatus = params.status !== undefined ? params.status : 'alive';
   let filters = {
     status:  initStatus,
@@ -89,13 +89,11 @@ Pages.individualList = function () {
         </div>
       </div>`;
 
-    // 修正③: 検索時に件数も更新
     document.getElementById('q').addEventListener('input', e => {
       filters.q = e.target.value;
       _applyFilters();
     });
 
-    // ステージフィルタ
     document.getElementById('stage-filter').addEventListener('click', e => {
       const p = e.target.closest('.pill');
       if (!p) return;
@@ -110,7 +108,6 @@ Pages.individualList = function () {
       render();
     });
 
-    // 性別フィルタ
     document.getElementById('sex-filter').addEventListener('click', e => {
       const p = e.target.closest('.pill');
       if (!p) return;
@@ -118,7 +115,6 @@ Pages.individualList = function () {
       render();
     });
 
-    // ステータスフィルタ
     document.getElementById('status-filter').addEventListener('click', e => {
       const p = e.target.closest('.pill');
       if (!p) return;
@@ -135,9 +131,8 @@ Pages.individualList = function () {
     });
   }
 
-  // ステータスモーダルからスコープ内 filters を更新できるよう登録
   window.__indSetStatus = function(code) {
-    filters.status = code; // '_all' もそのまま渡す
+    filters.status = code;
     filters.statusFilter = '';
     render();
   };
@@ -148,7 +143,7 @@ Pages.individualList = function () {
 function _stageFilters(active) {
   const stages = [
     { val:'', label:'全て' },
-    { val:'larva',   label:'幼虫' },   // T1/T2/T3まとめ
+    { val:'larva',   label:'幼虫' },
     { val:'T1',      label:'T1' },
     { val:'T2A',     label:'T2①' },
     { val:'T2B',     label:'T2②' },
@@ -191,14 +186,12 @@ function _indCardHTML(ind) {
   const w       = ind.latest_weight_g ? ind.latest_weight_g + 'g' : null;
   const sz      = ind.adult_size_mm    ? ind.adult_size_mm + 'mm'  : null;
 
-  // ライン名：line_id から正引き（undefined を防ぐ）
   const line    = ind.line_id ? Store.getLine(ind.line_id) : null;
   const lineStr = line ? (line.line_code || line.display_id || '') : '';
-  const lineLbl = lineStr ? lineStr + 'ライン' : (ind.line_id ? '—' : '—');
+  const lineLbl = lineStr ? lineStr + 'ライン' : '—';
 
   const locality = ind.locality || (line ? line.locality : '') || '';
 
-  // ステータスラベル
   const stMap = {
     larva:'幼虫', prepupa:'前蛹', pupa:'蛹', adult:'成虫', alive:'飼育中',
     seed_candidate:'種親候補', seed_reserved:'種親確保済',
@@ -214,35 +207,28 @@ function _indCardHTML(ind) {
   const stLbl  = stMap[ind.status] || ind.status || '—';
   const stClr  = stColor[ind.status] || 'var(--text3)';
 
-  // 種親・ギネスアイコン
   const icons = [
     String(ind.guinness_flag) === 'true' ? '🏆' : '',
     String(ind.parent_flag)   === 'true' ? '👑' : '',
     String(ind.g200_flag)     === 'true' ? '💪' : '',
   ].filter(Boolean).join('');
 
-  // 性別色
   const sexColor = ind.sex === '♂' ? 'var(--male,#5ba8e8)' : ind.sex === '♀' ? 'var(--female,#e87fa0)' : 'var(--text3)';
 
-  return '<div class="ind-card" onclick="routeTo(\x27ind-detail\x27,{indId:\x27' + ind.ind_id + '\x27})" style="padding:10px 12px">'
-    // 【1行目】性別 + ID + ステージ
+  return '<div class="ind-card" onclick="routeTo(\'ind-detail\',{indId:\'' + ind.ind_id + '\'})" style="padding:10px 12px">'
     + '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">'
     +   '<span style="font-weight:700;color:' + sexColor + ';font-size:.95rem">' + (ind.sex || '?') + '</span>'
     +   '<span style="font-family:var(--font-mono);font-weight:700;font-size:.9rem;flex:1">' + ind.display_id + '</span>'
     +   (icons ? '<span style="font-size:.82rem">' + icons + '</span>' : '')
     +   UI.stageBadge(ind.current_stage)
     + '</div>'
-    // 【2行目】ライン / 産地
     + '<div style="font-size:.76rem;color:var(--text2);margin-bottom:3px">'
     +   lineLbl + (locality ? ' / ' + locality : '')
     + '</div>'
-    // 【3行目】日齢
     + '<div style="font-size:.76rem;color:var(--text3);margin-bottom:3px">'
     +   (age ? '日齢' + age.days + '日' + (age.stageGuess ? ' · ' + age.stageGuess : '') : (ind.hatch_date ? '' : '<span style="color:var(--amber)">孵化日未設定</span>'))
     + '</div>'
-    // 【4行目】サイズ
     + (w || sz ? '<div style="font-size:.8rem;color:var(--text2);margin-bottom:4px">' + [w,sz].filter(Boolean).join(' / ') + '</div>' : '')
-    // 【最下段】状態バッジ
     + '<div style="display:flex;align-items:center;justify-content:space-between">'
     +   '<span style="font-size:.72rem;font-weight:700;color:' + stClr + '">' + stLbl + '</span>'
     +   '<span style="color:var(--text3);font-size:1rem">›</span>'
@@ -250,26 +236,18 @@ function _indCardHTML(ind) {
     + '</div>';
 }
 
-// QRスキャン（カメラ起動→QR解析は別途実装。現状はID入力）
-// 修正④: 表示ID（HM2025-A1-001）でも遷移できる構造
-// QRコードには内部ID（IND-xxxxx）を埋め込む前提。
-// 表示IDで検索した場合はキャッシュから内部IDを逆引きする。
 Pages._indQrScan = function () {
   const input = prompt('個体ID（IND-xxxxx）または表示ID（HM2025-A1-001）:');
   if (!input) return;
   const trimmed = input.trim();
-
-  // 内部ID形式ならそのまま遷移
   if (trimmed.startsWith('IND-')) {
     routeTo('ind-detail', { indId: trimmed });
     return;
   }
-  // QRに "IND:IND-xxxxx" 形式で埋め込まれた場合
   if (trimmed.startsWith('IND:')) {
     routeTo('ind-detail', { indId: trimmed.replace('IND:', '') });
     return;
   }
-  // 表示IDで逆引き（例: HM2025-A1-001）
   const inds  = Store.getDB('individuals') || [];
   const found = inds.find(i =>
     i.display_id === trimmed ||
@@ -282,8 +260,6 @@ Pages._indQrScan = function () {
   }
 };
 
-// 修正①: _indStatusModal を individualList のスコープ外から呼べるよう
-// filtersオブジェクトを参照せず、paramsで渡すパターンに統一。
 Pages._indStatusModal = function () {
   const statuses = [
     { code:'',              label:'飼育中すべて（デフォルト）' },
@@ -303,11 +279,9 @@ Pages._indStatusModal = function () {
 
 Pages._setStatusFilter = function (code) {
   _closeModal();
-  // グローバルコールバック経由でスコープ内のfiltersを更新
   if (typeof window.__indSetStatus === 'function') {
     window.__indSetStatus(code);
   } else {
-    // フォールバック：routeTo（ライン限定モードが外れるが許容）
     routeTo('ind-list', { status: code });
   }
 };
@@ -320,18 +294,15 @@ Pages.individualDetail = async function (indId) {
   const main = document.getElementById('main');
   if (!indId) { main.innerHTML = UI.empty('IDが指定されていません'); return; }
 
-  // まずキャッシュから表示、バックグラウンドで最新取得
   let ind = Store.getIndividual(indId);
   if (ind) _renderDetail(ind, main);
   else main.innerHTML = UI.header('個体詳細', {}) + UI.spinner();
 
   try {
     const res = await API.individual.get(indId);
-    // 競合防止: API返却時に ind-detail にいるか・同じIDか確認
     if (Store.getPage() !== 'ind-detail') return;
     if (Store.getParams().indId !== indId && Store.getParams().id !== indId) return;
     ind = res.individual;
-    // キャッシュ更新
     Store.patchDBItem('individuals', 'ind_id', indId, ind);
     if (ind._growthRecords) Store.setGrowthRecords(indId, ind._growthRecords);
     _renderDetail(ind, main);
@@ -343,13 +314,15 @@ Pages.individualDetail = async function (indId) {
 };
 
 function _renderDetail(ind, main) {
-  const age      = Store.calcAge(ind.hatch_date);    // 現在の日齢
+  const age      = Store.calcAge(ind.hatch_date);
   const verdict  = Store.getVerdict(ind);
   const father   = Store.getParent(ind.father_par_id);
   const mother   = Store.getParent(ind.mother_par_id);
   const bld      = Store.getBloodline(ind.bloodline_id);
   const records  = Store.getGrowthRecords(ind.ind_id) || ind._growthRecords || [];
-  const originLot= ind.origin_lot_id ? Store.getLot(ind.origin_lot_id) : null;
+  const originLot = ind.origin_lot_id ? Store.getLot(ind.origin_lot_id) : null;
+  // P0-5: 種親昇格済みの場合、種親オブジェクトを取得して display_name を使う
+  const promotedParent = ind.promoted_par_id ? Store.getParent(ind.promoted_par_id) : null;
   const line     = Store.getLine(ind.line_id);
 
   const icons = [
@@ -381,7 +354,6 @@ function _renderDetail(ind, main) {
             ${verdict ? UI.verdictBadge(verdict) : ''}
           </div>
         </div>
-        <!-- 日齢（現在の日齢）-->
         ${age ? `<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:10px">
           <div style="font-size:.7rem;color:var(--text3);margin-bottom:6px">📅 現在の日齢</div>
           ${UI.ageFull(ind.hatch_date)}
@@ -452,10 +424,12 @@ function _renderDetail(ind, main) {
             ${line ? _infoRow('ライン',
               `<span style="cursor:pointer;color:var(--blue)" onclick="routeTo('line-detail',{lineId:'${line.line_id}'})">${line.display_id} ${line.line_name ? '/ '+line.line_name : ''}</span>`
             ) : ''}
-            ${ind.origin_lot_id ? _infoRow('元ロット',
-              `<span style="cursor:pointer;color:var(--blue)" onclick="routeTo('lot-detail',{lotId:'${ind.origin_lot_id}'})">${ind.origin_lot_id}</span>
-               <span style="font-size:.7rem;color:var(--text3)">（同腹: <span style="cursor:pointer;color:var(--blue)" onclick="routeTo('ind-list',{lotId:'${ind.origin_lot_id}'})">一覧を見る</span>）</span>`
-            ) : ''}
+            ${ind.origin_lot_id ? _infoRow('元ロット', (() => {
+              // P0-5: 内部IDではなく display_id を表示ラベルに使う
+              const _dispId = originLot ? (originLot.display_id || ind.origin_lot_id) : ind.origin_lot_id;
+              return `<span style="cursor:pointer;color:var(--blue)" onclick="routeTo('lot-detail',{lotId:'${ind.origin_lot_id}'})">${_dispId}</span>
+               <span style="font-size:.7rem;color:var(--text3)">（同腹: <span style="cursor:pointer;color:var(--blue)" onclick="routeTo('ind-list',{lotId:'${ind.origin_lot_id}'})">一覧を見る</span>）</span>`;
+            })()) : ''}
           </div>
         </div>
       </div>
@@ -534,8 +508,13 @@ function _renderDetail(ind, main) {
         <div>
           <div style="font-weight:700;color:var(--gold)">種親昇格済み</div>
           <div style="color:var(--text3);font-size:.72rem">
-            種親ID: <span style="cursor:pointer;color:var(--blue)"
-              onclick="routeTo('parent-detail',{parId:'${ind.promoted_par_id}'})">${ind.promoted_par_id}</span>
+            種親:
+            <span style="cursor:pointer;color:var(--blue)"
+              onclick="routeTo('parent-detail',{parId:'${ind.promoted_par_id}'})">
+              ${promotedParent
+                ? (promotedParent.parent_display_id || promotedParent.display_name || ind.promoted_par_id)
+                : ind.promoted_par_id}
+            </span>
           </div>
         </div>
       </div>` : ''}
@@ -544,7 +523,8 @@ function _renderDetail(ind, main) {
       <div style="display:flex;gap:8px">
         <button class="btn btn-ghost btn-sm"
           onclick="Pages._indMarkDead('${ind.ind_id}')">💀 死亡</button>
-        <button class="btn btn-ghost btn-sm" style="${ind.status==='reserved'?'color:var(--blue);border-color:var(--blue);':''}"          onclick="Pages._indMarkReserved('${ind.ind_id}')">📦 予約${ind.status==='reserved'?' ✓':''}</button>
+        <button class="btn btn-ghost btn-sm" style="${ind.status==='reserved'?'color:var(--blue);border-color:var(--blue);':''}"
+          onclick="Pages._indMarkReserved('${ind.ind_id}')">📦 予約${ind.status==='reserved'?' ✓':''}</button>
         <button class="btn btn-ghost btn-sm" style="margin-left:auto"
           onclick="Pages._indFlagMenu('${ind.ind_id}','${ind.guinness_flag}','${ind.parent_flag}','${ind.g200_flag}')">
           🏷 フラグ</button>
@@ -552,7 +532,6 @@ function _renderDetail(ind, main) {
 
     </div>`;
 
-  // Chart.jsで体重グラフ描画
   if (records.filter(r => r.weight_g).length >= 2) {
     setTimeout(() => _drawWeightChart(ind.ind_id, records), 100);
   }
@@ -626,6 +605,7 @@ Pages._indMarkDead = async function (id) {
   } catch (e) {}
 };
 
+// P0-3修正: changeStatus('for_sale') が updateIndividual 経由になったので動作するようになる
 Pages._indCancelReserved = async function (id) {
   try {
     await apiCall(() => API.individual.changeStatus(id, 'for_sale'), '予約を解除しました');
@@ -634,6 +614,7 @@ Pages._indCancelReserved = async function (id) {
   } catch (e) {}
 };
 
+// P0-3修正: changeStatus('reserved') が updateIndividual 経由になったので動作するようになる
 Pages._indMarkReserved = async function (id) {
   try {
     await apiCall(() => API.individual.changeStatus(id, 'reserved'), '予約済みに変更しました');
@@ -684,7 +665,6 @@ Pages._indPromoteModal = function (indId) {
   const sexLabel  = ind.sex       || '未設定';
   const sizeLabel = ind.adult_size_mm ? ind.adult_size_mm + ' mm' : '未入力';
   const eclosion  = ind.eclosion_date || '—';
-  const today     = new Date().toISOString().split('T')[0];
 
   _showModal('🌟 種親に昇格', `
     <div class="form-section">
@@ -702,8 +682,7 @@ Pages._indPromoteModal = function (indId) {
       <div style="font-size:.78rem;color:var(--text3);margin-bottom:4px">種親IDは自動採番されます（${ind.sex === '♂' ? 'M年-英字' : 'F年-連番'}）</div>
 
       ${UI.field('後食開始日（任意）',
-        `<input type="date" id="prm-feeding" class="input" value="">`)}
-      ${UI.field('表示名（任意・空白なら自動）',
+        `<input type="date" id="prm-feeding" class="input" value="">`)}\n      ${UI.field('表示名（任意・空白なら自動）',
         `<input type="text" id="prm-name" class="input" placeholder="例: M26-A（空白=自動採番の値）">`)}
 
       <div class="modal-footer">
@@ -727,12 +706,10 @@ Pages._indPromoteExec = async function (indId) {
       }),
       '種親に昇格しました 🌟'
     );
-    // キャッシュ更新
     Store.patchDBItem('individuals', 'ind_id', indId, {
       parent_flag:     true,
       promoted_par_id: res.par_id,
     });
-    // 種親データをリロードしてから種親詳細へ
     await syncAll(true);
     routeTo('parent-detail', { parId: res.par_id });
   } catch(e) {}
@@ -806,8 +783,6 @@ Pages.individualNew = function (params = {}) {
           parents.filter(p => p.sex === '♀').map(p => ({ code: p.par_id, label: `${p.display_name}${p.size_mm ? ' '+p.size_mm+'mm' : ''}` })),
           v('mother_par_id')))}
 
-        <!-- 元ロットIDは分割時に自動セット。手入力フィールドは廃止 -->
-
         <div class="form-title">形態・成長データ</div>
         <div class="form-row-2">
           ${UI.field('頭幅 (mm)', UI.input('head_width_mm', 'number', v('head_width_mm'), '例: 14.5'))}
@@ -846,10 +821,8 @@ Pages._indSave = async function (editId) {
   if (!form) return;
   const data = UI.collectForm(form);
 
-  // 日付形式を YYYY/MM/DD に統一（inputのvalueは YYYY-MM-DD）
   if (data.hatch_date) data.hatch_date = data.hatch_date.replace(/-/g, '/');
 
-  // 予約チェックボックス：編集時のみ status に反映
   if (editId) {
     const chk = document.getElementById('chk-reserved');
     if (chk) {
@@ -857,7 +830,6 @@ Pages._indSave = async function (editId) {
     }
   }
 
-  // バリデーション
   if (!editId && !data.line_id) { UI.toast('ラインを選択してください', 'error'); return; }
   if (!data.current_stage)      { UI.toast('ステージを選択してください', 'error'); return; }
 
@@ -869,7 +841,7 @@ Pages._indSave = async function (editId) {
       routeTo('ind-detail', { indId: editId });
     } else {
       const res = await apiCall(() => API.individual.create(data), '登録しました');
-      await syncAll(true); // 一覧を最新化
+      await syncAll(true);
       routeTo('ind-detail', { indId: res.ind_id });
     }
   } catch (e) {}
@@ -879,7 +851,6 @@ Pages._indSave = async function (editId) {
 // 共通ユーティリティ（このファイル内）
 // ════════════════════════════════════════════════════════════════
 
-// アコーディオン開閉
 window._toggleAcc = function (id) {
   const el = document.getElementById(id);
   if (!el) return;
@@ -887,7 +858,6 @@ window._toggleAcc = function (id) {
   el.querySelector('.acc-body').classList.toggle('open');
 };
 
-// モーダル
 function _showModal(title, body) {
   let ov = document.getElementById('_modal');
   if (!ov) {
