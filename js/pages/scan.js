@@ -69,6 +69,23 @@ window._wmLastInput = _wmGetLastInput();
 // ════════════════════════════════════════════════════════════════
 // QRスキャン画面 (qr-scan)
 // ════════════════════════════════════════════════════════════════
+// ── 個体詳細→直接体重測定（QRスキャン省略） ──────────────────
+Pages._indDirectWeight = async function (indId) {
+  const ind  = Store.getIndividual(indId);
+  const line = ind ? Store.getLine(ind.line_id) : null;
+  // last_growth をキャッシュから取得
+  const lastGrowth = _getLastGrowthFromStore('IND', indId, ind?.latest_weight_g);
+  // resolve_result 形式に整形して weightMode へ直接遷移
+  routeTo('weight-mode', {
+    resolve_result: {
+      entity_type: 'IND',
+      entity:      ind || { ind_id: indId, display_id: indId },
+      line:        line || {},
+      last_growth: lastGrowth,
+    },
+  });
+};
+
 Pages.qrScan = function (params = {}) {
   const main = document.getElementById('main');
   let _scanMode = params.mode === 'weight' ? 'weight'

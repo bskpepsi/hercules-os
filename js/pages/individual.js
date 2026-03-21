@@ -578,8 +578,8 @@ function _renderDetail(ind, main) {
       <!-- クイックアクション -->
       <div style="display:flex;gap:8px">
         <button class="btn btn-primary" style="flex:2"
-          onclick="routeTo('qr-scan',{mode:'weight'})"
-          title="QRスキャン → 体重入力 → 保存">
+          onclick="Pages._indDirectWeight('${ind.ind_id}')"
+          title="体重入力">
           ⚖️ 体重測定
         </button>
         <button class="btn btn-ghost" style="flex:1"
