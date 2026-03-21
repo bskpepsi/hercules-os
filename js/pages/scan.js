@@ -1441,14 +1441,21 @@ Pages.weightMode = function (params = {}) {
             </select>
           </div>
 
+          <!-- 記録日 -->
+          <div class="field">
+            <label class="field-label">記録日</label>
+            <input id="wm-record-date" type="date" class="input"
+              value="${new Date().toISOString().split('T')[0]}"
+              max="${new Date().toISOString().split('T')[0]}">
+          </div>
+
           <!-- 交換種別 -->
           <div class="field">
             <label class="field-label">交換種別</label>
             <select id="wm-exchange" class="input">
-              <option value="" ${window._wmLastInput.exchange===''?'selected':''}>測定のみ</option>
-              <option value="マット交換" ${window._wmLastInput.exchange==='マット交換'?'selected':''}>マット交換</option>
-              <option value="容器交換" ${window._wmLastInput.exchange==='容器交換'?'selected':''}>容器交換</option>
-              <option value="マット+容器交換" ${window._wmLastInput.exchange==='マット+容器交換'?'selected':''}>マット+容器交換</option>
+              <option value="" ${window._wmLastInput.exchange===''?'selected':''}>交換なし</option>
+              <option value="全交換" ${window._wmLastInput.exchange==='全交換'?'selected':''}>全交換</option>
+              <option value="追加" ${window._wmLastInput.exchange==='追加'?'selected':''}>追加</option>
             </select>
           </div>
 
@@ -1565,6 +1572,9 @@ Pages._wmSave = async function () {
     const headVal     = parseFloat(document.getElementById('wm-head')?.value);
     const noteVal     = document.getElementById('wm-note')?.value?.trim() || '';
     const exchangeVal = document.getElementById('wm-exchange')?.value || '';
+    // 記録日: ユーザー指定 or 今日
+    const recordDateRaw = document.getElementById('wm-record-date')?.value || '';
+    const recordDateVal = recordDateRaw ? recordDateRaw.replace(/-/g, '/') : new Date().toISOString().split('T')[0].replace(/-/g, '/');
     const matVal      = document.getElementById('wm-mat')?.value       || '';  // 空='変更なし'
     const stageVal    = document.getElementById('wm-stage')?.value     || '';  // 空='変更なし'
     const containerVal= document.getElementById('wm-container')?.value || '';  // 空='変更なし'
@@ -1582,12 +1592,13 @@ Pages._wmSave = async function () {
 
     // ── 1. growth record 作成（体重 + 状態スナップショット）──────
     const growthData = {
-      target_type: state.entityType,
-      target_id:   state.entityId,
-      stage:       effectiveStage,
-      weight_g:    weightVal,
-      container:   effectiveContainer,
-      mat_type:    effectiveMat,
+      target_type:  state.entityType,
+      target_id:    state.entityId,
+      record_date:  recordDateVal,     // ユーザー指定日（後日入力対応）
+      stage:        effectiveStage,
+      weight_g:     weightVal,
+      container:    effectiveContainer,
+      mat_type:     effectiveMat,
       before_count: beforeCount,
       after_count:  afterCount,
     };
@@ -1634,7 +1645,7 @@ Pages._wmSave = async function () {
       Store.addGrowthRecord(state.entityId, {
         target_type:  state.entityType,
         target_id:    state.entityId,
-        record_date:  today,
+        record_date:  recordDateVal,
         weight_g:     weightVal,
         stage:        effectiveStage,
         mat_type:     effectiveMat,

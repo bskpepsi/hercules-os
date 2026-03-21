@@ -185,7 +185,8 @@ const Store = (() => {
     if (!ageDays && ageDays !== 0) return '—';
     const d = +ageDays;
     const w = Math.floor(d / 7);
-    return `記録時: ${d}日（${w}週）`;
+    // 短縮表示: 79日 / 11週
+    return w > 0 ? `${d}日 / ${w}週` : `${d}日`;
   }
 
   // ── 選別判定 ──────────────────────────────────────────────────

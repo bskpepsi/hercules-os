@@ -81,42 +81,35 @@ function routeTo(pageId, params = {}) {
   // 文字列で渡された場合は { id: '...' } に正規化（後方互換）
   if (typeof params === 'string') params = { id: params };
   if (!params || typeof params !== 'object') params = {};
-
-  // Store.navigate が nav イベントを発火 → nav ハンドラが fn() を実行するため
-  // ここで fn() を直接呼ぶ必要はない（二重実行防止）
   if (Object.keys(params).length) Store.navigate(pageId, params);
   else Store.navigate(pageId);
 
-  // URLハッシュ更新（リロード時に復元できるよう）
+  // ④ URLハッシュ更新（リロード時に復元できるよう）
   const hashParts = { page: pageId, ...(params || {}) };
   const hashStr = new URLSearchParams(hashParts).toString();
   history.replaceState(null, '', '#' + hashStr);
 
-  // PAGES に未登録ページの場合のみフォールバック表示
-  if (!PAGES[pageId]) {
-    const main = document.getElementById('main');
-    if (main) main.innerHTML = UI.empty('ページが見つかりません: ' + pageId);
+  const main = document.getElementById('main');
+  if (!main) return;
+
+  const fn = PAGES[pageId];
+  if (fn) {
+    main.innerHTML = '';
+    fn();
+  } else {
+    main.innerHTML = UI.empty('ページが見つかりません: ' + pageId);
   }
+  renderNav();
+  main.scrollTop = 0;
 }
 
 // Store のナビイベントを購読
 Store.on('nav', () => {
-  const pageId = Store.getPage();
-  const fn     = PAGES[pageId];
-  const main   = document.getElementById('main');
-  if (!main) return;
-  if (!fn) {
-    main.innerHTML = UI.empty('ページが見つかりません: ' + pageId);
-    renderNav();
-    return;
-  }
+  const fn = PAGES[Store.getPage()];
+  const main = document.getElementById('main');
+  if (!main || !fn) return;
   main.innerHTML = '';
-  try {
-    fn();
-  } catch (e) {
-    console.error('[nav] page render error:', e);
-    main.innerHTML = UI.empty('表示エラー: ' + e.message);
-  }
+  fn();
   renderNav();
   main.scrollTop = 0;
 });
@@ -140,7 +133,7 @@ function renderNav() {
   const managePages = ['lot-list','line-list','parent-list','bloodline-list','pairing-list',
                        'line-new','lot-new','parent-new','bloodline-new','pairing-new',
                        'lot-detail','line-detail','parent-detail','bloodline-detail','pairing-detail',
-                       'label-gen','sale-list'];
+                       'label-gen'];
   document.querySelectorAll('.nav-tab').forEach(el => {
     const nav = el.dataset.nav;
     el.classList.toggle('active',
@@ -165,40 +158,13 @@ function bindGlobalEvents() {
   });
   // 動的ナビ
   document.addEventListener('click', (e) => {
-    // ── data-nav による通常ルーティング ──────────────────────
     const nav = e.target.closest('[data-nav]');
     if (nav) {
       e.preventDefault();
       const page   = nav.dataset.nav;
       const params = nav.dataset.params ? JSON.parse(nav.dataset.params) : {};
       routeTo(page, params);
-      return;
     }
-
-    // ── entity-card イベント委譲 ──────────────────────────────
-    // normalize.js の renderEntityCard が付与する data-xxx-id を使用
-    // 詳細遷移は必ず内部IDベース
-    const card = e.target.closest('.entity-card');
-    if (card) {
-      e.preventDefault();
-      try {
-        const lotId  = card.dataset.lotId;
-        const indId  = card.dataset.indId;
-        const lineId = card.dataset.lineId;
-        if (lotId  && lotId  !== 'undefined') { routeTo('lot-detail',  { lotId  }); return; }
-        if (indId  && indId  !== 'undefined') { routeTo('ind-detail',  { indId  }); return; }
-        if (lineId && lineId !== 'undefined') { routeTo('line-detail', { lineId }); return; }
-      } catch(err) {
-        console.warn('[entity-card] routing error:', err.message);
-      }
-    }
-  });
-
-  // ── keyboard: entity-card は Enter / Space でも遷移 ─────────
-  document.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter' && e.key !== ' ') return;
-    const card = e.target.closest('.entity-card');
-    if (card) { e.preventDefault(); card.click(); }
   });
 }
 
@@ -261,11 +227,8 @@ const UI = {
 
   // ── ページヘッダー ──────────────────────────────────────────
   header(title, opts = {}) {
-    // backFn が指定された場合は必ず backFn を使う / なければ Store.back()
-    // 例: { back: true, backFn: "routeTo('ind-list')" }
-    const backOnClick = opts.backFn ? opts.backFn : 'Store.back()';
-    const back = (opts.back === true || (opts.back && opts.back !== false))
-      ? `<button class="btn-icon btn-back" onclick="${backOnClick}">←</button>` : '';
+    const back = opts.back === true || (opts.back && opts.back !== false)
+      ? `<button class="btn-icon btn-back" onclick="${opts.backFn || 'Store.back()'}">←</button>` : '';
     const action = opts.action
       ? `<button class="btn-icon btn-action" onclick="${opts.action.fn}">${opts.action.icon || '＋'}</button>` : '';
     return `<header class="page-header">
@@ -412,8 +375,10 @@ const UI = {
         : '—';
       const recAge  = r.age_days ? Store.formatRecordAge(r.age_days) : '';
       const contStr = r.container  || '';
-      const exchStr = r.exchange_type === 'FULL' ? '全交換'
-                    : r.exchange_type === 'PARTIAL' ? '追加' : '';
+      // exchange_type は文字列そのまま or 旧コードマッピング
+      const exchStr = r.exchange_type === 'FULL'    ? '全交換'
+                    : r.exchange_type === 'PARTIAL'  ? '追加'
+                    : (r.exchange_type && r.exchange_type !== '交換なし') ? r.exchange_type : '';
       const matStr  = r.mat_type || '';
       const editBtn = showEdit && r.record_id
         ? `<button style="font-size:.65rem;padding:2px 6px;border:1px solid var(--border);
@@ -431,13 +396,20 @@ const UI = {
       </tr>`;
     }).join('');
 
-    return `<table class="data-table" style="font-size:.8rem">
-      <thead><tr>
-        <th>日付</th><th>体重</th><th>増減</th><th>ステージ</th>
-        <th>容器/マット</th><th>日齢</th>${showEdit ? '<th></th>' : ''}
-      </tr></thead>
-      <tbody>${rows}</tbody>
-    </table>`;
+    return `<div style="overflow-x:auto;-webkit-overflow-scrolling:touch">
+      <table class="data-table" style="font-size:.8rem;min-width:360px">
+        <thead><tr>
+          <th style="white-space:nowrap">日付</th>
+          <th style="white-space:nowrap">体重</th>
+          <th style="white-space:nowrap">増減</th>
+          <th style="white-space:nowrap">ステージ</th>
+          <th style="white-space:nowrap">容器/マット</th>
+          <th style="white-space:nowrap">日齢</th>
+          ${showEdit ? '<th></th>' : ''}
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
   },
 };
 
