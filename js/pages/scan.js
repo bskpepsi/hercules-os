@@ -19,14 +19,52 @@
 window._qrContinuousMode = window._qrContinuousMode || false;
 window._qrCameraStream   = window._qrCameraStream   || null;
 
-// 体重測定モードの前回入力値引継ぎ（連続スキャン用）
-window._wmLastInput = window._wmLastInput || {
-  mat:       '',   // マット種別
-  molt:      '',   // モルト
-  stage:     '',   // ステージ
-  container: '',   // 容器サイズ
-  exchange:  '',   // 交換種別
+// ── 体重測定モード: プリセット定義 ──────────────────────────────
+const _WM_PRESETS = {
+  normal: { label: '通常',    mat:'',   molt:false, stage:'', container:'', exchange:'' },
+  t1:     { label: 'T1移行',  mat:'T1', molt:false, stage:'L2_EARLY', container:'2.7L', exchange:'全交換' },
+  t2:     { label: 'T2初回',  mat:'T2', molt:true,  stage:'L3_EARLY', container:'2.7L', exchange:'全交換' },
 };
+
+// プリセットID: localStorageで永続化（リロード後も維持）
+function _wmGetPresetId() {
+  return localStorage.getItem('wm_preset') || 'normal';
+}
+function _wmSetPresetId(id) {
+  localStorage.setItem('wm_preset', id);
+}
+
+// 前回入力値: localStorageで永続化
+function _wmGetLastInput() {
+  try {
+    const saved = localStorage.getItem('wm_last_input');
+    if (saved) return JSON.parse(saved);
+  } catch(_) {}
+  const preset = _WM_PRESETS[_wmGetPresetId()] || _WM_PRESETS.normal;
+  return { mat: preset.mat, molt: preset.molt, stage: preset.stage,
+           container: preset.container, exchange: preset.exchange };
+}
+function _wmSaveLastInput(obj) {
+  // 空文字は既存の有効値で上書きしない（今回入力 > 既存有効値）
+  const prev = _wmGetLastInput();
+  const merged = {};
+  Object.keys(obj).forEach(k => {
+    // obj[k] が空文字 / null / undefined かつ prev[k] に値があれば prev[k] を使う
+    // ただし false（モルト OFF）は有効値なのでそのまま使う
+    const newVal = obj[k];
+    const oldVal = prev[k];
+    if ((newVal === '' || newVal === null || newVal === undefined) && oldVal != null && oldVal !== '') {
+      merged[k] = oldVal;
+    } else {
+      merged[k] = newVal;
+    }
+  });
+  try { localStorage.setItem('wm_last_input', JSON.stringify(merged)); } catch(_) {}
+  window._wmLastInput = merged;
+}
+
+// 起動時に window 変数も初期化
+window._wmLastInput = _wmGetLastInput();
 
 // ════════════════════════════════════════════════════════════════
 // QRスキャン画面 (qr-scan)
@@ -1342,8 +1380,20 @@ Pages.weightMode = function (params = {}) {
   const prevAgeDays = _effectiveLg?.age_days    || '';
   Pages._wmState = { entityType: entity_type, entityId, stage, container, matType, prevWeight, prevDate, displayId, lotCount };
 
+  // プリセット・前回入力を取得
+  const _wmPresetId  = _wmGetPresetId();
+  const _wmPreset    = _WM_PRESETS[_wmPresetId] || _WM_PRESETS.normal;
+  const _li          = _wmGetLastInput();
+  // mat が T2 のときだけモルトを表示
+  const _showMolt    = (_li.mat || _wmPreset.mat) === 'T2';
+
   main.innerHTML = `
     ${UI.header('⚖️ 体重測定', { back: true, backFn: "routeTo('qr-scan',{mode:'weight'})" })}
+    <div style="position:absolute;top:14px;right:14px;z-index:10">
+      <button onclick="routeTo('qr-scan',{mode:'weight'})"
+        style="background:none;border:none;cursor:pointer;font-size:1.3rem;padding:6px;
+        color:var(--text3);opacity:.7" title="再スキャン">🔄</button>
+    </div>
     <div class="page-body has-quick-bar">
       <div class="quick-info-bar">
         <div style="flex:1;min-width:0">
@@ -1360,15 +1410,34 @@ Pages.weightMode = function (params = {}) {
         </div>
       </div>
 
-      <div class="card" style="border-color:rgba(76,175,120,.35);padding:16px 14px">
-        <div style="text-align:center;font-size:.72rem;font-weight:700;color:var(--text3);letter-spacing:.08em;margin-bottom:10px">体重 (g)</div>
-        <div style="display:flex;align-items:center;justify-content:center;gap:8px">
+      <!-- プリセット選択バー -->
+      <div style="display:flex;gap:5px;margin-bottom:6px">
+        <button class="btn btn-sm ${_wmPresetId==='normal'?'btn-primary':'btn-ghost'}" style="flex:1;font-size:.75rem"
+          data-preset="normal" onclick="Pages._wmApplyPreset('normal')">通常</button>
+        <button class="btn btn-sm ${_wmPresetId==='t1'?'btn-primary':'btn-ghost'}" style="flex:1;font-size:.75rem"
+          data-preset="t1" onclick="Pages._wmApplyPreset('t1')">T1移行</button>
+        <button class="btn btn-sm ${_wmPresetId==='t2'?'btn-primary':'btn-ghost'}" style="flex:1;font-size:.75rem"
+          data-preset="t2" onclick="Pages._wmApplyPreset('t2')">T2初回</button>
+      </div>
+
+      <div class="card" style="border-color:rgba(76,175,120,.35);padding:14px">
+        <div style="text-align:center;font-size:.72rem;font-weight:700;color:var(--text3);letter-spacing:.08em;margin-bottom:8px">体重 (g)</div>
+        <!-- 微調整ボタン上段 -->
+        <div style="display:flex;align-items:center;justify-content:center;gap:6px;margin-bottom:8px">
+          <button class="btn btn-ghost btn-sm" style="min-width:44px;font-size:.85rem" id="wm-adj-m10"
+            onclick="Pages._wmAdjWeight(-10)" onmousedown="Pages._wmAdjStart(-10)" onmouseup="Pages._wmAdjStop()" ontouchend="Pages._wmAdjStop()">−10</button>
+          <button class="btn btn-ghost btn-sm" style="min-width:44px;font-size:.85rem" id="wm-adj-m1"
+            onclick="Pages._wmAdjWeight(-1)"  onmousedown="Pages._wmAdjStart(-1)"  onmouseup="Pages._wmAdjStop()" ontouchend="Pages._wmAdjStop()">−1</button>
           <input id="wm-weight" type="number" inputmode="decimal" step="0.1" min="0.1" max="999.9"
-            placeholder="0.0" autocomplete="off" class="num-input-xl" style="width:180px;color:var(--green)"
+            placeholder="0.0" autocomplete="off" class="num-input-xl" style="width:140px;color:var(--green)"
             oninput="Pages._wmUpdateDelta(this.value)"
             onkeydown="if(event.key==='Enter'&&!event.isComposing){Pages._wmSave()}">
-          <span style="font-size:1.4rem;color:var(--text3);font-weight:600;flex-shrink:0">g</span>
+          <button class="btn btn-ghost btn-sm" style="min-width:44px;font-size:.85rem" id="wm-adj-p1"
+            onclick="Pages._wmAdjWeight(+1)"  onmousedown="Pages._wmAdjStart(+1)"  onmouseup="Pages._wmAdjStop()" ontouchend="Pages._wmAdjStop()">+1</button>
+          <button class="btn btn-ghost btn-sm" style="min-width:44px;font-size:.85rem" id="wm-adj-p10"
+            onclick="Pages._wmAdjWeight(+10)" onmousedown="Pages._wmAdjStart(+10)" onmouseup="Pages._wmAdjStop()" ontouchend="Pages._wmAdjStop()">+10</button>
         </div>
+        <div style="text-align:center;font-size:.72rem;color:var(--text3)">g</div>
         <div id="wm-delta" style="text-align:center;min-height:28px;margin-top:8px;font-size:.92rem;transition:all .15s">
           ${prevWeight !== null
             ? `<span style="color:var(--text3)">前回 <b>${prevWeight}g</b>${prevDate ? ' （' + prevDate + '）' : ''} から —</span>`
@@ -1394,52 +1463,9 @@ Pages.weightMode = function (params = {}) {
         <div id="wm-attrition" class="count-attrition"></div>
       </div>` : ''}
 
-      <!-- ─── 測定・更新入力（デフォルト展開） ─── -->
+      <!-- ─── 同時更新パネル ─── -->
       <div class="card" style="margin-top:8px;padding:12px 14px">
-        <div style="font-size:.72rem;font-weight:700;color:var(--text2);margin-bottom:10px">
-          📋 同時更新（任意）
-        </div>
         <div class="form-section">
-
-          <!-- マット -->
-          <div class="field">
-            <label class="field-label">マット種別</label>
-            <select id="wm-mat" class="input">
-              <option value="">変更なし</option>
-              ${MAT_TYPES.map(m => `<option value="${m.code}" ${window._wmLastInput.mat===m.code?'selected':''}>${m.label}</option>`).join('')}
-            </select>
-          </div>
-
-          <!-- モルト -->
-          <div class="field">
-            <label class="field-label">モルト処理</label>
-            <div style="display:flex;gap:8px">
-              <button id="wm-molt-none" class="btn btn-ghost btn-sm" style="flex:1;${window._wmLastInput.molt===''?'border-color:var(--green);color:var(--green)':''}"
-                onclick="Pages._wmSetMolt('')">変更なし</button>
-              <button id="wm-molt-on"   class="btn btn-ghost btn-sm" style="flex:1;${window._wmLastInput.molt==='on'?'border-color:var(--green);color:var(--green)':''}"
-                onclick="Pages._wmSetMolt('on')">ON</button>
-              <button id="wm-molt-off"  class="btn btn-ghost btn-sm" style="flex:1;${window._wmLastInput.molt==='off'?'border-color:var(--green);color:var(--green)':''}"
-                onclick="Pages._wmSetMolt('off')">OFF</button>
-            </div>
-          </div>
-
-          <!-- ステージ -->
-          <div class="field">
-            <label class="field-label">ステージ変更</label>
-            <select id="wm-stage" class="input">
-              <option value="">変更なし</option>
-              ${(typeof STAGE_LIST_NEW !== 'undefined' ? STAGE_LIST_NEW : []).map(s => `<option value="${s.code}" ${window._wmLastInput.stage===s.code?'selected':''}>${s.label}</option>`).join('')}
-            </select>
-          </div>
-
-          <!-- 容器 -->
-          <div class="field">
-            <label class="field-label">容器サイズ変更</label>
-            <select id="wm-container" class="input">
-              <option value="">変更なし</option>
-              ${(typeof CONTAINER_SIZES !== 'undefined' ? CONTAINER_SIZES : ['1.8L','2.7L','4.8L']).map(s => `<option value="${s}" ${window._wmLastInput.container===s?'selected':''}>${s}</option>`).join('')}
-            </select>
-          </div>
 
           <!-- 記録日 -->
           <div class="field">
@@ -1449,14 +1475,93 @@ Pages.weightMode = function (params = {}) {
               max="${new Date().toISOString().split('T')[0]}">
           </div>
 
+          <!-- 区分: IND=単一ボタン / LOT=複数チェックボックス -->
+          <div class="field">
+            <label class="field-label">区分</label>
+            ${isLot ? `
+              <!-- LOT: 複数選択チェックボックス -->
+              <div style="display:flex;gap:8px">
+                ${['大','中','小'].map(c => {
+                  const checked = (_li.sizeCat||'').split(',').map(s=>s.trim()).includes(c);
+                  return '<label style="flex:1;display:flex;align-items:center;justify-content:center;gap:5px;' +
+                    'padding:9px;border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:.85rem">' +
+                    '<input type="checkbox" class="wm-size-cat-chk" value="' + c + '" ' +
+                    (checked?'checked':'') + ' style="width:16px;height:16px">' + c + '</label>';
+                }).join('')}
+              </div>
+            ` : `
+              <!-- IND: 単一選択ボタン -->
+              <input type="hidden" id="wm-size-cat" value="${_li.sizeCat||''}">
+              <div style="display:flex;gap:6px">
+                ${[['大','大'],['中','中'],['小','小'],['','—']].map(([v,l]) =>
+                  '<button class="btn btn-sm ' + (_li.sizeCat===v?'btn-primary':'btn-ghost') + '" ' +
+                  'style="flex:1" data-wm="size-cat" data-val="' + v + '" ' +
+                  'onclick="Pages._wmBtnSel(this,\'wm-size-cat\')">' + l + '</button>'
+                ).join('')}
+              </div>
+            `}
+          </div>
+
           <!-- 交換種別 -->
           <div class="field">
             <label class="field-label">交換種別</label>
-            <select id="wm-exchange" class="input">
-              <option value="" ${window._wmLastInput.exchange===''?'selected':''}>交換なし</option>
-              <option value="全交換" ${window._wmLastInput.exchange==='全交換'?'selected':''}>全交換</option>
-              <option value="追加" ${window._wmLastInput.exchange==='追加'?'selected':''}>追加</option>
-            </select>
+            <input type="hidden" id="wm-exchange" value="${_li.exchange||''}">
+            <div style="display:flex;gap:6px">
+              ${[['全交換','全交換'],['追加','追加'],['','なし']].map(([v,l]) =>
+                '<button class="btn btn-sm ' + (_li.exchange===v?'btn-primary':'btn-ghost') + '" ' +
+                'style="flex:1" data-wm="exchange" data-val="' + v + '" ' +
+                'onclick="Pages._wmBtnSel(this,\'wm-exchange\')">' + l + '</button>'
+              ).join('')}
+            </div>
+          </div>
+
+          <!-- マット -->
+          <div class="field">
+            <label class="field-label">マット</label>
+            <input type="hidden" id="wm-mat" value="${_li.mat||''}">
+            <div style="display:flex;gap:6px">
+              ${[['T1','T1'],['T2','T2'],['T3','T3'],['','—']].map(([v,l]) =>
+                '<button class="btn btn-sm ' + (_li.mat===v?'btn-primary':'btn-ghost') + '" ' +
+                'style="flex:1" data-wm="mat" data-val="' + v + '" ' +
+                'onclick="Pages._wmBtnSelMat(this)">' + l + '</button>'
+              ).join('')}
+            </div>
+          </div>
+
+          <!-- モルト（T2のみ表示） -->
+          <div class="field" id="wm-molt-field" style="${_showMolt?'':'display:none'}">
+            <label style="display:flex;align-items:center;gap:10px;cursor:pointer">
+              <input type="checkbox" id="wm-molt-check"
+                ${_li.molt?'checked':''}
+                style="width:20px;height:20px;cursor:pointer">
+              <span class="field-label" style="margin:0">モルト使用 <span style="font-size:.7rem;color:var(--text3)">(T2)</span></span>
+            </label>
+          </div>
+
+          <!-- ステージ -->
+          <div class="field">
+            <label class="field-label">ステージ</label>
+            <input type="hidden" id="wm-stage" value="${_li.stage||''}">
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              ${[['L1','L1'],['L2_EARLY','L2前'],['L2_LATE','L2後'],['L3_EARLY','L3前'],['L3_MID','L3中'],['L3_LATE','L3後'],['','—']].map(([v,l]) =>
+                '<button class="btn btn-sm ' + (_li.stage===v?'btn-primary':'btn-ghost') + '" ' +
+                'style="flex:1;min-width:40px;font-size:.75rem" data-wm="stage" data-val="' + v + '" ' +
+                'onclick="Pages._wmBtnSel(this,\'wm-stage\')">' + l + '</button>'
+              ).join('')}
+            </div>
+          </div>
+
+          <!-- 容器 -->
+          <div class="field">
+            <label class="field-label">容器</label>
+            <input type="hidden" id="wm-container" value="${_li.container||''}">
+            <div style="display:flex;gap:6px">
+              ${[['1.8L','1.8L'],['2.7L','2.7L'],['4.8L','4.8L'],['','—']].map(([v,l]) =>
+                '<button class="btn btn-sm ' + (_li.container===v?'btn-primary':'btn-ghost') + '" ' +
+                'style="flex:1" data-wm="container" data-val="' + v + '" ' +
+                'onclick="Pages._wmBtnSel(this,\'wm-container\')">' + l + '</button>'
+              ).join('')}
+            </div>
           </div>
 
           <!-- 頭幅 + メモ（折りたたみ） -->
@@ -1486,8 +1591,9 @@ Pages.weightMode = function (params = {}) {
     </div>
 
     <div class="quick-action-bar">
-      <button class="btn btn-ghost btn-xl" style="flex:1" onclick="routeTo('qr-scan',{mode:'weight'})">📷 スキャン</button>
-      <button id="wm-save-btn" class="btn btn-gold btn-xl" style="flex:2" onclick="Pages._wmSave()">💾 保存</button>
+      <button id="wm-save-btn" class="btn btn-gold btn-xl" style="flex:1" onclick="Pages._wmSave()">
+        💾 保存して次へ
+      </button>
     </div>`;
 
   setTimeout(() => document.getElementById('wm-weight')?.focus(), 120);
@@ -1569,21 +1675,33 @@ Pages._wmSave = async function () {
 
   try {
     // ── 入力値の収集 ─────────────────────────────────────────
-    const headVal     = parseFloat(document.getElementById('wm-head')?.value);
-    const noteVal     = document.getElementById('wm-note')?.value?.trim() || '';
-    const exchangeVal = document.getElementById('wm-exchange')?.value || '';
+    const headVal      = parseFloat(document.getElementById('wm-head')?.value);
+    const noteVal      = document.getElementById('wm-note')?.value?.trim() || '';
+    const exchangeVal  = document.getElementById('wm-exchange')?.value || '';
+    // 区分: LOT=チェックボックス複数選択, IND=hidden input 単一値
+    const _sizeCatChks = document.querySelectorAll('.wm-size-cat-chk:checked');
+    const sizeCatVal = _sizeCatChks.length > 0
+      ? Array.from(_sizeCatChks).map(c => c.value).join(',')   // LOT: カンマ区切り
+      : (document.getElementById('wm-size-cat')?.value || ''); // IND: 単一値
     // 記録日: ユーザー指定 or 今日
     const recordDateRaw = document.getElementById('wm-record-date')?.value || '';
     const recordDateVal = recordDateRaw ? recordDateRaw.replace(/-/g, '/') : new Date().toISOString().split('T')[0].replace(/-/g, '/');
-    const matVal      = document.getElementById('wm-mat')?.value       || '';  // 空='変更なし'
-    const stageVal    = document.getElementById('wm-stage')?.value     || '';  // 空='変更なし'
-    const containerVal= document.getElementById('wm-container')?.value || '';  // 空='変更なし'
-    const moltVal     = window._wmCurrentMolt || '';                           // 'on'/'off'/''
+    const matVal       = document.getElementById('wm-mat')?.value       || '';  // 空='変更なし'
+    const stageVal     = document.getElementById('wm-stage')?.value     || '';  // 空='変更なし'
+    const containerVal = document.getElementById('wm-container')?.value || '';  // 空='変更なし'
+    // モルト: T2のみチェックボックスから取得（T2以外は常にfalse）
+    const isT2         = (matVal || state.matType) === 'T2';
+    const moltChecked  = isT2 ? (document.getElementById('wm-molt-check')?.checked || false) : false;
+    const moltVal      = moltChecked ? 'on' : 'off';
+    // mat_type の表示: T2かつモルトONなら 'T2' として保存（メモに(M)付記）
+    const matNote      = (isT2 && moltChecked) ? ' [T2(M)]' : '';
 
     // 使用するステージ・容器・マット（入力 > 前回状態 の優先順）
     const effectiveStage    = stageVal     || state.stage     || '';
     const effectiveContainer= containerVal || state.container || '';
     const effectiveMat      = matVal       || state.matType   || '';
+    // 区分: 入力があれば更新（LOT=複数可のためそのまま、IND=単一）
+    const effectiveSizeCat  = sizeCatVal;
 
     const beforeRaw   = document.getElementById('wm-before')?.value;
     const afterRaw    = document.getElementById('wm-after')?.value;
@@ -1603,7 +1721,7 @@ Pages._wmSave = async function () {
       after_count:  afterCount,
     };
     if (!isNaN(headVal) && headVal > 0) growthData.head_width_mm = headVal;
-    if (noteVal)     growthData.note_private  = noteVal;
+    if (noteVal || matNote) growthData.note_private = (noteVal + matNote).trim();
     if (exchangeVal) growthData.exchange_type = exchangeVal;
     await API.growth.create(growthData);
 
@@ -1611,10 +1729,11 @@ Pages._wmSave = async function () {
     const entityUpdates = {};
     if (state.entityType === 'IND') {
       entityUpdates.latest_weight_g = weightVal;
-      if (stageVal)      entityUpdates.current_stage     = stageVal;
-      if (containerVal)  entityUpdates.current_container = containerVal;
-      if (matVal)        entityUpdates.current_mat       = matVal;
-      if (moltVal)       entityUpdates.mat_molt          = (moltVal === 'on');
+      if (stageVal)        entityUpdates.current_stage     = stageVal;
+      if (containerVal)    entityUpdates.current_container = containerVal;
+      if (matVal)          entityUpdates.current_mat       = matVal;
+      if (effectiveSizeCat)entityUpdates.size_category     = effectiveSizeCat;
+      entityUpdates.mat_molt = moltChecked;  // T2以外は常にfalse
       if (Object.keys(entityUpdates).length) {
         await API.individual.update({ ind_id: state.entityId, ...entityUpdates }).catch(e => {
           console.warn('[wmSave] individual update failed:', e.message);
@@ -1624,10 +1743,11 @@ Pages._wmSave = async function () {
       await Store.syncEntityType('individuals').catch(() => {});
     }
     if (state.entityType === 'LOT') {
-      if (stageVal)      entityUpdates.stage          = stageVal;
-      if (containerVal)  entityUpdates.container_size = containerVal;
-      if (matVal)        entityUpdates.mat_type       = matVal;
-      if (moltVal)       entityUpdates.mat_molt       = (moltVal === 'on');
+      if (stageVal)        entityUpdates.stage          = stageVal;
+      if (containerVal)    entityUpdates.container_size = containerVal;
+      if (matVal)          entityUpdates.mat_type       = matVal;
+      if (effectiveSizeCat)entityUpdates.size_category  = effectiveSizeCat;
+      entityUpdates.mat_molt = moltChecked;
       if (afterCount !== undefined) {
         entityUpdates.count = afterCount;
         if (afterCount === 0) entityUpdates.status = 'individualized';
@@ -1654,33 +1774,132 @@ Pages._wmSave = async function () {
     } catch(_) {}
     await Store.syncEntityType('growth').catch(() => {});
 
-    // ── 3. 前回入力値を引継ぎ用に保存 ────────────────────────
-    window._wmLastInput = {
+    // ── 3. 前回入力値を引継ぎ用に保存（localStorage永続化）────
+    _wmSaveLastInput({
       mat:       matVal,
-      molt:      moltVal,
+      molt:      moltChecked,
       stage:     stageVal,
       container: containerVal,
       exchange:  exchangeVal,
-    };
-    window._wmCurrentMolt = '';  // モルトは保存後リセット（連続時に誤引継ぎ防止）
+      sizeCat:   sizeCatVal,
+    });
 
-    Pages._wmShowComplete(state.entityType, state.entityId, weightVal);
+    UI.toast('✅ ' + weightVal + 'g を保存しました', 'success');
+    // 保存して次へ: QRスキャン待機に戻る
+    routeTo('qr-scan', { mode: 'weight' });
   } catch (e) {
     UI.toast('❌ 保存失敗: ' + (e.message || '不明なエラー'), 'error');
-    if (btn) { btn.disabled = false; btn.textContent = '💾 成長記録を保存'; }
+    if (btn) { btn.disabled = false; btn.textContent = '💾 保存して次へ'; }
   }
 };
 
-// ── モルトボタントグル ────────────────────────────────────────
-Pages._wmSetMolt = function (val) {
-  window._wmCurrentMolt = val;
-  ['none','on','off'].forEach(k => {
-    const b = document.getElementById('wm-molt-' + k);
-    if (!b) return;
-    const active = (k === val) || (k === 'none' && val === '');
-    b.style.borderColor = active ? 'var(--green)' : '';
-    b.style.color       = active ? 'var(--green)' : '';
+// ── プリセット適用 ───────────────────────────────────────────
+Pages._wmApplyPreset = function (presetId) {
+  if (!_WM_PRESETS[presetId]) return;
+  _wmSetPresetId(presetId);
+  const p = _WM_PRESETS[presetId];
+
+  // hidden input に値をセット
+  const setHidden = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+  setHidden('wm-mat',       p.mat);
+  setHidden('wm-stage',     p.stage);
+  setHidden('wm-container', p.container);
+  setHidden('wm-exchange',  p.exchange);
+
+  // ボタン群のアクティブ状態を更新
+  ['mat','stage','container','exchange','size-cat'].forEach(group => {
+    document.querySelectorAll('[data-wm="' + group + '"]').forEach(b => {
+      const isActive = b.dataset.val === (group === 'mat' ? p.mat
+        : group === 'stage' ? p.stage
+        : group === 'container' ? p.container
+        : group === 'exchange' ? p.exchange : '');
+      b.className = 'btn btn-sm ' + (isActive ? 'btn-primary' : 'btn-ghost');
+      b.style.flex = '1';
+    });
   });
+
+  // モルトチェックボックス
+  const mc = document.getElementById('wm-molt-check');
+  if (mc) mc.checked = !!p.molt;
+  Pages._wmOnMatChange(p.mat);
+
+  // プリセットボタンのハイライト更新（data-preset 属性で特定）
+  ['normal','t1','t2'].forEach(id => {
+    const b = document.querySelector('[data-preset="' + id + '"]');
+    if (!b) return;
+    b.className = 'btn btn-sm ' + (id === presetId ? 'btn-primary' : 'btn-ghost');
+    b.style.flex = '1';
+    b.style.fontSize = '.75rem';
+  });
+
+  // LOT の区分チェックボックスがあれば全て外す（プリセットは区分を変更しない）
+  // 見た目と内部値のズレを防ぐため現在のチェック状態をそのまま維持
+  // → sizeCat は既存値で引き継ぐ（_wmSaveLastInput の merge ロジックが空文字を無視する）
+  _wmSaveLastInput({ mat: p.mat, molt: p.molt, stage: p.stage,
+                     container: p.container, exchange: p.exchange, sizeCat: '' });
+  UI.toast(p.label + ' モードを適用しました', 'success', 1500);
+};
+
+// ── ボタン式セレクタ共通ハンドラ ─────────────────────────────
+// 同グループの他ボタンを ghost に戻してから自分を primary に
+Pages._wmBtnSel = function (btn, hiddenId) {
+  const group = btn.dataset.wm;
+  document.querySelectorAll('[data-wm="' + group + '"]').forEach(b => {
+    b.className = 'btn btn-sm btn-ghost';
+    b.style.flex = '1'; b.style.minWidth = b.style.minWidth;
+  });
+  btn.className = 'btn btn-sm btn-primary';
+  btn.style.flex = '1';
+  const h = document.getElementById(hiddenId);
+  if (h) h.value = btn.dataset.val;
+};
+
+// マット選択: モルト欄の表示切替も同時に行う
+Pages._wmBtnSelMat = function (btn) {
+  Pages._wmBtnSel(btn, 'wm-mat');
+  Pages._wmOnMatChange(btn.dataset.val);
+};
+
+// ── マット変更時のモルト欄切替 ───────────────────────────────
+Pages._wmOnMatChange = function (matVal) {
+  const field = document.getElementById('wm-molt-field');
+  if (!field) return;
+  const isT2 = matVal === 'T2';
+  field.style.display = isT2 ? '' : 'none';
+  if (!isT2) {
+    const mc = document.getElementById('wm-molt-check');
+    if (mc) mc.checked = false;  // T2以外はfalseに強制
+  }
+};
+
+// ── 体重微調整ボタン ─────────────────────────────────────────
+Pages._wmAdjWeight = function (delta) {
+  const el = document.getElementById('wm-weight');
+  if (!el) return;
+  const cur = parseFloat(el.value) || 0;
+  const next = Math.round((cur + delta) * 10) / 10;
+  el.value = Math.max(0, next);
+  Pages._wmUpdateDelta(el.value);
+};
+
+// 長押し連続増減
+let _wmAdjTimer = null;
+let _wmAdjInterval = null;
+Pages._wmAdjStart = function (delta) {
+  // 300ms 後に 100ms 間隔で連続増減
+  _wmAdjTimer = setTimeout(() => {
+    _wmAdjInterval = setInterval(() => Pages._wmAdjWeight(delta), 100);
+  }, 350);
+};
+Pages._wmAdjStop = function () {
+  if (_wmAdjTimer)    { clearTimeout(_wmAdjTimer);   _wmAdjTimer    = null; }
+  if (_wmAdjInterval) { clearInterval(_wmAdjInterval); _wmAdjInterval = null; }
+};
+
+// ── モルトボタントグル（後方互換用） ─────────────────────────
+Pages._wmSetMolt = function (val) {
+  // 旧ボタン式は削除済み、後方互換のみ
+  window._wmCurrentMolt = val;
 };
 
 Pages._wmShowComplete = function (entityType, entityId, weight) {
@@ -1940,7 +2159,7 @@ const _T2_DEFAULTS = {
   mat:       'T2',
   molt:      'on',
   stage:     'L3_EARLY',
-  exchange:  'マット+容器交換',
+  exchange:  '全交換',
   container: '2.7L',
 };
 
@@ -2074,15 +2293,15 @@ Pages.t2Mode = function (params = {}) {
           </div>
         </div>
 
-        <!-- モルト（今回は固定ON、変更可） -->
+        <!-- モルト（チェックボックス式、初期ON） -->
         <div class="card" style="padding:12px 14px">
-          <div style="font-size:.72rem;font-weight:700;color:var(--text2);margin-bottom:8px">モルト処理</div>
-          <div style="display:flex;gap:8px">
-            <button id="t2-molt-on"  class="btn ${window._t2MoltVal!=='off'?'btn-primary':'btn-ghost'}" style="flex:1"
-              onclick="Pages._t2SetMolt('on')">ON</button>
-            <button id="t2-molt-off" class="btn ${window._t2MoltVal==='off'?'btn-primary':'btn-ghost'}" style="flex:1"
-              onclick="Pages._t2SetMolt('off')">OFF</button>
-          </div>
+          <label style="display:flex;align-items:center;gap:12px;cursor:pointer">
+            <input type="checkbox" id="t2-molt-check"
+              ${window._t2MoltVal!=='off'?'checked':''}
+              style="width:22px;height:22px;cursor:pointer"
+              onchange="Pages._t2SetMolt(this.checked?'on':'off')">
+            <span style="font-size:.85rem;font-weight:700;color:var(--text2)">モルト使用</span>
+          </label>
         </div>
 
         <!-- 容器 -->
@@ -2108,10 +2327,9 @@ Pages.t2Mode = function (params = {}) {
 
       <!-- アクションバー -->
       <div class="quick-action-bar">
-        <button class="btn btn-ghost btn-xl" style="flex:1" onclick="routeTo('qr-scan')">📷 スキャン</button>
-        <button class="btn btn-gold btn-xl" style="flex:2" id="t2-save-btn"
+        <button class="btn btn-gold btn-xl" style="flex:1" id="t2-save-btn"
           onclick="Pages._t2Save()">
-          ${headCount===2 ? '💾 保存' : '💾 保存して分割へ →'}
+          ${headCount===2 ? '💾 保存して次へ' : '💾 保存して分割へ →'}
         </button>
       </div>`;
 
