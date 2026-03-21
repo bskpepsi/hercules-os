@@ -181,9 +181,16 @@ SET:SET-XXXXXXXX"
   Pages._qrSwitchMode = (m) => { _scanMode = m; render(); };
   render();
 
-  // 起動直後カメラ自動起動（モード問わず）
+  // 起動直後カメラ自動起動（保存後の連続スキャンモード）
   if (params.autoCamera) {
-    setTimeout(() => Pages._qrStartCamera(), 300);
+    // 直前に保存したQRを一時的にdedup（同じQRを即再読取しない）
+    if (params.lastQrText) {
+      window._qrLastAutoIgnore = {
+        text: params.lastQrText,
+        until: Date.now() + 2000,  // 2秒間無視
+      };
+    }
+    setTimeout(() => Pages._qrStartCamera(), 200);
   }
 };
 
@@ -469,6 +476,11 @@ Pages._qrScanLoop = function (video) {
         requestAnimationFrame(scan); return;
       }
       _lastSeen = { code: code.data, ts: now };
+      // 保存直後の同一QR再読取を防止（autoCamera 復帰時のみ発動）
+      const _ign = window._qrLastAutoIgnore;
+      if (_ign && _ign.text === code.data && Date.now() < _ign.until) {
+        requestAnimationFrame(scan); return;
+      }
       resolved = true;
       if (!window._qrContinuousMode) Pages._qrStopCamera();
       const input = document.getElementById('qr-input');
@@ -1091,7 +1103,8 @@ Pages.weightMode = function (params = {}) {
 
   Pages._wmState = { entityType: entity_type, entityId, stage, container, matType,
                      prevWeight, prevDate, displayId, lotCount,
-                     fromDirect: _fromDirect, fromId: _fromId };
+                     fromDirect: _fromDirect, fromId: _fromId,
+                     lastQrText: params.qr_text || '' };  // 保存後dedup用
 
   const _wmPresetId = _wmGetPresetId();
   const _liRaw = _wmGetLastInput();
@@ -1484,9 +1497,15 @@ Pages._wmSave = async function () {
                        container:containerVal, exchange:exchangeVal, sizeCat:sizeCatVal });
     UI.toast('✅ ' + weightVal + 'g を保存しました', 'success');
     if (state.fromDirect && state.fromId) {
+      // 個体詳細からの直遷移 → 個体詳細に戻す
       routeTo('ind-detail', { indId: state.fromId });
     } else {
-      routeTo('qr-scan', { mode: 'weight' });
+      // QRスキャン連続作業 → カメラ自動起動 + 直前QRの再読取を一時無視
+      routeTo('qr-scan', {
+        mode:        'weight',
+        autoCamera:  true,
+        lastQrText:  state.lastQrText || '',  // 同一QR dedup 用
+      });
     }
   } catch (e) {
     UI.toast('❌ 保存失敗: ' + (e.message||'不明なエラー'), 'error');
