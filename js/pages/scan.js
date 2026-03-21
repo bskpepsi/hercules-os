@@ -141,7 +141,7 @@ SET:SET-XXXXXXXX"
             </label>
           </div>
         </div>
-      </div>\`;
+      </div>`;
 
     // CSSアニメーション注入
     if (!document.getElementById('scan-anim-style')) {
@@ -1507,6 +1507,315 @@ Pages._wmToggleExtra = function (btn) {
   if (arrow) arrow.style.transform = isOpen ? '' : 'rotate(180deg)';
 };
 
+
+// ════════════════════════════════════════════════════════════════
+// T1移行 体重専用入力モード  /  page: 't1-weight'
+// 2頭同時入力 + 区分 + 保存後ラベル発行
+// ════════════════════════════════════════════════════════════════
+window._t1wState = window._t1wState || { headCount: 2, sameWeight: false, lotId: '', displayId: '' };
+
+Pages.t1WeightMode = function (params = {}) {
+  const res = params.resolve_result;
+  if (!res || !res.entity || res.entity_type !== 'LOT') {
+    routeTo('qr-scan'); return;
+  }
+  const main = document.getElementById('main');
+  const { entity, line } = res;
+  const lotId    = entity.lot_id;
+  const displayId = entity.display_id || lotId;
+  const lineDisp  = line?.line_code || line?.display_id || '';
+  window._t1wState = { ...window._t1wState, lotId, displayId };
+
+  function _render() {
+    const st = window._t1wState;
+    const isSame = st.sameWeight;
+    const todayIso = new Date().toISOString().split('T')[0];
+    main.innerHTML = `
+      ${UI.header('🟡 T1移行 体重入力', { back: true, backFn: "routeTo('qr-scan')" })}
+      <div class="page-body" style="padding-bottom:80px">
+        <div class="quick-info-bar">
+          <div style="flex:1">
+            <div class="quick-info-id">${displayId}</div>
+            <div style="font-size:.72rem;color:var(--text3)">${lineDisp ? 'L:'+lineDisp : ''}</div>
+          </div>
+          <div style="background:rgba(45,122,82,.15);color:var(--green);font-size:.75rem;padding:2px 10px;border-radius:99px;font-weight:700">T1移行</div>
+        </div>
+
+        <!-- 体重入力 -->
+        <div class="card" style="padding:14px">
+          <div style="font-size:.72rem;font-weight:700;color:var(--text2);margin-bottom:8px">体重 (g)</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px">
+            <div>
+              <div style="font-size:.68rem;color:var(--text3);margin-bottom:4px">体重①</div>
+              <input id="t1w-w1" type="number" inputmode="decimal" step="0.1" min="0.1" max="999.9"
+                placeholder="0.0" class="num-input-xl" style="width:100%;color:var(--green)"
+                oninput="${isSame ? 'document.getElementById(\'t1w-w2\').value=this.value' : ''}">
+            </div>
+            <div>
+              <div style="font-size:.68rem;color:var(--text3);margin-bottom:4px">体重②</div>
+              <input id="t1w-w2" type="number" inputmode="decimal" step="0.1" min="0.1" max="999.9"
+                placeholder="0.0" class="num-input-xl" style="width:100%;color:var(--green)"
+                ${isSame ? 'readonly style="width:100%;opacity:.6;color:var(--green)"' : ''}>
+            </div>
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:.8rem">
+            <input type="checkbox" id="t1w-same" ${isSame?'checked':''}
+              onchange="window._t1wState.sameWeight=this.checked;Pages._t1wRender()"
+              style="width:18px;height:18px">
+            2匹とも同じ体重
+          </label>
+        </div>
+
+        <!-- 区分 -->
+        <div class="card" style="padding:12px 14px">
+          <div style="font-size:.72rem;font-weight:700;color:var(--text2);margin-bottom:8px">区分</div>
+          <div style="display:flex;gap:8px">
+            ${['大','中','小'].map(c => {
+              const checked = (entity.size_category||'').split(',').map(s=>s.trim()).includes(c);
+              return '<label style="flex:1;display:flex;align-items:center;justify-content:center;gap:5px;'+
+                'padding:9px;border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:.85rem">'+
+                '<input type="checkbox" class="t1w-cat-chk" value="'+c+'" '+(checked?'checked':'')+
+                ' style="width:16px;height:16px">'+c+'</label>';
+            }).join('')}
+          </div>
+        </div>
+
+        <!-- 記録日 -->
+        <div class="card" style="padding:12px 14px">
+          <label class="field-label">記録日</label>
+          <input id="t1w-date" type="date" class="input" value="${todayIso}" max="${todayIso}">
+        </div>
+      </div>
+
+      <div class="quick-action-bar">
+        <button id="t1w-save-btn" class="btn btn-gold btn-xl" style="flex:1" onclick="Pages._t1wSave()">
+          💾 保存してラベルへ
+        </button>
+      </div>`;
+    setTimeout(() => document.getElementById('t1w-w1')?.focus(), 80);
+  }
+
+  window._t1wRender = _render;
+  _render();
+};
+
+Pages._t1wSave = async function () {
+  const st = window._t1wState;
+  const w1 = parseFloat(document.getElementById('t1w-w1')?.value);
+  const w2 = parseFloat(document.getElementById('t1w-w2')?.value);
+  if (isNaN(w1) || w1 <= 0) { UI.toast('体重①を入力してください', 'error'); return; }
+  if (isNaN(w2) || w2 <= 0) { UI.toast('体重②を入力してください', 'error'); return; }
+
+  const cats = Array.from(document.querySelectorAll('.t1w-cat-chk:checked')).map(c => c.value);
+  const recDate = (document.getElementById('t1w-date')?.value || new Date().toISOString().split('T')[0]).replace(/-/g,'/');
+
+  const btn = document.getElementById('t1w-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ 保存中...'; }
+
+  try {
+    // LOT 本体更新
+    const updates = {};
+    if (cats.length) updates.size_category = cats.join(',');
+    if (Object.keys(updates).length) {
+      await API.lot.update({ lot_id: st.lotId, ...updates }).catch(e => console.warn('[t1wSave]', e.message));
+      Store.patchDBItem('lots', 'lot_id', st.lotId, updates);
+    }
+
+    // growth records（体重①と②を別レコード）
+    const base = { target_type:'LOT', target_id:st.lotId, record_date:recDate,
+                   stage:'L1', mat_type:'T1', exchange_type:'全交換' };
+    await API.growth.create({ ...base, weight_g:w1, note_private:'T1移行 体重①' });
+    if (w2 !== w1) {
+      await API.growth.create({ ...base, weight_g:w2, note_private:'T1移行 体重②' });
+    }
+    Store.addGrowthRecord(st.lotId, { ...base, weight_g:w1 });
+
+    UI.toast('✅ T1移行データを保存しました', 'success');
+    // ラベル発行へ遷移
+    routeTo('label-gen', { targetType: 'LOT', targetId: st.lotId });
+  } catch (e) {
+    UI.toast('❌ 保存失敗: ' + (e.message||'不明なエラー'), 'error');
+    if (btn) { btn.disabled = false; btn.textContent = '💾 保存してラベルへ'; }
+  }
+};
+
+// ════════════════════════════════════════════════════════════════
+// T2初回 体重専用入力モード  /  page: 't2-weight'
+// 2頭同時入力 + 頭数分岐（2匹=lot継続 / 単独=分割へ）
+// ════════════════════════════════════════════════════════════════
+window._t2wState = window._t2wState || {
+  lotId:'', displayId:'', headCount:2, sameWeight:false, moltOn:true
+};
+
+Pages.t2WeightMode = function (params = {}) {
+  const res = params.resolve_result;
+  if (!res || !res.entity || res.entity_type !== 'LOT') {
+    routeTo('qr-scan'); return;
+  }
+  const main = document.getElementById('main');
+  const { entity, line } = res;
+  const lotId     = entity.lot_id;
+  const displayId = entity.display_id || lotId;
+  const lineDisp  = line?.line_code || line?.display_id || '';
+  window._t2wState = { ...window._t2wState, lotId, displayId };
+
+  function _render() {
+    const st = window._t2wState;
+    const isSame = st.sameWeight;
+    const is2    = st.headCount === 2;
+    const moltOn = st.moltOn !== false;
+    const todayIso = new Date().toISOString().split('T')[0];
+
+    main.innerHTML = `
+      ${UI.header('🟠 T2初回 体重入力', { back: true, backFn: "routeTo('qr-scan')" })}
+      <div class="page-body" style="padding-bottom:80px">
+        <div class="quick-info-bar">
+          <div style="flex:1">
+            <div class="quick-info-id">${displayId}</div>
+            <div style="font-size:.72rem;color:var(--text3)">${lineDisp ? 'L:'+lineDisp : ''}</div>
+          </div>
+          <div style="background:rgba(200,168,75,.15);color:var(--amber);font-size:.75rem;padding:2px 10px;border-radius:99px;font-weight:700">T2初回</div>
+        </div>
+
+        <!-- 固定バッジ -->
+        <div style="display:flex;gap:6px;padding:4px 0">
+          ${['T2マット','L3前期','全交換'].map(l=>'<span style="font-size:.68rem;padding:2px 8px;border-radius:20px;background:rgba(200,168,75,.12);color:var(--amber);border:1px solid rgba(200,168,75,.3)">'+l+'</span>').join('')}
+        </div>
+
+        <!-- 頭数 -->
+        <div class="card" style="padding:12px 14px">
+          <div style="font-size:.72rem;font-weight:700;color:var(--text2);margin-bottom:8px">頭数</div>
+          <div style="display:flex;gap:8px">
+            <button class="btn ${is2?'btn-primary':'btn-ghost'}" style="flex:1"
+              onclick="window._t2wState.headCount=2;Pages._t2wRender()">🫧 2匹（ロット継続）</button>
+            <button class="btn ${!is2?'btn-primary':'btn-ghost'}" style="flex:1"
+              onclick="window._t2wState.headCount=1;Pages._t2wRender()">🐛 単独（分割へ）</button>
+          </div>
+          ${!is2 ? '<div style="font-size:.72rem;color:var(--blue);margin-top:6px">保存後に分割モーダルへ進みます。</div>' : ''}
+        </div>
+
+        <!-- 体重入力 -->
+        <div class="card" style="padding:14px">
+          <div style="font-size:.72rem;font-weight:700;color:var(--text2);margin-bottom:8px">体重 (g)</div>
+          ${is2 ? `
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px">
+            <div>
+              <div style="font-size:.68rem;color:var(--text3);margin-bottom:4px">体重①</div>
+              <input id="t2w-w1" type="number" inputmode="decimal" step="0.1" min="0.1" max="999.9"
+                placeholder="0.0" class="num-input-xl" style="width:100%;color:var(--green)"
+                oninput="${isSame ? 'document.getElementById(\'t2w-w2\').value=this.value' : ''}">
+            </div>
+            <div>
+              <div style="font-size:.68rem;color:var(--text3);margin-bottom:4px">体重②</div>
+              <input id="t2w-w2" type="number" inputmode="decimal" step="0.1" min="0.1" max="999.9"
+                placeholder="0.0" class="num-input-xl" style="width:100%;color:var(--green)"
+                ${isSame ? 'readonly style="width:100%;opacity:.6;color:var(--green)"' : ''}>
+            </div>
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:.8rem">
+            <input type="checkbox" id="t2w-same" ${isSame?'checked':''}
+              onchange="window._t2wState.sameWeight=this.checked;Pages._t2wRender()"
+              style="width:18px;height:18px">
+            2匹とも同じ体重
+          </label>` : `
+          <input id="t2w-w1" type="number" inputmode="decimal" step="0.1" min="0.1" max="999.9"
+            placeholder="0.0" class="num-input-xl" style="width:100%;color:var(--green)">`}
+        </div>
+
+        <!-- モルト（T2固定ON、変更可）-->
+        <div class="card" style="padding:12px 14px">
+          <label style="display:flex;align-items:center;gap:12px;cursor:pointer">
+            <input type="checkbox" id="t2w-molt" ${moltOn?'checked':''}
+              onchange="window._t2wState.moltOn=this.checked"
+              style="width:22px;height:22px;cursor:pointer">
+            <span style="font-size:.85rem;font-weight:700;color:var(--text2)">モルト使用</span>
+          </label>
+        </div>
+
+        <!-- 容器 -->
+        <div class="card" style="padding:12px 14px">
+          <div style="font-size:.72rem;font-weight:700;color:var(--text2);margin-bottom:6px">容器</div>
+          <div style="display:flex;gap:8px">
+            ${['1.8L','2.7L','4.8L'].map(s => {
+              const isActive = entity.container_size===s || (!entity.container_size && s==='2.7L');
+              return '<button class="btn '+(isActive?'btn-primary':'btn-ghost')+'" style="flex:1" data-cont="'+s+'" onclick="Pages._t2wSelectContainer(this.dataset.cont)">'+s+'</button>';
+            }).join('')}
+          </div>
+        </div>
+
+        <!-- 記録日 -->
+        <div class="card" style="padding:12px 14px">
+          <label class="field-label">記録日</label>
+          <input id="t2w-date" type="date" class="input" value="${todayIso}" max="${todayIso}">
+        </div>
+      </div>
+
+      <div class="quick-action-bar">
+        <button id="t2w-save-btn" class="btn btn-gold btn-xl" style="flex:1" onclick="Pages._t2wSave()">
+          ${is2 ? '💾 保存して次へ' : '💾 保存して分割へ →'}
+        </button>
+      </div>`;
+    setTimeout(() => document.getElementById('t2w-w1')?.focus(), 80);
+  }
+
+  window._t2wRender = _render;
+  _render();
+};
+
+Pages._t2wSelectContainer = function (val) {
+  window._t2wSelectedContainer = val;
+  ['1.8L','2.7L','4.8L'].forEach(s => {
+    const b = document.getElementById('t2w-cont-'+s.replace('.','_'));
+    if (b) b.className = 'btn '+(s===val?'btn-primary':'btn-ghost');
+    if (b) b.style.flex = '1';
+  });
+};
+
+Pages._t2wSave = async function () {
+  const st  = window._t2wState;
+  const w1  = parseFloat(document.getElementById('t2w-w1')?.value);
+  const w2  = st.headCount === 2 ? parseFloat(document.getElementById('t2w-w2')?.value) : w1;
+  if (isNaN(w1) || w1 <= 0) { UI.toast('体重を入力してください', 'error'); return; }
+  if (st.headCount === 2 && (isNaN(w2) || w2 <= 0)) { UI.toast('体重②を入力してください', 'error'); return; }
+
+  const moltOn  = document.getElementById('t2w-molt')?.checked !== false;
+  const container = window._t2wSelectedContainer || '2.7L';
+  const recDate = (document.getElementById('t2w-date')?.value || new Date().toISOString().split('T')[0]).replace(/-/g,'/');
+
+  const btn = document.getElementById('t2w-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ 保存中...'; }
+
+  try {
+    // LOT 本体更新
+    const updates = { mat_type:'T2', mat_molt:moltOn, stage:'L3_EARLY', container_size:container, exchange_type:'全交換' };
+    await API.lot.update({ lot_id: st.lotId, ...updates }).catch(e => console.warn('[t2wSave]', e.message));
+    Store.patchDBItem('lots', 'lot_id', st.lotId, updates);
+
+    // growth records
+    const base = { target_type:'LOT', target_id:st.lotId, record_date:recDate,
+                   stage:'L3_EARLY', mat_type:'T2', exchange_type:'全交換',
+                   container:container, note_private:'T2初回'+(moltOn?' [T2(M)]':'') };
+    await API.growth.create({ ...base, weight_g:w1 });
+    if (st.headCount === 2 && w2 !== w1) {
+      await API.growth.create({ ...base, weight_g:w2, note_private:(base.note_private)+' 体重②' });
+    }
+    Store.addGrowthRecord(st.lotId, { ...base, weight_g:w1 });
+
+    UI.toast('✅ T2初回データを保存しました', 'success');
+
+    if (st.headCount === 2) {
+      routeTo('lot-detail', { lotId: st.lotId });
+    } else {
+      // 単独 → 分割モーダルへ
+      window.__t2SplitWeight = w1;
+      await syncAll(true).catch(() => {});
+      routeTo('lot-detail', { lotId: st.lotId, openSplit: true });
+    }
+  } catch (e) {
+    UI.toast('❌ 保存失敗: ' + (e.message||'不明なエラー'), 'error');
+    if (btn) { btn.disabled = false; btn.textContent = st.headCount===2?'💾 保存して次へ':'💾 保存して分割へ →'; }
+  }
+};
 
 // ════════════════════════════════════════════════════════════════
 // T1交換 QR連続処理モード
