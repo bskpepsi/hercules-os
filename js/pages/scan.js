@@ -15,21 +15,32 @@
 // ════════════════════════════════════════════════════════════════
 // QRスキャン画面 (qr-scan)
 // ════════════════════════════════════════════════════════════════
+// セッション変数（ページをまたいで維持）
+// ════════════════════════════════════════════════════════════════
+window._qrContinuousMode = window._qrContinuousMode || false;
+window._qrCameraStream   = window._qrCameraStream   || null;
+window._qrSoundOn   = (function(){ return localStorage.getItem('qr_sound')   !== 'off'; })();
+window._qrVibrateOn = (function(){ return localStorage.getItem('qr_vibrate') !== 'off'; })();
+
+// ════════════════════════════════════════════════════════════════
 Pages.qrScan = function (params = {}) {
   const main = document.getElementById('main');
   // モード: 'view' | 'diff' | 'weight'
-  let _scanMode = params.mode === 'weight' ? 'weight' : params.mode === 'diff' ? 'diff' : 'view';
+  let _scanMode = ['weight','diff','t1','t2'].includes(params.mode) ? params.mode : 'view';
 
   function _modeStyle(m) {
     if (m === _scanMode) {
-      const bg = m==='weight' ? 'var(--green)' : m==='diff' ? 'var(--blue)' : 'var(--gold)';
+      const bg = m==='weight' ? 'var(--green)' : m==='diff' ? 'var(--blue)'
+               : m==='t1' ? 'var(--amber)' : m==='t2' ? '#9c6' : 'var(--gold)';
       return `background:${bg};color:#fff;font-weight:700;`;
     }
     return 'color:var(--text3);background:transparent;';
   }
   function _modeDesc() {
-    if (_scanMode === 'weight') return '⚖️ QR → 体重入力 → 保存（最短3タップ）';
+    if (_scanMode === 'weight') return '⚖️ QR → 体重入力 → 保存';
     if (_scanMode === 'diff')   return '📝 QR → 未入力項目を補完する';
+    if (_scanMode === 't1')     return '🟡 QR → T1移行 体重2頭入力 → ラベル';
+    if (_scanMode === 't2')     return '🟠 QR → T2初回 体重入力 → lot更新';
     return '🔍 QR → 個体・ロット・産卵セットの詳細を開く';
   }
 
@@ -38,14 +49,20 @@ Pages.qrScan = function (params = {}) {
       ${UI.header('📷 QRスキャン', { back: true })}
       <div class="page-body">
 
-        <!-- 3モードタブ -->
-        <div style="display:flex;background:var(--surface2);border-radius:10px;padding:3px;gap:3px">
+        <!-- モードタブ（2行構成） -->
+        <div style="display:flex;background:var(--surface2);border-radius:10px;padding:3px;gap:3px;margin-bottom:3px">
           <button style="flex:1;border:none;padding:7px 4px;border-radius:8px;cursor:pointer;font-size:.75rem;${_modeStyle('view')}"
             onclick="Pages._qrSwitchMode('view')">🔍 確認</button>
           <button style="flex:1;border:none;padding:7px 4px;border-radius:8px;cursor:pointer;font-size:.75rem;${_modeStyle('diff')}"
             onclick="Pages._qrSwitchMode('diff')">📝 差分</button>
           <button style="flex:1;border:none;padding:7px 4px;border-radius:8px;cursor:pointer;font-size:.75rem;${_modeStyle('weight')}"
             onclick="Pages._qrSwitchMode('weight')">⚖️ 体重</button>
+        </div>
+        <div style="display:flex;background:var(--surface2);border-radius:10px;padding:3px;gap:3px">
+          <button style="flex:1;border:none;padding:7px 4px;border-radius:8px;cursor:pointer;font-size:.75rem;${_modeStyle('t1')}"
+            onclick="Pages._qrSwitchMode('t1')">🟡 T1移行</button>
+          <button style="flex:1;border:none;padding:7px 4px;border-radius:8px;cursor:pointer;font-size:.75rem;${_modeStyle('t2')}"
+            onclick="Pages._qrSwitchMode('t2')">🟠 T2初回</button>
         </div>
         <div style="font-size:.72rem;color:var(--text3);padding:2px 4px;margin-top:-2px">${_modeDesc()}</div>
 
@@ -208,12 +225,26 @@ Pages._qrResolve = async function () {
       b.style.fontWeight === '700' && b.onclick && b.getAttribute('onclick')?.includes('_qrSwitchMode')
     );
     if (activeBtn) {
-      const m = activeBtn.getAttribute('onclick')?.match(/'(view|diff|weight)'/);
+      const m = activeBtn.getAttribute('onclick')?.match(/'(view|diff|weight|t1|t2)'/);
       if (m) mode = m[1];
     }
 
     if (mode === 'weight') {
       routeTo('weight-mode', { resolve_result: res, qr_text: qrText });
+    } else if (mode === 't1') {
+      // T1移行: LOTのみ有効
+      if (res.entity_type === 'LOT') {
+        routeTo('t1-weight', { resolve_result: res, qr_text: qrText });
+      } else {
+        UI.toast('T1移行モードはロットQRを読み取ってください', 'info', 3000);
+      }
+    } else if (mode === 't2') {
+      // T2初回: LOTのみ有効
+      if (res.entity_type === 'LOT') {
+        routeTo('t2-weight', { resolve_result: res, qr_text: qrText });
+      } else {
+        UI.toast('T2初回モードはロットQRを読み取ってください', 'info', 3000);
+      }
     } else if (mode === 'diff') {
       routeTo('qr-diff', { resolve_result: res, qr_text: qrText });
     } else {
@@ -859,7 +890,7 @@ Pages._indDirectWeight = async function (indId) {
       line:        line || {},
       last_growth: _getLastGrowthFromStore('IND', indId, ind?.latest_weight_g),
     },
-    from:    'ind-detail',   // 戻り先を個体詳細にするためのフラグ
+    from:    'ind-detail',  // weightMode に渡す遷移元識別子
     fromId:  indId,
   });
 };
@@ -1365,10 +1396,8 @@ Pages._wmAdjStop = function () {
 
 
 // ─────────────────────────────────────────────────────────────────
-// Pages._wmShowComplete — 保存完了後の画面
-// ・「📷 次をスキャン」→ qr-scan（weight-modeタブ選択済みで戻る）
-// ・「詳細を見る」   → ind-detail または lot-detail
-// ─────────────────────────────────────────────────────────────────
+// _wmShowComplete は「保存して次へ」導線に統合済みのため廃止
+// 旧互換のため定義は残すが何もしない
 Pages._wmShowComplete = function (entityType, entityId, weight) {
   const main = document.getElementById('main');
   const body = main?.querySelector('.page-body');
@@ -1764,10 +1793,10 @@ Pages.t2WeightMode = function (params = {}) {
 
 Pages._t2wSelectContainer = function (val) {
   window._t2wSelectedContainer = val;
-  ['1.8L','2.7L','4.8L'].forEach(s => {
-    const b = document.getElementById('t2w-cont-'+s.replace('.','_'));
-    if (b) b.className = 'btn '+(s===val?'btn-primary':'btn-ghost');
-    if (b) b.style.flex = '1';
+  // data-cont 属性でボタンを特定（id は付与していないため）
+  document.querySelectorAll('[data-cont]').forEach(b => {
+    b.className = 'btn ' + (b.dataset.cont === val ? 'btn-primary' : 'btn-ghost');
+    b.style.flex = '1';
   });
 };
 
@@ -2071,3 +2100,6 @@ Pages._t1StartCamera = async function () {
 
 // ルーティング登録
 window.PAGES['qr-scan-t1'] = () => Pages.qrScanT1();
+window.PAGES['weight-mode']  = () => Pages.weightMode(Store.getParams());
+window.PAGES['t1-weight']    = () => Pages.t1WeightMode(Store.getParams());
+window.PAGES['t2-weight']    = () => Pages.t2WeightMode(Store.getParams());
