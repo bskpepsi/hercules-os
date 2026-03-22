@@ -260,19 +260,60 @@ function _sexFilters(active) {
 //   normalize.js の renderIndCard / normalizeIndForView が使える場合は
 //   それ経由でレンダリング。なければ独自実装にフォールバック。
 // ────────────────────────────────────────────────────────────────
-function _indCardHTML(ind) {
-  // normalize.js が読み込まれていれば優先使用
-  if (typeof normalizeIndForView === 'function' && typeof renderIndCard === 'function') {
-    const vm = normalizeIndForView(ind);
-    if (vm) {
-      // _safeDisplayId で IND- プレフィックスを除去
-      vm.displayId = _safeDisplayId(ind);
-      return renderIndCard(vm);
-    }
-  }
+// ────────────────────────────────────────────────────────────────
+// _toDisplayStageLabel — ステージコード（新旧問わず）→ 新6区分の表示ラベル
+// ────────────────────────────────────────────────────────────────
+function _toDisplayStageLabel(code) {
+  if (!code) return '';
+  const map = {
+    // 新6区分（そのまま）
+    L1L2:      'L1L2',
+    L3:        'L3',
+    PREPUPA:   '前蛹',
+    PUPA:      '蛹',
+    ADULT_PRE: '成虫（未後食）',
+    ADULT:     '成虫（活動開始）',
+    // 旧 L 系細分 → L1L2
+    L1:        'L1L2',
+    L2_EARLY:  'L1L2',
+    L2_LATE:   'L1L2',
+    // 旧 L3 系細分 → L3
+    L3_EARLY:  'L3',
+    L3_MID:    'L3',
+    L3_LATE:   'L3',
+    // 旧 T 系 → 対応新区分
+    EGG:  'L1L2',
+    T0:   'L1L2',
+    T1:   'L1L2',
+    T2A:  'L3',
+    T2B:  'L3',
+    T3:   'L3',
+  };
+  return map[code] || code;
+}
 
-  // フォールバック: 独自実装（normalize.js がない場合）
-  // 常に Store.calcAge を使って age.days undefined を防ぐ
+function _toDisplayStageBadge(code) {
+  const label = _toDisplayStageLabel(code);
+  if (!label) return '';
+  const colorMap = {
+    'L1L2':        '#4caf50',
+    'L3':          '#2196f3',
+    '前蛹':         '#e65100',
+    '蛹':           '#bf360c',
+    '成虫（未後食）': '#9c27b0',
+    '成虫（活動開始）':'#c8a84b',
+  };
+  const c = colorMap[label] || '#888';
+  return '<span class="badge" style="background:' + c + '22;color:' + c + ';border:1px solid ' + c + '55">' + label + '</span>';
+}
+
+// ────────────────────────────────────────────────────────────────
+// _indCardHTML — 個体一覧カード
+//   normalize.js の event delegation (data-ind-id) は app.js にハンドラがないため
+//   使用しない。直接 onclick で遷移する実装を常に使用する。
+// ────────────────────────────────────────────────────────────────
+function _indCardHTML(ind) {
+  // 直接 onclick 実装（常にこちらを使用）
   const ageObj   = ind.hatch_date ? Store.calcAge(ind.hatch_date) : null;
   const ageDaysStr = ageObj ? ageObj.days : null;   // "150日" 形式
   const stageGuess = ageObj ? ageObj.stageGuess : '';
@@ -318,7 +359,7 @@ function _indCardHTML(ind) {
     +   '<span style="font-weight:700;color:' + sexColor + ';font-size:.95rem">' + (ind.sex || '?') + '</span>'
     +   '<span style="font-family:var(--font-mono);font-weight:700;font-size:.9rem;flex:1">' + dispId + '</span>'
     +   (icons ? '<span style="font-size:.82rem">' + icons + '</span>' : '')
-    +   UI.stageBadge(ind.current_stage)
+    +   _toDisplayStageBadge(ind.current_stage)
     + '</div>'
     + '<div style="font-size:.76rem;color:var(--text2);margin-bottom:3px">'
     +   lineLbl + (locality ? ' / ' + locality : '')
@@ -503,7 +544,7 @@ function _renderDetail(ind, main) {
           <div>
             <div style="font-family:var(--font-mono);font-size:.85rem;color:var(--gold)">${dispId}</div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
-              ${UI.stageBadge(ind.current_stage)}
+              ${_toDisplayStageBadge(ind.current_stage)}
               ${UI.statusBadge(ind.status)}
               ${icons}
             </div>

@@ -6,6 +6,21 @@
 
 'use strict';
 
+// ────────────────────────────────────────────────────────────────
+// _lotDisplayStageLabel — ステージコード（新旧問わず）→ 新6区分の表示ラベル
+// ────────────────────────────────────────────────────────────────
+function _lotDisplayStageLabel(code) {
+  if (!code) return '—';
+  var map = {
+    L1L2:'L1L2', L3:'L3', PREPUPA:'前蛹', PUPA:'蛹',
+    ADULT_PRE:'成虫（未後食）', ADULT:'成虫（活動開始）',
+    L1:'L1L2', L2_EARLY:'L1L2', L2_LATE:'L1L2',
+    L3_EARLY:'L3', L3_MID:'L3', L3_LATE:'L3',
+    EGG:'L1L2', T0:'L1L2', T1:'L1L2', T2A:'L3', T2B:'L3', T3:'L3',
+  };
+  return map[code] || code;
+}
+
 // ════════════════════════════════════════════════════════════════
 // ロット一覧
 // ════════════════════════════════════════════════════════════════
@@ -105,7 +120,7 @@ function _lotCardHTML(lot) {
 
     // ── ステージ ──────────────────────────────────────────────
     var stageCode = lot.stage_life || lot.stage || '';
-    var stageLbl  = stageCode ? stageLabel(stageCode) : '';
+    var stageLbl  = stageCode ? _lotDisplayStageLabel(stageCode) : '';
     var sColor    = stageCode ? stageColor(stageCode) : 'var(--text3)';
 
     var recs = Store.getGrowthRecords(lot.lot_id) || [];
@@ -271,8 +286,8 @@ function _renderLotDetail(lot, main) {
           <div class="lot-detail-center">
             <div class="lot-detail-count">${lot.count}<span style="font-size:.9rem;font-weight:400;color:var(--text3)">頭</span></div>
             ${stageLife
-              ? `<span style="font-size:.75rem;font-weight:700;color:var(--blue);padding:2px 8px;border:1px solid rgba(91,168,232,.4);border-radius:6px">${stageLabel(stageLife)}</span>`
-              : UI.stageBadge(dispStage !== '—' ? dispStage : lot.stage)}
+              ? `<span style="font-size:.75rem;font-weight:700;color:var(--blue);padding:2px 8px;border:1px solid rgba(91,168,232,.4);border-radius:6px">${_lotDisplayStageLabel(stageLife)}</span>`
+              : `<span style="font-size:.75rem;font-weight:700;color:var(--blue);padding:2px 8px;border:1px solid rgba(91,168,232,.4);border-radius:6px">${_lotDisplayStageLabel(dispStage !== '—' ? dispStage : lot.stage)}</span>`}
           </div>
           <div class="lot-detail-right">
             ${age ? `<div style="font-size:.72rem;color:var(--text3)">日齢</div><div style="font-weight:700;font-size:1rem">${age.days}</div>` : ''}
@@ -302,7 +317,7 @@ function _renderLotDetail(lot, main) {
         <div class="info-list">
           ${_infoRow('ライン', line ? `<span onclick="routeTo('line-detail',{lineId:'${line.line_id}'})" style="color:var(--blue);cursor:pointer">${lineCode}</span>` : lot.line_id)}
           ${dispWeight ? _infoRow('最新体重', `<span style="font-weight:700;color:var(--green)">${dispWeight}</span>`) : ''}
-          ${stageLife  ? _infoRow('生体ステージ', `<span style="font-weight:700;color:var(--blue)">${stageLabel(stageLife)}</span>`) : ''}
+          ${stageLife  ? _infoRow('生体ステージ', `<span style="font-weight:700;color:var(--blue)">${_lotDisplayStageLabel(stageLife)}</span>`) : ''}
           ${_infoRow('飼育ステージ', dispStage !== '—' ? dispStage : (lot.stage || '—'))}
           ${_infoRow('容器', dispContainer)}
           ${_infoRow('マット', dispMatLabel + (alertBadge ? ' ' + alertBadge : ''))}
@@ -513,7 +528,7 @@ Pages._lotStageUpdate = async function (lotId) {
   try {
     await apiCall(
       () => API.lot.update({ lot_id: lotId, stage_life: stageLife }),
-      stageLabel(stageLife) + ' に変更しました'
+      _lotDisplayStageLabel(stageLife) + ' に変更しました'
     );
     Store.patchDBItem('lots', 'lot_id', lotId, { stage_life: stageLife });
     Pages.lotDetail(lotId);
@@ -1188,12 +1203,17 @@ function _renderLotSaleActions(lot) {
 
   if (st === 'individualized' || st === 'dissolved') return '';
 
-  // 販売フロー: active → for_sale → listed → sold
+  // 終端（sold）
+  if (st === 'sold') {
+    return '<div style="margin-top:8px">'
+      + '<div class="ind-sale-done-msg">💰 販売済みです（' + (lot.count || '') + '頭）</div>'
+      + '</div>';
+  }
+
   var STATUS_LABELS = {
     active:   { label:'管理中',   color:'var(--green)' },
     for_sale: { label:'販売候補', color:'#9c27b0' },
     listed:   { label:'出品中',   color:'#ff9800' },
-    sold:     { label:'販売済み', color:'var(--gold)' },
   };
   var stInfo = STATUS_LABELS[st];
   var badge = stInfo
@@ -1210,29 +1230,27 @@ function _renderLotSaleActions(lot) {
   var setFn  = function(s) { return "Pages._lotSetSaleStatus('" + id + "','" + s + "')"; };
   var soldFn = "Pages._lotMarkSoldModal(window.__lotSoldId)";
   var partFn = "Pages._lotPartSaleModal(window.__lotPartId)";
+  // 死亡ボタンは終端以外では常に表示
+  var deadBtn = btn('btn-sale-red', '💀', 'ロット死亡', "Pages._lotMarkDead('" + id + "')");
 
-  var btns = '';
+  var saleBtns = '';
   if (st === 'active') {
-    btns = btn('btn-sale-purple', '🛒', '販売候補にする', setFn('for_sale'));
+    saleBtns = btn('btn-sale-purple', '🛒', '全部　販売候補', setFn('for_sale'))
+      + btn('btn-sale-purple2', '✂️', '一部 販売候補', "Pages._lotPartForSaleModal('" + id + "')");
   } else if (st === 'for_sale') {
-    btns = btn('btn-sale-orange', '📢', '出品する',     setFn('listed'))
+    saleBtns = btn('btn-sale-orange', '📢', '出品する',     setFn('listed'))
       + btn('btn-sale-gold',  '💰', 'まとめて販売', soldFn)
       + btn('btn-sale-gray',  '↩',  '候補解除',    setFn('active'));
   } else if (st === 'listed') {
-    btns = btn('btn-sale-gold', '💰', 'まとめて販売', soldFn)
+    saleBtns = btn('btn-sale-gold', '💰', 'まとめて販売', soldFn)
       + btn('btn-sale-orange','✂️', '一部販売',    partFn)
-      + btn('btn-sale-gray', '↩', '出品解除',    setFn('for_sale'));
-  } else if (st === 'sold') {
-    return '<div style="margin-top:8px"><div class="ind-sale-done-msg">'
-      + '💰 販売済みです（' + (lot.count || '') + '頭）'
-      + '</div></div>';
+      + btn('btn-sale-gray',  '↩',  '出品解除',   setFn('for_sale'));
   }
-
-  if (!btns) return '';
 
   return '<div class="ind-sale-actions" style="margin-top:8px">'
     + badge
-    + '<div class="ind-sale-btn-grid">' + btns + '</div>'
+    + '<div class="ind-sale-btn-grid">' + saleBtns + '</div>'
+    + '<div style="margin-top:6px">' + deadBtn + '</div>'
     + '</div>';
 }
 
@@ -1371,6 +1389,76 @@ Pages._lotPartSaleSave = async function (lotId, totalCount) {
     Pages.lotDetail(lotId);
   } catch(e) {
     UI.toast('販売失敗: ' + e.message, 'error');
+  } finally {
+    UI.loading(false);
+  }
+};
+
+// 一部を販売候補にするモーダル（active 状態から）
+// 「何頭を販売候補にするか」を選ぶだけ。金額・経路は出品→販売時に入力。
+Pages._lotPartForSaleModal = function (lotId) {
+  const lot   = Store.getLot(lotId);
+  const count = lot ? (parseInt(lot.count, 10) || 1) : 1;
+  if (count <= 1) {
+    // 1頭のみなら全部候補にする
+    Pages._lotSetSaleStatus(lotId, 'for_sale');
+    return;
+  }
+  window.__lotPartFsId    = lotId;
+  window.__lotPartFsTotal = count;
+  _showModal('一部を販売候補にする', '<div class="form-section">'
+    + '<div style="font-size:.8rem;color:var(--text3);margin-bottom:12px">'
+    + '販売候補にする頭数を選んでください。残りは引き続き管理中になります。</div>'
+    + UI.field('販売候補にする頭数 *', '<input type="number" id="lot-pfs-count" class="input" min="1" max="' + (count - 1) + '" value="1" placeholder="1〜' + (count - 1) + '">')
+    + '<div class="modal-footer">'
+    +   '<button class="btn btn-ghost" style="flex:1" onclick="_closeModal()">キャンセル</button>'
+    +   '<button class="btn btn-primary" style="flex:2" onclick="Pages._lotPartForSaleSave()">候補にする</button>'
+    + '</div></div>');
+};
+
+Pages._lotPartForSaleSave = async function () {
+  const lotId = window.__lotPartFsId;
+  const total = window.__lotPartFsTotal || 1;
+  const cntEl = document.getElementById('lot-pfs-count');
+  const partCount = parseInt(cntEl ? cntEl.value : '1', 10);
+  if (!partCount || partCount < 1) { UI.toast('頭数を入力してください', 'error'); return; }
+  if (partCount >= total) {
+    // 全部指定なら全体をfor_saleに
+    _closeModal();
+    Pages._lotSetSaleStatus(lotId, 'for_sale');
+    return;
+  }
+  _closeModal();
+  const remaining = total - partCount;
+  try {
+    UI.loading(true);
+    // 元ロットの頭数を残数に更新し、for_sale に
+    // 販売候補分は分割して別ロットを作る設計が理想だが、
+    // 今は元ロットのステータスをfor_saleにして頭数を販売候補数に変える簡易実装
+    await API.lot.update({ lot_id: lotId, status: 'for_sale', count: String(partCount) });
+    Store.patchDBItem('lots', 'lot_id', lotId, { status: 'for_sale', count: partCount });
+    UI.toast(partCount + '頭を販売候補にしました（残' + remaining + '頭は別途管理）', 'success');
+    Pages.lotDetail(lotId);
+  } catch(e) {
+    UI.toast('変更失敗: ' + e.message, 'error');
+  } finally {
+    UI.loading(false);
+  }
+};
+
+// ロット死亡（active / for_sale / listed から dissolved へ）
+Pages._lotMarkDead = async function (lotId) {
+  const lot = Store.getLot(lotId);
+  const cnt = lot ? (lot.count || '?') : '?';
+  if (!UI.confirm('ロット（' + cnt + '頭）を死亡として記録しますか？\n管理を終了します。')) return;
+  try {
+    UI.loading(true);
+    await API.lot.update({ lot_id: lotId, status: 'dissolved', count: 0 });
+    Store.patchDBItem('lots', 'lot_id', lotId, { status: 'dissolved', count: 0 });
+    UI.toast('死亡として記録しました', 'success');
+    Store.back();
+  } catch(e) {
+    UI.toast('記録失敗: ' + e.message, 'error');
   } finally {
     UI.loading(false);
   }
