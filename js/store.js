@@ -282,12 +282,22 @@ const Store = (() => {
 
     const _TERMINAL_STATUSES = new Set(['dead', 'sold']);
 
+    // 飼育中系ステータス（新旧両対応）
+    const _ALIVE_STATUSES = new Set([
+      'alive',                                    // 新仕様
+      'larva','prepupa','pupa','adult',            // 旧ライフサイクル（GASデフォルト）
+      'seed_candidate','seed_reserved',            // 旧種親候補
+    ]);
+
     if (filters.status === '_all') {
       // 全件
+    } else if (filters.status === 'alive') {
+      // 「飼育中」= 新仕様のalive + 旧ライフサイクルステータス全て
+      list = list.filter(i => _ALIVE_STATUSES.has(i.status));
     } else if (filters.status) {
       list = list.filter(i => i.status === filters.status);
     } else {
-      // デフォルト: 終端以外（alive / for_sale / listed）
+      // デフォルト（空文字）: 終端以外を全表示
       list = list.filter(i => !_TERMINAL_STATUSES.has(i.status));
     }
 

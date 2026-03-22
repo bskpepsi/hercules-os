@@ -1222,7 +1222,14 @@ Pages._blkQrBatch = function (createdLots) {
 window.PAGES = window.PAGES || {};
 
 // ════════════════════════════════════════════════════════════════
-// ロット販売アクションUI（ロット詳細画面から呼ばれる）
+// ロット詳細 — 販売アクション領域
+//
+// 状態ごとのボタン:
+//   active   : 全部を販売候補にする / 一部を販売候補にする / ロット死亡
+//   for_sale : 出品する / まとめて販売 / 販売候補を解除 / ロット死亡
+//   listed   : まとめて販売 / 一部販売 / 出品解除 / ロット死亡
+//   sold     : 販売済み表示のみ
+//   dissolved/individualized: 非表示
 // ════════════════════════════════════════════════════════════════
 function _renderLotSaleActions(lot) {
   var st = lot.status || 'active';
@@ -1230,57 +1237,76 @@ function _renderLotSaleActions(lot) {
 
   if (st === 'individualized' || st === 'dissolved') return '';
 
-  // 終端（sold）
   if (st === 'sold') {
-    return '<div style="margin-top:8px">'
-      + '<div class="ind-sale-done-msg">💰 販売済みです（' + (lot.count || '') + '頭）</div>'
+    return '<div style="background:rgba(200,168,75,.08);border:1px solid rgba(200,168,75,.25);'
+      + 'border-radius:12px;padding:14px 16px;margin-top:12px;text-align:center">'
+      + '<div style="font-size:.85rem;font-weight:700;color:var(--gold)">💰 販売済み</div>'
+      + '<div style="font-size:.75rem;color:var(--text3);margin-top:4px">計 ' + (lot.count || 0) + '頭</div>'
       + '</div>';
   }
 
-  var STATUS_LABELS = {
-    active:   { label:'管理中',   color:'var(--green)' },
-    for_sale: { label:'販売候補', color:'#9c27b0' },
-    listed:   { label:'出品中',   color:'#ff9800' },
+  var SC = {
+    active:   { label:'管理中',   color:'var(--green)',  desc:'販売候補にする操作をここから行えます' },
+    for_sale: { label:'販売候補', color:'#9c27b0',       desc:'出品または直接販売できます' },
+    listed:   { label:'出品中',   color:'#ff9800',       desc:'購入者が決まったら販売済みにしてください' },
   };
-  var stInfo = STATUS_LABELS[st];
-  var badge = stInfo
-    ? '<span style="display:inline-block;padding:3px 10px;border-radius:20px;font-size:.75rem;font-weight:700;'
-      + 'color:' + stInfo.color + ';border:1px solid ' + stInfo.color + ';margin-bottom:8px">'
-      + stInfo.label + '</span>'
+  var sc = SC[st] || {};
+  var header = sc.label
+    ? '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">'
+      + '<span style="display:inline-block;padding:3px 12px;border-radius:20px;font-size:.75rem;font-weight:700;'
+      + 'color:' + sc.color + ';border:1px solid ' + sc.color + ';background:' + sc.color + '18">'
+      + sc.label + '</span>'
+      + '<span style="font-size:.72rem;color:var(--text3)">' + sc.desc + '</span>'
+      + '</div>'
     : '';
 
-  function btn(cls, icon, label, fn) {
-    return '<button class="btn-sale ' + cls + '" onclick="' + fn + '">' + icon + ' ' + label + '</button>';
+  function btn(bg, border, color, icon, label, onclick) {
+    return '<button onclick="' + onclick + '" style="display:flex;align-items:center;justify-content:center;'
+      + 'gap:6px;padding:11px 10px;border-radius:10px;font-size:.82rem;font-weight:700;cursor:pointer;'
+      + 'background:' + bg + ';color:' + color + ';border:1px solid ' + border + '">'
+      + icon + ' ' + label + '</button>';
   }
+
   window.__lotSoldId = id;
   window.__lotPartId = id;
   var setFn  = function(s) { return "Pages._lotSetSaleStatus('" + id + "','" + s + "')"; };
   var soldFn = "Pages._lotMarkSoldModal(window.__lotSoldId)";
   var partFn = "Pages._lotPartSaleModal(window.__lotPartId)";
-  // 死亡ボタンは終端以外では常に表示
-  var deadBtn = btn('btn-sale-red', '💀', 'ロット死亡', "Pages._lotMarkDead('" + id + "')");
+  var deadFn = "Pages._lotMarkDead('" + id + "')";
 
-  var saleBtns = '';
+  var rows = '';
   if (st === 'active') {
-    saleBtns = btn('btn-sale-purple', '🛒', '全部　販売候補', setFn('for_sale'))
-      + btn('btn-sale-purple2', '✂️', '一部 販売候補', "Pages._lotPartForSaleModal('" + id + "')");
+    rows = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">'
+      + btn('rgba(156,39,176,.12)','rgba(156,39,176,.4)','#9c27b0', '🛒', '全部を販売候補にする', setFn('for_sale'))
+      + btn('rgba(156,39,176,.12)','rgba(156,39,176,.4)','#9c27b0', '✂️', '一部を販売候補にする', "Pages._lotPartForSaleModal('" + id + "')")
+      + '</div>'
+      + btn('rgba(224,80,80,.1)','rgba(224,80,80,.35)','var(--red,#e05050)', '💀', 'ロット死亡（管理終了）', deadFn);
   } else if (st === 'for_sale') {
-    saleBtns = btn('btn-sale-orange', '📢', '出品する',     "Pages._lotListModal('" + id + "')")
-      + btn('btn-sale-gold',  '💰', 'まとめて販売', soldFn)
-      + btn('btn-sale-gray',  '↩',  '候補解除',    setFn('active'));
+    rows = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">'
+      + btn('rgba(255,152,0,.12)','rgba(255,152,0,.4)','#ff9800', '📢', '出品する', "Pages._lotListModal('" + id + "')")
+      + btn('rgba(200,168,75,.15)','rgba(200,168,75,.4)','var(--gold)', '💰', 'まとめて販売', soldFn)
+      + '</div>'
+      + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">'
+      + btn('var(--bg3)','var(--border)','var(--text2)', '↩', '販売候補を解除', setFn('active'))
+      + btn('rgba(224,80,80,.1)','rgba(224,80,80,.35)','var(--red,#e05050)', '💀', 'ロット死亡', deadFn)
+      + '</div>';
   } else if (st === 'listed') {
-    saleBtns = btn('btn-sale-gold', '💰', 'まとめて販売', soldFn)
-      + btn('btn-sale-orange','✂️', '一部販売',    partFn)
-      + btn('btn-sale-gray',  '↩',  '出品解除',   setFn('for_sale'));
+    rows = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">'
+      + btn('rgba(200,168,75,.15)','rgba(200,168,75,.4)','var(--gold)', '💰', 'まとめて販売', soldFn)
+      + btn('rgba(255,152,0,.12)','rgba(255,152,0,.4)','#ff9800', '✂️', '一部販売', partFn)
+      + '</div>'
+      + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">'
+      + btn('var(--bg3)','var(--border)','var(--text2)', '↩', '出品解除', setFn('for_sale'))
+      + btn('rgba(224,80,80,.1)','rgba(224,80,80,.35)','var(--red,#e05050)', '💀', 'ロット死亡', deadFn)
+      + '</div>';
   }
 
-  return '<div class="ind-sale-actions" style="margin-top:8px">'
-    + badge
-    + '<div class="ind-sale-btn-grid">' + saleBtns + '</div>'
-    + '<div style="margin-top:6px">' + deadBtn + '</div>'
-    + '</div>';
-}
+  if (!rows) return '';
 
+  return '<div style="margin-top:16px;padding:14px 16px;background:var(--bg2);'
+    + 'border:1px solid var(--border);border-radius:12px">'
+    + header + rows + '</div>';
+}
 
 // ════════════════════════════════════════════════════════════════
 // ロット 販売ステータス変更関数

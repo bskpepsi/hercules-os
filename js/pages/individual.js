@@ -203,12 +203,12 @@ Pages.individualList = function () {
 // ステータスラベル取得
 function _statusLabel(code) {
   const map = {
-    '':        '全て',
-    'alive':   '飼育中',
-    'for_sale':'販売候補',
-    'listed':  '出品中',
-    'sold':    '販売済',
-    'dead':    '死亡',
+    '': '全て',
+    'alive':'飼育中', 'larva':'飼育中', 'prepupa':'飼育中',
+    'pupa':'飼育中', 'adult':'飼育中',
+    'seed_candidate':'飼育中', 'seed_reserved':'飼育中',
+    'for_sale':'販売候補', 'listed':'出品中',
+    'sold':'販売済', 'dead':'死亡',
   };
   return map[code] || '全て';
 }
@@ -327,11 +327,15 @@ function _indCardHTML(ind) {
   const locality = ind.locality || (line ? line.locality : '') || '';
 
   const stMap = {
-    alive:'飼育中', for_sale:'販売候補', listed:'出品中',
-    sold:'販売済', dead:'死亡',
+    alive:'飼育中', larva:'飼育中', prepupa:'飼育中', pupa:'飼育中', adult:'飼育中',
+    seed_candidate:'飼育中', seed_reserved:'飼育中',
+    for_sale:'販売候補', listed:'出品中', sold:'販売済', dead:'死亡',
   };
   const stColor = {
-    alive:'var(--green)', for_sale:'#9c27b0', listed:'#ff9800',
+    alive:'var(--green)', larva:'var(--green)', prepupa:'var(--green)',
+    pupa:'var(--green)', adult:'var(--green)',
+    seed_candidate:'var(--green)', seed_reserved:'var(--green)',
+    for_sale:'#9c27b0', listed:'#ff9800',
     sold:'var(--amber)', dead:'var(--red,#e05050)',
   };
   const stLbl = stMap[ind.status] || ind.status || '—';
@@ -490,7 +494,8 @@ function _renderDetail(ind, main) {
     onclick="Pages._indFlagMenu('${ind.ind_id}','${ind.guinness_flag}','${ind.parent_flag}','${ind.g200_flag}')">🏷 フラグ</button>`;
   const deadBtn = `<button class="btn btn-ghost btn-sm" onclick="Pages._indMarkDead('${ind.ind_id}')">💀 死亡</button>`;
 
-  if (ind.status === 'alive' || !ind.status) {
+  const _ALIVE_SET = new Set(['alive','larva','prepupa','pupa','adult','seed_candidate','seed_reserved']);
+  if (_ALIVE_SET.has(ind.status) || !ind.status) {
     // 飼育中 → 販売候補 / 死亡
     statusButtons = `<div style="display:flex;gap:8px">
       ${deadBtn}
