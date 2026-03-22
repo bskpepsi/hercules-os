@@ -623,25 +623,63 @@ function _renderDetail(ind, main) {
           血統・種親 <span class="acc-arrow">▼</span>
         </div>
         <div class="acc-body">
-          <div class="info-list">
-            ${_infoRow('血統',
-              (bld ? bld.bloodline_name : (ind.bloodline_id || '—')) +
-              (ind.bloodline_status &&
-               String(ind.bloodline_status).toLowerCase() !== 'unknown'
-                ? ' ' + UI.bloodlineBadge(ind.bloodline_status)
-                : '')
-            )}
-            ${_infoRow('親♂', father ? `${father.display_name}${father.size_mm ? ' ' + father.size_mm + 'mm' : ''}` : (ind.father_par_id || '—'))}
-            ${_infoRow('親♀', mother ? `${mother.display_name}${mother.size_mm ? ' ' + mother.size_mm + 'mm' : ''}` : (ind.mother_par_id || '—'))}
-            ${line ? _infoRow('ライン',
-              `<span style="cursor:pointer;color:var(--blue)" onclick="routeTo('line-detail',{lineId:'${line.line_id}'})">${line.display_id}${line.line_name ? ' / ' + line.line_name : ''}</span>`
-            ) : ''}
-            ${ind.origin_lot_id ? _infoRow('元ロット', (() => {
+          ${(() => {
+            // ── 親ブロック共通ヘルパー ──────────────────────────────
+            function _parBlock(par, parId, sex) {
+              if (!par && !parId) return '';
+              const mc = sex === '♂' ? 'var(--male,#5ba8e8)' : 'var(--female,#e87fa0)';
+              const bg = sex === '♂' ? 'rgba(91,168,232,.05)' : 'rgba(232,127,160,.05)';
+              const bd = sex === '♂' ? 'rgba(91,168,232,.2)' : 'rgba(232,127,160,.2)';
+              const tcBg = sex === '♂' ? 'rgba(91,168,232,.12)' : 'rgba(232,127,160,.12)';
+              const tcBd = sex === '♂' ? 'rgba(91,168,232,.3)' : 'rgba(232,127,160,.3)';
+
+              if (!par) {
+                return '<div style="padding:8px 10px;background:' + bg + ';border-radius:8px;border:1px solid ' + bd + ';margin-bottom:6px">'
+                  + '<span style="font-size:.75rem;color:' + mc + ';font-weight:700">' + sex + '</span>'
+                  + ' <span style="font-size:.8rem;color:var(--text3)">情報なし</span>'
+                  + '</div>';
+              }
+
+              const name    = par.parent_display_id || par.display_name || '—';
+              const rawText = sex === '♂' ? (par.paternal_raw || par.maternal_raw || '') : (par.maternal_raw || par.paternal_raw || '');
+              const tagSrc  = sex === '♂' ? (par.paternal_tags || par.bloodline_tags || '[]') : (par.maternal_tags || par.bloodline_tags || '[]');
+              const tags    = (() => { try { const t = JSON.parse(tagSrc); return Array.isArray(t) ? t : []; } catch(e) { return []; } })();
+              const tagHtml = tags.slice(0, 5).map(t =>
+                '<span style="font-size:.68rem;padding:1px 6px;border-radius:20px;background:' + tcBg + ';color:' + mc + ';border:1px solid ' + tcBd + '">' + t + '</span>'
+              ).join(' ');
+
+              return '<div style="padding:8px 10px;background:' + bg + ';border-radius:8px;border:1px solid ' + bd + ';margin-bottom:6px">'
+                + '<div style="display:flex;align-items:baseline;gap:6px;margin-bottom:' + (rawText||tags.length?'4':'0') + 'px">'
+                +   '<span style="font-size:.75rem;color:' + mc + ';font-weight:700;flex-shrink:0">' + sex + '</span>'
+                +   '<span style="font-size:.88rem;font-weight:700;cursor:pointer;color:var(--text1)"'
+                +     ' onclick="routeTo(' + "'" + 'parent-detail' + "'" + ',{parId:' + "'" + parId + "'" + '})">' + name + '</span>'
+                +   (par.size_mm ? '<span style="font-size:.8rem;color:var(--green);font-weight:700;margin-left:auto;flex-shrink:0">' + par.size_mm + 'mm</span>' : '')
+                + '</div>'
+                + (rawText ? '<div style="font-size:.73rem;color:var(--text2);font-family:var(--font-mono);word-break:break-all;margin-bottom:' + (tags.length?'4':'0') + 'px;line-height:1.4">' + rawText + '</div>' : '')
+                + (tags.length ? '<div style="display:flex;flex-wrap:wrap;gap:3px">' + tagHtml + '</div>' : '')
+                + '</div>';
+            }
+
+            const fBlock = _parBlock(father, ind.father_par_id, '♂');
+            const mBlock = _parBlock(mother, ind.mother_par_id, '♀');
+
+            // ライン・元ロット（親情報と分離して最後に表示）
+            const lineRow = line
+              ? '<div style="font-size:.78rem;color:var(--text3);margin-top:6px">'
+                + 'ライン: <span style="cursor:pointer;color:var(--blue)" onclick="routeTo(' + "'" + 'line-detail' + "'" + ',{lineId:' + "'" + line.line_id + "'" + '})">'
+                + line.display_id + (line.line_name ? ' / ' + line.line_name : '') + '</span></div>'
+              : '';
+            const lotRow = ind.origin_lot_id ? (() => {
               const _dispId = originLot ? (originLot.display_id || ind.origin_lot_id) : ind.origin_lot_id;
-              return `<span style="cursor:pointer;color:var(--blue)" onclick="routeTo('lot-detail',{lotId:'${ind.origin_lot_id}'})">${_dispId}</span>
-               <span style="font-size:.7rem;color:var(--text3)">（同腹: <span style="cursor:pointer;color:var(--blue)" onclick="routeTo('ind-list',{lotId:'${ind.origin_lot_id}'})">一覧を見る</span>）</span>`;
-            })()) : ''}
-          </div>
+              return '<div style="font-size:.78rem;color:var(--text3)">'
+                + '元ロット: <span style="cursor:pointer;color:var(--blue)" onclick="routeTo(' + "'" + 'lot-detail' + "'" + ',{lotId:' + "'" + ind.origin_lot_id + "'" + '})">' + _dispId + '</span>'
+                + ' <span onclick="routeTo(' + "'" + 'ind-list' + "'" + ',{lotId:' + "'" + ind.origin_lot_id + "'" + '})" style="cursor:pointer;color:var(--text3);font-size:.72rem">同腹一覧 ›</span>'
+                + '</div>';
+            })() : '';
+
+            return (fBlock || mBlock ? fBlock + mBlock : '<div style="font-size:.82rem;color:var(--text3);padding:4px 0">親情報なし</div>')
+              + (lineRow || lotRow ? '<div style="padding-top:4px;border-top:1px solid var(--border);margin-top:6px">' + lineRow + lotRow + '</div>' : '');
+          })()}
         </div>
       </div>
 
@@ -661,20 +699,97 @@ function _renderDetail(ind, main) {
         <div style="font-size:.85rem;color:var(--text2)">${ind.note_private}</div>
       </div>` : ''}
 
-      <!-- 追加日付フィールド -->
-      ${(ind.prepupa_date || ind.pupa_check_date || ind.artificial_cell_date) ? `
+      <!-- 重要日付 — 発育管理 -->
       <div class="accordion" id="acc-dates">
         <div class="acc-hdr" onclick="_toggleAcc('acc-dates')">
           発育日程 <span class="acc-arrow">▼</span>
         </div>
         <div class="acc-body">
-          <div class="info-list">
-            ${ind.prepupa_date         ? _infoRow('前蛹確認日',     ind.prepupa_date)         : ''}
-            ${ind.pupa_check_date      ? _infoRow('蛹確認日',       ind.pupa_check_date)      : ''}
-            ${ind.artificial_cell_date ? _infoRow('人工蛹室移行日', ind.artificial_cell_date) : ''}
-          </div>
+          ${(() => {
+            // 蛹室確認日: artificial_cell_date を流用（カラム名が一致しているか将来確認）
+            // COL_DEF: prepupa_date / pupa_check_date / artificial_cell_date / eclosion_date
+            const _today = new Date(); _today.setHours(0,0,0,0);
+            function _parseDate(d) {
+              if (!d) return null;
+              const p = String(d).replace(/\//g,'-').split('-');
+              if (p.length < 3) return null;
+              return new Date(+p[0], +p[1]-1, +p[2]);
+            }
+            function _diffDays(from, to) {
+              return Math.round((to - from) / 86400000);
+            }
+
+            // 前蛹確認日: 蛹になるまでの目安（前蛹から蛹まで約2〜4週間）
+            let artificialHint = '';
+            if (ind.prepupa_date && !ind.pupa_check_date) {
+              const preD = _parseDate(ind.prepupa_date);
+              if (preD) {
+                const minD = new Date(preD); minD.setDate(minD.getDate() + 14);
+                const maxD = new Date(preD); maxD.setDate(maxD.getDate() + 28);
+                const dMin = _diffDays(_today, minD);
+                const dMax = _diffDays(_today, maxD);
+                if (dMin > 0) {
+                  artificialHint = '<span style="font-size:.72rem;color:var(--text3);margin-left:6px">蛹化目安: あと' + dMin + '〜' + dMax + '日</span>';
+                } else if (dMax > 0) {
+                  artificialHint = '<span style="font-size:.72rem;color:var(--amber);margin-left:6px">蛹化時期の可能性あり</span>';
+                }
+              }
+            }
+
+            // 羽化予測（蛹確認日から目安）
+            let eclosionHint = '';
+            if (ind.pupa_check_date && !ind.eclosion_date) {
+              const pupaD = _parseDate(ind.pupa_check_date);
+              if (pupaD) {
+                // ヒラタ系: 蛹化後50〜70日で羽化目安
+                const minD = new Date(pupaD); minD.setDate(minD.getDate() + 50);
+                const maxD = new Date(pupaD); maxD.setDate(maxD.getDate() + 70);
+                const diffMin = _diffDays(_today, minD);
+                const diffMax = _diffDays(_today, maxD);
+                if (diffMin > 0) {
+                  eclosionHint = '<span style="font-size:.72rem;color:var(--text3);margin-left:6px">羽化目安: あと' + diffMin + '〜' + diffMax + '日</span>';
+                } else if (diffMax > 0) {
+                  eclosionHint = '<span style="font-size:.72rem;color:var(--amber);margin-left:6px">羽化時期です</span>';
+                } else {
+                  eclosionHint = '<span style="font-size:.72rem;color:var(--red,#e05050);margin-left:6px">羽化超過（確認推奨）</span>';
+                }
+              }
+            }
+
+            // artificial_cell_date = 蛹室確認日として運用
+            // +18日で人工蛹室移行目安を表示（♂のみ意味を持つ）
+            let pupaChamberHint = '';
+            if (ind.artificial_cell_date) {
+              const chamD = _parseDate(ind.artificial_cell_date);
+              if (chamD) {
+                const moveD = new Date(chamD); moveD.setDate(moveD.getDate() + 18);
+                const diff = _diffDays(_today, moveD);
+                const color = diff < 0 ? 'var(--red,#e05050)' : diff <= 3 ? 'var(--amber)' : 'var(--text3)';
+                const label = diff < 0 ? '人工蛹室移行推奨（' + Math.abs(diff) + '日経過）' : diff === 0 ? '今日が移行目安' : '移行目安まであと' + diff + '日';
+                pupaChamberHint = '<span style="font-size:.72rem;color:' + color + ';margin-left:6px">' + label + '</span>';
+              }
+            }
+
+            const rows = [
+              ind.artificial_cell_date ? `${_infoRow('蛹室確認日', ind.artificial_cell_date + pupaChamberHint)}` : '',
+              ind.prepupa_date ? `${_infoRow('前蛹確認日', ind.prepupa_date + artificialHint)}` : '',
+              ind.pupa_check_date ? `${_infoRow('蛹確認日', ind.pupa_check_date + eclosionHint)}` : '',
+              ind.eclosion_date ? `${_infoRow('羽化日', ind.eclosion_date)}` : '',
+            ].filter(Boolean).join('');
+
+            const hasDates = ind.prepupa_date || ind.pupa_check_date ||
+                             ind.artificial_cell_date || ind.eclosion_date;
+
+            return '<div class="info-list">' +
+              (hasDates ? rows : '<div style="font-size:.82rem;color:var(--text3);padding:4px 0">日付未記録</div>') +
+              '</div>' +
+              '<button class="btn btn-ghost btn-sm" style="margin-top:8px;font-size:.78rem;width:100%"' +
+              ' onclick="Pages._indDateModal(\'${ind.ind_id}\')">' +
+              '📅 発育日付を入力/更新' +
+              '</button>';
+          })()}
         </div>
-      </div>` : ''}
+      </div>
 
       <!-- 不全情報 -->
       ${String(ind.is_defective) === 'true' ? `
@@ -876,6 +991,67 @@ Pages._indSellExec = async function (id) {
 };
 
 
+
+// ── 発育日付 入力モーダル ────────────────────────────────────────
+// 蛹室確認日 / 前蛹確認日 / 蛹確認日 / 羽化日 の4つをまとめて編集
+Pages._indDateModal = function (indId) {
+  const ind = Store.getIndividual(indId);
+  if (!ind) { UI.toast('個体が見つかりません', 'error'); return; }
+
+  function _fmtForInput(d) { return d ? String(d).replace(/\//g, '-') : ''; }
+
+  _showModal('📅 発育日付を入力', `
+    <div class="form-section">
+      <div style="font-size:.78rem;color:var(--text3);margin-bottom:12px;line-height:1.6">
+        発育管理の4つの日付をまとめて記録します。<br>
+        <span style="color:var(--amber)">🏠 蛹室確認日から約18日後（♂のみ）に人工蛹室へ移動。</span>
+      </div>
+      ${UI.field('蛹室確認日 🏠',
+        '<input type="date" id="date-acel" class="input" value="' + _fmtForInput(ind.artificial_cell_date) + '">'
+        + '<div style="font-size:.7rem;color:var(--text3);margin-top:2px">蛹室を確認した日。+18日が人工蛹室移行目安（♂のみ）</div>')}
+      ${UI.field('前蛹確認日',
+        '<input type="date" id="date-prepupa" class="input" value="' + _fmtForInput(ind.prepupa_date) + '">'
+        + '<div style="font-size:.7rem;color:var(--text3);margin-top:2px">前蛹になった日（縮み始めた日）</div>')}
+      ${UI.field('蛹確認日',
+        '<input type="date" id="date-pupa" class="input" value="' + _fmtForInput(ind.pupa_check_date) + '">'
+        + '<div style="font-size:.7rem;color:var(--text3);margin-top:2px">蛹になった日。+50〜70日が羽化目安</div>')}
+      ${UI.field('羽化日',
+        '<input type="date" id="date-eclosion" class="input" value="' + _fmtForInput(ind.eclosion_date) + '">'
+        + '<div style="font-size:.7rem;color:var(--text3);margin-top:2px">成虫として羽化した日。種親昇格・後食管理の基準</div>')}
+      <div style="font-size:.72rem;color:var(--text3);margin-top:4px">
+        入力済みの日付は上書きされます。空のままにすれば変更しません。
+      </div>
+      <div class="modal-footer" style="margin-top:14px">
+        <button class="btn btn-ghost" style="flex:1" type="button" onclick="_closeModal()">キャンセル</button>
+        <button class="btn btn-primary" style="flex:2" type="button"
+          onclick="Pages._indDateSave('${indId}')">保存</button>
+      </div>
+    </div>`);
+};
+
+Pages._indDateSave = async function (indId) {
+  const prepupa   = document.getElementById('date-prepupa')?.value;
+  const pupa      = document.getElementById('date-pupa')?.value;
+  const acel      = document.getElementById('date-acel')?.value;
+  const eclosion  = document.getElementById('date-eclosion')?.value;
+
+  const updates = { ind_id: indId };
+  if (prepupa)  updates.prepupa_date         = prepupa.replace(/-/g, '/');
+  if (pupa)     updates.pupa_check_date      = pupa.replace(/-/g, '/');
+  if (acel)     updates.artificial_cell_date = acel.replace(/-/g, '/');
+  if (eclosion) updates.eclosion_date        = eclosion.replace(/-/g, '/');
+
+  if (Object.keys(updates).length <= 1) {
+    UI.toast('日付を1つ以上入力してください', 'error');
+    return;
+  }
+  _closeModal();
+  try {
+    await apiCall(() => API.individual.update(updates), '発育日付を保存しました 📅');
+    Store.patchDBItem('individuals', 'ind_id', indId, updates);
+    Pages.individualDetail(indId);
+  } catch (e) {}
+};
 
 Pages._indFlagMenu = function (id, guinness, parent, g200) {
   const gf = String(guinness) === 'true';
