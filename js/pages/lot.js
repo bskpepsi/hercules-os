@@ -31,10 +31,37 @@ Pages.lotList = function () {
   const fixedLine   = fixedLineId ? Store.getLine(fixedLineId) : null;
   const isLineLimited = !!fixedLineId;
 
+  // デフォルト: active / for_sale / listed を表示（販売候補・出品中が消えない）
   let filters = { status: 'active', stage: '', line_id: fixedLineId };
+  // status フィルタ切り替え用の内部値（''=管理中のみ, 'selling'=販売系, 'all'=全て）
+  let _lotStatusMode = 'active';  // 'active' | 'selling' | 'all'
 
   function render() {
-    const lots  = Store.filterLots(filters);
+    // _lotStatusMode に応じた lot 取得
+    let lots = [];
+    // filterLots にはステージを渡さず、後で丸めてから比較する
+    const _baseFilter = { line_id: filters.line_id };
+    if (_lotStatusMode === 'all') {
+      lots = Store.filterLots({ ..._baseFilter, status: 'all' });
+    } else if (_lotStatusMode === 'selling') {
+      const fs = Store.filterLots({ ..._baseFilter, status: 'for_sale' });
+      const li = Store.filterLots({ ..._baseFilter, status: 'listed' });
+      lots = [...fs, ...li];
+    } else {
+      // デフォルト: active + for_sale + listed を表示（販売候補・出品中が一覧から消えない）
+      const ac = Store.filterLots({ ..._baseFilter, status: 'active' });
+      const fs = Store.filterLots({ ..._baseFilter, status: 'for_sale' });
+      const li = Store.filterLots({ ..._baseFilter, status: 'listed' });
+      lots = [...ac, ...fs, ...li];
+    }
+    // ステージフィルタ: 丸めたラベルで比較
+    if (filters.stage) {
+      const targetLabel = _lotDisplayStageLabel(filters.stage);
+      lots = lots.filter(l => {
+        const s = l.stage_life || l.stage || '';
+        return _lotDisplayStageLabel(s) === targetLabel;
+      });
+    }
     const lines = Store.getDB('lines') || [];
     const title = isLineLimited
       ? (fixedLine ? (fixedLine.line_code || fixedLine.display_id) + ' のロット' : 'ロット一覧')
@@ -1238,7 +1265,7 @@ function _renderLotSaleActions(lot) {
     saleBtns = btn('btn-sale-purple', '🛒', '全部　販売候補', setFn('for_sale'))
       + btn('btn-sale-purple2', '✂️', '一部 販売候補', "Pages._lotPartForSaleModal('" + id + "')");
   } else if (st === 'for_sale') {
-    saleBtns = btn('btn-sale-orange', '📢', '出品する',     setFn('listed'))
+    saleBtns = btn('btn-sale-orange', '📢', '出品する',     "Pages._lotListModal('" + id + "')")
       + btn('btn-sale-gold',  '💰', 'まとめて販売', soldFn)
       + btn('btn-sale-gray',  '↩',  '候補解除',    setFn('active'));
   } else if (st === 'listed') {
@@ -1258,6 +1285,56 @@ function _renderLotSaleActions(lot) {
 // ════════════════════════════════════════════════════════════════
 // ロット 販売ステータス変更関数
 // ════════════════════════════════════════════════════════════════
+
+// 出品モーダル（for_sale → listed）— 販売ルート・出品日・メモを入力してから遷移
+Pages._lotListModal = function (lotId) {
+  const lot   = Store.getLot(lotId);
+  const today = new Date().toISOString().split('T')[0];
+  window.__lotListId = lotId;
+  _showModal('📢 出品設定', '<div class="form-section">'
+    + '<div style="font-size:.8rem;color:var(--text3);margin-bottom:12px">'
+    + (lot ? lot.display_id : '') + '</div>'
+    + UI.field('販売ルート *', UI.select('lot-list-channel', [
+        { code:'',        label:'— 選択してください —' },
+        { code:'ヤフオク', label:'ヤフオク' },
+        { code:'イベント', label:'イベント' },
+        { code:'直接取引', label:'直接取引' },
+        { code:'その他',   label:'その他'   },
+      ], ''))
+    + UI.field('出品日', '<input type="date" id="lot-list-date" class="input" value="' + today + '">') 
+    + UI.field('メモ（任意）', '<input type="text" id="lot-list-note" class="input" placeholder="例: ヤフオク開始価格5000円">')
+    + '<div class="modal-footer">'
+    +   '<button class="btn btn-ghost" style="flex:1" onclick="_closeModal()">キャンセル</button>'
+    +   '<button class="btn btn-primary" style="flex:2" onclick="Pages._lotListSave()">出品する</button>'
+    + '</div></div>');
+};
+
+Pages._lotListSave = async function () {
+  const lotId   = window.__lotListId;
+  const chanEl  = document.getElementById('lot-list-channel');
+  const dateEl  = document.getElementById('lot-list-date');
+  const noteEl  = document.getElementById('lot-list-note');
+  const channel = chanEl ? chanEl.value : '';
+  if (!channel) { UI.toast('販売ルートを選択してください', 'error'); return; }
+  _closeModal();
+  try {
+    UI.loading(true);
+    const updates = {
+      lot_id: lotId,
+      status: 'listed',
+      note:   noteEl ? (noteEl.value || '') : '',
+    };
+    await API.lot.update(updates);
+    Store.patchDBItem('lots', 'lot_id', lotId, { status: 'listed' });
+    // 出品チャネルはメモに保存（将来的に専用フィールド追加まで）
+    UI.toast('出品中にしました（' + channel + '）', 'success');
+    Pages.lotDetail(lotId);
+  } catch(e) {
+    UI.toast('変更失敗: ' + e.message, 'error');
+  } finally {
+    UI.loading(false);
+  }
+};
 
 // 汎用ステータス変更（API.lot.update 経由）
 Pages._lotSetSaleStatus = async function (lotId, newStatus) {
@@ -1395,24 +1472,30 @@ Pages._lotPartSaleSave = async function (lotId, totalCount) {
 };
 
 // 一部を販売候補にするモーダル（active 状態から）
-// 「何頭を販売候補にするか」を選ぶだけ。金額・経路は出品→販売時に入力。
+// 設計: splitLot を使って元ロットを分割する。
+//   例) 4頭ロットから1頭を販売候補 →
+//     ・販売候補ロット 1頭 (for_sale)
+//     ・残ロット      3頭 (active)
+//     ・元ロットは dissolved（二重カウント防止）
 Pages._lotPartForSaleModal = function (lotId) {
   const lot   = Store.getLot(lotId);
   const count = lot ? (parseInt(lot.count, 10) || 1) : 1;
   if (count <= 1) {
-    // 1頭のみなら全部候補にする
     Pages._lotSetSaleStatus(lotId, 'for_sale');
     return;
   }
   window.__lotPartFsId    = lotId;
   window.__lotPartFsTotal = count;
-  _showModal('一部を販売候補にする', '<div class="form-section">'
+  _showModal('一部を販売候補にする',
+    '<div class="form-section">'
     + '<div style="font-size:.8rem;color:var(--text3);margin-bottom:12px">'
-    + '販売候補にする頭数を選んでください。残りは引き続き管理中になります。</div>'
-    + UI.field('販売候補にする頭数 *', '<input type="number" id="lot-pfs-count" class="input" min="1" max="' + (count - 1) + '" value="1" placeholder="1〜' + (count - 1) + '">')
+    + '販売候補にする頭数を入力してください。<br>元ロットを分割し、残りは引き続き「管理中」として残ります。</div>'
+    + UI.field('販売候補にする頭数 *',
+        '<input type="number" id="lot-pfs-count" class="input" min="1" max="' + (count - 1) + '" value="1" placeholder="1〜' + (count - 1) + '">'
+        + '<div style="font-size:.75rem;color:var(--text3);margin-top:4px">残り ' + (count - 1) + '頭は管理中ロットとして分割されます</div>')
     + '<div class="modal-footer">'
     +   '<button class="btn btn-ghost" style="flex:1" onclick="_closeModal()">キャンセル</button>'
-    +   '<button class="btn btn-primary" style="flex:2" onclick="Pages._lotPartForSaleSave()">候補にする</button>'
+    +   '<button class="btn btn-primary" style="flex:2" onclick="Pages._lotPartForSaleSave()">分割して候補にする</button>'
     + '</div></div>');
 };
 
@@ -1420,27 +1503,49 @@ Pages._lotPartForSaleSave = async function () {
   const lotId = window.__lotPartFsId;
   const total = window.__lotPartFsTotal || 1;
   const cntEl = document.getElementById('lot-pfs-count');
-  const partCount = parseInt(cntEl ? cntEl.value : '1', 10);
-  if (!partCount || partCount < 1) { UI.toast('頭数を入力してください', 'error'); return; }
-  if (partCount >= total) {
-    // 全部指定なら全体をfor_saleに
+  const saleCount = parseInt(cntEl ? cntEl.value : '1', 10);
+  if (!saleCount || saleCount < 1) { UI.toast('頭数を入力してください', 'error'); return; }
+  if (saleCount >= total) {
     _closeModal();
     Pages._lotSetSaleStatus(lotId, 'for_sale');
     return;
   }
+  const remainCount = total - saleCount;
   _closeModal();
-  const remaining = total - partCount;
   try {
     UI.loading(true);
-    // 元ロットの頭数を残数に更新し、for_sale に
-    // 販売候補分は分割して別ロットを作る設計が理想だが、
-    // 今は元ロットのステータスをfor_saleにして頭数を販売候補数に変える簡易実装
-    await API.lot.update({ lot_id: lotId, status: 'for_sale', count: String(partCount) });
-    Store.patchDBItem('lots', 'lot_id', lotId, { status: 'for_sale', count: partCount });
-    UI.toast(partCount + '頭を販売候補にしました（残' + remaining + '頭は別途管理）', 'success');
-    Pages.lotDetail(lotId);
+    // splitLot: [販売候補, 残ロット] に分割
+    // GAS側で元ロットは dissolved になる（二重カウント防止）
+    const res = await API.lot.split({
+      lot_id:       lotId,
+      split_counts: [saleCount, remainCount],
+    });
+    const newLots       = res.new_lots       || [];
+    const autoInds      = res.auto_individuals || [];
+
+    // saleCount=1 の場合: 1頭ロットは自動個体化される（splitLot の仕様）
+    // → lot を for_sale に変えるのではなく individual を for_sale に変える
+    if (saleCount === 1 && autoInds.length >= 1) {
+      const indId = autoInds[0].ind_id;
+      await API.individual.changeStatus(indId, 'for_sale');
+    } else if (newLots.length >= 1) {
+      // saleCount≥2: 販売候補ロットを for_sale に
+      await API.lot.update({ lot_id: newLots[0].lot_id, status: 'for_sale' });
+    }
+
+    await syncAll(true);
+    UI.toast(saleCount + '頭を販売候補に分割しました（残' + remainCount + '頭は管理中）', 'success');
+    // 残ロット詳細へ（saleCount=1なら残は0番目、saleCount≥2なら1番目の新ロット）
+    // new_lots[0] = 販売対象ロット（saleCount=1なら自動個体化済み）
+    // new_lots[1] = 残ロット（remainCount頭, active）← 常に[1]
+    const remainLot = newLots.length >= 2 ? newLots[1] : null;
+    if (remainLot) {
+      routeTo('lot-detail', { lotId: remainLot.lot_id });
+    } else {
+      routeTo('lot-list');
+    }
   } catch(e) {
-    UI.toast('変更失敗: ' + e.message, 'error');
+    UI.toast('分割失敗: ' + e.message, 'error');
   } finally {
     UI.loading(false);
   }

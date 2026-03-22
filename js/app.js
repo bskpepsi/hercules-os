@@ -267,8 +267,18 @@ const UI = {
 
   // ── ステータスバッジ ────────────────────────────────────────
   stageBadge(code) {
-    const c = stageColor(code), l = stageLabel(code);
-    return `<span class="badge" style="background:${c}22;color:${c};border:1px solid ${c}55">${l}</span>`;
+    // 旧コードを新6区分に丸めてから表示
+    const _STAGE_NORM = {
+      L1:'L1L2', L2_EARLY:'L1L2', L2_LATE:'L1L2',
+      EGG:'L1L2', T0:'L1L2', T1:'L1L2',
+      L3_EARLY:'L3', L3_MID:'L3', L3_LATE:'L3', T2:'L3', T2A:'L3', T2B:'L3', T3:'L3',
+    };
+    const norm = (code && _STAGE_NORM[code]) ? _STAGE_NORM[code] : code;
+    const c = stageColor(norm), l = stageLabel(norm);
+    if (!l && !norm) return '';
+    const displayLabel = l || norm || '';
+    const displayColor = c || '#888';
+    return `<span class="badge" style="background:${displayColor}22;color:${displayColor};border:1px solid ${displayColor}55">${displayLabel}</span>`;
   },
 
   statusBadge(code) {
