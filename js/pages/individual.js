@@ -17,7 +17,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] individual.js v20260325a loaded');
+console.log('[HerculesOS] individual.js v20260401a loaded');
 
 const Pages = window.Pages || {};
 
@@ -705,6 +705,9 @@ function _renderDetail(ind, main) {
           発育日程 <span class="acc-arrow">▼</span>
         </div>
         <div class="acc-body">
+          <div style="font-size:.72rem;color:var(--text3);margin-bottom:6px">
+            日付を入力・変更するには「✏️ 編集」ボタンから形態・成長データ欄を使ってください。
+          </div>
           ${(() => {
             // 蛹室確認日: artificial_cell_date を流用（カラム名が一致しているか将来確認）
             // COL_DEF: prepupa_date / pupa_check_date / artificial_cell_date / eclosion_date
@@ -782,12 +785,9 @@ function _renderDetail(ind, main) {
 
             return '<div class="info-list">' +
               (hasDates ? rows : '<div style="font-size:.82rem;color:var(--text3);padding:4px 0">日付未記録</div>') +
-              '</div>' +
-              '<button class="btn btn-ghost btn-sm" style="margin-top:8px;font-size:.78rem;width:100%"' +
-              ' onclick="Pages._indDateModal(\'" + ind.ind_id + "\')">' +
-              '📅 発育日付を入力/更新' +
-              '</button>';
+              '</div>';
           })()}
+
         </div>
       </div>
 
@@ -868,6 +868,8 @@ function _renderDetail(ind, main) {
   if (records.filter(r => r.weight_g).length >= 2) {
     setTimeout(() => _drawWeightChart(ind.ind_id, records), 100);
   }
+
+
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -1156,6 +1158,8 @@ Pages.individualNew = function (params = {}) {
   const main    = document.getElementById('main');
   const isEdit  = !!params.editId;
   const ind     = isEdit ? Store.getIndividual(params.editId) : null;
+  // キャンセル用にグローバルへ保存
+  window.__indNewEditId = isEdit ? params.editId : '';
   const lines   = Store.getDB('lines')      || [];
   const parents = Store.getDB('parents')    || [];
   const blds    = Store.getDB('bloodlines') || [];
@@ -1227,13 +1231,26 @@ Pages.individualNew = function (params = {}) {
           ${UI.field('胸角長 (mm)',   UI.input('horn_length_mm', 'number', v('horn_length_mm'), '例: 65.0'))}
         </div>
 
+        <div class="form-title">発育日程</div>
+        <div style="font-size:.75rem;color:var(--text3);margin:-4px 0 8px;line-height:1.5">
+          🏠 蛹室確認日から+18日が人工蛹室移行目安（♂のみ）。蛹確認日から+50〜70日が羽化目安。
+        </div>
+        <div class="form-row-2">
+          ${UI.field('蛹室確認日', UI.input('artificial_cell_date', 'date', v('artificial_cell_date','').replace(/\//g,'-')))}
+          ${UI.field('前蛹確認日', UI.input('prepupa_date', 'date', v('prepupa_date','').replace(/\//g,'-')))}
+        </div>
+        <div class="form-row-2">
+          ${UI.field('蛹確認日', UI.input('pupa_check_date', 'date', v('pupa_check_date','').replace(/\//g,'-')))}
+          ${UI.field('羽化日',   UI.input('eclosion_date',   'date', v('eclosion_date','').replace(/\//g,'-')))}
+        </div>
+
         <div class="form-title">メモ</div>
         ${UI.field('内部メモ（非公開）',   UI.textarea('note_private', v('note_private'), 2, '飼育メモ・観察記録'))}
         ${UI.field('購入者向けコメント', UI.textarea('note_public',  v('note_public'),  2, '公開可能なコメント'))}
 
         <div style="display:flex;gap:10px;margin-top:4px">
           <button type="button" class="btn btn-ghost" style="flex:1"
-            onclick="${isEdit ? `routeTo('ind-detail',{indId:'${params.editId}'})` : `Store.back()`}">キャンセル</button>
+            onclick="window.__indNewEditId ? routeTo('ind-detail',{indId:window.__indNewEditId}) : Store.back()">キャンセル</button>
           <button type="button" class="btn btn-primary" style="flex:2"
             onclick="Pages._indSave('${isEdit ? params.editId : ''}')">
             ${isEdit ? '更新する' : '登録する'}
@@ -1249,7 +1266,11 @@ Pages._indSave = async function (editId) {
   if (!form) return;
   const data = UI.collectForm(form);
 
-  if (data.hatch_date) data.hatch_date = data.hatch_date.replace(/-/g, '/');
+  // 全日付フィールドを '/' 区切りに統一
+  ['hatch_date','individual_date','artificial_cell_date',
+   'prepupa_date','pupa_check_date','eclosion_date'].forEach(k => {
+    if (data[k]) data[k] = data[k].replace(/-/g, '/');
+  });
 
   if (!editId && !data.line_id) { UI.toast('ラインを選択してください', 'error'); return; }
   if (!data.current_stage)      { UI.toast('ステージを選択してください', 'error'); return; }
