@@ -467,12 +467,13 @@ Pages.individualDetail = async function (indId) {
 };
 
 function _renderDetail(ind, main) {
-  const age     = Store.calcAge(ind.hatch_date);
-  const verdict = Store.getVerdict(ind);
-  const father  = Store.getParent(ind.father_par_id);
-  const mother  = Store.getParent(ind.mother_par_id);
-  const bld     = Store.getBloodline(ind.bloodline_id);
-  const records = Store.getGrowthRecords(ind.ind_id) || ind._growthRecords || [];
+  const age      = Store.calcAge(ind.hatch_date);
+  const verdict  = Store.getVerdict(ind);
+  const father   = Store.getParent(ind.father_par_id);
+  const mother   = Store.getParent(ind.mother_par_id);
+  const bld      = Store.getBloodline(ind.bloodline_id);
+  const records  = Store.getGrowthRecords(ind.ind_id) || ind._growthRecords || [];
+  const _fromNew = !!(Store.getParams()._fromNew);  // 登録直後バナー表示フラグ
   const originLot      = ind.origin_lot_id ? Store.getLot(ind.origin_lot_id) : null;
   const promotedParent = ind.promoted_par_id ? Store.getParent(ind.promoted_par_id) : null;
   const line    = Store.getLine(ind.line_id);
@@ -580,6 +581,21 @@ function _renderDetail(ind, main) {
           onclick="routeTo('ind-new',{editId:'${ind.ind_id}'})">編集</button>
         <button class="btn btn-ghost" style="flex:1"
           onclick="routeTo('label-gen',{targetType:'IND',targetId:'${ind.ind_id}'})">🏷</button>
+      </div>
+
+      ${_fromNew ? `
+      <div style="background:rgba(200,168,75,.12);border:1px solid rgba(200,168,75,.35);
+        border-radius:10px;padding:12px 14px;display:flex;align-items:center;gap:10px">
+        <span style="font-size:1.1rem">✅</span>
+        <div style="flex:1">
+          <div style="font-size:.85rem;font-weight:700;color:var(--gold)">登録しました</div>
+          <div style="font-size:.75rem;color:var(--text3)">続けてラベルを発行できます</div>
+        </div>
+        <button class="btn btn-ghost btn-sm"
+          onclick="routeTo('label-gen',{targetType:'IND',targetId:'${ind.ind_id}'})">
+          🏷 ラベル発行
+        </button>
+      </div>` : ''}
       </div>
 
       <!-- 基本情報 -->
@@ -1318,9 +1334,10 @@ Pages._indSave = async function (editId) {
       Store.patchDBItem('individuals', 'ind_id', editId, data);
       routeTo('ind-detail', { indId: editId });
     } else {
-      const res = await apiCall(() => API.individual.create(data), '登録しました');
+      const res = await apiCall(() => API.individual.create(data), '登録しました 🐛');
       await syncAll(true);
-      routeTo('ind-detail', { indId: res.ind_id });
+      // 登録直後: 詳細画面へ（ラベルショートカット付き）
+      routeTo('ind-detail', { indId: res.ind_id, _fromNew: true });
     }
   } catch (e) {}
 };

@@ -1,13 +1,13 @@
 // ════════════════════════════════════════════════════════════════
-// label.js v2 — ラベル生成（HTML + print() ベース）
+// label.js v3 — ラベル生成（HTML + print() ベース）
 //
-// 変更点:
-//   - サイズ: 70mm × 50mm（旧: 50mm × 30mm）
-//   - HTML印刷方式（旧: Canvas PNG）
-//   - 1枚ずつ単独印刷
-//   - ロット用ラベル: 記録表（日付/体重①②/メモ）+ 右メモ欄
-//   - 個体用ラベル: 過去履歴引継ぎ + 記録表
-//   - 既存ダウンロード/Phomemo導線も維持
+// v3 変更点:
+//   - 詳細画面からの直行モード（isDirectMode）でプレビュー自動生成
+//   - 戻るボタンで元の詳細画面に戻れる
+//   - 発行後アクションバーにショートカット追加
+//   - PAR（種親）対応
+//   - ラベル種別の前回値引き継ぎ
+//   - scan.js QR読み取り後の PAR ルーティング対応済み（scan.js側）
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
@@ -33,30 +33,55 @@ const LABEL_TYPE_DEFS = [
   { code: 'parent',    label: '⑤ 種親',       target: 'PAR', desc: '種親QR・血統タグ' },
 ];
 
-// ラベルデータ構築
+// ラベルデータ + ラベル種別の前回値（targetTypeごとに保持）
 window._currentLabel = { displayId: '', fileName: '', html: '', dataUrl: '' };
+window._lastLabelType = {};  // { IND: 'ind_fixed', LOT: 'multi_lot', ... }
+
+// ── デフォルトラベル種別 ──────────────────────────────────────
+function _defaultLabelType(targetType) {
+  if (window._lastLabelType[targetType]) return window._lastLabelType[targetType];
+  if (targetType === 'LOT') return 'multi_lot';
+  if (targetType === 'SET') return 'set';
+  if (targetType === 'PAR') return 'parent';
+  return 'ind_fixed';
+}
+
+// ── 遷移元の詳細ページキー（戻るボタン用）────────────────────
+function _detailPageKey(targetType, targetId) {
+  if (targetType === 'IND') return { page: 'ind-detail',    params: { indId: targetId } };
+  if (targetType === 'LOT') return { page: 'lot-detail',    params: { lotId: targetId } };
+  if (targetType === 'PAR') return { page: 'parent-detail', params: { parId: targetId } };
+  if (targetType === 'SET') return { page: 'pairing-detail',params: { pairingId: targetId } };
+  return null;
+}
 
 // ── ラベル生成ページ ─────────────────────────────────────────────
 Pages.labelGen = function (params = {}) {
   const main = document.getElementById('main');
   let targetType = params.targetType || 'IND';
   let targetId   = params.targetId   || '';
-  let labelType  = params.labelType  || (params.targetType === 'LOT' ? 'egg_lot'
-    : params.targetType === 'SET' ? 'set' : 'ind_fixed');
+  let labelType  = params.labelType  || _defaultLabelType(targetType);
 
-  const inds  = Store.filterIndividuals({ status: 'alive' });
-  const lots  = Store.filterLots({ status: 'active' });
-  const pars  = Store.getDB('parents') || [];
+  const inds = Store.filterIndividuals({ status: 'alive' });
+  const lots = Store.filterLots({ status: 'active' });
+  const pars = Store.getDB('parents') || [];
 
-  // targetId が確定している場合は選択UIを省略してプレビューへ直行
+  // 詳細画面から来た場合は直行モード
   const isDirectMode = !!params.targetId;
+  const origin       = isDirectMode ? _detailPageKey(targetType, targetId) : null;
+
+  // ヘッダーの戻るボタン: 直行モードは元の詳細に戻る、それ以外は Store.back()
+  const headerOpts = isDirectMode && origin
+    ? { back: true, backFn: `routeTo('${origin.page}',${JSON.stringify(origin.params)})` }
+    : { back: true };
 
   function render() {
     main.innerHTML = `
-      ${UI.header('ラベル生成', {})}
+      ${UI.header('ラベル発行', headerOpts)}
       <div class="page-body">
 
         ${!isDirectMode ? `
+        <!-- 対象選択（直行モード以外のみ） -->
         <div class="card">
           <div class="card-title">ラベル対象</div>
           <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
@@ -83,6 +108,7 @@ Pages.labelGen = function (params = {}) {
             </select>`}
         </div>
 
+        <!-- 種別選択（直行モード以外のみ） -->
         <div class="card">
           <div class="card-title">ラベル種別</div>
           <div class="filter-bar">
@@ -102,45 +128,48 @@ Pages.labelGen = function (params = {}) {
             ? `<div class="card-title">プレビュー（70mm × 50mm）</div>
                <div id="lbl-html-preview" style="transform-origin:top left;margin-bottom:12px;
                  border:1px solid var(--border2);border-radius:4px;overflow:hidden;
-                 background:#fff;width:264px;height:189px;transform:scale(1)"></div>
-               <div id="lbl-qr-hidden" style="display:none"></div>
-               <div style="display:flex;gap:8px">
-                 <button class="btn btn-primary" style="flex:2"
-                   onclick="Pages._lblGenerate('${targetType}','${targetId}','${labelType}')">
-                   🏷 ラベル生成
-                 </button>
-                 <button class="btn btn-ghost" style="flex:1" id="lbl-print-btn" style="display:none"
-                   onclick="Pages._lblPrint()">🖨 印刷</button>
-               </div>`
+                 background:#fff;width:264px;height:189px;
+                 display:flex;align-items:center;justify-content:center">
+                 <div style="color:var(--text3);font-size:.8rem;text-align:center">
+                   <div class="spinner" style="margin:0 auto 8px"></div>
+                   プレビューを生成中...
+                 </div>
+               </div>
+               <div id="lbl-qr-hidden" style="display:none"></div>`
             : `<div style="color:var(--text3);font-size:.85rem;text-align:center;padding:20px">
                  対象を選択するとプレビューが表示されます
                </div>`}
         </div>
 
-        <!-- 発行後アクション -->
+        <!-- 発行後アクション（初期非表示・生成後に表示） -->
         <div id="lbl-action-bar" style="display:none;margin-top:8px">
           <div style="background:rgba(45,122,82,.10);border:1px solid rgba(45,122,82,.35);
-            border-radius:var(--radius);padding:14px 16px;">
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
-              <span style="font-size:1.3rem">✅</span>
-              <span style="font-size:.95rem;font-weight:700;color:var(--green)">ラベルを生成しました</span>
+            border-radius:var(--radius);padding:14px 16px">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+              <span style="font-size:1.1rem">✅</span>
+              <span style="font-size:.88rem;font-weight:700;color:var(--green)">ラベル生成完了</span>
             </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-              <button class="btn btn-primary" onclick="Pages._lblPrint()" style="font-size:.92rem;padding:13px;font-weight:700">
-                🖨 印刷（1枚）
-              </button>
-              <button class="btn btn-ghost" onclick="Pages._lblPrint()" style="font-size:.92rem;padding:13px">
-                🖨 再度印刷
-              </button>
-            </div>
-            <div id="lbl-filename" style="font-size:.72rem;color:var(--text3);margin-top:8px;text-align:center"></div>
-            <button class="btn btn-ghost" style="width:100%;margin-top:8px;font-size:.8rem;padding:8px"
-              onclick="Pages._lblGenerate('${targetType}','${targetId}','${labelType}')">
-              🔄 再生成
+            <!-- 主アクション: 印刷 -->
+            <button class="btn btn-primary btn-full"
+              style="font-size:.95rem;padding:14px;font-weight:700;margin-bottom:8px"
+              onclick="Pages._lblPrint()">
+              🖨 印刷する（1枚）
             </button>
+            <div style="display:flex;gap:8px;margin-bottom:8px">
+              <button class="btn btn-ghost" style="flex:1" onclick="Pages._lblPrint()">🖨 再印刷</button>
+              <button class="btn btn-ghost" style="flex:1"
+                onclick="Pages._lblGenerate('${targetType}','${targetId}','${labelType}')">🔄 再生成</button>
+            </div>
+            ${origin ? `
+            <!-- 戻るショートカット -->
+            <button class="btn btn-ghost btn-full" style="margin-top:2px;font-size:.82rem"
+              onclick="routeTo('${origin.page}',${JSON.stringify(origin.params)})">
+              ← ${targetType==='IND'?'個体':targetType==='LOT'?'ロット':targetType==='PAR'?'種親':'詳細'}に戻る
+            </button>` : ''}
             <div style="font-size:.7rem;color:var(--text3);margin-top:10px;line-height:1.6;
               padding-top:8px;border-top:1px solid var(--border)">
-              💡 印刷方法: ブラウザの印刷ダイアログで「カスタム 70×50mm」/ 余白なし / 実寸で印刷。PDFに保存してPhomemoアプリで印刷も可能。
+              💡 印刷: ブラウザの印刷ダイアログで「カスタム 70×50mm」/ 余白なし / 実寸で印刷。
+              PDFに保存してPhomemoアプリで印刷も可能。
             </div>
           </div>
         </div>
@@ -148,13 +177,23 @@ Pages.labelGen = function (params = {}) {
       </div>`;
 
     if (targetId) {
-      setTimeout(() => Pages._lblGenerate(targetType, targetId, labelType), 200);
+      // 直行モードは即座に自動生成、手動モードも選択後に自動生成
+      setTimeout(() => Pages._lblGenerate(targetType, targetId, labelType), 150);
     }
   }
 
-  Pages._lblSetType = (t) => { targetType = t; targetId = ''; render(); };
-  Pages._lblSetTarget = (id) => { targetId = id; render(); };
-  Pages._lblSetLabelType = (t) => { labelType = t; render(); };
+  Pages._lblSetType = (t) => {
+    targetType = t;
+    targetId = '';
+    labelType = _defaultLabelType(t);
+    render();
+  };
+  Pages._lblSetTarget    = (id) => { targetId = id; render(); };
+  Pages._lblSetLabelType = (t)  => {
+    labelType = t;
+    window._lastLabelType[targetType] = t;  // 次回のデフォルトに使う
+    render();
+  };
   render();
 };
 
@@ -184,14 +223,14 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         note_private: ind.note_private  || '',
         size_category:ind.size_category || '',
         records:      records.slice().sort((a,b) => String(b.record_date).localeCompare(String(a.record_date))).slice(0, 8),
-        label_type:   'ind_fixed',
+        label_type:   labelType || 'ind_fixed',
       };
     } else if (targetType === 'LOT') {
       const lot  = Store.getLot(targetId)     || {};
       const line = Store.getLine(lot.line_id) || {};
       const records = Store.getGrowthRecords(targetId) || [];
       const isMolt  = lot.mat_molt === true || lot.mat_molt === 'true';
-      const autoType = (lot.stage === 'EGG' || lot.stage === 'T0') ? 'egg_lot' : 'multi_lot';
+      const autoType = (lot.stage === 'EGG' || lot.stage === 'T0' || lot.stage === 'L1L2') ? 'egg_lot' : 'multi_lot';
       ld = {
         qr_text:      `LOT:${lot.lot_id || targetId}`,
         display_id:   lot.display_id    || targetId,
@@ -209,14 +248,9 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         label_type:   labelType || autoType,
       };
     } else if (targetType === 'PAR') {
-      // 種親ラベル: QR + 管理コード + 血統タグ
       const par = (Store.getDB('parents') || []).find(p => p.par_id === targetId) || {};
-      const pTags = (() => {
-        try { return JSON.parse(par.paternal_tags || '[]') || []; } catch(e) { return []; }
-      })();
-      const mTags = (() => {
-        try { return JSON.parse(par.maternal_tags || '[]') || []; } catch(e) { return []; }
-      })();
+      const pTags = (() => { try { return JSON.parse(par.paternal_tags || '[]') || []; } catch(e) { return []; } })();
+      const mTags = (() => { try { return JSON.parse(par.maternal_tags || '[]') || []; } catch(e) { return []; } })();
       ld = {
         qr_text:      `PAR:${par.par_id || targetId}`,
         display_id:   par.parent_display_id || par.display_name || targetId,
@@ -269,43 +303,33 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
   }
 
   setTimeout(() => {
-    // QR画像をBase64で取得
     let qrSrc = '';
     const qrImg = qrDiv?.querySelector('img') || qrDiv?.querySelector('canvas');
     if (qrImg) {
       try {
-        if (qrImg.tagName === 'CANVAS') {
-          qrSrc = qrImg.toDataURL('image/png');
-        } else {
-          qrSrc = qrImg.src;
-        }
+        qrSrc = qrImg.tagName === 'CANVAS' ? qrImg.toDataURL('image/png') : qrImg.src;
       } catch(e) {}
     }
 
-    // HTMLラベルを生成
     const html = _buildLabelHTML(ld, qrSrc);
     window._currentLabel = {
       displayId: ld.display_id,
       fileName: (ld.line_code ? ld.line_code.replace(/[^a-zA-Z0-9_-]/g,'_') + '_' : '') +
                 ld.display_id.replace(/[^a-zA-Z0-9_-]/g,'_') + '_label.html',
       html: html,
-      dataUrl: null, // PNG必要時はcanvasで後処理
+      dataUrl: null,
     };
 
-    // プレビュー表示（縮小）
     preview.innerHTML = `<iframe srcdoc="${html.replace(/"/g,'&quot;')}"
       style="width:264px;height:189px;border:none;transform-origin:top left"
       scrolling="no"></iframe>`;
 
-    // アクションバー表示
     const bar = document.getElementById('lbl-action-bar');
     if (bar) {
-      const fnEl = document.getElementById('lbl-filename');
-      if (fnEl) fnEl.textContent = window._currentLabel.fileName;
       bar.style.display = 'block';
+      // スクロールして見えるように
+      bar.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
-    const printBtn = document.getElementById('lbl-print-btn');
-    if (printBtn) printBtn.style.display = '';
   }, 300);
 };
 
@@ -316,36 +340,27 @@ function _buildLabelHTML(ld, qrSrc) {
   const stageLbl = typeof stageLabel === 'function' ? (stageLabel(_rawStage) || _rawStage || '') : _rawStage;
   const matLbl   = ld.mat_type ? (ld.mat_type + (ld.mat_molt ? '(M)' : '')) : '';
   const noteShort = (ld.note_private || '').slice(0, 40);
-  const qrHtml   = qrSrc ? `<img src="${qrSrc}" style="width:45px;height:45px;display:block">` : '<div style="width:45px;height:45px;background:#eee;display:flex;align-items:center;justify-content:center;font-size:8px">QR</div>';
+  const qrHtml   = qrSrc
+    ? `<img src="${qrSrc}" style="width:45px;height:45px;display:block">`
+    : '<div style="width:45px;height:45px;background:#eee;display:flex;align-items:center;justify-content:center;font-size:8px">QR</div>';
 
-  // ── チェック欄ヘルパー ─────────────────────────────────────────
-  const chk = (label, checked) => `<span style="margin-right:4px">
-    <span style="font-size:7px">${checked ? '■' : '□'}</span>${label}
-  </span>`;
-
+  const chk = (label, checked) =>
+    `<span style="margin-right:4px"><span style="font-size:7px">${checked ? '■' : '□'}</span>${label}</span>`;
   const sexCats = (ld.size_category || '').split(',').map(s => s.trim());
 
-  if (lt === 'set') {
-    return _buildSetLabelHTML(ld, qrHtml);
-  }
-  if (lt === 'parent') {
-    return _buildParentLabelHTML(ld, qrHtml);
-  }
+  if (lt === 'set')    return _buildSetLabelHTML(ld, qrHtml);
+  if (lt === 'parent') return _buildParentLabelHTML(ld, qrHtml);
 
   const isLot = lt === 'multi_lot' || lt === 'egg_lot';
-
-  // 記録行
   const records = ld.records || [];
   const maxRows  = isLot ? 6 : 7;
   const recRows  = records.slice(0, maxRows);
   while (recRows.length < maxRows) recRows.push(null);
 
   const recRowsHtml = recRows.map(r => {
-    if (!r) {
-      return isLot
-        ? `<tr><td style="border:1px solid #ccc;padding:1px 2px;width:24mm"></td><td style="border:1px solid #ccc;padding:1px 2px;width:14mm"></td><td style="border:1px solid #ccc;padding:1px 2px;width:14mm"></td><td style="border:1px solid #ccc;padding:1px 2px;width:15mm"></td></tr>`
-        : `<tr><td style="border:1px solid #ccc;padding:1px 2px;width:26mm"></td><td style="border:1px solid #ccc;padding:1px 2px;width:18mm"></td><td style="border:1px solid #ccc;padding:1px 2px;width:20mm"></td></tr>`;
-    }
+    if (!r) return isLot
+      ? `<tr><td style="border:1px solid #ccc;padding:1px 2px;width:24mm"></td><td style="border:1px solid #ccc;padding:1px 2px;width:14mm"></td><td style="border:1px solid #ccc;padding:1px 2px;width:14mm"></td><td style="border:1px solid #ccc;padding:1px 2px;width:15mm"></td></tr>`
+      : `<tr><td style="border:1px solid #ccc;padding:1px 2px;width:26mm"></td><td style="border:1px solid #ccc;padding:1px 2px;width:18mm"></td><td style="border:1px solid #ccc;padding:1px 2px;width:20mm"></td></tr>`;
     const d = String(r.record_date || '').replace(/\d{4}\//,'');
     const w = r.weight_g ? r.weight_g + 'g' : '';
     return isLot
@@ -387,8 +402,6 @@ function _buildLabelHTML(ld, qrSrc) {
 </style></head><body>
 <div class="lbl-wrap">
   <div class="lbl-header">${headerLabel} &nbsp;|&nbsp; HerculesOS</div>
-
-  <!-- 上段: QR + 基本情報 -->
   <div class="lbl-top">
     <div class="lbl-qr">${qrHtml}</div>
     <div class="lbl-info">
@@ -399,8 +412,6 @@ function _buildLabelHTML(ld, qrSrc) {
       ${!isLot && ld.sex ? `<div style="font-size:7px;color:${ld.sex==='♂'?'#3366cc':'#cc3366'};font-weight:700">${ld.sex}</div>` : ''}
     </div>
   </div>
-
-  <!-- 中段: チェック欄 -->
   <div class="lbl-mid">
     <div class="lbl-checks">
       ${isLot ? `<div>${chk('♂',ld.sex_hint==='♂')}${chk('♀',ld.sex_hint==='♀')}${chk('混合',ld.sex_hint==='混合')}</div>` : ''}
@@ -410,8 +421,6 @@ function _buildLabelHTML(ld, qrSrc) {
       <div>ステージ: ${stageLbl||'—'}</div>
     </div>
   </div>
-
-  <!-- 下段: 記録表 + メモ欄 -->
   <div class="lbl-bottom">
     <div class="lbl-table-wrap">
       <table class="lbl-table">
@@ -426,14 +435,12 @@ function _buildLabelHTML(ld, qrSrc) {
     </div>
     <div class="lbl-memo" style="overflow:hidden;word-break:break-all">メモ欄</div>
   </div>
-
-  <!-- 最下段: 内部メモ要約 -->
   <div class="lbl-foot">${noteShort ? '📝 ' + noteShort : ''}</div>
 </div>
 </body></html>`;
 }
 
-// ── 種親ラベル ──────────────────────────────────────────────────
+// ── 種親ラベル ───────────────────────────────────────────────────
 function _buildParentLabelHTML(ld, qrHtml) {
   const tagHtml = (tags, color) => tags.map(t =>
     `<span style="font-size:5.5px;padding:1px 4px;border-radius:8px;background:${color}22;color:${color};border:1px solid ${color}44">${t}</span>`
@@ -456,9 +463,9 @@ function _buildParentLabelHTML(ld, qrHtml) {
     <div style="flex:1;min-width:0">
       <div style="font-size:9px;font-weight:700;color:#8a6a00;font-family:monospace;margin-bottom:1mm">${ld.display_id}</div>
       <div style="display:flex;gap:3mm;margin-bottom:1mm">
-        ${ld.sex   ? `<span style="font-size:8px;font-weight:700;color:${ld.sex==='♂'?'#3366cc':'#cc3366'}">${ld.sex}</span>` : ''}
-        ${ld.size_mm ? `<span style="font-size:7px;font-weight:700;color:#2d7a52">${ld.size_mm}</span>` : ''}
-        ${ld.weight_g ? `<span style="font-size:6.5px;color:#555">${ld.weight_g}</span>` : ''}
+        ${ld.sex    ? `<span style="font-size:8px;font-weight:700;color:${ld.sex==='♂'?'#3366cc':'#cc3366'}">${ld.sex}</span>` : ''}
+        ${ld.size_mm? `<span style="font-size:7px;font-weight:700;color:#2d7a52">${ld.size_mm}</span>` : ''}
+        ${ld.weight_g? `<span style="font-size:6.5px;color:#555">${ld.weight_g}</span>` : ''}
       </div>
       ${ld.locality || ld.generation ? `<div style="font-size:6px;color:#777;margin-bottom:1mm">${[ld.locality,ld.generation].filter(Boolean).join(' / ')}</div>` : ''}
       ${ld.eclosion_date ? `<div style="font-size:6px;color:#777;margin-bottom:1.5mm">羽化: ${ld.eclosion_date}</div>` : ''}
@@ -501,30 +508,25 @@ function _buildSetLabelHTML(ld, qrHtml) {
 </body></html>`;
 }
 
-// ── 印刷（新ウィンドウで1枚） ─────────────────────────────────────
+// ── 印刷 ────────────────────────────────────────────────────────
 Pages._lblPrint = function () {
   const label = window._currentLabel || {};
-  if (!label.html) { UI.toast('ラベルデータがありません。先に「ラベル生成」を押してください。', 'error'); return; }
+  if (!label.html) { UI.toast('先に「ラベル生成」を実行してください', 'error'); return; }
   const win = window.open('', '_blank');
-  if (!win) { UI.toast('ポップアップをブロックされました', 'error'); return; }
+  if (!win) { UI.toast('ポップアップをブロックされました。ブラウザ設定でポップアップを許可してください', 'error'); return; }
   win.document.write(label.html);
   win.document.close();
   win.onload = () => { win.print(); };
 };
 
-// ── ダウンロード（HTMLファイルとして） ──────────────────────────
-// _lblDownload は印刷ダイアログへ誘導（HTML保存ではなく印刷→PDF保存が正規フロー）
-Pages._lblDownload = function () {
-  Pages._lblPrint();
-};
-
+Pages._lblDownload = function () { Pages._lblPrint(); };
 Pages._lblOpenDrive = function () {
   const url = window._currentLabel?.driveUrl;
   if (url) window.open(url, '_blank');
   else UI.toast('Driveに保存されていません', 'info');
 };
 
-// 後方互換: Canvas版 _lblPrint（旧コードから呼ばれることがあるため）
 window._currentLabel = window._currentLabel || { displayId:'', fileName:'', html:'', dataUrl:'' };
+window._lastLabelType = window._lastLabelType || {};
 
 window.PAGES['label-gen'] = () => Pages.labelGen(Store.getParams());

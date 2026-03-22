@@ -300,6 +300,11 @@ function _qrResolveFromCache(qrText) {
     if (!set) return null;
     return { entity_type:'SET', entity:set, line:null, last_growth:null, missing:[], label_type:'set' };
   }
+  if (prefix === 'PAR') {
+    const par = (Store.getDB('parents') || []).find(p => p.par_id === id || p.parent_display_id === id);
+    if (!par) return null;
+    return { entity_type:'PAR', entity:par, line:null, last_growth:null, missing:[], label_type:'parent' };
+  }
   return null;
 }
 
@@ -323,10 +328,11 @@ function _qrNavigate(mode, res, qrText) {
     routeTo('qr-diff', { resolve_result: res, qr_text: qrText });
   } else {
     // 確認モード: 直接詳細画面へ
-    const eid = res.entity?.ind_id || res.entity?.lot_id || res.entity?.set_id;
-    if (res.entity_type === 'IND' && eid)      routeTo('ind-detail',     { indId: eid });
+    const eid = res.entity?.ind_id || res.entity?.lot_id || res.entity?.set_id || res.entity?.par_id;
+    if      (res.entity_type === 'IND' && eid) routeTo('ind-detail',     { indId: eid });
     else if (res.entity_type === 'LOT' && eid) routeTo('lot-detail',     { lotId: eid });
     else if (res.entity_type === 'SET' && eid) routeTo('pairing-detail', { pairingId: eid });
+    else if (res.entity_type === 'PAR' && eid) routeTo('parent-detail',  { parId: eid });
     else routeTo('qr-diff', { resolve_result: res, qr_text: qrText });
   }
 }

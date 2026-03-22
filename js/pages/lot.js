@@ -260,6 +260,7 @@ function _renderLotDetail(lot, main) {
   const line     = Store.getLine(lot.line_id);
   const lineCode = line ? (line.line_code || line.display_id) : '';
   const records  = lot._growthRecords || Store.getGrowthRecords(lot.lot_id) || [];
+  const _fromNew = !!(Store.getParams()._fromNew);  // 登録直後バナー
   // Store.getSettings はバージョンによって未定義の場合があるため安全に取得
   let settings = {};
   try { if (typeof Store.getSettings === 'function') settings = Store.getSettings() || {}; } catch(_e) {}
@@ -303,6 +304,20 @@ function _renderLotDetail(lot, main) {
       action: { fn: `_lotQuickActions('${lot.lot_id}')`, icon: '…' }
     })}
     <div class="page-body">
+
+      ${_fromNew ? `
+      <div style="background:rgba(200,168,75,.12);border:1px solid rgba(200,168,75,.35);
+        border-radius:10px;padding:12px 14px;display:flex;align-items:center;gap:10px;margin-bottom:4px">
+        <span style="font-size:1.1rem">✅</span>
+        <div style="flex:1">
+          <div style="font-size:.85rem;font-weight:700;color:var(--gold)">ロットを登録しました</div>
+          <div style="font-size:.75rem;color:var(--text3)">続けてラベルを発行できます</div>
+        </div>
+        <button class="btn btn-ghost btn-sm"
+          onclick="routeTo('label-gen',{targetType:'LOT',targetId:'${lot.lot_id}'})">
+          🏷 ラベル発行
+        </button>
+      </div>` : ''}
 
       <div class="card card-gold">
         <div class="lot-detail-header">
@@ -716,7 +731,8 @@ Pages._lotSave = async function () {
   try {
     const res = await apiCall(() => API.lot.create(data), 'ロットを登録しました');
     await syncAll(true);
-    routeTo('lot-detail', { lotId: res.lot_id });
+    // 登録完了後: 詳細画面へ遷移（ラベル発行ショートカット付き）
+    routeTo('lot-detail', { lotId: res.lot_id, _fromNew: true });
   } catch (e) {}
 };
 
