@@ -722,8 +722,37 @@ function _renderDetail(ind, main) {
               return Math.round((to - from) / 86400000);
             }
 
-            // 前蛹確認日: 蛹になるまでの目安（前蛹から蛹まで約2〜4週間）
-            let artificialHint = '';
+            // ── 蛹室確認日 → 人工蛹室移行目安（+18日）────────────────────────
+            // 表示条件: artificial_cell_date あり かつ prepupa_date 未入力
+            // 消滅条件: prepupa_date を入力したら消える
+            //           （前蛹確認日 = 人工蛹室移動日 の運用）
+            let pupaChamberHint = '';
+            if (ind.artificial_cell_date && !ind.prepupa_date) {
+              const chamD = _parseDate(ind.artificial_cell_date);
+              if (chamD) {
+                const moveD = new Date(chamD); moveD.setDate(moveD.getDate() + 18);
+                const diff = _diffDays(_today, moveD);
+                if (diff < 0) {
+                  // 超過 → 警告（オレンジ〜赤）
+                  const color = Math.abs(diff) >= 5 ? 'var(--red,#e05050)' : 'var(--amber)';
+                  pupaChamberHint =
+                    '<span style="font-size:.72rem;color:' + color + ';margin-left:6px">'
+                    + '⚠️ 移行目安を' + Math.abs(diff) + '日超過'
+                    + '</span>'
+                    + '<div style="font-size:.7rem;color:var(--text3);margin-top:2px;margin-left:4px">'
+                    + '前蛹確認日を入力すると、この警告は消えます'
+                    + '</div>';
+                } else if (diff === 0) {
+                  pupaChamberHint = '<span style="font-size:.72rem;color:var(--amber);margin-left:6px">今日が移行目安日（♂のみ）</span>';
+                } else {
+                  pupaChamberHint = '<span style="font-size:.72rem;color:var(--text3);margin-left:6px">移行目安まであと' + diff + '日（♂のみ）</span>';
+                }
+              }
+            }
+
+            // ── 前蛹確認日 → 蛹化目安（+14〜28日）────────────────────────────
+            // 前蛹から蛹まで約2〜4週間
+            let prepupaHint = '';
             if (ind.prepupa_date && !ind.pupa_check_date) {
               const preD = _parseDate(ind.prepupa_date);
               if (preD) {
@@ -732,50 +761,57 @@ function _renderDetail(ind, main) {
                 const dMin = _diffDays(_today, minD);
                 const dMax = _diffDays(_today, maxD);
                 if (dMin > 0) {
-                  artificialHint = '<span style="font-size:.72rem;color:var(--text3);margin-left:6px">蛹化目安: あと' + dMin + '〜' + dMax + '日</span>';
+                  prepupaHint = '<span style="font-size:.72rem;color:var(--text3);margin-left:6px">蛹化目安: あと' + dMin + '〜' + dMax + '日</span>';
                 } else if (dMax > 0) {
-                  artificialHint = '<span style="font-size:.72rem;color:var(--amber);margin-left:6px">蛹化時期の可能性あり</span>';
+                  prepupaHint = '<span style="font-size:.72rem;color:var(--amber);margin-left:6px">蛹化時期の可能性あり</span>';
                 }
+                // dMax < 0 なら超過してもヒントなし（蛹確認日未入力は別途追う必要なし）
               }
             }
 
-            // 羽化予測（蛹確認日から目安）
+            // ── 蛹確認日 → 羽化目安（+50〜70日）/ 超過警告 ───────────────────
+            // 表示条件: pupa_check_date あり かつ eclosion_date 未入力
+            // 消滅条件: eclosion_date を入力したら消える
             let eclosionHint = '';
             if (ind.pupa_check_date && !ind.eclosion_date) {
               const pupaD = _parseDate(ind.pupa_check_date);
               if (pupaD) {
-                // ヒラタ系: 蛹化後50〜70日で羽化目安
                 const minD = new Date(pupaD); minD.setDate(minD.getDate() + 50);
                 const maxD = new Date(pupaD); maxD.setDate(maxD.getDate() + 70);
                 const diffMin = _diffDays(_today, minD);
                 const diffMax = _diffDays(_today, maxD);
+                // 目安フォーマット: YYYY/MM/DD 形式
+                const fmt = (d) => d.getFullYear() + '/' + String(d.getMonth()+1).padStart(2,'0') + '/' + String(d.getDate()).padStart(2,'0');
                 if (diffMin > 0) {
-                  eclosionHint = '<span style="font-size:.72rem;color:var(--text3);margin-left:6px">羽化目安: あと' + diffMin + '〜' + diffMax + '日</span>';
-                } else if (diffMax > 0) {
-                  eclosionHint = '<span style="font-size:.72rem;color:var(--amber);margin-left:6px">羽化時期です</span>';
+                  // まだ目安期間前 → 通常表示
+                  eclosionHint =
+                    '<span style="font-size:.72rem;color:var(--text3);margin-left:6px">'
+                    + '羽化目安: ' + fmt(minD) + '〜' + fmt(maxD)
+                    + ' （あと' + diffMin + '〜' + diffMax + '日）'
+                    + '</span>';
+                } else if (diffMax >= 0) {
+                  // 目安期間内 → 通常表示（少し強調）
+                  eclosionHint =
+                    '<span style="font-size:.72rem;color:var(--green);margin-left:6px">'
+                    + '🦋 羽化時期です（目安: ' + fmt(maxD) + 'まで）'
+                    + '</span>';
                 } else {
-                  eclosionHint = '<span style="font-size:.72rem;color:var(--red,#e05050);margin-left:6px">羽化超過（確認推奨）</span>';
+                  // 目安超過 → 警告
+                  const over = Math.abs(diffMax);
+                  eclosionHint =
+                    '<span style="font-size:.72rem;color:var(--red,#e05050);margin-left:6px">'
+                    + '⚠️ 羽化目安を' + over + '日超過'
+                    + '</span>'
+                    + '<div style="font-size:.7rem;color:var(--text3);margin-top:2px;margin-left:4px">'
+                    + '羽化日を入力すると、この表示は消えます'
+                    + '</div>';
                 }
-              }
-            }
-
-            // artificial_cell_date = 蛹室確認日として運用
-            // +18日で人工蛹室移行目安を表示（♂のみ意味を持つ）
-            let pupaChamberHint = '';
-            if (ind.artificial_cell_date) {
-              const chamD = _parseDate(ind.artificial_cell_date);
-              if (chamD) {
-                const moveD = new Date(chamD); moveD.setDate(moveD.getDate() + 18);
-                const diff = _diffDays(_today, moveD);
-                const color = diff < 0 ? 'var(--red,#e05050)' : diff <= 3 ? 'var(--amber)' : 'var(--text3)';
-                const label = diff < 0 ? '人工蛹室移行推奨（' + Math.abs(diff) + '日経過）' : diff === 0 ? '今日が移行目安' : '移行目安まであと' + diff + '日';
-                pupaChamberHint = '<span style="font-size:.72rem;color:' + color + ';margin-left:6px">' + label + '</span>';
               }
             }
 
             const rows = [
               ind.artificial_cell_date ? `${_infoRow('蛹室確認日', ind.artificial_cell_date + pupaChamberHint)}` : '',
-              ind.prepupa_date ? `${_infoRow('前蛹確認日', ind.prepupa_date + artificialHint)}` : '',
+              ind.prepupa_date ? `${_infoRow('前蛹確認日（人工蛹室移動日）', ind.prepupa_date + prepupaHint)}` : '',
               ind.pupa_check_date ? `${_infoRow('蛹確認日', ind.pupa_check_date + eclosionHint)}` : '',
               ind.eclosion_date ? `${_infoRow('羽化日', ind.eclosion_date)}` : '',
             ].filter(Boolean).join('');
@@ -785,7 +821,7 @@ function _renderDetail(ind, main) {
 
             return '<div class="info-list">' +
               (hasDates ? rows : '<div style="font-size:.82rem;color:var(--text3);padding:4px 0">日付未記録</div>') +
-              '</div>';
+              '</div>';\
           })()}
 
         </div>
