@@ -75,19 +75,14 @@ Pages.lotList = function () {
 };
 
 function _lotStageFilters(active) {
-  // ロット一覧フィルタ — stage_life（新生体ステージ）ベース
-  // 後方互換: 旧コード(T0〜T3)も「全て」に含まれる
   const stages = [
-    { val:'',        label:'全て'   },
-    { val:'L1',      label:'L1'    },
-    { val:'L2_EARLY',label:'L2前期' },
-    { val:'L2_LATE', label:'L2後期' },
-    { val:'L3_EARLY',label:'L3前期' },
-    { val:'L3_MID',  label:'L3中期' },
-    { val:'L3_LATE', label:'L3後期' },
-    { val:'PREPUPA', label:'前蛹'   },
-    { val:'PUPA',    label:'蛹'    },
-    { val:'ADULT',   label:'成虫'   },
+    { val:'',        label:'全て'          },
+    { val:'L1L2',    label:'L1L2'         },
+    { val:'L3',      label:'L3'           },
+    { val:'PREPUPA', label:'前蛹'          },
+    { val:'PUPA',    label:'蛹'           },
+    { val:'ADULT_PRE',label:'成虫（未後食）' },
+    { val:'ADULT',   label:'成虫（活動開始）'},
   ];
   return stages.map(s =>
     `<button class="pill ${s.val === active ? 'active' : ''}" data-val="${s.val}">${s.label}</button>`
@@ -108,20 +103,16 @@ function _lotCardHTML(lot) {
       lineCode = _ln ? (_ln.line_code || _ln.display_id || '') : '';
     }
 
-    // ── ステージ: stage_life 優先、旧コード変換 ──────────────
-    var OLD_TO_NEW = { T0:'L1', T1:'L2_EARLY', T2A:'L3_EARLY', T2B:'L3_MID', T3:'L3_LATE' };
-    var rawStage  = lot.stage_life || lot.stage || '';
-    var stageCode = OLD_TO_NEW[rawStage] || rawStage;
+    // ── ステージ ──────────────────────────────────────────────
+    var stageCode = lot.stage_life || lot.stage || '';
     var stageLbl  = stageCode ? stageLabel(stageCode) : '';
     var sColor    = stageCode ? stageColor(stageCode) : 'var(--text3)';
 
-    // ── マット: T2A/T2B → T2、mat_molt 考慮 ──────────────────
     var recs = Store.getGrowthRecords(lot.lot_id) || [];
     var latestRec = recs.length
       ? recs.slice().sort(function(a,b){ return String(b.record_date).localeCompare(String(a.record_date)); })[0]
       : null;
     var rawMat  = lot.mat_type || (latestRec && latestRec.mat_type) || '';
-    if (rawMat === 'T2A' || rawMat === 'T2B') rawMat = 'T2';
     var isMolt  = lot.mat_molt === true || lot.mat_molt === 'true';
     var matLbl  = rawMat === 'T2' && isMolt ? 'T2(M)' : rawMat;
 
@@ -301,7 +292,7 @@ function _renderLotDetail(lot, main) {
         </button>
         <button style="padding:14px 8px;border-radius:var(--radius);font-weight:700;font-size:.92rem;
           background:var(--surface3,#3a3a4a);color:var(--text1);border:1px solid var(--border);cursor:pointer"
-          onclick="Pages._showSplitModal('${lot.lot_id}',${lot.count},'${lot.stage_life||lot.stage||'L1'}','${lot.line_id}','${lot.hatch_date||''}','${lot.display_id}')">
+          onclick="Pages._showSplitModal('${lot.lot_id}',${lot.count},'${lot.stage_life||lot.stage||'L1L2'}','${lot.line_id}','${lot.hatch_date||''}','${lot.display_id}')">
           ✂️ 分割
         </button>
       </div>
@@ -502,7 +493,7 @@ Pages._lotEditStage = function (lotId, currentStage) {
   _showModal('ステージ変更', `
     <div class="form-section">
       ${UI.field('生体ステージ', UI.select('new-stage',
-        STAGE_LIST_NEW.map(s => ({ code: s.code, label: s.label })),
+        STAGE_LIST.map(s => ({ code: s.code, label: s.label })),
         currentStage || 'L1'))}
       <div style="font-size:.72rem;color:var(--text3);margin-top:-8px;margin-bottom:8px">
         ステージ（生体の成長段階）とマット（飼育環境）は別々に設定します
@@ -519,18 +510,12 @@ Pages._lotStageUpdate = async function (lotId) {
   if (!stageLife) return;
   _closeModal();
   // 後方互換: stage（旧フィールド）にも補助的にマッピング
-  const lifeToOld = {
-    L1:'T0', L2_EARLY:'T1', L2_LATE:'T1',
-    L3_EARLY:'T2A', L3_MID:'T2B', L3_LATE:'T3',
-    PREPUPA:'PREPUPA', PUPA:'PUPA', ADULT:'ADULT',
-  };
-  const stageLegacy = lifeToOld[stageLife] || stageLife;
   try {
     await apiCall(
-      () => API.lot.update({ lot_id: lotId, stage_life: stageLife, stage: stageLegacy }),
+      () => API.lot.update({ lot_id: lotId, stage_life: stageLife }),
       stageLabel(stageLife) + ' に変更しました'
     );
-    Store.patchDBItem('lots', 'lot_id', lotId, { stage_life: stageLife, stage: stageLegacy });
+    Store.patchDBItem('lots', 'lot_id', lotId, { stage_life: stageLife });
     Pages.lotDetail(lotId);
   } catch (e) {}
 };
@@ -641,9 +626,9 @@ Pages.lotNew = function (params = {}) {
           lines.map(l => ({ code: l.line_id, label: `${l.line_code || l.display_id}${l.line_name ? ' / '+l.line_name : ''}` })),
           params.lineId || ''), true)}
         <div class="form-row-2">
-          ${UI.field('生体ステージ', UI.select('stage_life',
-            STAGE_LIST_NEW.map(s => ({ code: s.code, label: s.label })),
-            'L1'))}
+          ${UI.field('ステージ', UI.select('stage_life',
+            STAGE_LIST.map(s => ({ code: s.code, label: s.label })),
+            'L1L2'))}
           ${UI.field('頭数', UI.input('count', 'number', '5', '頭数'))}
         </div>
         <div class="form-row-2">
@@ -680,12 +665,9 @@ Pages._lotSave = async function () {
   if (!data.line_id) { UI.toast('ラインを選択してください', 'error'); return; }
   if (data.hatch_date) data.hatch_date = data.hatch_date.replace(/-/g, '/');
   data.count = +data.count || 1;
-  // 後方互換: stage に stage_life の旧コード対応値を設定
-  // 新設計では stage_life が生体ステージ、stage は飼育ステージ（旧互換）
+  // stage_life をそのまま stage にも設定
   if (data.stage_life && !data.stage) {
-    // 旧コード変換マップ（GAS側の既存ロジックが stage を見る場合に備える）
-    const lifeToOld = { L1:'T0', L2_EARLY:'T1', L2_LATE:'T1', L3_EARLY:'T2A', L3_MID:'T2B', L3_LATE:'T3', PREPUPA:'PREPUPA', PUPA:'PUPA', ADULT:'ADULT' };
-    data.stage = lifeToOld[data.stage_life] || data.stage_life;
+    data.stage = data.stage_life;
   }
   // mat_molt は checkbox → bool
   data.mat_molt = !!data.mat_molt;
@@ -920,7 +902,7 @@ Pages.lotBulk = function (params = {}) {
         </select>`, true)}
         <div class="form-row-2">
           ${UI.field('生体ステージ', `<select id="blk-stage" class="input">
-            ${STAGE_LIST_NEW.map(s =>
+            ${STAGE_LIST.map(s =>
               '<option value="' + s.code + '" ' + (s.code === selectedStage ? 'selected' : '') + '>' + s.label + '</option>'
             ).join('')}
           </select>`, true)}
@@ -1077,7 +1059,7 @@ Pages._blkLineChange = function () {
 // 一括保存
 Pages._blkSave = async function () {
   const lineId = document.getElementById('blk-line')?.value;
-  const stage  = document.getElementById('blk-stage')?.value || 'L1';  // stage_life コード
+  const stage  = document.getElementById('blk-stage')?.value || 'L1L2';
   const hatch  = (document.getElementById('blk-hatch')?.value || '').replace(/-/g, '/');
   if (!lineId) { UI.toast('ラインを選択してください', 'error'); return; }
 
@@ -1089,12 +1071,10 @@ Pages._blkSave = async function () {
   if (btn) { btn.disabled = true; btn.textContent = '⏳ 作成中...'; }
 
   try {
-    // stage = stage_life コード（新設計）。後方互換で旧 stage にもマッピング
-    const lifeToOld = { L1:'T0', L2_EARLY:'T1', L2_LATE:'T1', L3_EARLY:'T2A', L3_MID:'T2B', L3_LATE:'T3', PREPUPA:'PREPUPA', PUPA:'PUPA', ADULT:'ADULT' };
     const res = await apiCall(() => API.lot.createBulk({
       line_id:    lineId,
       stage_life: stage,
-      stage:      lifeToOld[stage] || stage,
+      stage:      stage,
       hatch_date: hatch,
       lots:       rows.map(r => ({
         count:          parseInt(r.count, 10),
@@ -1208,10 +1188,10 @@ function _renderLotSaleActions(lot) {
 
   if (st === 'individualized' || st === 'dissolved') return '';
 
+  // 販売フロー: active → for_sale → listed → sold
   var STATUS_LABELS = {
-    active:   { label:'飼育中',   color:'var(--green)' },
+    active:   { label:'管理中',   color:'var(--green)' },
     for_sale: { label:'販売候補', color:'#9c27b0' },
-    reserved: { label:'予約中',   color:'var(--blue)' },
     listed:   { label:'出品中',   color:'#ff9800' },
     sold:     { label:'販売済み', color:'var(--gold)' },
   };
@@ -1235,17 +1215,13 @@ function _renderLotSaleActions(lot) {
   if (st === 'active') {
     btns = btn('btn-sale-purple', '🛒', '販売候補にする', setFn('for_sale'));
   } else if (st === 'for_sale') {
-    btns = btn('btn-sale-blue',   '📦', '予約する',     setFn('reserved'))
-      + btn('btn-sale-gold',  '💰', 'まとめて販売', soldFn)
-      + btn('btn-sale-orange','✂️', '一部販売',    partFn)
-      + btn('btn-sale-gray',  '↩',  '候補解除',    setFn('active'));
-  } else if (st === 'reserved') {
     btns = btn('btn-sale-orange', '📢', '出品する',     setFn('listed'))
       + btn('btn-sale-gold',  '💰', 'まとめて販売', soldFn)
-      + btn('btn-sale-gray',  '↩',  '予約解除',    setFn('for_sale'));
+      + btn('btn-sale-gray',  '↩',  '候補解除',    setFn('active'));
   } else if (st === 'listed') {
     btns = btn('btn-sale-gold', '💰', 'まとめて販売', soldFn)
-      + btn('btn-sale-gray', '↩', '出品解除', setFn('reserved'));
+      + btn('btn-sale-orange','✂️', '一部販売',    partFn)
+      + btn('btn-sale-gray', '↩', '出品解除',    setFn('for_sale'));
   } else if (st === 'sold') {
     return '<div style="margin-top:8px"><div class="ind-sale-done-msg">'
       + '💰 販売済みです（' + (lot.count || '') + '頭）'
@@ -1272,9 +1248,9 @@ Pages._lotSetSaleStatus = async function (lotId, newStatus) {
     await API.lot.update({ lot_id: lotId, status: newStatus });
     Store.patchDBItem('lots', 'lot_id', lotId, { status: newStatus });
     const msg = newStatus === 'for_sale' ? '販売候補にしました'
-      : newStatus === 'active'   ? '飼育中に戻しました'
-      : newStatus === 'reserved' ? '予約中にしました'
-      : newStatus === 'listed'   ? '出品中にしました'
+      : newStatus === 'active'  ? '管理中に戻しました'
+      : newStatus === 'listed'  ? '出品中にしました'
+      : newStatus === 'sold'    ? '販売済みにしました'
       : 'ステータスを変更しました';
     UI.toast(msg, 'success');
     Pages.lotDetail(lotId);
