@@ -344,9 +344,9 @@ function _indCardHTML(ind) {
   const stClr = stColor[ind.status] || 'var(--text3)';
 
   const icons = [
-    String(ind.guinness_flag) === 'true' ? '🏆' : '',
-    String(ind.parent_flag)   === 'true' ? '👑' : '',
-    String(ind.g200_flag)     === 'true' ? '💪' : '',
+    (String(ind.guinness_flag||'').toUpperCase()==='TRUE'||ind.guinness_flag===1||ind.guinness_flag===true) ? '🏆' : '',
+    (String(ind.parent_flag||'').toUpperCase() === 'TRUE' || ind.parent_flag === 1 || ind.parent_flag === true) ? '👑' : '',
+    (String(ind.g200_flag||'').toUpperCase()==='TRUE'||ind.g200_flag===1||ind.g200_flag===true) ? '💪' : '',
   ].filter(Boolean).join('');
 
   const sexColor = ind.sex === '♂' ? 'var(--male,#5ba8e8)' : ind.sex === '♀' ? 'var(--female,#e87fa0)' : 'var(--text3)';
@@ -479,9 +479,9 @@ function _renderDetail(ind, main) {
   const dispId  = _safeDisplayId(ind);
 
   const icons = [
-    String(ind.guinness_flag) === 'true' ? '<span title="ギネス候補">🏆</span>' : '',
-    String(ind.parent_flag)   === 'true' ? '<span title="種親候補">👑</span>'  : '',
-    String(ind.g200_flag)     === 'true' ? '<span title="200g候補">💪</span>'  : '',
+    (String(ind.guinness_flag||'').toUpperCase()==='TRUE'||ind.guinness_flag===1||ind.guinness_flag===true) ? '<span title="ギネス候補">🏆</span>' : '',
+    (String(ind.parent_flag||'').toUpperCase() === 'TRUE' || ind.parent_flag === 1 || ind.parent_flag === true) ? '<span title="種親候補">👑</span>' : '',
+    (String(ind.g200_flag||'').toUpperCase()==='TRUE'||ind.g200_flag===1||ind.g200_flag===true) ? '<span title="200g候補">💪</span>'  : '',
   ].filter(Boolean).join(' ');
 
   // ── ステータスに応じたアクションボタン群 ─────────────────────
@@ -626,7 +626,10 @@ function _renderDetail(ind, main) {
           <div class="info-list">
             ${_infoRow('血統',
               (bld ? bld.bloodline_name : (ind.bloodline_id || '—')) +
-              ' ' + UI.bloodlineBadge(ind.bloodline_status)
+              (ind.bloodline_status &&
+               String(ind.bloodline_status).toLowerCase() !== 'unknown'
+                ? ' ' + UI.bloodlineBadge(ind.bloodline_status)
+                : '')
             )}
             ${_infoRow('親♂', father ? `${father.display_name}${father.size_mm ? ' ' + father.size_mm + 'mm' : ''}` : (ind.father_par_id || '—'))}
             ${_infoRow('親♀', mother ? `${mother.display_name}${mother.size_mm ? ' ' + mother.size_mm + 'mm' : ''}` : (ind.mother_par_id || '—'))}
@@ -709,11 +712,20 @@ function _renderDetail(ind, main) {
       </div>` : ''}
 
       <!-- 種親昇格 -->
-      ${ind.eclosion_date && !ind.promoted_par_id ? `
+      ${(() => {
+        // current_stage: ADULT / ADULT_PRE / adult (旧) / pupa (蛹→成虫前後)
+        const _stageStr = String(ind.current_stage || '').toUpperCase();
+        const _isAdult  = _stageStr === 'ADULT' || _stageStr === 'ADULT_PRE';
+        // parent_flag: GASから 'TRUE'/'FALSE'/'1'/'0'/true/false で来る可能性
+        const _pfStr    = String(ind.parent_flag || '').toUpperCase();
+        const _hasFlag  = _pfStr === 'TRUE' || _pfStr === '1';
+        const _canPromote = !ind.promoted_par_id && (_isAdult || ind.eclosion_date || _hasFlag);
+        return _canPromote ? `
       <button class="btn btn-gold btn-full"
         onclick="Pages._indPromoteModal('${ind.ind_id}')">
         🌟 種親に昇格する
-      </button>` : ''}
+      </button>` : '';
+      })()}
       ${ind.promoted_par_id ? `
       <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;
         background:rgba(200,168,75,.1);border:1px solid rgba(200,168,75,.3);

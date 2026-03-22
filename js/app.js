@@ -288,7 +288,10 @@ const UI = {
   },
 
   bloodlineBadge(code) {
-    const s = Object.values(BLOODLINE_STATUS).find(x => x.code === code);
+    if (!code) return '';
+    // unknown / UNKNOWN の場合はバッジを出さない
+    if (String(code).toLowerCase() === 'unknown') return '';
+    const s = Object.values(BLOODLINE_STATUS).find(x => x.code === String(code).toLowerCase());
     if (!s) return '';
     return `<span class="badge-sm" style="color:${s.color}">${s.label}</span>`;
   },
