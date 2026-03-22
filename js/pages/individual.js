@@ -784,7 +784,7 @@ function _renderDetail(ind, main) {
               (hasDates ? rows : '<div style="font-size:.82rem;color:var(--text3);padding:4px 0">日付未記録</div>') +
               '</div>' +
               '<button class="btn btn-ghost btn-sm" style="margin-top:8px;font-size:.78rem;width:100%"' +
-              ' onclick="Pages._indDateModal(\'${ind.ind_id}\')">' +
+              ' onclick="Pages._indDateModal(\'" + ind.ind_id + "\')">' +
               '📅 発育日付を入力/更新' +
               '</button>';
           })()}
