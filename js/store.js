@@ -11,6 +11,9 @@
 
 'use strict';
 
+// Version marker — update when deploying to verify cache bust
+console.log('[HerculesOS] store.js v20260325a loaded');
+
 const Store = (() => {
 
   let _state = {

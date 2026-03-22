@@ -17,6 +17,8 @@
 
 'use strict';
 
+console.log('[HerculesOS] individual.js v20260325a loaded');
+
 const Pages = window.Pages || {};
 
 // ────────────────────────────────────────────────────────────────
