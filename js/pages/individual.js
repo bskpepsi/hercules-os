@@ -821,7 +821,7 @@ function _renderDetail(ind, main) {
 
             return '<div class="info-list">' +
               (hasDates ? rows : '<div style="font-size:.82rem;color:var(--text3);padding:4px 0">日付未記録</div>') +
-              '</div>';\
+              '</div>';
           })()}
 
         </div>
