@@ -153,13 +153,9 @@ function _renderSettings(main) {
           }
           // 編集対象: L1〜PREPUPA（前蛹以降は手入力不要）
           const editable = [
-            { code:'L1',       label:'L1'    },
-            { code:'L2_EARLY', label:'L2前期' },
-            { code:'L2_LATE',  label:'L2後期' },
-            { code:'L3_EARLY', label:'L3前期' },
-            { code:'L3_MID',   label:'L3中期' },
-            { code:'L3_LATE',  label:'L3後期' },
-            { code:'PREPUPA',  label:'前蛹'   },
+            { code:'L1L2',    label:'L1L2（L1/L2期）'  },
+            { code:'L3',      label:'L3'               },
+            { code:'PREPUPA', label:'前蛹'              },
           ];
           return '<div style="font-size:.82rem">'
             + '<div style="display:grid;grid-template-columns:80px 1fr 60px;gap:4px;padding:4px 0;'
@@ -183,7 +179,7 @@ function _renderSettings(main) {
                   + '</div>';
               }).join('')
             + '<div style="font-size:.72rem;color:var(--text3);padding:6px 0 2px">'
-            + '💡 例: L1=0, L2前期=30, L2後期=90, L3前期=150, L3中期=240, L3後期=330, 前蛹=450'
+            + '💡 例: L1L2=0（日齢0〜）, L3=150（日齢150〜）, 前蛹=350（日齢350〜）'
             + '</div>'
             + '</div>';
         })()}
@@ -786,7 +782,7 @@ Pages._saveExchangeSettings = async function () {
 
 // ── Phase6: ステージ目安日齢 保存・リセット ───────────────────────
 Pages._saveStageAgeRules = async function () {
-  const codes = ['L1','L2_EARLY','L2_LATE','L3_EARLY','L3_MID','L3_LATE','PREPUPA'];
+  const codes = ['L1L2','L3','PREPUPA'];
 
   // 入力値を収集し minDays の昇順で rules 配列を構築
   const inputs = codes.map(code => {

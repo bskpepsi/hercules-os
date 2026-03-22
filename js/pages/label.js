@@ -11,12 +11,26 @@
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
+// ── ステージコード正規化（ラベル表示用）────────────────────────
+function _normStageForLabel(code) {
+  if (!code) return '';
+  var MAP = {
+    L1:'L1L2', L2_EARLY:'L1L2', L2_LATE:'L1L2',
+    EGG:'L1L2', T0:'L1L2', T1:'L1L2',
+    L3_EARLY:'L3', L3_MID:'L3', L3_LATE:'L3', T2:'L3', T2A:'L3', T2B:'L3', T3:'L3',
+    L1L2:'L1L2', L3:'L3', PREPUPA:'前蛹', PUPA:'蛹',
+    ADULT_PRE:'成虫（未後食）', ADULT:'成虫（活動開始）',
+  };
+  return MAP[code] || code;
+}
+
 // ラベル種別定義
 const LABEL_TYPE_DEFS = [
   { code: 'egg_lot',   label: '① 卵管理',     target: 'LOT', desc: '採卵後・孵化日/頭数は後で補完' },
   { code: 'multi_lot', label: '② 複数頭飼育', target: 'LOT', desc: 'ロット管理用（記録表付き）' },
   { code: 'ind_fixed', label: '③ 個別飼育',   target: 'IND', desc: '個体管理用（履歴引継ぎ）' },
   { code: 'set',       label: '④ 産卵セット', target: 'SET', desc: '親情報・開始日' },
+  { code: 'parent',    label: '⑤ 種親',       target: 'PAR', desc: '種親QR・血統タグ' },
 ];
 
 // ラベルデータ構築
@@ -32,23 +46,35 @@ Pages.labelGen = function (params = {}) {
 
   const inds  = Store.filterIndividuals({ status: 'alive' });
   const lots  = Store.filterLots({ status: 'active' });
+  const pars  = Store.getDB('parents') || [];
+
+  // targetId が確定している場合は選択UIを省略してプレビューへ直行
+  const isDirectMode = !!params.targetId;
 
   function render() {
     main.innerHTML = `
       ${UI.header('ラベル生成', {})}
       <div class="page-body">
 
+        ${!isDirectMode ? `
         <div class="card">
           <div class="card-title">ラベル対象</div>
-          <div style="display:flex;gap:8px;margin-bottom:10px">
-            <button class="pill ${targetType==='IND'?'active':''}" onclick="Pages._lblSetType('IND')">個体(IND)</button>
-            <button class="pill ${targetType==='LOT'?'active':''}" onclick="Pages._lblSetType('LOT')">ロット(LOT)</button>
+          <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+            <button class="pill ${targetType==='IND'?'active':''}" onclick="Pages._lblSetType('IND')">個体</button>
+            <button class="pill ${targetType==='LOT'?'active':''}" onclick="Pages._lblSetType('LOT')">ロット</button>
+            <button class="pill ${targetType==='PAR'?'active':''}" onclick="Pages._lblSetType('PAR')">種親</button>
           </div>
           ${targetType === 'IND' ? `
             <select id="lbl-target" class="input" onchange="Pages._lblSetTarget(this.value)">
               <option value="">個体を選択...</option>
               ${inds.map(i => `<option value="${i.ind_id}" ${i.ind_id===targetId?'selected':''}>
                 ${i.display_id} ${i.sex||''} ${i.latest_weight_g?'('+i.latest_weight_g+'g)':''}</option>`).join('')}
+            </select>`
+          : targetType === 'PAR' ? `
+            <select id="lbl-target" class="input" onchange="Pages._lblSetTarget(this.value)">
+              <option value="">種親を選択...</option>
+              ${pars.filter(p=>p.status==='active'||!p.status).map(p => `<option value="${p.par_id}" ${p.par_id===targetId?'selected':''}>
+                ${p.parent_display_id||p.display_name||p.par_id} ${p.sex||''} ${p.size_mm?p.size_mm+'mm':''}</option>`).join('')}
             </select>` : `
             <select id="lbl-target" class="input" onchange="Pages._lblSetTarget(this.value)">
               <option value="">ロットを選択...</option>
@@ -68,7 +94,7 @@ Pages.labelGen = function (params = {}) {
           <div id="lbl-type-desc" style="font-size:.72rem;color:var(--text3);margin-top:4px">
             ${LABEL_TYPE_DEFS.find(t => t.code === labelType)?.desc || ''}
           </div>
-        </div>
+        </div>` : ''}
 
         <!-- プレビューエリア -->
         <div class="card" id="lbl-preview-card">
@@ -182,6 +208,35 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         records:      records.slice().sort((a,b) => String(b.record_date).localeCompare(String(a.record_date))).slice(0, 8),
         label_type:   labelType || autoType,
       };
+    } else if (targetType === 'PAR') {
+      // 種親ラベル: QR + 管理コード + 血統タグ
+      const par = (Store.getDB('parents') || []).find(p => p.par_id === targetId) || {};
+      const pTags = (() => {
+        try { return JSON.parse(par.paternal_tags || '[]') || []; } catch(e) { return []; }
+      })();
+      const mTags = (() => {
+        try { return JSON.parse(par.maternal_tags || '[]') || []; } catch(e) { return []; }
+      })();
+      ld = {
+        qr_text:      `PAR:${par.par_id || targetId}`,
+        display_id:   par.parent_display_id || par.display_name || targetId,
+        line_code:    '',
+        stage_code:   '',
+        sex:          par.sex  || '',
+        size_mm:      par.size_mm ? par.size_mm + 'mm' : '',
+        weight_g:     par.weight_g ? par.weight_g + 'g' : '',
+        locality:     par.locality || '',
+        generation:   par.generation || '',
+        eclosion_date:par.eclosion_date || '',
+        paternal_raw: par.paternal_raw || '',
+        maternal_raw: par.maternal_raw || '',
+        paternal_tags:pTags,
+        maternal_tags:mTags,
+        note_private: par.note || '',
+        hatch_date:   '',
+        records:      [],
+        label_type:   'parent',
+      };
     } else {
       const set = (Store.getDB('pairings') || []).find(p => p.set_id === targetId) || {};
       ld = {
@@ -257,7 +312,8 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
 // ── HTMLラベル構築 ────────────────────────────────────────────────
 function _buildLabelHTML(ld, qrSrc) {
   const lt = ld.label_type || 'ind_fixed';
-  const stageLbl = typeof stageLabel === 'function' ? (stageLabel(ld.stage_code) || ld.stage_code || '') : (ld.stage_code || '');
+  const _rawStage = typeof _normStageForLabel === 'function' ? _normStageForLabel(ld.stage_code) : (ld.stage_code || '');
+  const stageLbl = typeof stageLabel === 'function' ? (stageLabel(_rawStage) || _rawStage || '') : _rawStage;
   const matLbl   = ld.mat_type ? (ld.mat_type + (ld.mat_molt ? '(M)' : '')) : '';
   const noteShort = (ld.note_private || '').slice(0, 40);
   const qrHtml   = qrSrc ? `<img src="${qrSrc}" style="width:45px;height:45px;display:block">` : '<div style="width:45px;height:45px;background:#eee;display:flex;align-items:center;justify-content:center;font-size:8px">QR</div>';
@@ -271,6 +327,9 @@ function _buildLabelHTML(ld, qrSrc) {
 
   if (lt === 'set') {
     return _buildSetLabelHTML(ld, qrHtml);
+  }
+  if (lt === 'parent') {
+    return _buildParentLabelHTML(ld, qrHtml);
   }
 
   const isLot = lt === 'multi_lot' || lt === 'egg_lot';
@@ -370,6 +429,45 @@ function _buildLabelHTML(ld, qrSrc) {
 
   <!-- 最下段: 内部メモ要約 -->
   <div class="lbl-foot">${noteShort ? '📝 ' + noteShort : ''}</div>
+</div>
+</body></html>`;
+}
+
+// ── 種親ラベル ──────────────────────────────────────────────────
+function _buildParentLabelHTML(ld, qrHtml) {
+  const tagHtml = (tags, color) => tags.map(t =>
+    `<span style="font-size:5.5px;padding:1px 4px;border-radius:8px;background:${color}22;color:${color};border:1px solid ${color}44">${t}</span>`
+  ).join(' ');
+
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>
+  @page { size: 70mm 50mm; margin: 0; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { width:70mm; height:50mm; font-family:'Noto Sans JP',sans-serif; font-size:7px; background:#fff; color:#111; overflow:hidden; }
+  @media print { @page { size: 70mm 50mm; margin: 0; } body { -webkit-print-color-adjust: exact; } }
+</style></head><body>
+<div style="width:70mm;height:50mm;display:flex;flex-direction:column">
+  <div style="background:#c8a84b;color:#1a1200;font-size:7px;font-weight:700;padding:1mm 2mm;height:4mm;display:flex;align-items:center">
+    種親 &nbsp;|&nbsp; HerculesOS
+  </div>
+  <div style="display:flex;flex:1;padding:1.5mm 2mm;gap:2mm">
+    <div style="flex-shrink:0">${qrHtml}</div>
+    <div style="flex:1;min-width:0">
+      <div style="font-size:9px;font-weight:700;color:#8a6a00;font-family:monospace;margin-bottom:1mm">${ld.display_id}</div>
+      <div style="display:flex;gap:3mm;margin-bottom:1mm">
+        ${ld.sex   ? `<span style="font-size:8px;font-weight:700;color:${ld.sex==='♂'?'#3366cc':'#cc3366'}">${ld.sex}</span>` : ''}
+        ${ld.size_mm ? `<span style="font-size:7px;font-weight:700;color:#2d7a52">${ld.size_mm}</span>` : ''}
+        ${ld.weight_g ? `<span style="font-size:6.5px;color:#555">${ld.weight_g}</span>` : ''}
+      </div>
+      ${ld.locality || ld.generation ? `<div style="font-size:6px;color:#777;margin-bottom:1mm">${[ld.locality,ld.generation].filter(Boolean).join(' / ')}</div>` : ''}
+      ${ld.eclosion_date ? `<div style="font-size:6px;color:#777;margin-bottom:1.5mm">羽化: ${ld.eclosion_date}</div>` : ''}
+      ${ld.paternal_raw ? `<div style="font-size:5.5px;color:#555;margin-bottom:1mm">♂: ${ld.paternal_raw.slice(0,35)}</div>` : ''}
+      ${ld.paternal_tags && ld.paternal_tags.length ? `<div style="display:flex;flex-wrap:wrap;gap:2px;margin-bottom:1mm">${tagHtml(ld.paternal_tags.slice(0,5),'#3366cc')}</div>` : ''}
+      ${ld.maternal_raw ? `<div style="font-size:5.5px;color:#555;margin-bottom:1mm">♀: ${ld.maternal_raw.slice(0,35)}</div>` : ''}
+      ${ld.maternal_tags && ld.maternal_tags.length ? `<div style="display:flex;flex-wrap:wrap;gap:2px">${tagHtml(ld.maternal_tags.slice(0,5),'#cc3366')}</div>` : ''}
+    </div>
+  </div>
 </div>
 </body></html>`;
 }

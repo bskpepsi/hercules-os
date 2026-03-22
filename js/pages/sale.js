@@ -10,11 +10,13 @@
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-// display_id 正規化（個体カード・販売履歴で IND- プレフィクスを除去）
+// display_id 正規化（IND- / LOT- / PAR- プレフィクスを除去）
 function _saleCleanDisplay(raw) {
   if (!raw) return '—';
   var s = String(raw).trim();
-  if (s.startsWith('IND-')) s = s.slice(4);
+  if (/^(IND|LOT|PAR)-/i.test(s)) s = s.replace(/^(IND|LOT|PAR)-/i, '');
+  // 純粋な内部IDは表示しない
+  if (/^[0-9a-f]{8,}$/i.test(s)) return '—';
   return s || '—';
 }
 

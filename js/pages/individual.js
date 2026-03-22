@@ -6,7 +6,7 @@
 // 修正履歴:
 //   - ステージ新6区分に統一（L1L2/L3/前蛹/蛹/成虫（未後食）/成虫（活動開始））
 //   - ライン絞り込みフィルタを追加
-//   - ステータスフィルタを「全状態/飼育中/販売候補/出品中/販売済/死亡」に整理
+//   - ステータスフィルタを「全状態/飼育中/販売候補/出品中/販売済み/死亡」に整理
 //   - IND- プレフィックスを display_id から除去して表示（normalize.js 優先）
 //   - age.days undefined 問題修正（Store.calcAge を常に使う）
 //   - sold 個体に「予約」ボタンを出さない
@@ -210,7 +210,7 @@ function _statusLabel(code) {
     'pupa':'飼育中', 'adult':'飼育中',
     'seed_candidate':'飼育中', 'seed_reserved':'飼育中',
     'for_sale':'販売候補', 'listed':'出品中',
-    'sold':'販売済', 'dead':'死亡',
+    'sold':'販売済み', 'dead':'死亡',
   };
   return map[code] || '全て';
 }
@@ -239,7 +239,7 @@ function _statusFilters(active) {
     { val:'alive',   label:'飼育中' },
     { val:'for_sale',label:'販売候補' },
     { val:'listed',  label:'出品中' },
-    { val:'sold',    label:'販売済' },
+    { val:'sold',    label:'販売済み' },
     { val:'dead',    label:'死亡' },
   ];
   return statuses.map(s =>
@@ -331,7 +331,7 @@ function _indCardHTML(ind) {
   const stMap = {
     alive:'飼育中', larva:'飼育中', prepupa:'飼育中', pupa:'飼育中', adult:'飼育中',
     seed_candidate:'飼育中', seed_reserved:'飼育中',
-    for_sale:'販売候補', listed:'出品中', sold:'販売済', dead:'死亡',
+    for_sale:'販売候補', listed:'出品中', sold:'販売済み', dead:'死亡',
   };
   const stColor = {
     alive:'var(--green)', larva:'var(--green)', prepupa:'var(--green)',
@@ -405,13 +405,13 @@ Pages._indQrScan = function () {
 };
 
 Pages._indStatusModal = function () {
-  // pill と選択肢を一致させる: 全状態 / 飼育中 / 販売候補 / 出品中 / 販売済 / 死亡
+  // pill と選択肢を一致させる: 全状態 / 飼育中 / 販売候補 / 出品中 / 販売済み / 死亡
   const statuses = [
     { code:'',        label:'全状態' },
     { code:'alive',   label:'飼育中' },
     { code:'for_sale',label:'販売候補' },
     { code:'listed',  label:'出品中' },
-    { code:'sold',    label:'販売済' },
+    { code:'sold',    label:'販売済み' },
     { code:'dead',    label:'死亡' },
   ];
   const html = statuses.map(s =>
@@ -513,7 +513,7 @@ function _renderDetail(ind, main) {
       ${flagBtn}
     </div>`;
   } else if (ind.status === 'listed') {
-    // 出品中 → 販売済 / 候補に戻す / 死亡
+    // 出品中 → 販売済み / 候補に戻す / 死亡
     statusButtons = `<div style="display:flex;gap:8px;flex-wrap:wrap">
       ${deadBtn}
       <button class="btn btn-ghost btn-sm" onclick="Pages._indMarkSold('${ind.ind_id}')">💰 販売済みにする</button>

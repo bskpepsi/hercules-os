@@ -123,11 +123,10 @@ function _parentCard(p) {
 
   // ── ①ステータスバッジ ──
   const STATUS_LABEL = {
-    active:   { label: '現役',  color: 'var(--green)' },
-    retired:  { label: '引退',  color: 'var(--text3)' },
-    dead:     { label: '死亡',  color: 'var(--red)'   },
-    sold:     { label: '譲渡',  color: 'var(--amber)'  },
-    reserved: { label: '予約',  color: 'var(--blue)'  },
+    active:  { label: '現役',   color: 'var(--green)' },
+    retired: { label: '引退',   color: 'var(--text3)' },
+    dead:    { label: '死亡',   color: 'var(--red)'   },
+    sold:    { label: '売却済み', color: 'var(--amber)' },
   };
   const st = STATUS_LABEL[p.status] || { label: p.status || '—', color: 'var(--text3)' };
   const statusBadge = `<span style="font-size:.7rem;padding:2px 7px;border-radius:20px;background:rgba(0,0,0,.25);color:${st.color};border:1px solid ${st.color}">${st.label}</span>`;
@@ -277,72 +276,136 @@ Pages.parentDetail = async function (parIdParam) {
     ${UI.header(pid, { back: true, action: { fn: `_parentEditMenu('${parId}')`, icon: '…' } })}
     <div class="page-body">
 
-      <!-- 基本情報カード -->
-      <div class="detail-card">
-        <!-- ヘッダー行 -->
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;
-          padding-bottom:10px;border-bottom:1px solid var(--border)">
-          <span style="font-family:var(--font-mono);font-size:1.05rem;font-weight:700;
-            color:var(--gold)">${pid}</span>
-          <span style="font-size:1.2rem;color:${p.sex==='♂'?'var(--male)':'var(--female)'}">
-            ${p.sex || ''}</span>
-          <span style="font-size:.9rem;font-weight:700;
-            color:${p.size_mm?'var(--green)':'var(--text3)'};margin-left:4px">
-            ${p.size_mm ? p.size_mm + 'mm' : '未計測'}</span>
-          <span style="margin-left:auto">
-            <span style="font-size:.7rem;padding:2px 8px;border-radius:20px;
-              border:1px solid currentColor;
-              color:${p.status==='active'?'var(--green)':p.status==='sold'?'var(--amber)':'var(--text3)'}">
-              ${_parentStatusLabel(p.status)}
-            </span>
-          </span>
+      <!-- ヘッダーカード -->
+      <div class="card card-gold">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:2rem;color:${p.sex==='♂'?'var(--male)':'var(--female)'}">${p.sex||'?'}</span>
+          <div style="flex:1">
+            <div style="font-family:var(--font-mono);font-size:1.05rem;font-weight:700;color:var(--gold)">${pid}</div>
+            <div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap">
+              ${p.size_mm ? `<span class="badge" style="background:rgba(200,168,75,.15);color:var(--gold)">${p.size_mm}mm</span>` : ''}
+              ${p.weight_g ? `<span class="badge" style="background:var(--surface2);color:var(--text2)">${p.weight_g}g</span>` : ''}
+              <span style="font-size:.7rem;padding:2px 8px;border-radius:20px;border:1px solid currentColor;
+                color:${p.status==='active'?'var(--green)':p.status==='sold'?'var(--amber)':'var(--text3)'}">
+                ${_parentStatusLabel(p.status)}
+              </span>
+            </div>
+          </div>
         </div>
-        ${pairingBadge ? `<div style="margin-bottom:10px">${pairingBadge}</div>` : ''}
-
-        <!-- 詳細行 -->
-        ${UI.detailRow('管理コード', pid)}
-        ${UI.detailRow('性別', p.sex || '—')}
-        ${UI.detailRow('サイズ', p.size_mm ? p.size_mm + 'mm' : '未計測')}
-        ${UI.detailRow('産地', p.locality || '—')}
-        ${UI.detailRow('世代', p.generation || '—')}
-        ${UI.detailRow('父親サイズ', p.father_parent_size_mm ? p.father_parent_size_mm + 'mm' : '—')}
-        ${UI.detailRow('母親サイズ', p.mother_parent_size_mm ? p.mother_parent_size_mm + 'mm' : '—')}
-        ${UI.detailRow('羽化日', p.eclosion_date || '—')}
-        ${UI.detailRow('後食開始日',
-          p.feeding_start_date
-            ? `<span style="color:var(--green)">${p.feeding_start_date}</span>`
-            : '<span style="color:var(--amber)">未設定</span>')}
-        ${UI.detailRow('交配可能日',
-          p.pairing_ready_date
-            ? `<span style="color:var(--blue)">${p.pairing_ready_date}</span>`
-            : '—')}
+        ${pairingBadge ? `<div style="margin-top:10px">${pairingBadge}</div>` : ''}
       </div>
 
+      <!-- クイックアクション -->
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-ghost" style="flex:1"
+          onclick="routeTo('parent-new',{editId:'${parId}'})">✏️ 編集</button>
+        <button class="btn btn-ghost" style="flex:1"
+          onclick="routeTo('label-gen',{targetType:'PAR',targetId:'${parId}',autoGenerate:true})">🏷 ラベル/QR</button>
+      </div>
+
+      <!-- 後食開始日未設定警告（編集フォームへ誘導） -->
       ${!p.feeding_start_date ? `
-      <button class="btn btn-primary btn-full" style="margin-top:4px"
-        onclick="_parentSetFeeding('${parId}')">
-        🍽️ 後食開始日を設定
+      <button class="btn btn-full"
+        style="background:rgba(230,150,0,.15);color:var(--amber);border:1px solid rgba(230,150,0,.4);font-weight:700"
+        onclick="routeTo('parent-new',{editId:'${parId}'})">
+        🍽️ 後食開始日が未設定です — 編集して設定する
       </button>` : ''}
 
-      ${tags.length ? `
-      <div class="detail-card">
-        <div class="detail-label">血統タグ</div>
-        <div class="tag-row">${tags.map(t=>`<span class="tag tag-gold">${t}</span>`).join('')}</div>
-        ${p.bloodline_raw ? `<div class="detail-raw text-mono" style="margin-top:4px;font-size:.78rem;color:var(--text2)">${p.bloodline_raw}</div>` : ''}
-            ${(p.paternal_raw || p.maternal_raw) ? `
-            <div style="margin-top:6px;font-size:.75rem">
-              ${p.paternal_raw ? `<div><span style="color:var(--text3)">父系:</span> <span class="text-mono">${p.paternal_raw}</span></div>` : ''}
-              ${p.maternal_raw ? `<div><span style="color:var(--text3)">母系:</span> <span class="text-mono">${p.maternal_raw}</span></div>` : ''}
-            </div>` : ''}
+      <!-- 本人情報 -->
+      <div class="accordion" id="acc-par-basic">
+        <div class="acc-hdr open" onclick="_toggleAcc('acc-par-basic')">本人情報 <span class="acc-arrow">▼</span></div>
+        <div class="acc-body open">
+          <div class="info-list">
+            ${UI.detailRow('管理コード', pid)}
+            ${UI.detailRow('性別',    p.sex || '—')}
+            ${UI.detailRow('サイズ',  p.size_mm ? p.size_mm + 'mm' : '未計測')}
+            ${p.weight_g ? UI.detailRow('体重', p.weight_g + 'g') : ''}
+            ${UI.detailRow('産地',    p.locality   || '—')}
+            ${UI.detailRow('世代',    p.generation || '—')}
+            ${UI.detailRow('羽化日',  p.eclosion_date || '—')}
+            ${UI.detailRow('後食開始日',
+              p.feeding_start_date
+                ? `<span style="color:var(--green)">${p.feeding_start_date}</span>`
+                : '<span style="color:var(--amber)">未設定</span>')}
+            ${UI.detailRow('交配可能日',
+              p.pairing_ready_date
+                ? `<span style="color:var(--blue)">${p.pairing_ready_date}</span>`
+                : '—')}
+          </div>
+        </div>
+      </div>
+
+      <!-- 血統・親情報 -->
+      <div class="accordion" id="acc-par-blood">
+        <div class="acc-hdr open" onclick="_toggleAcc('acc-par-blood')">血統・親情報 <span class="acc-arrow">▼</span></div>
+        <div class="acc-body open">
+          <div class="info-list">
+            ${(p.father_parent_size_mm || p.mother_parent_size_mm) ? `
+              ${UI.detailRow('父親サイズ', p.father_parent_size_mm ? p.father_parent_size_mm + 'mm' : '—')}
+              ${UI.detailRow('母親サイズ', p.mother_parent_size_mm ? p.mother_parent_size_mm + 'mm' : '—')}
+            ` : ''}
+          </div>
+          ${(p.paternal_raw || pTags.length) ? `
+          <div style="margin-top:8px;padding:10px;background:rgba(91,168,232,.06);border-radius:8px;border:1px solid rgba(91,168,232,.2)">
+            <div style="font-size:.72rem;font-weight:700;color:var(--male);margin-bottom:4px">♂ 血統（父方）</div>
+            ${p.paternal_raw ? `<div style="font-size:.8rem;color:var(--text2);font-family:var(--font-mono);word-break:break-all;margin-bottom:6px">${p.paternal_raw}</div>` : ''}
+            ${pTags.length ? `<div style="display:flex;flex-wrap:wrap;gap:4px">${pTags.map(t=>`<span style="font-size:.72rem;padding:2px 8px;border-radius:20px;background:rgba(91,168,232,.12);color:var(--male);border:1px solid rgba(91,168,232,.3)">${t}</span>`).join('')}</div>` : ''}
+          </div>` : ''}
+          ${(p.maternal_raw || mTags.length) ? `
+          <div style="margin-top:8px;padding:10px;background:rgba(232,127,160,.06);border-radius:8px;border:1px solid rgba(232,127,160,.2)">
+            <div style="font-size:.72rem;font-weight:700;color:var(--female);margin-bottom:4px">♀ 血統（母方）</div>
+            ${p.maternal_raw ? `<div style="font-size:.8rem;color:var(--text2);font-family:var(--font-mono);word-break:break-all;margin-bottom:6px">${p.maternal_raw}</div>` : ''}
+            ${mTags.length ? `<div style="display:flex;flex-wrap:wrap;gap:4px">${mTags.map(t=>`<span style="font-size:.72rem;padding:2px 8px;border-radius:20px;background:rgba(232,127,160,.12);color:var(--female);border:1px solid rgba(232,127,160,.3)">${t}</span>`).join('')}</div>` : ''}
+          </div>` : ''}
+          ${(!p.paternal_raw && !p.maternal_raw && !pTags.length && !mTags.length) ? `
+          <div style="font-size:.8rem;color:var(--text3);padding:8px 0">血統情報なし — 編集から入力できます</div>` : ''}
+        </div>
+      </div>
+
+      <!-- 入手・実績 -->
+      ${(p.source || p.purchase_date || p.achievements || p.note) ? `
+      <div class="accordion" id="acc-par-misc">
+        <div class="acc-hdr" onclick="_toggleAcc('acc-par-misc')">入手・実績 <span class="acc-arrow">▼</span></div>
+        <div class="acc-body">
+          <div class="info-list">
+            ${p.source       ? UI.detailRow('入手元', p.source)       : ''}
+            ${p.purchase_date? UI.detailRow('入手日', p.purchase_date) : ''}
+            ${p.achievements ? UI.detailRow('実績',   p.achievements)  : ''}
+            ${p.note         ? UI.detailRow('メモ',   p.note)          : ''}
+            ${p.origin_type === 'bred'      ? UI.detailRow('区分', '<span style="color:var(--green);font-weight:600">🌱 自家産（昇格）</span>') : ''}
+            ${p.origin_type === 'purchased' ? UI.detailRow('区分', '🛒 購入') : ''}
+            ${p.origin_individual_id ? UI.detailRow('元個体', (() => {
+              // IND-プレフィックスを除去して表示。Store から display_id を引けるなら優先。
+              const _origInd = Store.getIndividual ? Store.getIndividual(p.origin_individual_id) : null;
+              const _origDisp = _origInd
+                ? (_origInd.display_id || '').replace(/^IND-/i, '')
+                : String(p.origin_individual_id).replace(/^IND-/i, '');
+              return `<span style="cursor:pointer;color:var(--blue)"
+                onclick="routeTo('ind-detail',{indId:'${p.origin_individual_id}'})"
+              >${_origDisp || '—'}</span>`;
+            })()) : ''}
+          </div>
+        </div>
       </div>` : ''}
 
-      ${(pTags.length || mTags.length || cTags.length) ? `
-      <div class="detail-card">
-        <div class="detail-label">系統タグ</div>
-        <div class="tag-row-label">父系: ${pTags.map(t=>`<span class="tag tag-blue">${t}</span>`).join('') || '—'}</div>
-        <div class="tag-row-label">母系: ${mTags.map(t=>`<span class="tag tag-amber">${t}</span>`).join('') || '—'}</div>
-        <div class="tag-row-label">子世代: ${cTags.map(t=>`<span class="tag tag-green">${t}</span>`).join('') || '—'}</div>
-      </div>` : ''}
+      <!-- ステータス操作 -->
+      <div style="margin-top:12px">
+        <div style="font-size:.72rem;font-weight:700;color:var(--text3);letter-spacing:.06em;margin-bottom:6px">ステータス操作</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          ${p.status !== 'active' ? `
+          <button class="btn btn-ghost btn-sm" style="color:var(--green);border-color:var(--green)"
+            onclick="_parentChangeStatus('${parId}','active')">✅ 現役に戻す</button>` : ''}
+          ${p.status === 'active' ? `
+          <button class="btn btn-ghost btn-sm"
+            onclick="_parentChangeStatus('${parId}','retired')">📦 引退にする</button>` : ''}
+          ${p.status !== 'sold' ? `
+          <button class="btn btn-ghost btn-sm" style="color:var(--amber);border-color:var(--amber)"
+            onclick="_parentChangeStatus('${parId}','sold')">💴 売却済みにする</button>` : ''}
+          ${p.status !== 'dead' ? `
+          <button class="btn btn-ghost btn-sm" style="color:var(--red,#e05050);border-color:var(--red,#e05050);font-size:.75rem;opacity:.75"
+            onclick="_parentChangeStatus('${parId}','dead')">💀 死亡として記録</button>` : ''}
+        </div>
+      </div>
 
       <div id="pairing-stats-section">
         <div style="display:flex;justify-content:space-between;align-items:center;margin:12px 0 4px">
@@ -355,7 +418,7 @@ Pages.parentDetail = async function (parIdParam) {
 
     </div>`;
 
-    // ペアリング管理を非同期ロード（♂♀両対応）
+        // ペアリング管理を非同期ロード（♂♀両対応）
     _loadPairingManagement(parId);
 
   } catch (err) {
@@ -944,20 +1007,41 @@ async function _phSave(maleParId) {
 // ════════════════════════════════════════════════════════════════
 // ── ユーティリティ ───────────────────────────────────────────
 
+// 血統タグ自動抽出（クライアント側）
+Pages._parAutoTags = function (srcFieldName, targetInputId) {
+  const srcEl = document.querySelector('[name="' + srcFieldName + '"]');
+  const tgtEl = document.getElementById(targetInputId);
+  if (!srcEl || !tgtEl) { UI.toast('フィールドが見つかりません', 'error'); return; }
+  const raw      = srcEl.value.trim();
+  const extracted = _clientExtractTags(raw);
+  if (!extracted.length) { UI.toast('タグを抽出できませんでした（手動で入力してください）', 'info'); return; }
+  // 既存タグと重複除去してマージ
+  const existing = tgtEl.value.split(',').map(t => t.trim()).filter(Boolean);
+  const merged   = [...new Set([...existing, ...extracted])];
+  tgtEl.value    = merged.join(', ');
+  UI.toast(extracted.length + '件のタグを抽出しました', 'success');
+};
+
 // ステータスラベル変換
 function _parentStatusLabel(s) {
   const map = {
-    active:   '活動中',
-    retired:  '引退',
-    dead:     '死亡',
-    sold:     '売却済',
-    reserved: '確保中',
+    active:  '現役',     // 活動中→現役に統一
+    retired: '引退',
+    dead:    '死亡',
+    sold:    '売却済み', // 売却済→売却済みに統一
   };
   return map[s] || s || '—';
 }
 
-function _parseTags(json) {
-  try { return JSON.parse(json) || []; } catch(e) { return []; }
+function _parseTags(raw) {
+  if (!raw) return [];
+  // JSON配列形式
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed.map(t => String(t).trim()).filter(Boolean);
+  } catch(e) {}
+  // カンマ区切り文字列形式
+  return String(raw).split(',').map(t => t.trim()).filter(Boolean);
 }
 
 function _clientExtractTags(raw) {
@@ -989,6 +1073,13 @@ Pages.parentNew = function (params = {}) {
   const blds   = Store.getDB('bloodlines') || [];
   const v = (f, d = '') => par ? (par[f] !== undefined && par[f] !== null ? par[f] : d) : (params[f] || d);
 
+  // 編集時のIDをグローバルに保持（戻るボタン用）
+  window.__parFormEditId = isEdit ? params.editId : '';
+
+  // 初期タグ値（カンマ区切り文字列に変換して表示）
+  const initPTags = _parseTags(v('paternal_tags')).join(', ');
+  const initMTags = _parseTags(v('maternal_tags')).join(', ');
+
   main.innerHTML = `
     ${UI.header(isEdit ? '種親を編集' : '種親を登録', { back: true })}
     <div class="page-body">
@@ -1019,19 +1110,30 @@ Pages.parentNew = function (params = {}) {
             UI.input('mother_parent_size_mm', 'number', v('mother_parent_size_mm'), '例: 65'))}
         </div>
 
-        <div class="form-title">血統・産地</div>
-        ${UI.field('血統（選択）',
-          UI.select('bloodline_id',
-            blds.map(b => ({ code: b.bloodline_id, label: b.abbreviation || b.bloodline_name })),
-            v('bloodline_id')))}
-        ${UI.field('血統原文（ヤフオク等の表記）',
-          UI.input('bloodline_raw', 'text', v('bloodline_raw'), '例: U6SA-GTR.RU01U6SAティー×FFOFA2No113×T117R'))}
-        <div class="form-row-2">
-          ${UI.field('父系原文',
-            UI.input('paternal_raw', 'text', v('paternal_raw'), '例: U6SA-GTR（父方）'))}
-          ${UI.field('母系原文',
-            UI.input('maternal_raw', 'text', v('maternal_raw'), '例: FF1710F（母方）'))}
+        <div class="form-title">血統（♂系）</div>
+        ${UI.field('♂血統原文',
+          UI.input('paternal_raw', 'text', v('paternal_raw'), '例: U6SA-GTR.RU01U6SAティー'))}
+        <div style="display:flex;gap:6px;align-items:flex-start">
+          <div style="flex:1">
+            ${UI.field('♂血統タグ（カンマ区切り）',
+              '<input type="text" name="paternal_tags" id="par-ptags" class="input" value="' + initPTags + '" placeholder="例: FF,T117,WF1">')}
+          </div>
+          <button type="button" class="btn btn-ghost btn-sm" style="margin-top:22px;flex-shrink:0"
+            onclick="Pages._parAutoTags('paternal_raw','par-ptags')">自動抽出</button>
         </div>
+
+        <div class="form-title">血統（♀系）</div>
+        ${UI.field('♀血統原文',
+          UI.input('maternal_raw', 'text', v('maternal_raw'), '例: FF1710F（母方）'))}
+        <div style="display:flex;gap:6px;align-items:flex-start">
+          <div style="flex:1">
+            ${UI.field('♀血統タグ（カンマ区切り）',
+              '<input type="text" name="maternal_tags" id="par-mtags" class="input" value="' + initMTags + '" placeholder="例: FOX,LS,CBF2">')}
+          </div>
+          <button type="button" class="btn btn-ghost btn-sm" style="margin-top:22px;flex-shrink:0"
+            onclick="Pages._parAutoTags('maternal_raw','par-mtags')">自動抽出</button>
+        </div>
+
         ${UI.field('産地',
           UI.input('locality', 'text', v('locality', 'Guadeloupe')))}
 
@@ -1060,7 +1162,7 @@ Pages.parentNew = function (params = {}) {
 
         <div style="display:flex;gap:10px;margin-top:8px">
           <button type="button" class="btn btn-ghost" style="flex:1"
-            onclick="Store.back()">戻る</button>
+            onclick="window.__parFormEditId ? routeTo('parent-detail',{parId:window.__parFormEditId}) : Store.back()">戻る</button>
           <button type="button" class="btn btn-primary" style="flex:2"
             onclick="Pages._parV2Save('${isEdit ? params.editId : ''}')">
             ${isEdit ? '更新する' : '登録する'}
@@ -1082,6 +1184,12 @@ Pages._parV2Save = async function (editId) {
   ['eclosion_date','feeding_start_date','purchase_date'].forEach(k => {
     if (data[k]) data[k] = data[k].replace(/-/g, '/');
   });
+  // タグをカンマ区切り文字列 → JSON配列文字列に変換して保存
+  ['paternal_tags','maternal_tags'].forEach(k => {
+    const raw = data[k] || '';
+    const arr = String(raw).split(',').map(t => t.trim()).filter(Boolean);
+    data[k] = arr.length ? JSON.stringify(arr) : '';
+  });
 
   try {
     if (editId) {
@@ -1101,19 +1209,12 @@ Pages._parV2Save = async function (editId) {
 // … メニュー（編集 / ステータス変更 / 後食日設定）
 // ════════════════════════════════════════════════════════════════
 function _parentEditMenu(parId) {
-  const p = Store.getParent(parId);
-  if (!p) return;
+  // 状態操作・後食日設定は詳細画面下部から行う。ここは補助操作のみ。
   UI.actionSheet([
     { label: '✏️ 種親情報を編集',
       fn: () => routeTo('parent-new', { editId: parId }) },
     { label: '🏷 ラベル/QR発行',
-      fn: () => routeTo('label-gen', { targetType: 'PAR', targetId: parId, labelType: 'parent', autoGenerate: true }) },
-    { label: '🍽️ 後食開始日を設定',
-      fn: () => _parentSetFeeding(parId) },
-    { label: p.status === 'active' ? '📦 引退にする' : '✅ 現役に戻す',
-      fn: () => _parentChangeStatus(parId, p.status === 'active' ? 'retired' : 'active') },
-    { label: '💴 売却済みにする',
-      fn: () => _parentChangeStatus(parId, 'sold') },
+      fn: () => routeTo('label-gen', { targetType: 'PAR', targetId: parId, autoGenerate: true }) },
   ]);
 }
 

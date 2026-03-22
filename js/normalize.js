@@ -23,7 +23,14 @@
 // 旧ステージコード → 新ステージコード変換マップ
 // ════════════════════════════════════════════════════════════════
 var _STAGE_OLD_TO_NEW = {
-  T0: 'L1', T1: 'L2_EARLY', T2A: 'L3_EARLY', T2B: 'L3_MID', T3: 'L3_LATE',
+  // 旧T系 → 新6区分
+  T0: 'L1L2', T1: 'L1L2',
+  T2A: 'L3', T2B: 'L3', T3: 'L3',
+  // 旧L細分 → 新6区分
+  L1: 'L1L2', L2_EARLY: 'L1L2', L2_LATE: 'L1L2',
+  L3_EARLY: 'L3', L3_MID: 'L3', L3_LATE: 'L3',
+  // EGG
+  EGG: 'L1L2',
 };
 
 // IND_STATUS 値（ステージコードではない）
@@ -33,8 +40,8 @@ var _IND_STATUS_VALS = new Set([
 ]);
 
 // ────────────────────────────────────────────────────────────────
-// _normalizeStage — ステージコードを新設計に正規化
-//   - T0/T1/T2A/T2B/T3 → L1/L2_EARLY 等
+// _normalizeStage — ステージコードを新6区分に正規化
+//   - 旧T系/旧L細分 → L1L2/L3/PREPUPA/PUPA/ADULT_PRE/ADULT
 //   - IND_STATUS 値は '' を返す（ステージとして扱わない）
 // ────────────────────────────────────────────────────────────────
 function _normalizeStage(rawStage) {
@@ -216,17 +223,17 @@ function normalizeIndForView(ind) {
 
   // ステータスラベル
   var ST_LBL = {
-    larva:'幼虫', prepupa:'前蛹', pupa:'蛹', adult:'成虫', alive:'飼育中',
-    seed_candidate:'種親候補', seed_reserved:'種親確保済',
-    for_sale:'販売候補', reserved:'予約済', listed:'出品中',
-    sold:'販売済', dead:'死亡', excluded:'除外',
+    alive:'飼育中', larva:'飼育中', prepupa:'飼育中', pupa:'飼育中', adult:'飼育中',
+    seed_candidate:'飼育中', seed_reserved:'飼育中',
+    for_sale:'販売候補', listed:'出品中',
+    sold:'販売済み', dead:'死亡',
   };
   var ST_CLR = {
-    larva:'var(--green)', prepupa:'var(--amber)', pupa:'#bf360c',
-    adult:'var(--green)', alive:'var(--green)',
-    seed_candidate:'var(--blue)', seed_reserved:'var(--blue)',
-    for_sale:'#9c27b0', reserved:'var(--blue)', listed:'#ff9800',
-    sold:'var(--amber)', dead:'var(--red,#e05050)', excluded:'var(--text3)',
+    alive:'var(--green)', larva:'var(--green)', prepupa:'var(--green)',
+    pupa:'var(--green)', adult:'var(--green)',
+    seed_candidate:'var(--green)', seed_reserved:'var(--green)',
+    for_sale:'#9c27b0', listed:'#ff9800',
+    sold:'var(--amber)', dead:'var(--red,#e05050)',
   };
 
   return {

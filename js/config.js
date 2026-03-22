@@ -203,7 +203,7 @@ const IND_STATUS = {
   ALIVE:    { code:'alive',    label:'飼育中',   color:'#4caf78' },
   FOR_SALE: { code:'for_sale', label:'販売候補', color:'#9c27b0' },
   LISTED:   { code:'listed',   label:'出品中',   color:'#ff9800' },
-  SOLD:     { code:'sold',     label:'販売済',   color:'#e09040' },
+  SOLD:     { code:'sold',     label:'販売済み',   color:'#e09040' },
   DEAD:     { code:'dead',     label:'死亡',     color:'#e05050' },
 };
 
@@ -223,7 +223,7 @@ const LOT_STATUS = {
   DISSOLVED:      { code:'dissolved',      label:'分割済'   },
   FOR_SALE:       { code:'for_sale',       label:'販売候補' },
   LISTED:         { code:'listed',         label:'出品中'   },
-  SOLD:           { code:'sold',           label:'販売済'   },
+  SOLD:           { code:'sold',           label:'販売済み'   },
 };
 
 // ════════════════════════════════════════════════════════════════
