@@ -289,17 +289,15 @@ const Store = (() => {
       'seed_candidate','seed_reserved',            // 旧種親候補
     ]);
 
-    if (filters.status === '_all') {
-      // 全件
+    if (filters.status === '_all' || filters.status === '') {
+      // 全状態: フィルタなし（sold・dead含む全件）
     } else if (filters.status === 'alive') {
       // 「飼育中」= 新仕様のalive + 旧ライフサイクルステータス全て
       list = list.filter(i => _ALIVE_STATUSES.has(i.status));
     } else if (filters.status) {
       list = list.filter(i => i.status === filters.status);
-    } else {
-      // デフォルト（空文字）: 終端以外を全表示
-      list = list.filter(i => !_TERMINAL_STATUSES.has(i.status));
     }
+    // 注: filters.status === '' は上の _all 分岐で処理済みのためここには到達しない
 
     if (filters.guinness) list = list.filter(i => String(i.guinness_flag) === 'true');
     if (filters.q) {
