@@ -995,8 +995,13 @@ Pages._indSellExec = async function (id) {
 // ── 発育日付 入力モーダル ────────────────────────────────────────
 // 蛹室確認日 / 前蛹確認日 / 蛹確認日 / 羽化日 の4つをまとめて編集
 Pages._indDateModal = function (indId) {
+  // indId が undefined/'${ind.ind_id}' 等の場合のフォールバック
+  if (!indId || String(indId).includes('{') || String(indId).includes('$')) {
+    const p = Store.getParams();
+    indId = p.indId || p.id || '';
+  }
   const ind = Store.getIndividual(indId);
-  if (!ind) { UI.toast('個体が見つかりません', 'error'); return; }
+  if (!ind) { UI.toast('個体が見つかりません (id=' + indId + ')', 'error'); return; }
 
   function _fmtForInput(d) { return d ? String(d).replace(/\//g, '-') : ''; }
 
@@ -1227,7 +1232,8 @@ Pages.individualNew = function (params = {}) {
         ${UI.field('購入者向けコメント', UI.textarea('note_public',  v('note_public'),  2, '公開可能なコメント'))}
 
         <div style="display:flex;gap:10px;margin-top:4px">
-          <button type="button" class="btn btn-ghost" style="flex:1" onclick="Store.back()">キャンセル</button>
+          <button type="button" class="btn btn-ghost" style="flex:1"
+            onclick="${isEdit ? `routeTo('ind-detail',{indId:'${params.editId}'})` : `Store.back()`}">キャンセル</button>
           <button type="button" class="btn btn-primary" style="flex:2"
             onclick="Pages._indSave('${isEdit ? params.editId : ''}')">
             ${isEdit ? '更新する' : '登録する'}
