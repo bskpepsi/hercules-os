@@ -1,16 +1,12 @@
 // ════════════════════════════════════════════════════════════════
-// growth.js v4 — 成長記録入力画面（旧weightMode UIベース・全導線統一）
+// growth.js v5 — 成長記録入力画面（体重測定UIベース・全導線統一）
 //
-// 【UI構成】（スクショ準拠）
-//   ① 対象カード（ID / ステージ / 日齢 / ライン）
-//   ② モードタブ: 通常 / T1移行 / T2初回移行
-//   ③ 体重入力（-10/-1/+1/+10 ± ボタン + 大型数値入力）
-//   ④ 記録日 / 区分 / 容器 / 交換種別 / マット / ステージ（全ボタン式）
-//   ⑤ 写真・AI解析（既存維持）
-//   ⑥ 前回記録 / 頭幅・メモ（折りたたみ）
-//   ⑦ 「保存して次へ」固定フッターボタン
-//
-// 【導線】個体詳細 / ロット詳細 / QRスキャン 全てここへ統一
+// v5 修正:
+//   - ±ボタン二重発火修正: onclick廃止 → onpointerdown/onpointerup のみ
+//   - 区分ボタン: LOT時は必ず表示（isLot判定を単純化）
+//   - 🍄 モルト入り: メインカード内に常時表示
+//   - ステージ: L1L2 / L3 / 前蛹 のみ（蛹・成虫系は除外）
+//   - ボタンサイズ: min-height 48px に拡大
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
@@ -20,7 +16,7 @@ const GR_THRESHOLDS = [
   { min: 150, badge: '🔥 大型候補',   color: 'var(--amber)', bg: 'rgba(224,144,64,.12)' },
 ];
 
-// ── モードプリセット定義 ────────────────────────────────────────
+// ── モードプリセット ────────────────────────────────────────────
 const GR_MODE_PRESETS = {
   normal: { label: '通常',       mat: '',   exchange: '',     stage: '' },
   t1:     { label: 'T1移行',     mat: 'T1', exchange: 'FULL', stage: 'L1L2' },
@@ -28,13 +24,14 @@ const GR_MODE_PRESETS = {
 };
 
 // ── ボタン式グループヘルパー ────────────────────────────────────
+// min-height: 48px で押しやすいサイズ確保
 function _grBtnGroup(id, items, active, onClickFn) {
   return '<div style="display:flex;gap:6px;flex-wrap:wrap">'
     + items.map(it => {
         const on = it.val === active;
         return `<button type="button"
-          style="padding:8px 14px;border-radius:8px;font-size:.85rem;font-weight:700;
-            cursor:pointer;min-height:42px;
+          style="padding:12px 16px;border-radius:10px;font-size:.92rem;font-weight:700;
+            cursor:pointer;min-height:52px;flex:1;
             border:1px solid ${on ? 'var(--green)' : 'var(--border)'};
             background:${on ? 'var(--green)' : 'var(--surface2)'};
             color:${on ? '#fff' : 'var(--text2)'}"
@@ -49,18 +46,19 @@ Pages.growthRecord = function (params = {}) {
   let targetType = params.targetType || 'IND';
   let targetId   = params.targetId   || '';
   let displayId  = params.displayId  || '';
-  let _mode      = params._preset    || 'normal';  // 'normal'|'t1'|'t2'
+  let _mode      = params._preset    || 'normal';
 
   let _photoB64  = null;
   let _photoMime = null;
   let _aiResult  = null;
 
-  // ── ボタン式フィールドの現在値 ──────────────────────────────
+  // ── 入力状態 ──────────────────────────────────────────────────
   let _selSizeCat  = '';
   let _selContainer= '';
   let _selExchange = '';
   let _selMat      = '';
   let _selStage    = '';
+  let _hasMalt     = false;
 
   function _applyModePreset(mode) {
     const p = GR_MODE_PRESETS[mode] || GR_MODE_PRESETS.normal;
@@ -101,49 +99,63 @@ Pages.growthRecord = function (params = {}) {
     let threshHtml = '';
     for (const t of GR_THRESHOLDS) {
       if (cur >= t.min) {
-        threshHtml = `<div style="display:inline-block;background:${t.bg};border:1px solid ${t.color};border-radius:99px;padding:2px 10px;font-size:.8rem;font-weight:700;color:${t.color};margin-bottom:2px">${t.badge}</div><br>`;
+        threshHtml = `<div style="display:inline-block;background:${t.bg};border:1px solid ${t.color};border-radius:99px;padding:2px 12px;font-size:.82rem;font-weight:700;color:${t.color};margin-bottom:4px">${t.badge}</div><br>`;
         break;
       }
     }
-    if (prev === null) {
-      return threshHtml + `<span style="color:var(--text3)">📝 初回記録: <b>${cur}g</b></span>`;
-    }
+    if (prev === null) return threshHtml + `<span style="color:var(--text3)">📝 初回記録: <b>${cur}g</b></span>`;
     const diff  = Math.round((cur - prev) * 10) / 10;
     const isPos = diff > 0, isNeg = diff < 0;
     const arrow = isPos ? '↑' : isNeg ? '↓' : '→';
     const color = isPos ? 'var(--green)' : isNeg ? 'var(--red,#e05050)' : 'var(--text3)';
     const sign  = isPos ? '+' : '';
     const cel   = isPos && diff >= 5 ? ' 🎉' : '';
-    return threshHtml + `<span style="color:${color};font-weight:700;font-size:1.05rem">${arrow} ${sign}${diff}g${cel}</span><span style="color:var(--text3);font-size:.75rem;margin-left:6px">（前回 ${prev}g）</span>`;
+    return threshHtml
+      + `<span style="color:${color};font-weight:700;font-size:1.05rem">${arrow} ${sign}${diff}g${cel}</span>`
+      + `<span style="color:var(--text3);font-size:.75rem;margin-left:6px">（前回 ${prev}g）</span>`;
   }
 
-  // ── 最初の一度だけ適用 ────────────────────────────────────────
+  // ── 初期化（1回だけ） ─────────────────────────────────────────
   _applyModePreset(_mode);
   _loadEntityDefaults();
 
   function render() {
-    const { obj, age, stage, sex, count, lineDisp } = _getEntityInfo();
+    const isLot = (targetType === 'LOT');  // シンプルに直接評価
+
+    const { age, stage, sex, count, lineDisp } = _getEntityInfo();
     const prev      = _getPrevRecord();
     const prevWeight= prev ? +prev.weight_g : null;
     const prevDate  = prev?.record_date || '';
     const today     = new Date().toISOString().split('T')[0];
-    const isLot     = targetType === 'LOT';
-    const isDirectMode = !!targetId;
 
-    // stage display label
     const stageDispMap = { L1L2:'L1L2', L3:'L3', PREPUPA:'前蛹', PUPA:'蛹', ADULT_PRE:'未後食', ADULT:'活動中' };
     const stageDisp = stageDispMap[stage] || stage || '—';
 
-    // back route
-    const backFn = isDirectMode
-      ? (isLot ? `routeTo('lot-detail',{lotId:'${targetId}'})` : `routeTo('ind-detail',{indId:'${targetId}'})`)
+    const backFn = targetId
+      ? (isLot ? `routeTo('lot-detail',{lotId:'${targetId}'})`
+                : `routeTo('ind-detail',{indId:'${targetId}'})`)
       : `Store.back()`;
+
+    // ── 区分ボタン HTML（LOT専用） ─────────────────────────────
+    function sizeCatButtonsHtml() {
+      return '<div style="display:flex;gap:6px">'
+        + ['大','中','小','—'].map(function(val) {
+            const on = val === '—' ? !_selSizeCat : (_selSizeCat || '').split(',').map(s => s.trim()).includes(val);
+            return '<button type="button"'
+              + ' style="flex:1;min-height:52px;border-radius:10px;font-size:.92rem;font-weight:700;cursor:pointer;'
+              + 'border:1px solid ' + (on ? 'var(--green)' : 'var(--border)') + ';'
+              + 'background:' + (on ? 'var(--green)' : 'var(--surface2)') + ';'
+              + 'color:' + (on ? '#fff' : 'var(--text2)') + '"'
+              + ' onclick="Pages._grSelSizeCat(\'' + val + '\')">' + val + '</button>';
+          }).join('')
+        + '<input type="hidden" id="gr-size-cat" value="' + (_selSizeCat || '') + '"></div>';
+    }
 
     main.innerHTML = `
       ${UI.header('成長記録', { back: true, backFn: backFn })}
       <div class="page-body has-quick-bar">
 
-        ${!isDirectMode ? `
+        ${!targetId ? `
         <!-- 対象選択（手動モードのみ） -->
         <div class="card">
           <div class="card-title">記録対象</div>
@@ -166,9 +178,7 @@ Pages.growthRecord = function (params = {}) {
         ${targetId ? `
         <div class="quick-info-bar">
           <div style="flex:1;min-width:0">
-            <div class="quick-info-id" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
-              ${displayId}
-            </div>
+            <div class="quick-info-id" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${displayId}</div>
             <div style="display:flex;gap:5px;align-items:center;margin-top:4px;flex-wrap:wrap">
               <span style="background:rgba(76,175,120,.15);color:var(--green);font-size:.68rem;padding:1px 6px;border-radius:99px;font-weight:600">${stageDisp}</span>
               ${isLot ? `<span style="font-size:.7rem;color:var(--text3)">${count}頭</span>` : `<span style="font-size:.7rem;color:var(--text3)">${sex}</span>`}
@@ -184,7 +194,7 @@ Pages.growthRecord = function (params = {}) {
         ${targetId ? `
         <div style="display:flex;gap:5px">
           ${Object.entries(GR_MODE_PRESETS).map(([k, p]) =>
-            `<button class="btn btn-sm ${_mode===k ? 'btn-primary' : 'btn-ghost'}" style="flex:1;font-size:.75rem"
+            `<button class="btn btn-sm ${_mode===k ? 'btn-primary' : 'btn-ghost'}" style="flex:1;font-size:.78rem;padding:10px 4px"
               onclick="Pages._grSetMode('${k}')">${p.label}</button>`
           ).join('')}
         </div>` : ''}
@@ -193,21 +203,20 @@ Pages.growthRecord = function (params = {}) {
         <div class="card" style="border-color:rgba(76,175,120,.35);padding:16px 14px">
           <div style="text-align:center;font-size:.72rem;font-weight:700;color:var(--text3);letter-spacing:.08em;margin-bottom:10px">体重 (g)</div>
           <div style="display:flex;align-items:center;justify-content:center;gap:6px;margin-bottom:8px">
-            <button class="btn btn-ghost btn-sm" style="min-width:46px;font-size:.9rem"
-              onclick="Pages._grAdjWeight(-10)" onmousedown="Pages._grAdjStart(-10)" onmouseup="Pages._grAdjStop()" ontouchend="Pages._grAdjStop()">−10</button>
-            <button class="btn btn-ghost btn-sm" style="min-width:46px;font-size:.9rem"
-              onclick="Pages._grAdjWeight(-1)" onmousedown="Pages._grAdjStart(-1)" onmouseup="Pages._grAdjStop()" ontouchend="Pages._grAdjStop()">−1</button>
+            <button class="btn btn-ghost" style="min-width:54px;min-height:52px;font-size:.95rem;font-weight:700;border-radius:10px"
+              id="gr-adj-m10" data-delta="-10">−10</button>
+            <button class="btn btn-ghost" style="min-width:54px;min-height:52px;font-size:.95rem;font-weight:700;border-radius:10px"
+              id="gr-adj-m1" data-delta="-1">−1</button>
             <input id="gr-weight" type="number" inputmode="decimal" step="0.1" min="0" max="999.9"
               placeholder="0.0" autocomplete="off"
               style="width:180px;font-size:2.6rem;font-weight:700;text-align:center;
                 border:2px solid var(--gold);border-radius:10px;padding:10px 8px;
                 background:var(--bg2);color:var(--green)"
-              oninput="Pages._grLiveUpdate(this.value,${prevWeight})"
-              onkeydown="if(event.key==='Enter'&&!event.isComposing){Pages._grSave('${targetType}','${targetId}')}">
-            <button class="btn btn-ghost btn-sm" style="min-width:46px;font-size:.9rem"
-              onclick="Pages._grAdjWeight(1)" onmousedown="Pages._grAdjStart(1)" onmouseup="Pages._grAdjStop()" ontouchend="Pages._grAdjStop()">+1</button>
-            <button class="btn btn-ghost btn-sm" style="min-width:46px;font-size:.9rem"
-              onclick="Pages._grAdjWeight(10)" onmousedown="Pages._grAdjStart(10)" onmouseup="Pages._grAdjStop()" ontouchend="Pages._grAdjStop()">+10</button>
+              oninput="Pages._grLiveUpdate(this.value,${prevWeight})">
+            <button class="btn btn-ghost" style="min-width:54px;min-height:52px;font-size:.95rem;font-weight:700;border-radius:10px"
+              id="gr-adj-p1" data-delta="1">+1</button>
+            <button class="btn btn-ghost" style="min-width:54px;min-height:52px;font-size:.95rem;font-weight:700;border-radius:10px"
+              id="gr-adj-p10" data-delta="10">+10</button>
           </div>
           <div style="text-align:center;font-size:.78rem;color:var(--text3);margin-bottom:6px">g</div>
           <div id="gr-delta" style="text-align:center;min-height:28px;font-size:.9rem;transition:all .15s">
@@ -217,7 +226,7 @@ Pages.growthRecord = function (params = {}) {
           </div>
         </div>
 
-        <!-- ④ 写真・AI解析（維持） -->
+        <!-- ④ 写真・AI解析 -->
         <div class="card">
           <div class="card-title">📷 写真・AI解析</div>
           <div class="photo-upload-area" onclick="document.getElementById('gr-photo').click()" id="photo-area">
@@ -229,7 +238,7 @@ Pages.growthRecord = function (params = {}) {
           <div id="gr-ai-result" style="margin-top:8px"></div>
         </div>
 
-        <!-- ⑤ 入力パネル: 記録日 / 区分 / 容器 / 交換種別 / マット / ステージ -->
+        <!-- ⑤ 入力パネル -->
         <div class="card">
           <div class="form-section">
 
@@ -240,19 +249,7 @@ Pages.growthRecord = function (params = {}) {
 
             <div class="field">
               <label class="field-label" style="font-size:.72rem;color:var(--text3);font-weight:700">区分</label>
-              ${isLot ? `
-                <div style="display:flex;gap:6px">
-                  ${['大','中','小','—'].map(c => {
-                    const on = c === '—' ? !_selSizeCat : (_selSizeCat||'').split(',').map(s=>s.trim()).includes(c);
-                    return `<button type="button"
-                      style="flex:1;min-height:42px;border-radius:8px;font-size:.85rem;font-weight:700;cursor:pointer;
-                        border:1px solid ${on ? 'var(--green)' : 'var(--border)'};
-                        background:${on ? 'var(--green)' : 'var(--surface2)'};
-                        color:${on ? '#fff' : 'var(--text2)'}"
-                      onclick="Pages._grSelSizeCat('${c}')">${c}</button>`;
-                  }).join('')}
-                  <input type="hidden" id="gr-size-cat" value="${_selSizeCat}">
-                </div>` : `<div style="font-size:.8rem;color:var(--text3)">（個体は区分なし）</div>`}
+              ${sizeCatButtonsHtml()}
             </div>
 
             <div class="field">
@@ -276,11 +273,23 @@ Pages.growthRecord = function (params = {}) {
                 _selMat, 'Pages._grSelMat')}
             </div>
 
+            <!-- 🍄 モルト入り（マット直下・常時表示） -->
             <div class="field">
-              <label class="field-label" style="font-size:.72rem;color:var(--text3);font-weight:700">ステージ</label>
+              <label style="display:flex;align-items:center;gap:12px;cursor:pointer;
+                padding:12px;background:var(--surface2);border-radius:var(--radius-sm);
+                border:1px solid var(--border)">
+                <input type="checkbox" id="gr-malt" style="width:20px;height:20px;cursor:pointer;flex-shrink:0"
+                  ${_hasMalt ? 'checked' : ''} onchange="Pages._grToggleMalt(this.checked)">
+                <span style="font-size:.92rem;font-weight:600">🍄 モルト入り</span>
+              </label>
+            </div>
+
+            <div class="field">
+              <label class="field-label" style="font-size:.72rem;color:var(--text3);font-weight:700">
+                ステージ（幼虫〜前蛹）
+              </label>
               ${_grBtnGroup('gr-stage',
-                [{val:'L1L2',label:'L1L2'},{val:'L3',label:'L3'},{val:'PREPUPA',label:'前蛹'},
-                 {val:'PUPA',label:'蛹'},{val:'ADULT_PRE',label:'未後食'},{val:'ADULT',label:'活動中'},{val:'',label:'—'}],
+                [{val:'L1L2',label:'L1L2'},{val:'L3',label:'L3'},{val:'PREPUPA',label:'前蛹'}],
                 _selStage, 'Pages._grSelStage')}
             </div>
 
@@ -325,13 +334,6 @@ Pages.growthRecord = function (params = {}) {
                 <input id="gr-headwidth" class="input" type="number" inputmode="decimal" step="0.1" min="0" max="99" placeholder="例: 38.5">
               </div>
               <div class="field">
-                <label class="field-label">🍄 モルト入り</label>
-                <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:8px;background:var(--surface2);border-radius:var(--radius-sm)">
-                  <input type="checkbox" id="gr-malt" style="width:18px;height:18px">
-                  <span style="font-size:.88rem">モルトパウダー入りマット</span>
-                </label>
-              </div>
-              <div class="field">
                 <label class="field-label">観察メモ（内部）</label>
                 <textarea id="gr-ai-comment" class="input" rows="2" placeholder="幼虫の状態、色艶など"></textarea>
               </div>
@@ -368,8 +370,23 @@ Pages.growthRecord = function (params = {}) {
         </button>
       </div>`;
 
-    // ── 戻るボタン addEventListener ────────────────────────────
-    const backBtn = document.getElementById('gr-back-btn');
+    // ── ±ボタン: pointerdown/pointerup のみ（click廃止で二重発火防止） ──
+    ['gr-adj-m10','gr-adj-m1','gr-adj-p1','gr-adj-p10'].forEach(function(btnId) {
+      var btn = document.getElementById(btnId);
+      if (!btn) return;
+      var delta = parseFloat(btn.getAttribute('data-delta'));
+      btn.addEventListener('pointerdown', function(e) {
+        e.preventDefault();  // click イベントを発生させない
+        Pages._grAdjWeight(delta);
+        Pages._grAdjStart(delta);
+      });
+      btn.addEventListener('pointerup',    function() { Pages._grAdjStop(); });
+      btn.addEventListener('pointerleave', function() { Pages._grAdjStop(); });
+      btn.addEventListener('pointercancel',function() { Pages._grAdjStop(); });
+    });
+
+    // ── 戻るボタン ────────────────────────────────────────────────
+    var backBtn = document.getElementById('gr-back-btn');
     if (backBtn) {
       backBtn.addEventListener('click', function() {
         if (!targetId) { Store.back(); return; }
@@ -378,224 +395,225 @@ Pages.growthRecord = function (params = {}) {
       });
     }
 
-    // ── 初期フォーカス ────────────────────────────────────────
     if (targetId) {
-      setTimeout(() => document.getElementById('gr-weight')?.focus(), 150);
+      setTimeout(function() { var w = document.getElementById('gr-weight'); if (w) w.focus(); }, 150);
       Pages._grLoadHistory(targetType, targetId);
     }
   }
 
   // ── モード切替 ────────────────────────────────────────────────
-  Pages._grSetMode = (mode) => {
+  Pages._grSetMode = function(mode) {
+    var w = document.getElementById('gr-weight')?.value;
+    var d = document.getElementById('gr-date')?.value;
     _mode = mode;
     _applyModePreset(mode);
-    // フォーム値を保持して再描画
-    const w = document.getElementById('gr-weight')?.value;
-    const d = document.getElementById('gr-date')?.value;
     render();
-    if (w) setTimeout(() => { const el = document.getElementById('gr-weight'); if (el) el.value = w; }, 0);
-    if (d) setTimeout(() => { const el = document.getElementById('gr-date');   if (el) el.value = d; }, 0);
+    if (w) setTimeout(function() { var e = document.getElementById('gr-weight'); if (e) e.value = w; }, 0);
+    if (d) setTimeout(function() { var e = document.getElementById('gr-date');   if (e) e.value = d; }, 0);
   };
 
-  // ── 対象選択（手動モード） ────────────────────────────────────
-  Pages._grSetType = (type) => {
+  // ── 対象選択 ─────────────────────────────────────────────────
+  Pages._grSetType = function(type) {
     targetType = type; targetId = ''; displayId = '';
     _selStage = ''; _selContainer = ''; _selMat = ''; _selExchange = ''; _selSizeCat = '';
     render();
   };
-  Pages._grTargetChange = (id, type) => {
+  Pages._grTargetChange = function(id, type) {
     targetId = id; targetType = type;
     _selStage = ''; _selContainer = ''; _selMat = ''; _selExchange = ''; _selSizeCat = '';
     _applyModePreset(_mode);
     _loadEntityDefaults();
-    const obj = type === 'IND' ? Store.getIndividual(id) : Store.getLot(id);
+    var obj = type === 'IND' ? Store.getIndividual(id) : Store.getLot(id);
     displayId = obj?.display_id || id;
     render();
   };
 
-  // ── ボタン選択ハンドラ ────────────────────────────────────────
-  Pages._grSelContainer = (v) => { _selContainer = v; render(); };
-  Pages._grSelExchange  = (v) => { _selExchange  = v; render(); };
-  Pages._grSelMat       = (v) => { _selMat       = v; render(); };
-  Pages._grSelStage     = (v) => { _selStage     = v; render(); };
-  Pages._grSelSizeCat   = (v) => {
+  // ── ボタン選択 ───────────────────────────────────────────────
+  Pages._grSelContainer = function(v) { _selContainer = v; render(); };
+  Pages._grSelExchange  = function(v) { _selExchange  = v; render(); };
+  Pages._grSelMat       = function(v) { _selMat       = v; render(); };
+  Pages._grSelStage     = function(v) { _selStage     = v; render(); };
+  Pages._grToggleMalt   = function(checked) { _hasMalt = checked; };
+  Pages._grSelSizeCat   = function(v) {
     if (v === '—') { _selSizeCat = ''; }
     else {
-      const cats = (_selSizeCat || '').split(',').map(s => s.trim()).filter(Boolean);
-      const idx  = cats.indexOf(v);
+      var cats = (_selSizeCat || '').split(',').map(function(s){ return s.trim(); }).filter(Boolean);
+      var idx = cats.indexOf(v);
       if (idx >= 0) cats.splice(idx, 1); else cats.push(v);
       _selSizeCat = cats.join(',');
     }
     render();
   };
 
-  // ── 体重 ±ボタン ─────────────────────────────────────────────
-  let _adjTimer = null;
-  Pages._grAdjWeight = (delta) => {
-    const el = document.getElementById('gr-weight');
+  // ── ±ボタン実装（pointerdown から呼ばれる） ──────────────────
+  var _adjTimer = null;
+  Pages._grAdjWeight = function(delta) {
+    var el = document.getElementById('gr-weight');
     if (!el) return;
-    const cur  = parseFloat(el.value) || 0;
-    const next = Math.max(0, Math.round((cur + delta) * 10) / 10);
+    var cur  = parseFloat(el.value) || 0;
+    var next = Math.max(0, Math.round((cur + delta) * 10) / 10);
     el.value = next;
     Pages._grLiveUpdate(String(next), _grPrevWeightCache);
   };
-  Pages._grAdjStart = (delta) => {
-    Pages._grAdjWeight(delta);
-    _adjTimer = setInterval(() => Pages._grAdjWeight(delta), 150);
+  Pages._grAdjStart = function(delta) {
+    // 既存タイマーをクリア（二重起動防止）
+    if (_adjTimer) { clearInterval(_adjTimer); _adjTimer = null; }
+    // 長押し：500ms 待ってから 150ms ごとに連続加算
+    _adjTimer = setTimeout(function() {
+      _adjTimer = setInterval(function() { Pages._grAdjWeight(delta); }, 150);
+    }, 500);
   };
-  Pages._grAdjStop = () => { clearInterval(_adjTimer); _adjTimer = null; };
+  Pages._grAdjStop = function() {
+    if (_adjTimer) { clearInterval(_adjTimer); clearTimeout(_adjTimer); _adjTimer = null; }
+  };
 
-  // ── リアルタイム前回比更新 ────────────────────────────────────
-  let _grPrevWeightCache = null;
-  const _initPrev = _getPrevRecord();
+  // ── リアルタイム前回比 ────────────────────────────────────────
+  var _grPrevWeightCache = null;
+  var _initPrev = _getPrevRecord();
   _grPrevWeightCache = _initPrev ? +_initPrev.weight_g : null;
 
-  Pages._grLiveUpdate = (val, prev) => {
-    const el = document.getElementById('gr-delta');
+  Pages._grLiveUpdate = function(val, prev) {
+    var el = document.getElementById('gr-delta');
     if (!el) return;
-    const cur = parseFloat(val);
+    var cur = parseFloat(val);
     if (!val || isNaN(cur) || cur <= 0) {
       el.innerHTML = prev !== null
-        ? `<span style="color:var(--text3)">前回 <b>${prev}g</b> から —</span>`
-        : `<span style="color:var(--text3)">（初回記録）</span>`;
+        ? '<span style="color:var(--text3)">前回 <b>' + prev + 'g</b> から —</span>'
+        : '<span style="color:var(--text3)">（初回記録）</span>';
       return;
     }
     el.innerHTML = _deltaHtml(cur, prev);
   };
 
   // ── 写真選択 ─────────────────────────────────────────────────
-  Pages._grPhotoSelected = async (input) => {
-    const file = input.files[0];
+  Pages._grPhotoSelected = async function(input) {
+    var file = input.files[0];
     if (!file) return;
-    const area     = document.getElementById('photo-area');
-    const resultEl = document.getElementById('gr-ai-result');
+    var area     = document.getElementById('photo-area');
+    var resultEl = document.getElementById('gr-ai-result');
     try {
-      const { base64, mimeType, dataUrl } = await compressImageToBase64(file);
-      _photoB64  = base64;
-      _photoMime = mimeType;
-      area.innerHTML = `<img src="${dataUrl}" class="photo-preview">`;
-      const key = Store.getSetting('gemini_key') || CONFIG.GEMINI_KEY;
+      var compressed = await compressImageToBase64(file);
+      _photoB64  = compressed.base64;
+      _photoMime = compressed.mimeType;
+      area.innerHTML = '<img src="' + compressed.dataUrl + '" class="photo-preview">';
+      var key = Store.getSetting('gemini_key') || CONFIG.GEMINI_KEY;
       if (key) {
-        resultEl.innerHTML = `<div style="font-size:.8rem;color:var(--text3)">🤖 AI解析中...</div>`;
+        resultEl.innerHTML = '<div style="font-size:.8rem;color:var(--text3)">🤖 AI解析中...</div>';
         try {
-          _aiResult = await API.gemini.analyzeImage(base64, mimeType, 'scale');
+          _aiResult = await API.gemini.analyzeImage(_photoB64, _photoMime, 'scale');
           if (_aiResult) {
             if (_aiResult.weight) {
-              const wEl = document.getElementById('gr-weight');
+              var wEl = document.getElementById('gr-weight');
               if (wEl) { wEl.value = _aiResult.weight; Pages._grLiveUpdate(_aiResult.weight, _grPrevWeightCache); }
             }
             if (_aiResult.larva_analysis?.comment) {
-              const cEl = document.getElementById('gr-ai-comment'); if (cEl) cEl.value = _aiResult.larva_analysis.comment;
+              var cEl = document.getElementById('gr-ai-comment'); if (cEl) cEl.value = _aiResult.larva_analysis.comment;
             }
-            resultEl.innerHTML = `<div style="background:rgba(76,175,120,.1);border:1px solid rgba(76,175,120,.3);border-radius:6px;padding:8px;font-size:.78rem">✅ AI解析完了: ${_aiResult.weight ? _aiResult.weight+'g' : ''}${_aiResult.larva_analysis?.health ? ' / '+_aiResult.larva_analysis.health : ''}</div>`;
+            resultEl.innerHTML = '<div style="background:rgba(76,175,120,.1);border:1px solid rgba(76,175,120,.3);border-radius:6px;padding:8px;font-size:.78rem">✅ AI解析完了: ' + (_aiResult.weight ? _aiResult.weight + 'g' : '') + (_aiResult.larva_analysis?.health ? ' / ' + _aiResult.larva_analysis.health : '') + '</div>';
           }
         } catch (e) {
-          resultEl.innerHTML = `<div style="font-size:.78rem;color:var(--amber)">⚠️ AI解析失敗 (${e.message.slice(0,40)})</div>`;
+          resultEl.innerHTML = '<div style="font-size:.78rem;color:var(--amber)">⚠️ AI解析失敗 (' + e.message.slice(0,40) + ')</div>';
         }
       }
     } catch (e) { UI.toast('画像の読み込みに失敗しました', 'error'); }
   };
 
   // ── 記録履歴 ─────────────────────────────────────────────────
-  Pages._grLoadHistory = async (type, id) => {
-    const el = document.getElementById('gr-history');
+  Pages._grLoadHistory = async function(type, id) {
+    var el = document.getElementById('gr-history');
     if (!el) return;
-    const cached = Store.getGrowthRecords(id);
+    var cached = Store.getGrowthRecords(id);
     if (cached) el.innerHTML = UI.weightTable(cached);
     try {
-      const res = await API.growth.list(type, id);
+      var res = await API.growth.list(type, id);
       Store.setGrowthRecords(id, res.records);
       el.innerHTML = UI.weightTable(res.records);
     } catch (e) { if (!cached) el.innerHTML = UI.empty('履歴取得失敗'); }
   };
 
-  // ── 頭数減耗計算 ─────────────────────────────────────────────
-  Pages._grCalcAttrition = () => {
-    const before = parseInt(document.getElementById('gr-before-count')?.value || '');
-    const after  = parseInt(document.getElementById('gr-after-count')?.value  || '');
-    const el = document.getElementById('gr-attrition-display');
+  // ── 頭数減耗 ─────────────────────────────────────────────────
+  Pages._grCalcAttrition = function() {
+    var before = parseInt(document.getElementById('gr-before-count')?.value || '');
+    var after  = parseInt(document.getElementById('gr-after-count')?.value  || '');
+    var el = document.getElementById('gr-attrition-display');
     if (!el) return;
     if (!isNaN(before) && !isNaN(after)) {
-      const diff = before - after;
-      el.textContent = diff > 0 ? `減耗 ${diff} 頭` : diff === 0 ? '変化なし' : `⚠️ 後が多い(${Math.abs(diff)}頭増)`;
+      var diff = before - after;
+      el.textContent = diff > 0 ? '減耗 ' + diff + ' 頭' : diff === 0 ? '変化なし' : '⚠️ 後が多い(' + Math.abs(diff) + '頭増)';
       el.style.color = diff > 0 ? 'var(--red)' : diff === 0 ? 'var(--text3)' : 'var(--amber)';
     } else { el.textContent = ''; }
   };
 
   // ── 保存 ──────────────────────────────────────────────────────
-  Pages._grSave = async (type, id) => {
+  Pages._grSave = async function(type, id) {
     if (!id) { UI.toast('対象を選択してください', 'error'); return; }
-    const weight = document.getElementById('gr-weight')?.value;
+    var weight = document.getElementById('gr-weight')?.value;
     if (!weight || parseFloat(weight) <= 0) { UI.toast('体重を入力してください（0.1g以上）', 'error'); return; }
 
-    const stage     = document.getElementById('gr-stage')?.value     || _selStage     || '';
-    const container = document.getElementById('gr-container')?.value || _selContainer || '';
-    const exchange  = document.getElementById('gr-exchange')?.value  || _selExchange  || '';
-    const mat       = document.getElementById('gr-mat')?.value       || _selMat       || '';
-    const sizeCat   = document.getElementById('gr-size-cat')?.value  || _selSizeCat   || '';
-    const headW     = document.getElementById('gr-headwidth')?.value || '';
-    const recDate   = (document.getElementById('gr-date')?.value || '').replace(/-/g, '/');
-    const aiCmt     = document.getElementById('gr-ai-comment')?.value || '';
-    const hasMalt   = document.getElementById('gr-malt')?.checked    || false;
-    const beforeCount = document.getElementById('gr-before-count')?.value;
-    const afterCount  = document.getElementById('gr-after-count')?.value;
+    var stage     = document.getElementById('gr-stage')?.value     || _selStage     || '';
+    var container = document.getElementById('gr-container')?.value || _selContainer || '';
+    var exchange  = document.getElementById('gr-exchange')?.value  || _selExchange  || '';
+    var mat       = document.getElementById('gr-mat')?.value       || _selMat       || '';
+    var sizeCat   = document.getElementById('gr-size-cat')?.value  || _selSizeCat   || '';
+    var headW     = document.getElementById('gr-headwidth')?.value || '';
+    var recDate   = (document.getElementById('gr-date')?.value || '').replace(/-/g, '/');
+    var aiCmt     = document.getElementById('gr-ai-comment')?.value || '';
+    var hasMalt   = document.getElementById('gr-malt')?.checked || _hasMalt || false;
+    var beforeCount = document.getElementById('gr-before-count')?.value;
+    var afterCount  = document.getElementById('gr-after-count')?.value;
 
-    const payload = {
+    var payload = {
       target_type:   type,
       target_id:     id,
-      stage,
+      stage:         stage     || undefined,
       weight_g:      weight,
-      head_width_mm: headW || undefined,
+      head_width_mm: headW     || undefined,
       container:     container || undefined,
-      mat_type:      mat || undefined,
+      mat_type:      mat       || undefined,
       has_malt:      hasMalt,
-      exchange_type: exchange || undefined,
-      size_category: sizeCat || undefined,
-      before_count:  beforeCount !== '' && beforeCount !== undefined ? parseInt(beforeCount) : undefined,
-      after_count:   afterCount  !== '' && afterCount  !== undefined ? parseInt(afterCount)  : undefined,
-      note_private:  aiCmt || undefined,
+      exchange_type: exchange  || undefined,
+      size_category: sizeCat   || undefined,
+      before_count:  beforeCount !== '' && beforeCount !== undefined && beforeCount !== null ? parseInt(beforeCount) : undefined,
+      after_count:   afterCount  !== '' && afterCount  !== undefined && afterCount  !== null ? parseInt(afterCount)  : undefined,
+      note_private:  aiCmt     || undefined,
       record_date:   recDate,
     };
 
-    // 写真アップロード
     if (_photoB64) {
-      const obj  = type === 'IND' ? Store.getIndividual(id) : Store.getLot(id);
-      const line = obj ? Store.getLine(obj.line_id) : null;
-      if (line) {
+      var obj2  = type === 'IND' ? Store.getIndividual(id) : Store.getLot(id);
+      var line2 = obj2 ? Store.getLine(obj2.line_id) : null;
+      if (line2) {
         try {
-          const today2 = new Date().toISOString().split('T')[0].replace(/-/g,'/');
-          const up = await API.drive.uploadPhoto({ base64: _photoB64, mime_type: _photoMime,
-            filename: `${displayId||id}_${today2}.jpg`, line_display_id: line.display_id, folder_type: 'GROWTH' });
+          var today2 = new Date().toISOString().split('T')[0].replace(/-/g,'/');
+          var up = await API.drive.uploadPhoto({ base64: _photoB64, mime_type: _photoMime,
+            filename: (displayId||id) + '_' + today2 + '.jpg',
+            line_display_id: line2.display_id, folder_type: 'GROWTH' });
           payload.photo_url = up.url;
         } catch (e) { UI.toast('写真アップロード失敗（記録は保存します）', 'info'); }
       }
     }
 
-    const btn = document.getElementById('gr-save-btn');
+    var btn = document.getElementById('gr-save-btn');
     if (btn) { btn.disabled = true; btn.textContent = '⏳ 保存中...'; }
 
     try {
-      const res = await apiCall(() => API.growth.create(payload), '記録しました ✅');
-      Store.addGrowthRecord(id, { ...payload, record_id: res.record_id, age_days: res.age_days });
+      var res = await apiCall(function() { return API.growth.create(payload); }, '記録しました ✅');
+      Store.addGrowthRecord(id, Object.assign({}, payload, { record_id: res.record_id, age_days: res.age_days }));
       if (type === 'IND') Store.patchDBItem('individuals', 'ind_id', id, { latest_weight_g: weight, current_stage: stage });
       if (type === 'LOT') {
-        const lu = {};
+        var lu = {};
         if (stage) lu.stage = stage;
         if (payload.after_count !== undefined) { lu.count = payload.after_count; if (payload.after_count === 0) lu.status = 'individualized'; }
         if (Object.keys(lu).length) Store.patchDBItem('lots', 'lot_id', id, lu);
       }
-      // 体重フィールドリセット
-      const wEl = document.getElementById('gr-weight'); if (wEl) wEl.value = '';
-      _photoB64 = null; _aiResult = null;
-      // 履歴更新
-      const cached = Store.getGrowthRecords(id);
-      const histEl = document.getElementById('gr-history');
+      var wEl = document.getElementById('gr-weight'); if (wEl) wEl.value = '';
+      _photoB64 = null; _aiResult = null; _hasMalt = false;
+      var cached = Store.getGrowthRecords(id);
+      var histEl = document.getElementById('gr-history');
       if (histEl && cached) histEl.innerHTML = UI.weightTable(cached);
       if (btn) { btn.disabled = false; btn.textContent = '💾 保存して次へ'; }
-      // ロット: 次のロットへバー
       if (type === 'LOT') _grShowNextLotBar(id);
-      // 個体: 次フォーカス
-      if (type === 'IND') setTimeout(() => document.getElementById('gr-weight')?.focus(), 200);
+      if (type === 'IND') setTimeout(function() { var w = document.getElementById('gr-weight'); if (w) w.focus(); }, 200);
     } catch (e) {
       if (btn) { btn.disabled = false; btn.textContent = '💾 保存して次へ'; }
     }
@@ -607,27 +625,26 @@ Pages.growthRecord = function (params = {}) {
 // ── 次のロット連続入力バー ──────────────────────────────────────
 function _grShowNextLotBar(currentLotId) {
   document.getElementById('gr-next-lot-bar')?.remove();
-  const currentLot = Store.getLot(currentLotId);
+  var currentLot = Store.getLot(currentLotId);
   if (!currentLot) return;
-  const sameLine  = Store.filterLots({ line_id: currentLot.line_id, status: 'active' }).filter(l => l.lot_id !== currentLotId);
-  const allActive = Store.filterLots({ status: 'active' }).filter(l => l.lot_id !== currentLotId);
-  const candidates = sameLine.length ? sameLine : allActive.slice(0, 8);
+  var sameLine  = Store.filterLots({ line_id: currentLot.line_id, status: 'active' }).filter(function(l){ return l.lot_id !== currentLotId; });
+  var allActive = Store.filterLots({ status: 'active' }).filter(function(l){ return l.lot_id !== currentLotId; });
+  var candidates = sameLine.length ? sameLine : allActive.slice(0, 8);
   if (!candidates.length) return;
-
-  const bar = document.createElement('div');
+  var bar = document.createElement('div');
   bar.id = 'gr-next-lot-bar'; bar.className = 'next-lot-bar';
-  const labelEl = document.createElement('div');
+  var labelEl = document.createElement('div');
   labelEl.style.cssText = 'font-size:.72rem;color:var(--text3);margin-bottom:6px;font-weight:700';
   labelEl.textContent = '📦 次のロットへ（同ライン）';
   bar.appendChild(labelEl);
-  const scrollEl = document.createElement('div');
+  var scrollEl = document.createElement('div');
   scrollEl.className = 'next-lot-scroll';
   candidates.slice(0, 6).forEach(function(l) {
-    const ln   = Store.getLine(l.line_id);
-    const code = ln ? (ln.line_code || ln.display_id) : l.display_id;
-    const btn  = document.createElement('button');
+    var ln = Store.getLine(l.line_id);
+    var code = ln ? (ln.line_code || ln.display_id) : l.display_id;
+    var btn = document.createElement('button');
     btn.className = 'next-lot-btn';
-    btn.innerHTML = `<span style="color:var(--gold);font-weight:700">${code}</span><span style="color:var(--text3);margin-left:4px">${l.count}頭</span>`;
+    btn.innerHTML = '<span style="color:var(--gold);font-weight:700">' + code + '</span><span style="color:var(--text3);margin-left:4px">' + l.count + '頭</span>';
     btn.onclick = (function(lotId, lotDisplayId) {
       return function() {
         document.getElementById('gr-next-lot-bar')?.remove();
@@ -636,44 +653,44 @@ function _grShowNextLotBar(currentLotId) {
     })(l.lot_id, l.display_id);
     scrollEl.appendChild(btn);
   });
-  const closeBtn = document.createElement('button');
+  var closeBtn = document.createElement('button');
   closeBtn.className = 'next-lot-btn'; closeBtn.style.color = 'var(--text3)'; closeBtn.textContent = '✕ 閉じる';
-  closeBtn.onclick = () => document.getElementById('gr-next-lot-bar')?.remove();
+  closeBtn.onclick = function() { document.getElementById('gr-next-lot-bar')?.remove(); };
   scrollEl.appendChild(closeBtn);
   bar.appendChild(scrollEl);
   document.body.appendChild(bar);
 }
 
 // ── 成長記録編集モーダル ─────────────────────────────────────────
-Pages._grEditRecord = async function (recordId) {
-  let rec = null;
-  const gm = Store.getDB('growthMap') || {};
-  for (const recs of Object.values(gm)) {
-    const found = (recs || []).find(r => r.record_id === recordId);
+Pages._grEditRecord = async function(recordId) {
+  var rec = null;
+  var gm = Store.getDB('growthMap') || {};
+  for (var recs of Object.values(gm)) {
+    var found = (recs || []).find(function(r){ return r.record_id === recordId; });
     if (found) { rec = found; break; }
   }
-  const initDate   = rec ? String(rec.record_date || '').replace(/\//g, '-') : '';
-  const initWeight = rec ? (rec.weight_g  || '') : '';
-  const initStage  = rec ? (rec.stage     || '') : '';
-  const initCont   = rec ? (rec.container || '') : '';
-  const initMat    = rec ? (rec.mat_type  || '') : '';
-  const initExch   = rec ? (rec.exchange_type || '') : '';
-  const initNote   = rec ? (rec.note_private  || '') : '';
-  const STAGE_OPTS = ['L1L2','L3','PREPUPA','PUPA','ADULT_PRE','ADULT'].map(s => `<option value="${s}" ${initStage===s?'selected':''}>${s}</option>`).join('');
+  var initDate   = rec ? String(rec.record_date || '').replace(/\//g, '-') : '';
+  var initWeight = rec ? (rec.weight_g  || '') : '';
+  var initStage  = rec ? (rec.stage     || '') : '';
+  var initCont   = rec ? (rec.container || '') : '';
+  var initMat    = rec ? (rec.mat_type  || '') : '';
+  var initExch   = rec ? (rec.exchange_type || '') : '';
+  var initNote   = rec ? (rec.note_private  || '') : '';
+  var STAGE_OPTS = ['L1L2','L3','PREPUPA'].map(function(s){ return '<option value="' + s + '" ' + (initStage===s?'selected':'') + '>' + s + '</option>'; }).join('');
   UI.modal(`
     <div class="modal-title">成長記録を編集</div>
     <div class="form-section" style="max-height:60vh;overflow-y:auto">
-      ${UI.field('記録日', `<input type="date" id="gre-date" class="input" value="${initDate}">`)}
-      ${UI.field('体重(g)', `<input type="number" id="gre-weight" class="input" step="0.1" value="${initWeight}" placeholder="例: 45.2">`)}
+      ${UI.field('記録日', '<input type="date" id="gre-date" class="input" value="' + initDate + '">')}
+      ${UI.field('体重(g)', '<input type="number" id="gre-weight" class="input" step="0.1" value="' + initWeight + '" placeholder="例: 45.2">')}
       <div class="form-row-2">
-        ${UI.field('ステージ', `<select id="gre-stage" class="input">${STAGE_OPTS}</select>`)}
-        ${UI.field('容器', `<select id="gre-cont" class="input"><option value="">—</option>${['1.8L','2.7L','4.8L'].map(v=>`<option value="${v}" ${initCont===v?'selected':''}>${v}</option>`).join('')}</select>`)}
+        ${UI.field('ステージ', '<select id="gre-stage" class="input"><option value="">—</option>' + STAGE_OPTS + '</select>')}
+        ${UI.field('容器', '<select id="gre-cont" class="input"><option value="">—</option>' + ['1.8L','2.7L','4.8L'].map(function(v){ return '<option value="' + v + '" ' + (initCont===v?'selected':'') + '>' + v + '</option>'; }).join('') + '</select>')}
       </div>
       <div class="form-row-2">
-        ${UI.field('マット', `<select id="gre-mat" class="input"><option value="">—</option>${['T1','T2','T3'].map(v=>`<option value="${v}" ${initMat===v?'selected':''}>${v}</option>`).join('')}</select>`)}
-        ${UI.field('交換区分', `<select id="gre-exch" class="input"><option value="">—</option><option value="FULL" ${initExch==='FULL'?'selected':''}>全交換</option><option value="PARTIAL" ${initExch==='PARTIAL'?'selected':''}>追加のみ</option></select>`)}
+        ${UI.field('マット', '<select id="gre-mat" class="input"><option value="">—</option>' + ['T1','T2','T3'].map(function(v){ return '<option value="' + v + '" ' + (initMat===v?'selected':'') + '>' + v + '</option>'; }).join('') + '</select>')}
+        ${UI.field('交換区分', '<select id="gre-exch" class="input"><option value="">—</option><option value="FULL" ' + (initExch==='FULL'?'selected':'') + '>全交換</option><option value="PARTIAL" ' + (initExch==='PARTIAL'?'selected':'') + '>追加のみ</option></select>')}
       </div>
-      ${UI.field('メモ', `<input type="text" id="gre-note" class="input" value="${initNote}" placeholder="任意">`)}
+      ${UI.field('メモ', '<input type="text" id="gre-note" class="input" value="' + initNote + '" placeholder="任意">')}
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" style="flex:1" onclick="UI.closeModal()">キャンセル</button>
@@ -682,27 +699,28 @@ Pages._grEditRecord = async function (recordId) {
   `);
 };
 
-Pages._grSaveEdit = async function (recordId) {
-  const date   = (document.getElementById('gre-date')?.value   || '').replace(/-/g, '/');
-  const weight = document.getElementById('gre-weight')?.value   || '';
-  const stage  = document.getElementById('gre-stage')?.value    || '';
-  const cont   = document.getElementById('gre-cont')?.value     || '';
-  const mat    = document.getElementById('gre-mat')?.value      || '';
-  const exch   = document.getElementById('gre-exch')?.value     || '';
-  const note   = document.getElementById('gre-note')?.value     || '';
+Pages._grSaveEdit = async function(recordId) {
+  var date   = (document.getElementById('gre-date')?.value   || '').replace(/-/g, '/');
+  var weight = document.getElementById('gre-weight')?.value   || '';
+  var stage  = document.getElementById('gre-stage')?.value    || '';
+  var cont   = document.getElementById('gre-cont')?.value     || '';
+  var mat    = document.getElementById('gre-mat')?.value      || '';
+  var exch   = document.getElementById('gre-exch')?.value     || '';
+  var note   = document.getElementById('gre-note')?.value     || '';
   if (!weight) { UI.toast('体重を入力してください', 'error'); return; }
-  const payload = { record_id: recordId, record_date: date, weight_g: weight, stage, container: cont, mat_type: mat, exchange_type: exch, note_private: note };
+  var payload = { record_id: recordId, record_date: date, weight_g: weight, stage: stage, container: cont, mat_type: mat, exchange_type: exch, note_private: note };
   try {
     UI.loading(true); UI.closeModal();
-    await apiCall(() => API.growth.update(payload), '成長記録を更新しました');
-    const gm = Store.getDB('growthMap') || {};
-    for (const [tid, recs] of Object.entries(gm)) {
-      const idx = (recs || []).findIndex(r => r.record_id === recordId);
-      if (idx >= 0) { Object.assign(recs[idx], payload); Store.setGrowthRecords(tid, recs); const h = document.getElementById('gr-history'); if (h) h.innerHTML = UI.weightTable(recs); break; }
+    await apiCall(function(){ return API.growth.update(payload); }, '成長記録を更新しました');
+    var gm = Store.getDB('growthMap') || {};
+    for (var entries = Object.entries(gm), i = 0; i < entries.length; i++) {
+      var tid = entries[i][0], recs = entries[i][1];
+      var idx = (recs || []).findIndex(function(r){ return r.record_id === recordId; });
+      if (idx >= 0) { Object.assign(recs[idx], payload); Store.setGrowthRecords(tid, recs); var h = document.getElementById('gr-history'); if (h) h.innerHTML = UI.weightTable(recs); break; }
     }
   } catch (e) { UI.toast('更新失敗: ' + e.message, 'error'); }
   finally { UI.loading(false); }
 };
 
 window.PAGES = window.PAGES || {};
-window.PAGES['growth-rec'] = () => Pages.growthRecord(Store.getParams());
+window.PAGES['growth-rec'] = function() { Pages.growthRecord(Store.getParams()); };
