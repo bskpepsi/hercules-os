@@ -94,6 +94,19 @@ document.addEventListener('DOMContentLoaded', () => {
 function _renderPage(pageId) {
   const main = document.getElementById('main');
   if (!main) return;
+  // ── カメラストリームを必ず停止（どの画面へ移動する場合も） ──────
+  // video.srcObject が残っていたらトラックを全停止してから DOM を破棄する。
+  // これにより QR画面 → 成長記録画面 などの遷移でもカメラが裏で動き続けない。
+  try {
+    const vid = document.getElementById('qr-video');
+    if (vid && vid.srcObject) {
+      vid.srcObject.getTracks().forEach(function(t) { t.stop(); });
+      vid.srcObject = null;
+    }
+    // _qrStopCamera が存在する場合は UI状態も一緒に片付ける
+    if (typeof Pages._qrStopCamera === 'function') Pages._qrStopCamera();
+  } catch (_) {}
+
   const fn = PAGES[pageId];
   if (fn) {
     main.innerHTML = '';
@@ -410,7 +423,7 @@ const UI = {
       const exchStr = r.exchange_type === 'FULL'    ? '全交換'
                     : r.exchange_type === 'PARTIAL'  ? '追加'
                     : (r.exchange_type && r.exchange_type !== '交換なし') ? r.exchange_type : '';
-      const matStr  = r.mat_type || '';
+      const matStr  = r.mat_type ? (r.mat_type + (r.has_malt ? '（M）' : '')) : '';
       const editBtn = showEdit && r.record_id
         ? `<button style="font-size:.65rem;padding:2px 6px;border:1px solid var(--border);
             border-radius:10px;background:transparent;color:var(--text3);cursor:pointer;white-space:nowrap"
