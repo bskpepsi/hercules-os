@@ -1,27 +1,46 @@
 // ════════════════════════════════════════════════════════════════
-// growth.js v3 — 成長記録入力（ボタン式新UI）
-// ・体重: ±1/±10 操作ボタン + 直接入力
-// ・ステージ/容器/マット/交換区分: ボタン式ピル選択
-// ・詳細画面から来た場合は対象選択UIなし（isDirectMode）
-// ・写真・AI解析ブロックはそのまま維持
-// ・次のロットへ連続入力バー付き
+// growth.js v4 — 成長記録入力画面（旧weightMode UIベース・全導線統一）
+//
+// 【UI構成】（スクショ準拠）
+//   ① 対象カード（ID / ステージ / 日齢 / ライン）
+//   ② モードタブ: 通常 / T1移行 / T2初回移行
+//   ③ 体重入力（-10/-1/+1/+10 ± ボタン + 大型数値入力）
+//   ④ 記録日 / 区分 / 容器 / 交換種別 / マット / ステージ（全ボタン式）
+//   ⑤ 写真・AI解析（既存維持）
+//   ⑥ 前回記録 / 頭幅・メモ（折りたたみ）
+//   ⑦ 「保存して次へ」固定フッターボタン
+//
+// 【導線】個体詳細 / ロット詳細 / QRスキャン 全てここへ統一
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-// ── ボタン式選択ヘルパー ────────────────────────────────────────
-// gId: hidden input id, items: [{val, label}], active: 現在値, fn: onChange
-function _grBtnGroup(gId, items, active, fn) {
-  return '<div style="display:flex;flex-wrap:wrap;gap:6px">'
+// ── 体重閾値バッジ ───────────────────────────────────────────────
+const GR_THRESHOLDS = [
+  { min: 170, badge: '⭐ 超大型候補', color: '#c8a84b', bg: 'rgba(200,168,75,.15)' },
+  { min: 150, badge: '🔥 大型候補',   color: 'var(--amber)', bg: 'rgba(224,144,64,.12)' },
+];
+
+// ── モードプリセット定義 ────────────────────────────────────────
+const GR_MODE_PRESETS = {
+  normal: { label: '通常',       mat: '',   exchange: '',     stage: '' },
+  t1:     { label: 'T1移行',     mat: 'T1', exchange: 'FULL', stage: 'L1L2' },
+  t2:     { label: 'T2初回移行', mat: 'T2', exchange: 'FULL', stage: 'L3'   },
+};
+
+// ── ボタン式グループヘルパー ────────────────────────────────────
+function _grBtnGroup(id, items, active, onClickFn) {
+  return '<div style="display:flex;gap:6px;flex-wrap:wrap">'
     + items.map(it => {
         const on = it.val === active;
         return `<button type="button"
-          style="padding:7px 12px;border-radius:20px;font-size:.8rem;font-weight:700;cursor:pointer;
-            border:1px solid ${on ? 'var(--gold)' : 'var(--border)'};
-            background:${on ? 'rgba(200,168,75,.18)' : 'var(--bg3)'};
-            color:${on ? 'var(--gold)' : 'var(--text2)'}"
-          onclick="${fn}('${it.val}')">${it.label}</button>`;
+          style="padding:8px 14px;border-radius:8px;font-size:.85rem;font-weight:700;
+            cursor:pointer;min-height:42px;
+            border:1px solid ${on ? 'var(--green)' : 'var(--border)'};
+            background:${on ? 'var(--green)' : 'var(--surface2)'};
+            color:${on ? '#fff' : 'var(--text2)'}"
+          onclick="${onClickFn}('${it.val}')">${it.label}</button>`;
       }).join('')
-    + `<input type="hidden" id="${gId}" value="${active || ''}">` + '</div>';
+    + `<input type="hidden" id="${id}" value="${active || ''}"></div>`;
 }
 
 Pages.growthRecord = function (params = {}) {
@@ -30,143 +49,175 @@ Pages.growthRecord = function (params = {}) {
   let targetType = params.targetType || 'IND';
   let targetId   = params.targetId   || '';
   let displayId  = params.displayId  || '';
-  const _preset  = params._preset    || '';  // 't1' / 't2' プリセット（QRモードから）
+  let _mode      = params._preset    || 'normal';  // 'normal'|'t1'|'t2'
 
-  let _aiResult  = null;
   let _photoB64  = null;
   let _photoMime = null;
+  let _aiResult  = null;
 
-  // ── ボタン式フィールドの現在値（render間で保持） ─────────────
-  let _selStage    = '';
+  // ── ボタン式フィールドの現在値 ──────────────────────────────
+  let _selSizeCat  = '';
   let _selContainer= '';
-  let _selMat      = '';
   let _selExchange = '';
+  let _selMat      = '';
+  let _selStage    = '';
+
+  function _applyModePreset(mode) {
+    const p = GR_MODE_PRESETS[mode] || GR_MODE_PRESETS.normal;
+    if (p.mat)      _selMat      = p.mat;
+    if (p.exchange) _selExchange = p.exchange;
+    if (p.stage)    _selStage    = p.stage;
+  }
+
+  function _loadEntityDefaults() {
+    if (!targetId) return;
+    const obj = targetType === 'IND' ? Store.getIndividual(targetId) : Store.getLot(targetId);
+    if (!obj) return;
+    if (!_selStage)     _selStage     = (obj.current_stage || obj.stage || '').toUpperCase();
+    if (!_selContainer) _selContainer = obj.current_container || obj.container_size || '';
+    if (!_selMat)       _selMat       = obj.current_mat       || obj.mat_type       || '';
+    if (!_selSizeCat)   _selSizeCat   = obj.size_category     || '';
+    if (!displayId)     displayId     = obj.display_id || targetId;
+  }
 
   function _getPrevRecord() {
-    const cached = Store.getGrowthRecords(targetId);
-    if (!cached || !cached.length) return null;
-    const wts = cached.filter(r => r.weight_g && +r.weight_g > 0);
+    const recs = Store.getGrowthRecords(targetId) || [];
+    const wts  = recs.filter(r => r.weight_g && +r.weight_g > 0);
     return wts.length ? wts[wts.length - 1] : null;
   }
 
-  function _getHatchDate() {
-    if (targetType === 'IND') return Store.getIndividual(targetId)?.hatch_date || '';
-    if (targetType === 'LOT') return Store.getLot(targetId)?.hatch_date || '';
-    return '';
+  function _getEntityInfo() {
+    const obj  = targetType === 'IND' ? Store.getIndividual(targetId) : Store.getLot(targetId);
+    const line = obj ? Store.getLine(obj.line_id) : null;
+    const age  = obj?.hatch_date ? Store.calcAge(obj.hatch_date) : null;
+    const stage = (targetType === 'IND' ? obj?.current_stage : obj?.stage) || '';
+    const sex   = targetType === 'IND' ? (obj?.sex || '') : '';
+    const count = targetType === 'LOT' ? (parseInt(obj?.count, 10) || 0) : 0;
+    const lineDisp = line?.line_code || line?.display_id || '';
+    return { obj, line, age, stage, sex, count, lineDisp };
   }
 
-  function render() {
-    const hatchDate = _getHatchDate();
-    const age       = hatchDate ? Store.calcAge(hatchDate) : null;
-    const prev      = _getPrevRecord();
-    const prevWeight= prev ? +prev.weight_g : null;
-    const today     = new Date().toISOString().split('T')[0];
-    const isDirectMode = !!targetId;
-
-    // プリセット（QR T1/T2モードからの場合）
-    if (_preset && !_selMat && !_selExchange) {
-      if (_preset === 't1') {
-        _selMat = 'T1'; _selExchange = 'FULL'; _selStage = 'L1L2';
-      } else if (_preset === 't2') {
-        _selMat = 'T2'; _selExchange = 'FULL'; _selStage = 'L3';
+  function _deltaHtml(cur, prev) {
+    let threshHtml = '';
+    for (const t of GR_THRESHOLDS) {
+      if (cur >= t.min) {
+        threshHtml = `<div style="display:inline-block;background:${t.bg};border:1px solid ${t.color};border-radius:99px;padding:2px 10px;font-size:.8rem;font-weight:700;color:${t.color};margin-bottom:2px">${t.badge}</div><br>`;
+        break;
       }
     }
-    // 対象の現在ステージを初期値として取得
-    if (!_selStage && targetId) {
-      const obj = targetType === 'IND' ? Store.getIndividual(targetId) : Store.getLot(targetId);
-      _selStage = (obj?.current_stage || obj?.stage || '').replace(/^(L1L2|L3)$/, s => s);
+    if (prev === null) {
+      return threshHtml + `<span style="color:var(--text3)">📝 初回記録: <b>${cur}g</b></span>`;
     }
+    const diff  = Math.round((cur - prev) * 10) / 10;
+    const isPos = diff > 0, isNeg = diff < 0;
+    const arrow = isPos ? '↑' : isNeg ? '↓' : '→';
+    const color = isPos ? 'var(--green)' : isNeg ? 'var(--red,#e05050)' : 'var(--text3)';
+    const sign  = isPos ? '+' : '';
+    const cel   = isPos && diff >= 5 ? ' 🎉' : '';
+    return threshHtml + `<span style="color:${color};font-weight:700;font-size:1.05rem">${arrow} ${sign}${diff}g${cel}</span><span style="color:var(--text3);font-size:.75rem;margin-left:6px">（前回 ${prev}g）</span>`;
+  }
 
-    const STAGES = [
-      { val:'L1L2', label:'L1L2' }, { val:'L3', label:'L3' },
-      { val:'PREPUPA', label:'前蛹' }, { val:'PUPA', label:'蛹' },
-      { val:'ADULT_PRE', label:'未後食' }, { val:'ADULT', label:'活動開始' },
-    ];
-    const CONTAINERS = [
-      { val:'', label:'変更なし' }, { val:'1.8L', label:'1.8L' },
-      { val:'2.7L', label:'2.7L' }, { val:'4.8L', label:'4.8L' },
-    ];
-    const MATS = [
-      { val:'', label:'変更なし' }, { val:'T0', label:'T0' },
-      { val:'T1', label:'T1' }, { val:'T2', label:'T2' },
-      { val:'T3', label:'T3' },
-    ];
-    const EXCHANGES = [
-      { val:'', label:'なし' }, { val:'FULL', label:'全交換' },
-      { val:'PARTIAL', label:'追加のみ' },
-    ];
+  // ── 最初の一度だけ適用 ────────────────────────────────────────
+  _applyModePreset(_mode);
+  _loadEntityDefaults();
+
+  function render() {
+    const { obj, age, stage, sex, count, lineDisp } = _getEntityInfo();
+    const prev      = _getPrevRecord();
+    const prevWeight= prev ? +prev.weight_g : null;
+    const prevDate  = prev?.record_date || '';
+    const today     = new Date().toISOString().split('T')[0];
+    const isLot     = targetType === 'LOT';
+    const isDirectMode = !!targetId;
+
+    // stage display label
+    const stageDispMap = { L1L2:'L1L2', L3:'L3', PREPUPA:'前蛹', PUPA:'蛹', ADULT_PRE:'未後食', ADULT:'活動中' };
+    const stageDisp = stageDispMap[stage] || stage || '—';
+
+    // back route
+    const backFn = isDirectMode
+      ? (isLot ? `routeTo('lot-detail',{lotId:'${targetId}'})` : `routeTo('ind-detail',{indId:'${targetId}'})`)
+      : `Store.back()`;
 
     main.innerHTML = `
-      ${UI.header('成長記録', {
-        back: true,
-        backFn: targetId
-          ? (targetType === 'LOT'
-              ? "routeTo('lot-detail',{lotId:'" + targetId + "'})"
-              : "routeTo('ind-detail',{indId:'" + targetId + "'})") 
-          : "Store.back()"
-      })}
+      ${UI.header('成長記録', { back: true, backFn: backFn })}
       <div class="page-body has-quick-bar">
 
         ${!isDirectMode ? `
-        <!-- 対象選択（直行モード以外のみ） -->
+        <!-- 対象選択（手動モードのみ） -->
         <div class="card">
           <div class="card-title">記録対象</div>
           <div style="display:flex;gap:8px;margin-bottom:10px">
-            <button class="pill ${targetType==='IND'?'active':''}"
-              onclick="Pages._grSetType('IND')">個体</button>
-            <button class="pill ${targetType==='LOT'?'active':''}"
-              onclick="Pages._grSetType('LOT')">ロット</button>
+            <button class="pill ${targetType==='IND'?'active':''}" onclick="Pages._grSetType('IND')">個体</button>
+            <button class="pill ${targetType==='LOT'?'active':''}" onclick="Pages._grSetType('LOT')">ロット</button>
           </div>
           ${targetType === 'IND' ? `
             <select id="gr-target" class="input" onchange="Pages._grTargetChange(this.value,'IND')">
               <option value="">個体を選択...</option>
-              ${(Store.filterIndividuals({status:'alive'})).map(i =>
-                `<option value="${i.ind_id}" ${i.ind_id===targetId?'selected':''}>
-                  ${i.display_id} ${i.latest_weight_g?'('+i.latest_weight_g+'g)':''} ${i.sex||''}</option>`
-              ).join('')}
+              ${(Store.filterIndividuals({status:'alive'})).map(i => `<option value="${i.ind_id}" ${i.ind_id===targetId?'selected':''}>${i.display_id} ${i.latest_weight_g?'('+i.latest_weight_g+'g)':''} ${i.sex||''}</option>`).join('')}
             </select>` : `
             <select id="gr-target" class="input" onchange="Pages._grTargetChange(this.value,'LOT')">
               <option value="">ロットを選択...</option>
-              ${(Store.filterLots({status:'active'})).map(l =>
-                `<option value="${l.lot_id}" ${l.lot_id===targetId?'selected':''}>
-                  ${l.display_id} ${stageLabel(l.stage)} (${l.count}頭)</option>`
-              ).join('')}
+              ${(Store.filterLots({status:'active'})).map(l => `<option value="${l.lot_id}" ${l.lot_id===targetId?'selected':''}>${l.display_id} (${l.count}頭)</option>`).join('')}
             </select>`}
-        </div>` : `
-        <!-- 直行モード: 対象バッジのみ表示 -->
-        <div style="background:var(--surface2);border-radius:var(--radius-sm);padding:8px 12px;
-          display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:2px">
-          <div style="display:flex;align-items:center;gap:8px">
-            <span style="font-size:.7rem;color:var(--text3);
-              padding:1px 6px;background:var(--surface3);border-radius:8px">
-              ${targetType === 'LOT' ? 'ロット' : '個体'}
-            </span>
-            <span style="font-weight:700;color:var(--gold);font-size:.9rem;font-family:var(--font-mono)">
-              ${displayId || targetId}
-            </span>
-          </div>
-          ${age ? `<span style="font-size:.78rem;color:var(--blue);font-weight:600">${age.days}</span>` : ''}
-        </div>`}
-
-        <!-- 日齢・前回比 -->
-        ${targetId && (age || prev) ? `
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin:2px 0">
-          ${age ? `
-          <div style="flex:1;min-width:100px;background:rgba(91,168,232,.07);border:1px solid rgba(91,168,232,.2);
-            border-radius:8px;padding:6px 10px">
-            <div style="font-size:.62rem;color:var(--text3)">現在の日齢</div>
-            <div style="font-size:.9rem;font-weight:700;color:var(--blue)">${age.days}</div>
-            <div style="font-size:.62rem;color:var(--text3)">${age.weeks} / ${age.stageGuess}</div>
-          </div>` : ''}
-          ${prev ? `
-          <div style="flex:1;min-width:100px;background:var(--surface2);border-radius:8px;padding:6px 10px">
-            <div style="font-size:.62rem;color:var(--text3)">前回 (${prev.record_date})</div>
-            <div style="font-size:.9rem;font-weight:700">${prev.weight_g}g</div>
-            <div id="gr-delta" style="font-size:.72rem;color:var(--text3)">—</div>
-          </div>` : ''}
         </div>` : ''}
 
-        <!-- 写真・AI解析（そのまま維持） -->
+        <!-- ① 対象カード -->
+        ${targetId ? `
+        <div class="quick-info-bar">
+          <div style="flex:1;min-width:0">
+            <div class="quick-info-id" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+              ${displayId}
+            </div>
+            <div style="display:flex;gap:5px;align-items:center;margin-top:4px;flex-wrap:wrap">
+              <span style="background:rgba(76,175,120,.15);color:var(--green);font-size:.68rem;padding:1px 6px;border-radius:99px;font-weight:600">${stageDisp}</span>
+              ${isLot ? `<span style="font-size:.7rem;color:var(--text3)">${count}頭</span>` : `<span style="font-size:.7rem;color:var(--text3)">${sex}</span>`}
+              ${lineDisp ? `<span style="font-size:.68rem;color:var(--text3)">L:${lineDisp}</span>` : ''}
+            </div>
+          </div>
+          <div style="text-align:right;flex-shrink:0">
+            ${age ? `<div class="quick-info-age">${age.totalDays}</div><div class="quick-info-age-label">日齢</div>` : ''}
+          </div>
+        </div>` : ''}
+
+        <!-- ② モードタブ -->
+        ${targetId ? `
+        <div style="display:flex;gap:5px">
+          ${Object.entries(GR_MODE_PRESETS).map(([k, p]) =>
+            `<button class="btn btn-sm ${_mode===k ? 'btn-primary' : 'btn-ghost'}" style="flex:1;font-size:.75rem"
+              onclick="Pages._grSetMode('${k}')">${p.label}</button>`
+          ).join('')}
+        </div>` : ''}
+
+        <!-- ③ 体重入力 -->
+        <div class="card" style="border-color:rgba(76,175,120,.35);padding:16px 14px">
+          <div style="text-align:center;font-size:.72rem;font-weight:700;color:var(--text3);letter-spacing:.08em;margin-bottom:10px">体重 (g)</div>
+          <div style="display:flex;align-items:center;justify-content:center;gap:6px;margin-bottom:8px">
+            <button class="btn btn-ghost btn-sm" style="min-width:46px;font-size:.9rem"
+              onclick="Pages._grAdjWeight(-10)" onmousedown="Pages._grAdjStart(-10)" onmouseup="Pages._grAdjStop()" ontouchend="Pages._grAdjStop()">−10</button>
+            <button class="btn btn-ghost btn-sm" style="min-width:46px;font-size:.9rem"
+              onclick="Pages._grAdjWeight(-1)" onmousedown="Pages._grAdjStart(-1)" onmouseup="Pages._grAdjStop()" ontouchend="Pages._grAdjStop()">−1</button>
+            <input id="gr-weight" type="number" inputmode="decimal" step="0.1" min="0" max="999.9"
+              placeholder="0.0" autocomplete="off"
+              style="width:180px;font-size:2.6rem;font-weight:700;text-align:center;
+                border:2px solid var(--gold);border-radius:10px;padding:10px 8px;
+                background:var(--bg2);color:var(--green)"
+              oninput="Pages._grLiveUpdate(this.value,${prevWeight})"
+              onkeydown="if(event.key==='Enter'&&!event.isComposing){Pages._grSave('${targetType}','${targetId}')}">
+            <button class="btn btn-ghost btn-sm" style="min-width:46px;font-size:.9rem"
+              onclick="Pages._grAdjWeight(1)" onmousedown="Pages._grAdjStart(1)" onmouseup="Pages._grAdjStop()" ontouchend="Pages._grAdjStop()">+1</button>
+            <button class="btn btn-ghost btn-sm" style="min-width:46px;font-size:.9rem"
+              onclick="Pages._grAdjWeight(10)" onmousedown="Pages._grAdjStart(10)" onmouseup="Pages._grAdjStop()" ontouchend="Pages._grAdjStop()">+10</button>
+          </div>
+          <div style="text-align:center;font-size:.78rem;color:var(--text3);margin-bottom:6px">g</div>
+          <div id="gr-delta" style="text-align:center;min-height:28px;font-size:.9rem;transition:all .15s">
+            ${prevWeight !== null
+              ? `<span style="color:var(--text3)">前回 <b>${prevWeight}g</b>（${prevDate}）から —</span>`
+              : `<span style="color:var(--text3)">（前回体重なし・初回記録）</span>`}
+          </div>
+        </div>
+
+        <!-- ④ 写真・AI解析（維持） -->
         <div class="card">
           <div class="card-title">📷 写真・AI解析</div>
           <div class="photo-upload-area" onclick="document.getElementById('gr-photo').click()" id="photo-area">
@@ -178,131 +229,127 @@ Pages.growthRecord = function (params = {}) {
           <div id="gr-ai-result" style="margin-top:8px"></div>
         </div>
 
-        <!-- 体重入力 -->
+        <!-- ⑤ 入力パネル: 記録日 / 区分 / 容器 / 交換種別 / マット / ステージ -->
         <div class="card">
-          <div style="font-size:.75rem;font-weight:700;color:var(--text3);margin-bottom:8px">
-            体重 <span style="color:var(--red)">*</span>
-          </div>
-          <!-- ±ボタン行 -->
-          <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
-            <button type="button" class="btn btn-ghost"
-              style="font-size:1.1rem;font-weight:700;padding:10px 14px;border-radius:10px"
-              onclick="Pages._grAdjWeight(-10)">−10</button>
-            <button type="button" class="btn btn-ghost"
-              style="font-size:1.1rem;font-weight:700;padding:10px 14px;border-radius:10px"
-              onclick="Pages._grAdjWeight(-1)">−1</button>
-            <input type="number" id="gr-weight"
-              style="flex:1;font-size:1.6rem;font-weight:700;text-align:center;
-                padding:12px 6px;border:2px solid var(--border);border-radius:10px;
-                background:var(--bg2);color:var(--text1);width:100%"
-              placeholder="0.0" step="0.1" min="0"
-              oninput="Pages._grUpdateDelta(this.value, ${prevWeight})">
-            <button type="button" class="btn btn-ghost"
-              style="font-size:1.1rem;font-weight:700;padding:10px 14px;border-radius:10px"
-              onclick="Pages._grAdjWeight(1)">+1</button>
-            <button type="button" class="btn btn-ghost"
-              style="font-size:1.1rem;font-weight:700;padding:10px 14px;border-radius:10px"
-              onclick="Pages._grAdjWeight(10)">+10</button>
-          </div>
-          <!-- g単位表示 + 前回差 -->
-          <div style="display:flex;align-items:center;justify-content:center;gap:10px">
-            <span style="font-size:.78rem;color:var(--text3)">g</span>
-            ${prev ? `<span id="gr-delta-inline" style="font-size:.78rem;color:var(--text3)">前回比: —</span>` : ''}
-          </div>
-          <!-- 頭幅 -->
-          <div style="margin-top:10px">
-            <div style="font-size:.72rem;color:var(--text3);margin-bottom:4px">頭幅 (mm)（任意）</div>
-            <input type="number" id="gr-headwidth" class="input"
-              style="font-size:1rem;text-align:center;padding:8px"
-              placeholder="例: 32.5" step="0.1">
+          <div class="form-section">
+
+            <div class="field">
+              <label class="field-label" style="font-size:.72rem;color:var(--text3);font-weight:700">記録日</label>
+              <input id="gr-date" type="date" class="input" value="${today}" max="${today}">
+            </div>
+
+            <div class="field">
+              <label class="field-label" style="font-size:.72rem;color:var(--text3);font-weight:700">区分</label>
+              ${isLot ? `
+                <div style="display:flex;gap:6px">
+                  ${['大','中','小','—'].map(c => {
+                    const on = c === '—' ? !_selSizeCat : (_selSizeCat||'').split(',').map(s=>s.trim()).includes(c);
+                    return `<button type="button"
+                      style="flex:1;min-height:42px;border-radius:8px;font-size:.85rem;font-weight:700;cursor:pointer;
+                        border:1px solid ${on ? 'var(--green)' : 'var(--border)'};
+                        background:${on ? 'var(--green)' : 'var(--surface2)'};
+                        color:${on ? '#fff' : 'var(--text2)'}"
+                      onclick="Pages._grSelSizeCat('${c}')">${c}</button>`;
+                  }).join('')}
+                  <input type="hidden" id="gr-size-cat" value="${_selSizeCat}">
+                </div>` : `<div style="font-size:.8rem;color:var(--text3)">（個体は区分なし）</div>`}
+            </div>
+
+            <div class="field">
+              <label class="field-label" style="font-size:.72rem;color:var(--text3);font-weight:700">容器</label>
+              ${_grBtnGroup('gr-container',
+                [{val:'1.8L',label:'1.8L'},{val:'2.7L',label:'2.7L'},{val:'4.8L',label:'4.8L'},{val:'',label:'—'}],
+                _selContainer, 'Pages._grSelContainer')}
+            </div>
+
+            <div class="field">
+              <label class="field-label" style="font-size:.72rem;color:var(--text3);font-weight:700">交換種別</label>
+              ${_grBtnGroup('gr-exchange',
+                [{val:'FULL',label:'全交換'},{val:'PARTIAL',label:'追加'},{val:'',label:'なし'}],
+                _selExchange, 'Pages._grSelExchange')}
+            </div>
+
+            <div class="field">
+              <label class="field-label" style="font-size:.72rem;color:var(--text3);font-weight:700">マット</label>
+              ${_grBtnGroup('gr-mat',
+                [{val:'T1',label:'T1'},{val:'T2',label:'T2'},{val:'T3',label:'T3'},{val:'',label:'—'}],
+                _selMat, 'Pages._grSelMat')}
+            </div>
+
+            <div class="field">
+              <label class="field-label" style="font-size:.72rem;color:var(--text3);font-weight:700">ステージ</label>
+              ${_grBtnGroup('gr-stage',
+                [{val:'L1L2',label:'L1L2'},{val:'L3',label:'L3'},{val:'PREPUPA',label:'前蛹'},
+                 {val:'PUPA',label:'蛹'},{val:'ADULT_PRE',label:'未後食'},{val:'ADULT',label:'活動中'},{val:'',label:'—'}],
+                _selStage, 'Pages._grSelStage')}
+            </div>
+
           </div>
         </div>
 
-        <!-- ステージ -->
-        <div class="card">
-          <div style="font-size:.72rem;color:var(--text3);margin-bottom:6px;font-weight:700">ステージ</div>
-          ${_grBtnGroup('gr-stage', STAGES, _selStage, 'Pages._grSelStage')}
-        </div>
-
-        <!-- 容器 / 交換区分 -->
-        <div class="card">
-          <div style="font-size:.72rem;color:var(--text3);margin-bottom:6px;font-weight:700">容器サイズ</div>
-          ${_grBtnGroup('gr-container', CONTAINERS, _selContainer, 'Pages._grSelContainer')}
-          <div style="height:12px"></div>
-          <div style="font-size:.72rem;color:var(--text3);margin-bottom:6px;font-weight:700">交換区分</div>
-          ${_grBtnGroup('gr-exchange', EXCHANGES, _selExchange, 'Pages._grSelExchange')}
-        </div>
-
-        <!-- マット / モルト -->
-        <div class="card">
-          <div style="font-size:.72rem;color:var(--text3);margin-bottom:6px;font-weight:700">マット種別</div>
-          ${_grBtnGroup('gr-mat', MATS, _selMat, 'Pages._grSelMat')}
-          <div style="margin-top:10px">
-            <label style="display:flex;align-items:center;gap:10px;cursor:pointer;
-              padding:10px;background:var(--surface2);border-radius:var(--radius-sm)">
-              <input type="checkbox" id="gr-malt" style="width:18px;height:18px;cursor:pointer">
-              <span style="font-size:.88rem;font-weight:600">🍄 モルト入り</span>
-            </label>
+        <!-- ⑥ LOT: 頭数変化 -->
+        ${isLot ? `
+        <div class="card" style="padding:14px">
+          <div style="font-size:.72rem;font-weight:700;color:var(--text2);margin-bottom:10px">🔢 頭数変化（マット交換時）</div>
+          <div class="count-row">
+            <div>
+              <div style="font-size:.68rem;color:var(--text3);margin-bottom:4px;text-align:center">交換前</div>
+              <input id="gr-before-count" type="number" inputmode="numeric"
+                class="num-input-xl" style="font-size:2rem"
+                min="0" max="999" placeholder="${count||'—'}" value="${count||''}"
+                oninput="Pages._grCalcAttrition()">
+            </div>
+            <div class="count-row-arrow">→</div>
+            <div>
+              <div style="font-size:.68rem;color:var(--text3);margin-bottom:4px;text-align:center">交換後</div>
+              <input id="gr-after-count" type="number" inputmode="numeric"
+                class="num-input-xl" style="font-size:2rem"
+                min="0" max="999" placeholder="—"
+                oninput="Pages._grCalcAttrition()">
+            </div>
           </div>
-        </div>
-
-        <!-- 記録日 -->
-        <div class="card">
-          <div style="font-size:.72rem;color:var(--text3);margin-bottom:6px;font-weight:700">記録日</div>
-          <input type="date" id="gr-date" class="input" value="${today}">
-        </div>
-
-        ${targetType === 'LOT' ? `
-        <!-- ロット: 頭数変化 -->
-        <div class="card">
-          <div style="font-size:.72rem;color:var(--text3);margin-bottom:6px;font-weight:700">
-            🔢 マット交換時の頭数記録（任意）
-          </div>
-          <div class="form-row-2">
-            ${UI.field('交換前頭数', `<input type="number" id="gr-before-count" class="input" min="0"
-              placeholder="例: 5" oninput="Pages._grCalcAttrition()">`)}
-            ${UI.field('交換後頭数', `<input type="number" id="gr-after-count" class="input" min="0"
-              placeholder="例: 4" oninput="Pages._grCalcAttrition()">`)}
-          </div>
-          <div id="gr-attrition-display" style="font-size:.8rem;color:var(--text3);margin-top:4px;min-height:18px"></div>
+          <div id="gr-attrition-display" class="count-attrition"></div>
         </div>` : ''}
 
-        <!-- 詳細入力（折りたたみ・体色/メモ/公開設定） -->
+        <!-- ⑦ 頭幅/メモ（折りたたみ） -->
         <div class="collapse-toggle"
           onclick="this.nextElementSibling.classList.toggle('open');this.nextElementSibling.classList.toggle('closed');this.querySelector('span:last-child').style.transform=this.nextElementSibling.classList.contains('open')?'rotate(180deg)':''">
-          <span>📝 詳細入力（体色・メモ・公開設定）</span>
+          <span>📝 頭幅 / メモ（任意）</span>
           <span style="font-size:.7rem;transition:transform .2s">▼</span>
         </div>
         <div class="collapse-body closed">
           <div class="card" style="border-radius:0 0 var(--radius) var(--radius)">
             <div class="form-section">
-              <div class="form-row-2">
-                ${UI.field('体色', `<select id="gr-color" class="input">
-                  <option value="">—</option>
-                  <option>黄白色</option><option>クリーム色</option>
-                  <option>やや黄色</option><option>黄色</option>
-                </select>`)}
-                ${UI.field('張り', `<select id="gr-firm" class="input">
-                  <option value="">—</option>
-                  <option>良好</option><option>普通</option>
-                  <option>やや弱い</option><option>弱い</option>
-                </select>`)}
+              <div class="field">
+                <label class="field-label">頭幅 (mm)</label>
+                <input id="gr-headwidth" class="input" type="number" inputmode="decimal" step="0.1" min="0" max="99" placeholder="例: 38.5">
               </div>
               <div class="field">
-                <label class="field-label">観察コメント</label>
-                <textarea id="gr-ai-comment" class="input" rows="2"
-                  placeholder="AI解析結果またはご自身の観察メモ"></textarea>
+                <label class="field-label">🍄 モルト入り</label>
+                <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:8px;background:var(--surface2);border-radius:var(--radius-sm)">
+                  <input type="checkbox" id="gr-malt" style="width:18px;height:18px">
+                  <span style="font-size:.88rem">モルトパウダー入りマット</span>
+                </label>
               </div>
-              ${UI.field('公開区分', `<select id="gr-public" class="input">
-                <option value="private">🔒 非公開</option>
-                <option value="buyer_only">🔑 購入者限定</option>
-                <option value="public">🌐 公開</option>
-              </select>`)}
+              <div class="field">
+                <label class="field-label">観察メモ（内部）</label>
+                <textarea id="gr-ai-comment" class="input" rows="2" placeholder="幼虫の状態、色艶など"></textarea>
+              </div>
             </div>
           </div>
         </div>
 
-        <!-- 記録履歴 -->
+        <!-- ⑧ 前回記録 -->
+        ${prev ? `
+        <div class="card" style="padding:10px 14px">
+          <div style="font-size:.68rem;color:var(--text3);margin-bottom:4px">前回記録</div>
+          <div style="display:flex;align-items:baseline;gap:10px">
+            <span style="font-size:1.5rem;font-weight:700;color:var(--text2);font-family:var(--font-mono)">${prev.weight_g}g</span>
+            <span style="font-size:.75rem;color:var(--text3)">${prevDate}${prev.age_days ? ` / ${prev.age_days}日齢` : ''}</span>
+          </div>
+        </div>` : ''}
+
+        <!-- ⑨ 記録履歴 -->
         ${targetId ? `
         <div class="sec-hdr" style="margin-top:4px">
           <span class="sec-title">記録履歴</span>
@@ -312,87 +359,111 @@ Pages.growthRecord = function (params = {}) {
 
       </div>
 
-      <!-- 下部固定保存バー -->
+      <!-- 固定フッター -->
       <div class="quick-action-bar">
-        <button class="btn btn-ghost btn-xl" style="flex:1"
-          id="gr-back-btn">← 戻る</button>
-        <button class="btn btn-primary btn-xl" style="flex:2"
+        <button id="gr-back-btn" class="btn btn-ghost btn-xl" style="flex:1">← 戻る</button>
+        <button id="gr-save-btn" class="btn btn-gold btn-xl" style="flex:2"
           onclick="Pages._grSave('${targetType}','${targetId}')">
-          ✅ 保存
+          💾 保存して次へ
         </button>
       </div>`;
 
-    if (targetId) {
-      Pages._grLoadHistory(targetType, targetId);
-    }
-    // 戻るボタン — addEventListener で安全にバインド（inline onclick のクォート問題を回避）
-    const _backBtn = document.getElementById('gr-back-btn');
-    if (_backBtn) {
-      _backBtn.addEventListener('click', function() {
+    // ── 戻るボタン addEventListener ────────────────────────────
+    const backBtn = document.getElementById('gr-back-btn');
+    if (backBtn) {
+      backBtn.addEventListener('click', function() {
         if (!targetId) { Store.back(); return; }
-        if (targetType === 'LOT') {
-          routeTo('lot-detail', { lotId: targetId });
-        } else {
-          routeTo('ind-detail', { indId: targetId });
-        }
+        isLot ? routeTo('lot-detail', { lotId: targetId })
+               : routeTo('ind-detail', { indId: targetId });
       });
+    }
+
+    // ── 初期フォーカス ────────────────────────────────────────
+    if (targetId) {
+      setTimeout(() => document.getElementById('gr-weight')?.focus(), 150);
+      Pages._grLoadHistory(targetType, targetId);
     }
   }
 
-  // ── ボタン式選択ハンドラ ────────────────────────────────────
-  Pages._grSelStage     = (v) => { _selStage     = v; render(); };
-  Pages._grSelContainer = (v) => { _selContainer = v; render(); };
-  Pages._grSelMat       = (v) => { _selMat       = v; render(); };
-  Pages._grSelExchange  = (v) => { _selExchange  = v; render(); };
-
-  // ── 体重 ±ボタン ──────────────────────────────────────────
-  Pages._grAdjWeight = (delta) => {
-    const el = document.getElementById('gr-weight');
-    if (!el) return;
-    const cur = parseFloat(el.value) || 0;
-    const next = Math.max(0, Math.round((cur + delta) * 10) / 10);
-    el.value = next;
-    // 前回比更新
-    const prev = _getPrevRecord();
-    if (prev) Pages._grUpdateDelta(String(next), +prev.weight_g);
+  // ── モード切替 ────────────────────────────────────────────────
+  Pages._grSetMode = (mode) => {
+    _mode = mode;
+    _applyModePreset(mode);
+    // フォーム値を保持して再描画
+    const w = document.getElementById('gr-weight')?.value;
+    const d = document.getElementById('gr-date')?.value;
+    render();
+    if (w) setTimeout(() => { const el = document.getElementById('gr-weight'); if (el) el.value = w; }, 0);
+    if (d) setTimeout(() => { const el = document.getElementById('gr-date');   if (el) el.value = d; }, 0);
   };
 
-  // ── type切替 ──────────────────────────────────────────────
+  // ── 対象選択（手動モード） ────────────────────────────────────
   Pages._grSetType = (type) => {
     targetType = type; targetId = ''; displayId = '';
-    _selStage = ''; _selContainer = ''; _selMat = ''; _selExchange = '';
+    _selStage = ''; _selContainer = ''; _selMat = ''; _selExchange = ''; _selSizeCat = '';
+    render();
+  };
+  Pages._grTargetChange = (id, type) => {
+    targetId = id; targetType = type;
+    _selStage = ''; _selContainer = ''; _selMat = ''; _selExchange = ''; _selSizeCat = '';
+    _applyModePreset(_mode);
+    _loadEntityDefaults();
+    const obj = type === 'IND' ? Store.getIndividual(id) : Store.getLot(id);
+    displayId = obj?.display_id || id;
     render();
   };
 
-  // ── 対象変更 ──────────────────────────────────────────────
-  Pages._grTargetChange = (id, type) => {
-    targetId = id; targetType = type;
-    _selStage = ''; _selContainer = ''; _selMat = ''; _selExchange = '';
-    if (id) {
-      const obj = type === 'IND' ? Store.getIndividual(id) : Store.getLot(id);
-      displayId = obj?.display_id || id;
+  // ── ボタン選択ハンドラ ────────────────────────────────────────
+  Pages._grSelContainer = (v) => { _selContainer = v; render(); };
+  Pages._grSelExchange  = (v) => { _selExchange  = v; render(); };
+  Pages._grSelMat       = (v) => { _selMat       = v; render(); };
+  Pages._grSelStage     = (v) => { _selStage     = v; render(); };
+  Pages._grSelSizeCat   = (v) => {
+    if (v === '—') { _selSizeCat = ''; }
+    else {
+      const cats = (_selSizeCat || '').split(',').map(s => s.trim()).filter(Boolean);
+      const idx  = cats.indexOf(v);
+      if (idx >= 0) cats.splice(idx, 1); else cats.push(v);
+      _selSizeCat = cats.join(',');
     }
     render();
   };
 
-  // ── 前回比リアルタイム更新 ───────────────────────────────
-  Pages._grUpdateDelta = (val, prev) => {
-    // 旧 gr-delta (日齢行) + 新 gr-delta-inline (体重行)
-    [document.getElementById('gr-delta'), document.getElementById('gr-delta-inline')].forEach(el => {
-      if (!el || !prev || !val) return;
-      const delta = +val - prev;
-      const sign  = delta >= 0 ? '+' : '';
-      const color = delta >= 0 ? 'var(--green)' : 'var(--red,#e05050)';
-      if (el.id === 'gr-delta-inline') {
-        el.textContent = `前回比: ${sign}${delta.toFixed(1)}g`;
-      } else {
-        el.textContent = `${sign}${delta.toFixed(1)}g`;
-      }
-      el.style.color = color;
-    });
+  // ── 体重 ±ボタン ─────────────────────────────────────────────
+  let _adjTimer = null;
+  Pages._grAdjWeight = (delta) => {
+    const el = document.getElementById('gr-weight');
+    if (!el) return;
+    const cur  = parseFloat(el.value) || 0;
+    const next = Math.max(0, Math.round((cur + delta) * 10) / 10);
+    el.value = next;
+    Pages._grLiveUpdate(String(next), _grPrevWeightCache);
+  };
+  Pages._grAdjStart = (delta) => {
+    Pages._grAdjWeight(delta);
+    _adjTimer = setInterval(() => Pages._grAdjWeight(delta), 150);
+  };
+  Pages._grAdjStop = () => { clearInterval(_adjTimer); _adjTimer = null; };
+
+  // ── リアルタイム前回比更新 ────────────────────────────────────
+  let _grPrevWeightCache = null;
+  const _initPrev = _getPrevRecord();
+  _grPrevWeightCache = _initPrev ? +_initPrev.weight_g : null;
+
+  Pages._grLiveUpdate = (val, prev) => {
+    const el = document.getElementById('gr-delta');
+    if (!el) return;
+    const cur = parseFloat(val);
+    if (!val || isNaN(cur) || cur <= 0) {
+      el.innerHTML = prev !== null
+        ? `<span style="color:var(--text3)">前回 <b>${prev}g</b> から —</span>`
+        : `<span style="color:var(--text3)">（初回記録）</span>`;
+      return;
+    }
+    el.innerHTML = _deltaHtml(cur, prev);
   };
 
-  // ── 写真選択 ───────────────────────────────────────────────
+  // ── 写真選択 ─────────────────────────────────────────────────
   Pages._grPhotoSelected = async (input) => {
     const file = input.files[0];
     if (!file) return;
@@ -411,39 +482,21 @@ Pages.growthRecord = function (params = {}) {
           if (_aiResult) {
             if (_aiResult.weight) {
               const wEl = document.getElementById('gr-weight');
-              if (wEl) {
-                wEl.value = _aiResult.weight;
-                const prev = _getPrevRecord();
-                if (prev) Pages._grUpdateDelta(_aiResult.weight, +prev.weight_g);
-              }
+              if (wEl) { wEl.value = _aiResult.weight; Pages._grLiveUpdate(_aiResult.weight, _grPrevWeightCache); }
             }
             if (_aiResult.larva_analysis?.comment) {
-              const cEl = document.getElementById('gr-ai-comment');
-              if (cEl) cEl.value = _aiResult.larva_analysis.comment;
+              const cEl = document.getElementById('gr-ai-comment'); if (cEl) cEl.value = _aiResult.larva_analysis.comment;
             }
-            if (_aiResult.larva_analysis?.color) {
-              const colEl = document.getElementById('gr-color');
-              if (colEl) colEl.value = _aiResult.larva_analysis.color;
-            }
-            if (_aiResult.larva_analysis?.firmness) {
-              const firmEl = document.getElementById('gr-firm');
-              if (firmEl) firmEl.value = _aiResult.larva_analysis.firmness;
-            }
-            resultEl.innerHTML = `<div style="background:rgba(76,175,120,.1);border:1px solid rgba(76,175,120,.3);border-radius:6px;padding:8px;font-size:.78rem">
-              ✅ AI解析完了: ${_aiResult.weight ? _aiResult.weight+'g' : ''}
-              ${_aiResult.larva_analysis?.health ? ' / '+_aiResult.larva_analysis.health : ''}
-            </div>`;
+            resultEl.innerHTML = `<div style="background:rgba(76,175,120,.1);border:1px solid rgba(76,175,120,.3);border-radius:6px;padding:8px;font-size:.78rem">✅ AI解析完了: ${_aiResult.weight ? _aiResult.weight+'g' : ''}${_aiResult.larva_analysis?.health ? ' / '+_aiResult.larva_analysis.health : ''}</div>`;
           }
         } catch (e) {
           resultEl.innerHTML = `<div style="font-size:.78rem;color:var(--amber)">⚠️ AI解析失敗 (${e.message.slice(0,40)})</div>`;
         }
       }
-    } catch (e) {
-      UI.toast('画像の読み込みに失敗しました', 'error');
-    }
+    } catch (e) { UI.toast('画像の読み込みに失敗しました', 'error'); }
   };
 
-  // ── 履歴表示 ──────────────────────────────────────────────
+  // ── 記録履歴 ─────────────────────────────────────────────────
   Pages._grLoadHistory = async (type, id) => {
     const el = document.getElementById('gr-history');
     if (!el) return;
@@ -453,12 +506,10 @@ Pages.growthRecord = function (params = {}) {
       const res = await API.growth.list(type, id);
       Store.setGrowthRecords(id, res.records);
       el.innerHTML = UI.weightTable(res.records);
-    } catch (e) {
-      if (!cached) el.innerHTML = UI.empty('履歴取得失敗: ' + e.message);
-    }
+    } catch (e) { if (!cached) el.innerHTML = UI.empty('履歴取得失敗'); }
   };
 
-  // ── 減耗数自動計算 ───────────────────────────────────────
+  // ── 頭数減耗計算 ─────────────────────────────────────────────
   Pages._grCalcAttrition = () => {
     const before = parseInt(document.getElementById('gr-before-count')?.value || '');
     const after  = parseInt(document.getElementById('gr-after-count')?.value  || '');
@@ -466,33 +517,25 @@ Pages.growthRecord = function (params = {}) {
     if (!el) return;
     if (!isNaN(before) && !isNaN(after)) {
       const diff = before - after;
-      el.textContent = diff > 0
-        ? `減耗: ${diff}頭（${before}頭 → ${after}頭）`
-        : diff === 0 ? '変化なし' : '⚠️ 交換後が交換前より多い';
+      el.textContent = diff > 0 ? `減耗 ${diff} 頭` : diff === 0 ? '変化なし' : `⚠️ 後が多い(${Math.abs(diff)}頭増)`;
       el.style.color = diff > 0 ? 'var(--red)' : diff === 0 ? 'var(--text3)' : 'var(--amber)';
-    } else {
-      el.textContent = '';
-    }
+    } else { el.textContent = ''; }
   };
 
-  // ── 保存 ──────────────────────────────────────────────────
+  // ── 保存 ──────────────────────────────────────────────────────
   Pages._grSave = async (type, id) => {
     if (!id) { UI.toast('対象を選択してください', 'error'); return; }
     const weight = document.getElementById('gr-weight')?.value;
-    if (!weight) { UI.toast('体重を入力してください', 'error'); return; }
+    if (!weight || parseFloat(weight) <= 0) { UI.toast('体重を入力してください（0.1g以上）', 'error'); return; }
 
-    // ボタン式フィールドは hidden input から取得
     const stage     = document.getElementById('gr-stage')?.value     || _selStage     || '';
     const container = document.getElementById('gr-container')?.value || _selContainer || '';
     const exchange  = document.getElementById('gr-exchange')?.value  || _selExchange  || '';
     const mat       = document.getElementById('gr-mat')?.value       || _selMat       || '';
-
-    const headW     = document.getElementById('gr-headwidth')?.value    || '';
+    const sizeCat   = document.getElementById('gr-size-cat')?.value  || _selSizeCat   || '';
+    const headW     = document.getElementById('gr-headwidth')?.value || '';
     const recDate   = (document.getElementById('gr-date')?.value || '').replace(/-/g, '/');
-    const color     = document.getElementById('gr-color')?.value     || '';
-    const firm      = document.getElementById('gr-firm')?.value      || '';
     const aiCmt     = document.getElementById('gr-ai-comment')?.value || '';
-    const pub       = document.getElementById('gr-public')?.value    || 'private';
     const hasMalt   = document.getElementById('gr-malt')?.checked    || false;
     const beforeCount = document.getElementById('gr-before-count')?.value;
     const afterCount  = document.getElementById('gr-after-count')?.value;
@@ -502,74 +545,67 @@ Pages.growthRecord = function (params = {}) {
       target_id:     id,
       stage,
       weight_g:      weight,
-      head_width_mm: headW,
-      container,
-      mat_type:      mat,
+      head_width_mm: headW || undefined,
+      container:     container || undefined,
+      mat_type:      mat || undefined,
       has_malt:      hasMalt,
-      exchange_type: exchange,
-      before_count:  beforeCount !== undefined && beforeCount !== '' ? parseInt(beforeCount) : undefined,
-      after_count:   afterCount  !== undefined && afterCount  !== '' ? parseInt(afterCount)  : undefined,
-      larva_color:   color,
-      larva_firmness:firm,
-      ai_comment:    aiCmt,
-      is_public:     pub,
+      exchange_type: exchange || undefined,
+      size_category: sizeCat || undefined,
+      before_count:  beforeCount !== '' && beforeCount !== undefined ? parseInt(beforeCount) : undefined,
+      after_count:   afterCount  !== '' && afterCount  !== undefined ? parseInt(afterCount)  : undefined,
+      note_private:  aiCmt || undefined,
       record_date:   recDate,
     };
 
     // 写真アップロード
     if (_photoB64) {
-      const ind = type === 'IND' ? Store.getIndividual(id) : null;
-      const lot = type === 'LOT' ? Store.getLot(id) : null;
-      const lineId = ind?.line_id || lot?.line_id;
-      const line   = lineId ? Store.getLine(lineId) : null;
+      const obj  = type === 'IND' ? Store.getIndividual(id) : Store.getLot(id);
+      const line = obj ? Store.getLine(obj.line_id) : null;
       if (line) {
         try {
           const today2 = new Date().toISOString().split('T')[0].replace(/-/g,'/');
-          const fname  = `${displayId || id}_${today2}.jpg`;
-          const up = await API.drive.uploadPhoto({
-            base64: _photoB64, mime_type: _photoMime, filename: fname,
-            line_display_id: line.display_id, folder_type: 'GROWTH',
-          });
+          const up = await API.drive.uploadPhoto({ base64: _photoB64, mime_type: _photoMime,
+            filename: `${displayId||id}_${today2}.jpg`, line_display_id: line.display_id, folder_type: 'GROWTH' });
           payload.photo_url = up.url;
-        } catch (e) {
-          UI.toast('写真アップロード失敗（記録は保存します）', 'info');
-        }
+        } catch (e) { UI.toast('写真アップロード失敗（記録は保存します）', 'info'); }
       }
     }
+
+    const btn = document.getElementById('gr-save-btn');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ 保存中...'; }
 
     try {
       const res = await apiCall(() => API.growth.create(payload), '記録しました ✅');
       Store.addGrowthRecord(id, { ...payload, record_id: res.record_id, age_days: res.age_days });
-      if (type === 'IND') {
-        Store.patchDBItem('individuals', 'ind_id', id, { latest_weight_g: weight, current_stage: stage });
-      }
+      if (type === 'IND') Store.patchDBItem('individuals', 'ind_id', id, { latest_weight_g: weight, current_stage: stage });
       if (type === 'LOT') {
-        const lotUpdates = {};
-        if (stage) lotUpdates.stage = stage;
-        if (payload.after_count !== undefined) {
-          lotUpdates.count = payload.after_count;
-          if (payload.after_count === 0) lotUpdates.status = 'individualized';
-        }
-        if (Object.keys(lotUpdates).length) Store.patchDBItem('lots', 'lot_id', id, lotUpdates);
+        const lu = {};
+        if (stage) lu.stage = stage;
+        if (payload.after_count !== undefined) { lu.count = payload.after_count; if (payload.after_count === 0) lu.status = 'individualized'; }
+        if (Object.keys(lu).length) Store.patchDBItem('lots', 'lot_id', id, lu);
       }
-      // フォームリセット（体重のみ）
-      const wEl = document.getElementById('gr-weight');
-      if (wEl) wEl.value = '';
+      // 体重フィールドリセット
+      const wEl = document.getElementById('gr-weight'); if (wEl) wEl.value = '';
       _photoB64 = null; _aiResult = null;
-      // 履歴リロード
+      // 履歴更新
       const cached = Store.getGrowthRecords(id);
       const histEl = document.getElementById('gr-history');
       if (histEl && cached) histEl.innerHTML = UI.weightTable(cached);
-      // ロット: 次のロットバー
-      if (type === 'LOT') _showNextLotBar(id);
-    } catch (e) {}
+      if (btn) { btn.disabled = false; btn.textContent = '💾 保存して次へ'; }
+      // ロット: 次のロットへバー
+      if (type === 'LOT') _grShowNextLotBar(id);
+      // 個体: 次フォーカス
+      if (type === 'IND') setTimeout(() => document.getElementById('gr-weight')?.focus(), 200);
+    } catch (e) {
+      if (btn) { btn.disabled = false; btn.textContent = '💾 保存して次へ'; }
+    }
   };
 
   render();
 };
 
-// ── 次のロット選択バー ──────────────────────────────────────────
-function _showNextLotBar(currentLotId) {
+// ── 次のロット連続入力バー ──────────────────────────────────────
+function _grShowNextLotBar(currentLotId) {
   document.getElementById('gr-next-lot-bar')?.remove();
   const currentLot = Store.getLot(currentLotId);
   if (!currentLot) return;
@@ -587,13 +623,16 @@ function _showNextLotBar(currentLotId) {
   const scrollEl = document.createElement('div');
   scrollEl.className = 'next-lot-scroll';
   candidates.slice(0, 6).forEach(function(l) {
-    const ln = Store.getLine(l.line_id);
+    const ln   = Store.getLine(l.line_id);
     const code = ln ? (ln.line_code || ln.display_id) : l.display_id;
-    const btn = document.createElement('button');
+    const btn  = document.createElement('button');
     btn.className = 'next-lot-btn';
-    btn.innerHTML = '<span style="color:var(--gold);font-weight:700">' + code + '</span><span style="color:var(--text3);margin-left:4px">' + l.count + '頭</span>';
+    btn.innerHTML = `<span style="color:var(--gold);font-weight:700">${code}</span><span style="color:var(--text3);margin-left:4px">${l.count}頭</span>`;
     btn.onclick = (function(lotId, lotDisplayId) {
-      return function() { document.getElementById('gr-next-lot-bar')?.remove(); routeTo('growth-rec', { targetType:'LOT', targetId:lotId, displayId:lotDisplayId }); };
+      return function() {
+        document.getElementById('gr-next-lot-bar')?.remove();
+        routeTo('growth-rec', { targetType:'LOT', targetId:lotId, displayId:lotDisplayId });
+      };
     })(l.lot_id, l.display_id);
     scrollEl.appendChild(btn);
   });
@@ -620,10 +659,7 @@ Pages._grEditRecord = async function (recordId) {
   const initMat    = rec ? (rec.mat_type  || '') : '';
   const initExch   = rec ? (rec.exchange_type || '') : '';
   const initNote   = rec ? (rec.note_private  || '') : '';
-
-  const STAGE_OPTS = ['L1L2','L3','PREPUPA','PUPA','ADULT_PRE','ADULT']
-    .map(s => `<option value="${s}" ${initStage===s?'selected':''}>${s}</option>`).join('');
-
+  const STAGE_OPTS = ['L1L2','L3','PREPUPA','PUPA','ADULT_PRE','ADULT'].map(s => `<option value="${s}" ${initStage===s?'selected':''}>${s}</option>`).join('');
   UI.modal(`
     <div class="modal-title">成長記録を編集</div>
     <div class="form-section" style="max-height:60vh;overflow-y:auto">
@@ -631,26 +667,11 @@ Pages._grEditRecord = async function (recordId) {
       ${UI.field('体重(g)', `<input type="number" id="gre-weight" class="input" step="0.1" value="${initWeight}" placeholder="例: 45.2">`)}
       <div class="form-row-2">
         ${UI.field('ステージ', `<select id="gre-stage" class="input">${STAGE_OPTS}</select>`)}
-        ${UI.field('容器', `<select id="gre-cont" class="input">
-          <option value="">—</option>
-          <option value="1.8L" ${initCont==='1.8L'?'selected':''}>1.8L</option>
-          <option value="2.7L" ${initCont==='2.7L'?'selected':''}>2.7L</option>
-          <option value="4.8L" ${initCont==='4.8L'?'selected':''}>4.8L</option>
-        </select>`)}
+        ${UI.field('容器', `<select id="gre-cont" class="input"><option value="">—</option>${['1.8L','2.7L','4.8L'].map(v=>`<option value="${v}" ${initCont===v?'selected':''}>${v}</option>`).join('')}</select>`)}
       </div>
       <div class="form-row-2">
-        ${UI.field('マット', `<select id="gre-mat" class="input">
-          <option value="">—</option>
-          <option value="T0" ${initMat==='T0'?'selected':''}>T0</option>
-          <option value="T1" ${initMat==='T1'?'selected':''}>T1</option>
-          <option value="T2" ${initMat==='T2'?'selected':''}>T2</option>
-          <option value="T3" ${initMat==='T3'?'selected':''}>T3</option>
-        </select>`)}
-        ${UI.field('交換区分', `<select id="gre-exch" class="input">
-          <option value="">—</option>
-          <option value="FULL"    ${initExch==='FULL'?'selected':''}>全交換</option>
-          <option value="PARTIAL" ${initExch==='PARTIAL'?'selected':''}>追加のみ</option>
-        </select>`)}
+        ${UI.field('マット', `<select id="gre-mat" class="input"><option value="">—</option>${['T1','T2','T3'].map(v=>`<option value="${v}" ${initMat===v?'selected':''}>${v}</option>`).join('')}</select>`)}
+        ${UI.field('交換区分', `<select id="gre-exch" class="input"><option value="">—</option><option value="FULL" ${initExch==='FULL'?'selected':''}>全交換</option><option value="PARTIAL" ${initExch==='PARTIAL'?'selected':''}>追加のみ</option></select>`)}
       </div>
       ${UI.field('メモ', `<input type="text" id="gre-note" class="input" value="${initNote}" placeholder="任意">`)}
     </div>
@@ -677,13 +698,7 @@ Pages._grSaveEdit = async function (recordId) {
     const gm = Store.getDB('growthMap') || {};
     for (const [tid, recs] of Object.entries(gm)) {
       const idx = (recs || []).findIndex(r => r.record_id === recordId);
-      if (idx >= 0) {
-        Object.assign(recs[idx], payload);
-        Store.setGrowthRecords(tid, recs);
-        const histEl = document.getElementById('gr-history');
-        if (histEl) histEl.innerHTML = UI.weightTable(recs);
-        break;
-      }
+      if (idx >= 0) { Object.assign(recs[idx], payload); Store.setGrowthRecords(tid, recs); const h = document.getElementById('gr-history'); if (h) h.innerHTML = UI.weightTable(recs); break; }
     }
   } catch (e) { UI.toast('更新失敗: ' + e.message, 'error'); }
   finally { UI.loading(false); }
