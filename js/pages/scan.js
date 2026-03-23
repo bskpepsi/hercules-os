@@ -19,6 +19,7 @@ Pages.qrScan = function (params = {}) {
   const main = document.getElementById('main');
   // モード: 'view' | 'diff' | 'weight'
   let _scanMode = params.mode === 'weight' ? 'weight' : params.mode === 'diff' ? 'diff' : 'view';
+  window._qrScanMode = _scanMode;  // 外部から参照できるようにグローバルへ
 
   function _modeStyle(m) {
     if (m === _scanMode) {
@@ -135,7 +136,7 @@ SET:SET-XXXXXXXX"
     setTimeout(() => Pages._qrRenderHistory(), 50);
   }
 
-  Pages._qrSwitchMode = (m) => { _scanMode = m; render(); };
+  Pages._qrSwitchMode = (m) => { _scanMode = m; window._qrScanMode = m; render(); };
   render();
 
   // 起動直後カメラ自動起動（モード問わず）
@@ -165,6 +166,45 @@ Pages._qrPreviewInput = function (val) {
 };
 
 // ── QR解析・モード別遷移 ─────────────────────────────────────
+
+// モード別遷移（ローカル/API両方から呼ばれる共通ルーター）
+function _qrNavigate(mode, res, qrText) {
+  if (mode === 'weight') {
+    const _ent = res.entity || {};
+    const _eid = _ent.ind_id || _ent.lot_id || '';
+    const _ety = res.entity_type || 'IND';
+    if (_eid) {
+      routeTo('growth-rec', { targetType: _ety, targetId: _eid, displayId: _ent.display_id || _eid, _fromQR: true });
+    } else {
+      UI.toast('対象が特定できませんでした', 'error'); routeTo('qr-scan');
+    }
+  } else if (mode === 'diff') {
+    routeTo('qr-diff', { resolve_result: res, qr_text: qrText });
+  } else if (mode === 't1') {
+    if (res.entity_type === 'LOT') {
+      const _e1 = res.entity || {};
+      routeTo('growth-rec', { targetType: 'LOT', targetId: _e1.lot_id || '', displayId: _e1.display_id || '', _preset: 't1' });
+    } else {
+      UI.toast('T1移行モードはロットQRを読み取ってください', 'info', 3000);
+    }
+  } else if (mode === 't2') {
+    if (res.entity_type === 'LOT') {
+      const _e2 = res.entity || {};
+      routeTo('growth-rec', { targetType: 'LOT', targetId: _e2.lot_id || '', displayId: _e2.display_id || '', _preset: 't2' });
+    } else {
+      UI.toast('T2初回移行モードはロットQRを読み取ってください', 'info', 3000);
+    }
+  } else {
+    // 確認モード: 直接詳細画面へ
+    const eid = res.entity?.ind_id || res.entity?.lot_id || res.entity?.set_id || res.entity?.par_id;
+    if      (res.entity_type === 'IND' && eid) routeTo('ind-detail',     { indId: eid });
+    else if (res.entity_type === 'LOT' && eid) routeTo('lot-detail',     { lotId: eid });
+    else if (res.entity_type === 'SET' && eid) routeTo('pairing-detail', { pairingId: eid });
+    else if (res.entity_type === 'PAR' && eid) routeTo('parent-detail',  { parId: eid });
+    else routeTo('qr-diff', { resolve_result: res, qr_text: qrText });
+  }
+}
+
 // ── ローカルキャッシュから QR文字列を即解決 ────────────────────
 // API呼び出しなし。Store に存在する場合は即返す。
 function _qrLocalResolve(v) {
@@ -209,27 +249,8 @@ Pages._qrResolve = async function () {
   if (!qrText) { if (errEl) errEl.textContent = 'QRコードを入力してください'; return; }
   if (errEl) errEl.textContent = '';
 
-  // ── 現在のスキャンモードを取得 ────────────────────────────────
-  let mode = 'view';
-  // data-mode 属性で確実に判定（ボタンのスタイル判定より確実）
-  const modeBtns = document.querySelectorAll('[data-mode]');
-  modeBtns.forEach(b => {
-    if (b.classList.contains('btn-primary') || b.style.background.includes('var(--green)') ||
-        b.style.background.includes('var(--blue)')) {
-      mode = b.getAttribute('data-mode') || mode;
-    }
-  });
-  // onclick 属性ベースのフォールバック
-  if (mode === 'view') {
-    const activeBtn2 = Array.from(document.querySelectorAll('button')).find(b =>
-      (b.classList.contains('btn-primary') || b.style.fontWeight === '700') &&
-      b.getAttribute('onclick')?.includes('_qrSwitchMode')
-    );
-    if (activeBtn2) {
-      const m = activeBtn2.getAttribute('onclick')?.match(/'(view|diff|weight)'/);
-      if (m) mode = m[1];
-    }
-  }
+  // ── 現在のスキャンモードを取得（window._qrScanMode が確実）──
+  const mode = window._qrScanMode || 'view';
 
   // ── ① ローカルで即解決（APIなし） ────────────────────────────
   const localRes = _qrLocalResolve(qrText);
