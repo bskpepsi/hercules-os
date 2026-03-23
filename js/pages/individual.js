@@ -894,21 +894,25 @@ function _renderDetail(ind, main) {
       </button>` : '';
       })()}
       ${ind.promoted_par_id ? `
-      <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;
-        background:rgba(200,168,75,.1);border:1px solid rgba(200,168,75,.3);
-        border-radius:10px;font-size:.82rem">
-        <span style="font-size:1.1rem">👑</span>
-        <div>
+      <div style="background:rgba(200,168,75,.1);border:1px solid rgba(200,168,75,.3);
+        border-radius:10px;padding:10px 14px;font-size:.82rem">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <span style="font-size:1.1rem">👑</span>
           <div style="font-weight:700;color:var(--gold)">種親昇格済み</div>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
           <div style="color:var(--text3);font-size:.72rem">
-            種親:
+            ${promotedParent ? `
             <span style="cursor:pointer;color:var(--blue)"
               onclick="routeTo('parent-detail',{parId:'${ind.promoted_par_id}'})">
-              ${promotedParent
-                ? (promotedParent.parent_display_id || promotedParent.display_name || ind.promoted_par_id)
-                : ind.promoted_par_id}
-            </span>
+              ${promotedParent.parent_display_id || promotedParent.display_name || '種親詳細を開く'}
+            </span>` : `<span style="color:var(--text3)">種親情報を読み込み中...</span>`}
           </div>
+          <button class="btn btn-ghost btn-sm" style="font-size:.72rem;color:var(--red,#e05050);
+            border-color:rgba(224,80,80,.3);white-space:nowrap"
+            onclick="Pages._indRevokePromotion('${ind.ind_id}')">
+            取りやめる
+          </button>
         </div>
       </div>` : ''}
 
@@ -1201,6 +1205,53 @@ Pages._indPromoteExec = async function (indId) {
     await syncAll(true);
     routeTo('parent-detail', { parId: res.par_id });
   } catch(e) {}
+};
+
+// ── 種親昇格取りやめ ─────────────────────────────────────────────
+Pages._indRevokePromotion = async function (indId) {
+  const ind = Store.getIndividual(indId);
+  if (!ind || !ind.promoted_par_id) return;
+  const par = Store.getParent(ind.promoted_par_id);
+  const parDisp = par
+    ? (par.parent_display_id || par.display_name || '種親')
+    : '種親';
+
+  if (!UI.confirm(
+    `「${parDisp}」への種親昇格を取りやめます。
+` +
+    `種親レコードを削除し、個体の昇格済みフラグをクリアします。
+
+` +
+    `続けますか？`
+  )) return;
+
+  try {
+    // ① GAS: 種親昇格取りやめ（種親を deleted、個体の promoted_par_id をクリア）
+    await apiCall(
+      () => API.parent.revokePromotion({
+        par_id: ind.promoted_par_id,
+        ind_id: indId,
+      }),
+      '種親昇格を取りやめました'
+    );
+
+    // ② ローカルキャッシュを更新
+    Store.patchDBItem('individuals', 'ind_id', indId, {
+      promoted_par_id: '',
+      parent_flag:     false,
+    });
+    // 種親を一覧から除外（deleted扱い）
+    const parents = Store.getDB('parents') || [];
+    const pIdx = parents.findIndex(p => p.par_id === ind.promoted_par_id);
+    if (pIdx >= 0) {
+      parents[pIdx].status = 'deleted';
+      Store.setDB('parents', parents);
+    }
+
+    // ③ 再同期して個体詳細へ戻る
+    await syncAll(true);
+    routeTo('ind-detail', { indId });
+  } catch (e) {}
 };
 
 // ════════════════════════════════════════════════════════════════

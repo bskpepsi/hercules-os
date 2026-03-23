@@ -15,8 +15,8 @@ Pages.parentList = function () {
     + '<div class="page-body" id="parent-list-body">' + UI.spinner() + '</div>';
 
   try {
-    const parents = Store.getDB('parents') || [];
-    const active  = parents.filter(p => p && p.status === 'active');
+    const parents = (Store.getDB('parents') || []).filter(p => p && p.status !== 'deleted');
+    const active  = parents.filter(p => p.status === 'active');
     const retired = parents.filter(p => p && p.status !== 'active');
     const males   = active.filter(p => p.sex === '♂');
     const females = active.filter(p => p.sex === '♀');

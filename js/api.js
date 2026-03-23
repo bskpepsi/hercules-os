@@ -4,11 +4,6 @@
 //       フロントの他のコードはこのファイルのメソッドのみを通してGASと通信する。
 //       成功時は data を返し、失敗時は Error をスローする。
 //       リトライ・タイムアウト・エラー整形もここで行う。
-//
-// P0-3修正: API.individual.changeStatus の責務分離
-//   - dead / sold / excluded（終端） → deleteIndividual（StatusRulesで強制終端）
-//   - for_sale / reserved / listed / alive 等（中間） → updateIndividual（StatusRulesを経由）
-//   これにより「予約する」「予約解除」が常にGASエラーになる問題を解消。
 // ════════════════════════════════════════════════════════════════
 
 'use strict';
@@ -16,11 +11,12 @@
 const API = (() => {
   const TIMEOUT_MS = 30000;
 
-  // ── 基底通信（GET） ────────────────────────────────────────────
+  // ── 基底通信 ──────────────────────────────────────────────────
   async function call(action, payload = {}) {
     const url = CONFIG.GAS_URL || localStorage.getItem(CONFIG.LS_KEYS.GAS_URL) || '';
     if (!url) throw new Error('GAS URLが設定されていません。設定画面から入力してください。');
 
+    // GASはGETリクエストでCORSを回避する
     const params = new URLSearchParams({
       action,
       payload: JSON.stringify(payload),
@@ -50,76 +46,13 @@ const API = (() => {
     }
   }
 
-  // ── POST専用通信（画像アップロード・大容量データ用）────────────
-  async function callPost(action, payload = {}) {
-    const gasUrl = CONFIG.GAS_URL || localStorage.getItem(CONFIG.LS_KEYS.GAS_URL) || '';
-    if (!gasUrl) throw new Error('GAS URLが設定されていません。');
-
-    const body = JSON.stringify(Object.assign({ action }, payload));
-    const ctrl = new AbortController();
-    const tid  = setTimeout(() => ctrl.abort(), 90000);
-
-    try {
-      let postUrl = gasUrl;
-      try {
-        const probe = await fetch(gasUrl, {
-          method:   'POST',
-          headers:  { 'Content-Type': 'text/plain' },
-          redirect: 'manual',
-          body:     body,
-        });
-        if (probe.type === 'opaqueredirect' || probe.status === 0) {
-          // opaqueredirect: ヘッダー読めないのでそのまま
-        } else if (probe.status >= 300 && probe.status < 400) {
-          const loc = probe.headers.get('location');
-          if (loc) postUrl = loc;
-        } else if (probe.ok) {
-          clearTimeout(tid);
-          const json = await probe.json();
-          if (!json.ok) throw new Error(json.error || '不明なエラー');
-          return json.data;
-        }
-      } catch (probeErr) {
-        console.warn('[callPost] probe failed, trying direct POST:', probeErr.message);
-      }
-
-      const res = await fetch(postUrl, {
-        method:   'POST',
-        headers:  { 'Content-Type': 'text/plain' },
-        redirect: 'follow',
-        signal:   ctrl.signal,
-        body:     body,
-      });
-      clearTimeout(tid);
-
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-
-      const text = await res.text();
-      let json;
-      try {
-        json = JSON.parse(text);
-      } catch(parseErr) {
-        console.error('[callPost] GAS returned non-JSON:', text.slice(0, 200));
-        throw new Error('GASがJSONを返しませんでした。スクリプトエラーの可能性があります。');
-      }
-      if (!json.ok) throw new Error(json.error || '不明なエラー');
-      return json.data;
-
-    } catch (e) {
-      clearTimeout(tid);
-      if (e.name === 'AbortError') throw new Error('タイムアウト（90秒）。画像が大きすぎる可能性があります。');
-      throw e;
-    }
-  }
-
   // ── システム ──────────────────────────────────────────────────
   const system = {
-    init:          ()          => call('init'),
-    getAllData:     ()          => call('getAllData'),
-    resetAllData:  ()          => call('resetAllData'),
-    getSettings:   ()          => call('getSettings'),
-    updateSetting: (key, v)    => call('updateSetting',   { key, value: v }),
-    updateSettings: (updates)  => callPost('updateSettings', { updates }),
+    init:       ()        => call('init'),
+    getAllData:  ()        => call('getAllData'),
+    resetAllData:()        => call('resetAllData'),
+    getSettings:()        => call('getSettings'),
+    updateSetting:(key,v) => call('updateSetting', { key, value: v }),
   };
 
   // ── ライン ────────────────────────────────────────────────────
@@ -133,12 +66,12 @@ const API = (() => {
   // ── ロット ────────────────────────────────────────────────────
   const lot = {
     create:       (d)  => call('createLot',        d),
-    createBulk:   (d)  => call('createLotBulk',    d),
+    createBulk:   (d)  => call('createLotBulk',    d),   // { line_id, stage, lots:[{count,...}] }
     list:         (f)  => call('getLots',           f || {}),
     get:          (id) => call('getLot',            { lot_id: id }),
     update:       (d)  => call('updateLot',         d),
-    split:        (d)  => call('splitLot',          d),
-    individualize:(d)  => call('individualizeLot',  d),
+    split:        (d)  => call('splitLot',          d),  // { lot_id, split_counts:[n,n] }
+    individualize:(d)  => call('individualizeLot',  d),  // { lot_id, count, stage }
   };
 
   // ── 個体 ──────────────────────────────────────────────────────
@@ -148,48 +81,26 @@ const API = (() => {
     get:             (id) => call('getIndividual',    { ind_id: id }),
     update:          (d)  => call('updateIndividual', d),
     promoteToParent: (d)  => call('promoteToParent',  d),
-
-    // 販売済みにして販売履歴を作成（for_sale / listed → sold 時のみ使う）
-    sell: (d) => call('sellIndividual', d),
-
-    // ────────────────────────────────────────────────────────────
-    // changeStatus — P0-3修正: 終端と中間を分離
-    //
-    // 終端ステータス（dead / sold / excluded）
-    //   → deleteIndividual: GAS側が StatusRules で終端処理を強制
-    //
-    // 中間ステータス（for_sale / reserved / listed / alive / その他）
-    //   → updateIndividual: GAS側が StatusRules でバリデーション済み
-    //
-    // 以前は for_sale / reserved を deleteIndividual に送っていたため
-    // GAS側が「dead/sold/excluded のみ受け付ける」エラーを返していた。
-    // ────────────────────────────────────────────────────────────
-    changeStatus: (id, newStatus, reason) => {
-      const terminalStatuses = ['dead', 'sold', 'excluded'];
-      if (terminalStatuses.includes(newStatus)) {
-        // 終端遷移: deleteIndividual 経由（StatusRulesによる強制終端）
-        return call('deleteIndividual', { ind_id: id, new_status: newStatus, reason });
-      }
-      // 中間遷移: updateIndividual 経由（GAS側の validateStatusTransition を通る）
-      const payload = { ind_id: id, status: newStatus };
-      if (reason) payload.note_private = reason;
-      return call('updateIndividual', payload);
-    },
+    // 論理削除: new_status='dead'|'sold'|'reserved', reason=任意
+    changeStatus:    (id, newStatus, reason) =>
+      call('deleteIndividual', { ind_id: id, new_status: newStatus, reason }),
   };
 
   // ── 成長記録 ──────────────────────────────────────────────────
+  // getGrowthRecords は target_type + target_id を必ず両方指定する
   const growth = {
-    create: (d)        => call('createGrowthRecord', d),
-    list:   (type, id) => call('getGrowthRecords',   { target_type: type, target_id: id }),
-    update: (d)        => call('updateGrowthRecord', d),
+    create: (d)          => call('createGrowthRecord', d),
+    list:   (type, id)   => call('getGrowthRecords', { target_type: type, target_id: id }),
+    update: (d)          => call('updateGrowthRecord', d),
   };
 
   // ── 種親 ──────────────────────────────────────────────────────
   const parent = {
-    create: (d)  => call('createParent', d),
-    list:   (f)  => call('getParents',   f || {}),
-    get:    (id) => call('getParent',    { par_id: id }),
-    update: (d)  => call('updateParent', d),
+    create:          (d)  => call('createParent',         d),
+    list:            (f)  => call('getParents',            f || {}),
+    get:             (id) => call('getParent',             { par_id: id }),
+    update:          (d)  => call('updateParent',          d),
+    revokePromotion: (d)  => call('revokeParentPromotion', d),
   };
 
   // ── 血統 ──────────────────────────────────────────────────────
@@ -202,40 +113,41 @@ const API = (() => {
 
   // ── 産卵セット ────────────────────────────────────────────────
   const pairing = {
-    create:      (d)  => call('createPairing', d),
-    list:        (f)  => call('getPairings',   f || {}),
-    get:         (id) => call('getPairing',    { set_id: id }),
-    update:      (d)  => call('updatePairing', d),
-    getWithEggs: (d)  => call('getPairingWithEggs', d),
-    addEgg:      (d)  => call('addEggRecord',    d),
-    getEggRecords:(d) => call('getEggRecords',   d),
-    updateEgg:   (d)  => call('updateEggRecord', d),
-    deleteEgg:   (d)  => call('deleteEggRecord', d),
+    create:    (d) => call('createPairing', d),
+    list:      (f) => call('getPairings',   f || {}),
+    get:       (id)=> call('getPairing',    { set_id: id }),
+    update:    (d) => call('updatePairing', d),
+    getWithEggs:   (d) => call('getPairingWithEggs', d),
+    addEgg:        (d) => call('addEggRecord',    d),
+    getEggRecords: (d) => call('getEggRecords',  d),
+    updateEgg:     (d) => call('updateEggRecord', d),
+    deleteEgg:     (d) => call('deleteEggRecord', d),
   };
 
   // ── ラベル ────────────────────────────────────────────────────
   const label = {
+    // type: 'IND'|'LOT'|'SET', id: 内部ID, labelType: 'larva'等
     generate: (type, id, labelType) =>
       call('generateLabel', { target_type: type, target_id: id, label_type: labelType }),
-    history:  (id) => call('getLabelHistory', { target_id: id }),
+    history: (id) => call('getLabelHistory', { target_id: id }),
   };
 
   // ── Drive ─────────────────────────────────────────────────────
   const drive = {
-    uploadPhoto:  (d)                    => call('uploadPhoto',       d),
-    getFolderUrl: (lineDisplayId, folderType) =>
+    // base64アップロード: { base64, mime_type, filename, line_display_id, folder_type }
+    uploadPhoto:    (d) => call('uploadPhoto',       d),
+    getFolderUrl:   (lineDisplayId, folderType) =>
       call('getDriveFolderUrl', { line_display_id: lineDisplayId, folder_type: folderType }),
   };
 
   // ── Gemini AI（直接呼び出し） ──────────────────────────────────
   const gemini = {
+    // 画像解析（ラベル読み取り or 体重計読み取り）
     analyzeImage: async (base64, mimeType, promptType) => {
       const key = CONFIG.GEMINI_KEY || localStorage.getItem(CONFIG.LS_KEYS.GEMINI_KEY) || '';
       if (!key) throw new Error('Gemini APIキーが未設定です。');
 
-      const prompt = promptType === 'label_full' ? GEMINI_PROMPTS.label_full
-                   : promptType === 'label'      ? GEMINI_PROMPTS.label
-                   : GEMINI_PROMPTS.scale;
+      const prompt = promptType === 'label' ? GEMINI_PROMPTS.label : GEMINI_PROMPTS.scale;
       const ctrl   = new AbortController();
       const tid    = setTimeout(() => ctrl.abort(), 40000);
 
@@ -275,97 +187,66 @@ const API = (() => {
 
   // ── バックアップ ──────────────────────────────────────────────
   const backup = {
-    run:             (note) => call('runBackup',              { note: note || '' }),
-    list:            (f)    => call('getBackupList',          f || {}),
-    getSettings:     ()     => call('getBackupSettings'),
-    initTriggers:    ()     => call('initBackupTriggers'),
-    removeTriggers:  ()     => call('removeBackupTriggers'),
-    getTriggerStatus:()     => call('getBackupTriggerStatus'),
+    run:           (note) => call('runBackup',              { note: note || '' }),
+    list:          (f)    => call('getBackupList',          f || {}),
+    getSettings:   ()     => call('getBackupSettings'),
+    initTriggers:  ()     => call('initBackupTriggers'),
+    removeTriggers:()     => call('removeBackupTriggers'),
+    getTriggerStatus: ()  => call('getBackupTriggerStatus'),
   };
 
   // ── QRスキャン解決 ────────────────────────────────────────────
+  // QR文字列 → entity取得 + missing判定を1回で返す
   const scan = {
+    /** QR文字列を送り entity + missing を返す
+     *  qrText: "LOT:LOT-xxxxx" | "IND:IND-xxxxx" | "SET:SET-xxxxx" */
     resolve:         (qrText) => call('resolveQR',       { qr_text: qrText }),
+    /** ロット差分更新（hatch_date / count / sex_hint / size_category） */
     updateLotFields: (d)      => call('updateLotFields', d),
+    /** 個体差分更新（sex など） */
     updateIndFields: (d)      => call('updateIndividual', d),
+    /** 産卵セット差分更新 */
     updateSetFields: (d)      => call('updatePairing',   d),
   };
 
   // ── Phase2 拡張API ──────────────────────────────────────────
   const phase2 = {
-    extractTags:          (raw) => call('extractBloodlineTags', { bloodline_raw: raw }),
-    createBloodline:      (d)   => call('createBloodlineV2', d),
-    createParent:         (d)   => call('createParentV2', d),
-    sellIndividual:       (d)   => call('sellIndividual', d),
-    analyzeLineStats:     (d)   => call('analyzeLineStats', d),
-    updateParent:         (d)   => call('updateParentV2', d),
-    getPairingReady:      ()    => call('getPairingReadyStatus', {}),
-    createPairingHistory: (d)   => call('createPairingHistory', d),
-    updatePairingHistory: (d)   => call('updatePairingHistory', d),
-    getPairingHistories:  (d)   => call('getPairingHistories', d || {}),
-    getMalePairingStats:  (mid) => call('getMalePairingStats', { male_parent_id: mid }),
-    createLine:           (d)   => call('createLineV2', d),
-    getLineAnalysis:      ()    => call('getLineAnalysis', {}),
-    getMotherRanking:     ()    => call('getMotherRanking', {}),
-    getHeatmap:           ()    => call('getBloodlineHeatmap', {}),
-    getDashboardExt:      ()    => call('getDashboardExtended', {}),
+    // 血統
+    extractTags:      (raw)      => call('extractBloodlineTags', { bloodline_raw: raw }),
+    createBloodline:  (d)        => call('createBloodlineV2', d),
+    // 種親V2
+    createParent:     (d)        => call('createParentV2', d),
+    sellIndividual:   (d)        => call('sellIndividual', d),
+    analyzeLineStats: (d)        => call('analyzeLineStats', d),
+    updateParent:     (d)        => call('updateParentV2', d),
+    getPairingReady:  ()         => call('getPairingReadyStatus', {}),
+    // ペアリング履歴
+    createPairingHistory: (d)    => call('createPairingHistory', d),
+    updatePairingHistory: (d)    => call('updatePairingHistory', d),
+    getPairingHistories:  (d)    => call('getPairingHistories', d || {}),
+    getMalePairingStats:  (mid)  => call('getMalePairingStats', { male_parent_id: mid }),
+    // ラインV2
+    createLine:       (d)        => call('createLineV2', d),
+    // 分析
+    getLineAnalysis:  ()         => call('getLineAnalysis', {}),
+    getMotherRanking: ()         => call('getMotherRanking', {}),
+    getHeatmap:       ()         => call('getBloodlineHeatmap', {}),
+    getDashboardExt:  ()         => call('getDashboardExtended', {}),
   };
 
-  // ── Phase A: データ安定化 ─────────────────────────────────────
+    // ── Phase A: データ安定化 ─────────────────────────────────────
   const integrity = {
-    check:          ()  => call('checkDataIntegrity', {}),
-    recalculateLot: (d) => call('recalculateLot',    d),
-    recalculateAll: ()  => call('recalculateAllLots', {}),
-    getLotEvents:   (d) => call('getLotEvents',       d || {}),
+    check:             ()  => call('checkDataIntegrity', {}),
+    recalculateLot:    (d) => call('recalculateLot',    d),
+    recalculateAll:    ()  => call('recalculateAllLots', {}),
+    getLotEvents:      (d) => call('getLotEvents',       d || {}),
   };
 
-  // ── Phase5/6: 販売履歴 ────────────────────────────────────────
-  const sale = {
-    // 個体販売履歴作成（ind_id ベース）
-    create:            (d) => call('createSaleHist',        d),
-    // 一覧取得
-    list:              (d) => call('getSaleHists',           d || {}),
-    // ロット全売却: SALE_HIST作成 + lot status=sold 更新を一括
-    createLotSale:     (d) => call('createLotSaleHist',     d),
-    // ロット一部販売: SALE_HIST作成のみ（status は変えない）
-    createPartLotSale: (d) => call('createPartLotSaleHist', d),
-    // 販売履歴編集（P0-4で Code.gs ルーターに追加済み）
-    update:            (d) => call('updateSaleHist',         d),
-  };
-
-  // ── Phase5.5: 公開ページ ─────────────────────────────────────
-  const publicPage = {
-    createOrUpdate: (d)     => call('createOrUpdatePublic', d),
-    getByToken:     (token) => call('getPublicByToken',     { token }),
-    getByIndId:     (indId) => call('getPublicByIndId',     { ind_id: indId }),
-    incrementView:  (token) => call('incrementViewCount',   { token }),
-    uploadPhoto:    (d)     => callPost('uploadPhoto',      d),
-  };
-
-  return {
-    system, line, lot, individual, growth, parent, bloodline, pairing,
-    label, drive, gemini, backup, scan, phase2, integrity, publicPage, sale,
-  };
+return { system, line, lot, individual, growth, parent, bloodline, pairing, label, drive, gemini, backup, scan, phase2, integrity };
 })();
 
 // ── Gemini プロンプト ──────────────────────────────────────────
 const GEMINI_PROMPTS = {
-  label_full: `この画像はヘラクレスオオカブト飼育管理ラベルです。
-以下をJSONのみで返してください（コードブロック不要）:
-{
-  "qr_detected": QRコードが画像内にあるか(true/false),
-  "sex": "♂ または ♀ または 不明",
-  "size_categories": ["大","中","小" のうち該当するもの（複数可）],
-  "mat_type": "T0/T1/T2/T2A/T2B/T3 のいずれか、または null",
-  "mat_molt": モルト処理済みかどうか(true/false/null),
-  "stage_label": "L1/L2/L2前期/L2後期/L3/L3前期/L3中期/L3後期/前蛹/蛹/成虫 または null",
-  "records": [
-    {"date": "YYYY/MM/DD または MM/DD", "weight_g": 体重の数値, "memo": "メモ文字列または null"}
-  ],
-  "notes": "その他読み取れた文字列（任意）"
-}
-読み取れない項目はnullにしてください。体重は整数または小数。日付はラベルに記載の形式で。`,
-
   label: `この画像はヘラクレスオオカブト飼育容器の手書きラベルです。
 以下をJSONのみで返してください（コードブロック不要）:
 {
@@ -413,8 +294,8 @@ async function compressImageToBase64(file, maxPx = 1280, quality = 0.85) {
         c.getContext('2d').drawImage(img, 0, 0, w, h);
         const dataUrl = c.toDataURL('image/jpeg', quality);
         resolve({
-          base64:   dataUrl.split(',')[1],
-          mimeType: 'image/jpeg',
+          base64:    dataUrl.split(',')[1],
+          mimeType:  'image/jpeg',
           dataUrl,
         });
       };
