@@ -165,55 +165,86 @@ Pages._qrPreviewInput = function (val) {
 };
 
 // ── QR解析・モード別遷移 ─────────────────────────────────────
+// ── ローカルキャッシュから QR文字列を即解決 ────────────────────
+// API呼び出しなし。Store に存在する場合は即返す。
+function _qrLocalResolve(v) {
+  const parts = (v || '').split(':');
+  if (parts.length < 2) return null;
+  const prefix = parts[0].toUpperCase();
+  const id     = parts.slice(1).join(':').trim();  // IDに':'が含まれるケースも考慮
+
+  if (prefix === 'IND') {
+    const ind = Store.getIndividual(id)
+      || (Store.getDB('individuals') || []).find(i => i.display_id === id);
+    if (!ind) return null;
+    const line = Store.getLine(ind.line_id) || {};
+    const lg   = _getLastGrowthFromStore('IND', ind.ind_id, ind.latest_weight_g);
+    return { entity_type: 'IND', entity: ind, line, last_growth: lg, missing: [], label_type: 'ind_fixed' };
+  }
+  if (prefix === 'LOT') {
+    const lot = Store.getLot(id)
+      || (Store.getDB('lots') || []).find(l => l.display_id === id);
+    if (!lot) return null;
+    const line = Store.getLine(lot.line_id) || {};
+    const lg   = _getLastGrowthFromStore('LOT', lot.lot_id, lot.latest_weight_g);
+    return { entity_type: 'LOT', entity: lot, line, last_growth: lg, missing: [], label_type: 'multi_lot' };
+  }
+  if (prefix === 'PAR') {
+    const par = (Store.getDB('parents') || []).find(p => p.par_id === id || p.parent_display_id === id);
+    if (!par) return null;
+    return { entity_type: 'PAR', entity: par, line: null, last_growth: null, missing: [], label_type: 'parent' };
+  }
+  if (prefix === 'SET') {
+    const set = (Store.getDB('pairings') || []).find(s => s.set_id === id || s.display_id === id);
+    if (!set) return null;
+    return { entity_type: 'SET', entity: set, line: null, last_growth: null, missing: [], label_type: 'set' };
+  }
+  return null;
+}
+
 Pages._qrResolve = async function () {
   const qrText = document.getElementById('qr-input')?.value?.trim();
   const errEl  = document.getElementById('qr-error');
   const btn    = document.getElementById('qr-resolve-btn');
   if (!qrText) { if (errEl) errEl.textContent = 'QRコードを入力してください'; return; }
   if (errEl) errEl.textContent = '';
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ 解析中...'; }
 
+  // ── 現在のスキャンモードを取得 ────────────────────────────────
+  let mode = 'view';
+  // data-mode 属性で確実に判定（ボタンのスタイル判定より確実）
+  const modeBtns = document.querySelectorAll('[data-mode]');
+  modeBtns.forEach(b => {
+    if (b.classList.contains('btn-primary') || b.style.background.includes('var(--green)') ||
+        b.style.background.includes('var(--blue)')) {
+      mode = b.getAttribute('data-mode') || mode;
+    }
+  });
+  // onclick 属性ベースのフォールバック
+  if (mode === 'view') {
+    const activeBtn2 = Array.from(document.querySelectorAll('button')).find(b =>
+      (b.classList.contains('btn-primary') || b.style.fontWeight === '700') &&
+      b.getAttribute('onclick')?.includes('_qrSwitchMode')
+    );
+    if (activeBtn2) {
+      const m = activeBtn2.getAttribute('onclick')?.match(/'(view|diff|weight)'/);
+      if (m) mode = m[1];
+    }
+  }
+
+  // ── ① ローカルで即解決（APIなし） ────────────────────────────
+  const localRes = _qrLocalResolve(qrText);
+  if (localRes) {
+    Pages._qrSaveHistory(qrText, localRes);
+    _qrNavigate(mode, localRes, qrText);
+    return;  // API呼び出しなし・即遷移
+  }
+
+  // ── ② ローカルで見つからない場合だけ API へ ──────────────────
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ 解析中...'; }
   try {
     const res = await API.scan.resolve(qrText);
     Pages._qrSaveHistory(qrText, res);
-
-    // 選択中モードをボタンのfontWeightで判定
-    const btns = document.querySelectorAll('[onclick*="_qrSwitchMode"]');
-    let mode = 'view';
-    btns.forEach(b => {
-      if (b.style.fontWeight === '700' || b.style.background.includes('var(--green)')) mode = 'weight';
-      else if (b.style.fontWeight === '700' || b.style.background.includes('var(--blue)')) mode = 'diff';
-    });
-    // より確実な判定: 選択中ボタンのonclick属性から取得
-    const activeBtn = Array.from(document.querySelectorAll('button')).find(b =>
-      b.style.fontWeight === '700' && b.onclick && b.getAttribute('onclick')?.includes('_qrSwitchMode')
-    );
-    if (activeBtn) {
-      const m = activeBtn.getAttribute('onclick')?.match(/'(view|diff|weight)'/);
-      if (m) mode = m[1];
-    }
-
-    if (mode === 'weight') {
-      // growth-rec（新UI）に統一
-      const _ent = res.entity || {};
-      const _eid = _ent.ind_id || _ent.lot_id || '';
-      const _ety = res.entity_type || 'IND';
-      if (_eid) {
-        routeTo('growth-rec', { targetType: _ety, targetId: _eid, displayId: _ent.display_id || _eid, _fromQR: true });
-      } else {
-        UI.toast('対象が特定できませんでした', 'error'); routeTo('qr-scan');
-      }
-    } else if (mode === 'diff') {
-      routeTo('qr-diff', { resolve_result: res, qr_text: qrText });
-    } else {
-      // 確認モード: 直接詳細画面へ
-      const eid = res.entity?.ind_id || res.entity?.lot_id || res.entity?.set_id || res.entity?.par_id;
-      if      (res.entity_type === 'IND' && eid) routeTo('ind-detail',     { indId: eid });
-      else if (res.entity_type === 'LOT' && eid) routeTo('lot-detail',     { lotId: eid });
-      else if (res.entity_type === 'SET' && eid) routeTo('pairing-detail', { pairingId: eid });
-      else if (res.entity_type === 'PAR' && eid) routeTo('parent-detail',  { parId: eid });
-      else routeTo('qr-diff', { resolve_result: res, qr_text: qrText });
-    }
+    _qrNavigate(mode, res, qrText);
   } catch (e) {
     if (errEl) errEl.textContent = '❌ ' + (e.message || '解析に失敗しました');
   } finally {
@@ -343,7 +374,7 @@ Pages._qrScanLoop = function (video) {
         if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
         const status = document.getElementById('scan-status');
         if (status) { status.textContent = '✅ 読み取り成功！'; status.style.color = 'var(--green)'; }
-        setTimeout(() => Pages._qrResolve(), 200);
+        Pages._qrResolve();
         return;
       }
     }
@@ -384,7 +415,7 @@ Pages._qrReadFromImage = function (input) {
         const qrInput = document.getElementById('qr-input');
         if (qrInput) { qrInput.value = code.data; Pages._qrPreviewInput(code.data); }
         UI.toast('QRコードを読み取りました', 'success');
-        setTimeout(() => Pages._qrResolve(), 300);
+        Pages._qrResolve();
       } else {
         UI.toast('QRコードが見つかりませんでした。鮮明な画像を使用してください', 'error', 4000);
       }
