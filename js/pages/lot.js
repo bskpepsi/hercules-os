@@ -332,13 +332,10 @@ function _renderLotDetail(lot, main) {
               : `<span style="font-size:.75rem;font-weight:700;color:var(--blue);padding:2px 8px;border:1px solid rgba(91,168,232,.4);border-radius:6px">${_lotDisplayStageLabel(dispStage !== '—' ? dispStage : lot.stage)}</span>`}
           </div>
           <div class="lot-detail-right">
-            ${age ? `<div style="font-size:.72rem;color:var(--text3)">日齢</div><div style="font-weight:700;font-size:1rem">${age.days}</div>` : ''}
+            ${age ? `<div style="font-size:.68rem;color:var(--text3)">日齢</div><div style="font-weight:700;font-size:1rem;line-height:1.1">${age.days}日</div>` : ''}
           </div>
         </div>
         ${alertBadge ? `<div style="margin-top:8px">${alertBadge}</div>` : ''}
-        ${age ? `<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:8px;margin-top:8px">
-          ${UI.ageFull(lot.hatch_date)}
-        </div>` : ''}
       </div>
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
