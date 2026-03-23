@@ -17,7 +17,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] individual.js v20260401a loaded');
+console.log('[HerculesOS] individual.js v20260402a loaded');
 
 const Pages = window.Pages || {};
 
@@ -573,9 +573,9 @@ function _renderDetail(ind, main) {
       <!-- クイックアクション -->
       <div style="display:flex;gap:8px">
         <button class="btn btn-primary" style="flex:2"
-          onclick="Pages._indDirectWeight('${ind.ind_id}')"
-          title="体重入力（QRスキャン省略）">
-          ⚖️ 体重測定
+          onclick="routeTo('growth-rec',{targetType:'IND',targetId:'${ind.ind_id}',displayId:'${ind.display_id||ind.ind_id}'})"
+          title="成長記録を入力">
+          📷 成長記録
         </button>
         <button class="btn btn-ghost" style="flex:1"
           onclick="routeTo('ind-new',{editId:'${ind.ind_id}'})">編集</button>

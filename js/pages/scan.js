@@ -1,10 +1,10 @@
 // ════════════════════════════════════════════════════════════════
-// scan.js — QRスキャン + 差分入力 + 体重測定画面  v2
+// scan.js — QRスキャン + 差分入力 + 成長記録  v3
 //
 // 【3モード】
 //   確認モード  : QR → 個体/ロット/産卵セット詳細画面を直接開く
 //   差分入力    : QR → 未入力項目を補完して保存
-//   体重測定    : QR → 体重入力 → 保存（最短3タップ）
+//   成長記録    : QR → growth-rec（新UI）に転送
 //
 // 【QR読み取り方法】
 //   ① カメラ読み取り（jsQR / inversionAttempts:'attemptBoth' / 3フレームに1回スキャン）
@@ -260,7 +260,7 @@ Pages._qrRescanFromHistory = function (qrText) {
 Pages._qrStartCamera = async function () {
   // jsQR確認（index.htmlで静的ロード済みのはずだが念のため）
   if (typeof jsQR === 'undefined') {
-    UI.toast('QRライブラリ未ロード。ページを再読み込みしてください', 'error');
+    UI.toast('QRライブラリ（jsQR）未ロード。ネットワーク接続を確認して再読み込みしてください', 'error');
     return;
   }
   const card = document.getElementById('camera-card');
@@ -742,495 +742,36 @@ const WM_THRESHOLDS = [
  * params.resolve_result: resolveQR のレスポンス（必須）
  * qr-scan 画面から growth-rec へリダイレクト（weight-mode は薄いラッパー）
  */
-Pages.weightMode = function (params = {}) {
-  const res = params.resolve_result;
-  if (!res || !res.entity) { routeTo('qr-scan', { mode: 'weight' }); return; }
+// ── weightMode / t1 / t2 は growth-rec への薄いラッパー ─────────
+// UI本体は growth.js が担う。ここでは確実に growth-rec へ転送するのみ。
 
-  const main = document.getElementById('main');
-  const { entity_type, entity, line, last_growth } = res;
-
-  const displayId = entity.display_id || '—';
-  const isLot     = entity_type === 'LOT';
-  const stage     = (isLot ? entity.stage : entity.current_stage) || '—';
-  const stageDisp = (typeof STAGE_LABELS !== 'undefined' && STAGE_LABELS[stage]) || stage;
-  const ageDays   = entity._age?.totalDays ?? entity.ageDays ?? '—';
-  const container = (isLot ? entity.container_size : entity.current_container) || '';
-  const matType   = (isLot ? entity.mat_type : entity.current_mat) || '';
-  const lineDisp  = line?.line_code || line?.display_id || '';
-  const entityId  = (isLot ? entity.lot_id : entity.ind_id) || '';
-  const lotCount  = isLot ? (parseInt(entity.count, 10) || 0) : 0;
-
-  const prevWeight  = (last_growth?.weight_g != null && last_growth.weight_g !== '')
-    ? parseFloat(last_growth.weight_g) : null;
-  const prevDate    = last_growth?.record_date || '';
-  const prevAgeDays = last_growth?.age_days    || '';
-
-  Pages._wmState = {
-    entityType : entity_type,
-    entityId   : entityId,
-    stage      : stage,
-    container  : container,
-    matType    : matType,
-    prevWeight : prevWeight,
-    displayId  : displayId,
-    lotCount   : lotCount,
-  };
-
-  main.innerHTML = `
-    ${UI.header('⚖️ 体重測定', { back: true, backFn: "routeTo('qr-scan',{mode:'weight'})" })}
-    <div class="page-body has-quick-bar">
-
-      <!-- ① コンパクト情報バー -->
-      <div class="quick-info-bar">
-        <div style="flex:1;min-width:0">
-          <div class="quick-info-id"
-            style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${displayId}</div>
-          <div style="display:flex;gap:5px;align-items:center;margin-top:4px;flex-wrap:wrap">
-            <span style="background:rgba(76,175,120,.15);color:var(--green);
-              font-size:.68rem;padding:1px 6px;border-radius:99px;font-weight:600">${stageDisp}</span>
-            ${isLot
-              ? `<span style="font-size:.7rem;color:var(--text3)">${entity.count || '?'}頭</span>`
-              : `<span style="font-size:.7rem;color:var(--text3)">${entity.sex || ''}</span>`}
-            ${lineDisp
-              ? `<span style="font-size:.68rem;color:var(--text3)">L:${lineDisp}</span>` : ''}
-          </div>
-        </div>
-        <div style="text-align:right;flex-shrink:0">
-          <div class="quick-info-age">${ageDays !== '—' ? ageDays : '—'}</div>
-          <div class="quick-info-age-label">日齢</div>
-        </div>
-      </div>
-
-      <!-- ② 体重入力 -->
-      <div class="card" style="border-color:rgba(76,175,120,.35);padding:16px 14px">
-        <div style="text-align:center;font-size:.72rem;font-weight:700;
-          color:var(--text3);letter-spacing:.08em;margin-bottom:10px">体重 (g)</div>
-        <div style="display:flex;align-items:center;justify-content:center;gap:8px">
-          <input
-            id="wm-weight"
-            type="number" inputmode="decimal" step="0.1" min="0.1" max="999.9"
-            placeholder="0.0" autocomplete="off"
-            class="num-input-xl"
-            style="width:180px;color:var(--green)"
-            oninput="Pages._wmUpdateDelta(this.value)"
-            onkeydown="if(event.key==='Enter'&&!event.isComposing){Pages._wmSave()}">
-          <span style="font-size:1.4rem;color:var(--text3);font-weight:600;flex-shrink:0">g</span>
-        </div>
-        <div id="wm-delta"
-          style="text-align:center;min-height:28px;margin-top:8px;font-size:.92rem;transition:all .15s">
-          ${prevWeight !== null
-            ? `<span style="color:var(--text3)">前回 <b>${prevWeight}g</b> から —</span>`
-            : `<span style="color:var(--text3)">（初回記録）</span>`}
-        </div>
-      </div>
-
-      <!-- ③ LOT 専用: before/after 頭数（growth.js と統一ロジック） -->
-      ${isLot ? `
-      <div class="card" style="padding:14px">
-        <div style="font-size:.72rem;font-weight:700;color:var(--text2);margin-bottom:10px">
-          🔢 頭数変化（マット交換時）
-        </div>
-        <div class="count-row">
-          <div>
-            <div style="font-size:.68rem;color:var(--text3);margin-bottom:4px;text-align:center">交換前</div>
-            <input id="wm-before" type="number" inputmode="numeric"
-              class="num-input-xl" style="font-size:2rem"
-              min="0" max="999" placeholder="${lotCount || '—'}" value="${lotCount || ''}"
-              oninput="Pages._wmCalcAttrition()">
-          </div>
-          <div class="count-row-arrow">→</div>
-          <div>
-            <div style="font-size:.68rem;color:var(--text3);margin-bottom:4px;text-align:center">交換後</div>
-            <input id="wm-after" type="number" inputmode="numeric"
-              class="num-input-xl" style="font-size:2rem"
-              min="0" max="999" placeholder="—"
-              oninput="Pages._wmCalcAttrition()">
-          </div>
-        </div>
-        <div id="wm-attrition" class="count-attrition"></div>
-      </div>` : ''}
-
-      <!-- ④ 追加（折りたたみ） -->
-      <div style="margin-top:8px">
-        <div class="collapse-toggle" onclick="Pages._wmToggleExtra(this)">
-          <span>📝 追加メモ（任意）</span>
-          <span style="font-size:.7rem;transition:transform .2s">▼</span>
-        </div>
-        <div id="wm-extra" class="collapse-body closed">
-          <div class="card" style="border-radius:0 0 var(--radius) var(--radius);margin-top:-1px">
-            <div class="form-section">
-              <div class="field">
-                <label class="field-label">頭幅 (mm)</label>
-                <input id="wm-head" class="input" type="number"
-                  inputmode="decimal" step="0.1" min="0" max="99" placeholder="例: 38.5">
-              </div>
-              <div class="field">
-                <label class="field-label">観察メモ</label>
-                <textarea id="wm-note" class="input" rows="2"
-                  placeholder="幼虫の状態、色艶、活動性など"></textarea>
-              </div>
-              <div class="field">
-                <label class="field-label">交換種別</label>
-                <select id="wm-exchange" class="input">
-                  <option value="">体重測定のみ</option>
-                  <option value="マット交換">マット交換</option>
-                  <option value="容器交換">容器交換</option>
-                  <option value="マット+容器交換">マット+容器交換</option>
-                </select>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      ${prevWeight !== null ? `
-      <div class="card" style="padding:10px 14px;margin-top:8px">
-        <div style="font-size:.68rem;color:var(--text3);margin-bottom:4px">前回記録</div>
-        <div style="display:flex;align-items:baseline;gap:10px">
-          <span style="font-size:1.5rem;font-weight:700;color:var(--text2);
-            font-family:var(--font-mono)">${prevWeight}g</span>
-          <span style="font-size:.75rem;color:var(--text3)">
-            ${prevDate}${prevAgeDays ? ` / ${prevAgeDays}日齢` : ''}
-          </span>
-        </div>
-      </div>` : ''}
-
-    </div>
-
-    <!-- 下部固定アクションバー -->
-    <div class="quick-action-bar">
-      <button class="btn btn-ghost btn-xl" style="flex:1"
-        onclick="routeTo('qr-scan',{mode:'weight'})">
-        📷 スキャン
-      </button>
-      <button id="wm-save-btn" class="btn btn-gold btn-xl" style="flex:2"
-        onclick="Pages._wmSave()">
-        💾 保存
-      </button>
-    </div>`;
-
-  // 体重入力にフォーカス（キーボード即表示）
-  setTimeout(() => document.getElementById('wm-weight')?.focus(), 120);
-};
-
-// LOT の before/after から減耗数を自動計算して表示
-Pages._wmCalcAttrition = function () {
-  const beforeEl = document.getElementById('wm-before');
-  const afterEl  = document.getElementById('wm-after');
-  const dispEl   = document.getElementById('wm-attrition');
-  if (!dispEl) return;
-
-  const before = parseInt(beforeEl?.value, 10);
-  const after  = parseInt(afterEl?.value,  10);
-
-  if (isNaN(before) || isNaN(after)) {
-    dispEl.textContent = '';
-    return;
-  }
-  const attrition = before - after;
-  if (attrition > 0) {
-    dispEl.textContent  = `減耗 ${attrition} 頭`;
-    dispEl.style.color  = 'var(--red)';
-  } else if (attrition === 0) {
-    dispEl.textContent  = '変化なし';
-    dispEl.style.color  = 'var(--text3)';
+Pages.weightMode = function (params) {
+  var p   = params || {};
+  var res = p.resolve_result;
+  var ent = (res && res.entity) || {};
+  var eid = ent.ind_id || ent.lot_id || '';
+  var ety = (res && res.entity_type) || 'IND';
+  if (eid) {
+    routeTo('growth-rec', { targetType: ety, targetId: eid, displayId: ent.display_id || eid });
   } else {
-    dispEl.textContent  = `⚠️ 後の方が多い (${Math.abs(attrition)}頭増)`;
-    dispEl.style.color  = 'var(--amber)';
+    routeTo('qr-scan');
   }
 };
 
-
-Pages._wmUpdateDelta = function (rawVal) {
-  const el   = document.getElementById('wm-delta');
-  if (!el) return;
-
-  const cur  = parseFloat(rawVal);
-  const prev = Pages._wmState?.prevWeight ?? null;
-
-  // 未入力 or 不正値
-  if (!rawVal || isNaN(cur) || cur <= 0) {
-    el.innerHTML = prev !== null
-      ? `<span style="color:var(--text3)">前回 <b>${prev}g</b> から —</span>`
-      : `<span style="color:var(--text3)">（前回体重なし・初回記録）</span>`;
-    return;
-  }
-
-  // ── 閾値バッジを判定 ──────────────────────────────────────
-  let thresholdHtml = '';
-  for (const t of WM_THRESHOLDS) {
-    if (cur >= t.min) {
-      thresholdHtml = `
-        <div style="
-          display:inline-block;
-          background:${t.bg};
-          border:1px solid ${t.color};
-          border-radius:99px;
-          padding:3px 12px;
-          font-size:.82rem;
-          font-weight:700;
-          color:${t.color};
-          margin-bottom:4px">
-          ${t.badge}
-        </div>`;
-      break; // 最上位の閾値のみ表示
-    }
-  }
-
-  // ── 前回比 ────────────────────────────────────────────────
-  if (prev === null) {
-    el.innerHTML = `
-      ${thresholdHtml}
-      <div style="color:var(--text2)">📝 初回記録: <b>${cur}g</b></div>`;
-    return;
-  }
-
-  const diff  = Math.round((cur - prev) * 10) / 10;
-  const isPos = diff > 0;
-  const isNeg = diff < 0;
-  const arrow = isPos ? '↑' : isNeg ? '↓' : '→';
-  const color = isPos ? 'var(--green)' : isNeg ? 'var(--red)' : 'var(--text3)';
-  const sign  = isPos ? '+' : '';
-  // +5g以上はお祝いを表示
-  const celebEmoji = isPos && diff >= 5 ? ' 🎉' : '';
-
-  el.innerHTML = `
-    ${thresholdHtml}
-    <span style="color:${color};font-weight:700;font-size:1.1rem">
-      ${arrow} ${sign}${diff}g${celebEmoji}
-    </span>
-    <span style="color:var(--text3);font-size:.75rem;margin-left:6px">
-      （前回 ${prev}g）
-    </span>`;
-};
-
-// ─────────────────────────────────────────────────────────────────
-// Pages._wmSave — 成長記録を GROWTHテーブルに保存
-// 既存の API.growth.create (= createGrowthRecord) を利用
-// IND の場合は individual.latest_weight_g も自動更新される（GAS側で処理）
-// ─────────────────────────────────────────────────────────────────
-Pages._wmSave = async function () {
-  const state    = Pages._wmState;
-  const weightEl = document.getElementById('wm-weight');
-  const rawVal   = weightEl?.value;
-  const weightVal = parseFloat(rawVal);
-
-  // バリデーション
-  if (!rawVal || isNaN(weightVal) || weightVal <= 0 || weightVal > 999.9) {
-    UI.toast('体重を入力してください（0.1〜999.9g）', 'error');
-    weightEl?.focus();
-    return;
-  }
-  if (!state?.entityId) {
-    UI.toast('対象IDが不明です。再スキャンしてください', 'error');
-    return;
-  }
-
-  const btn = document.getElementById('wm-save-btn');
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ 保存中...'; }
-
-  try {
-    // ── 成長記録データを構築（growth.js の _grSave と統一ロジック）──
-    const headVal     = parseFloat(document.getElementById('wm-head')?.value);
-    const noteVal     = document.getElementById('wm-note')?.value?.trim() || '';
-    const exchangeVal = document.getElementById('wm-exchange')?.value || '';
-
-    // LOT 専用: before_count / after_count（growth.js と同一計算）
-    const beforeRaw = document.getElementById('wm-before')?.value;
-    const afterRaw  = document.getElementById('wm-after')?.value;
-    const beforeCount = (beforeRaw !== undefined && beforeRaw !== '')
-      ? parseInt(beforeRaw, 10) : undefined;
-    const afterCount  = (afterRaw  !== undefined && afterRaw  !== '')
-      ? parseInt(afterRaw,  10) : undefined;
-
-    const growthData = {
-      target_type:   state.entityType,
-      target_id:     state.entityId,
-      stage:         state.stage   || '',
-      weight_g:      weightVal,
-      container:     state.container || '',
-      mat_type:      state.matType   || '',
-      // LOT の頭数変化（undefined のまま送ると GAS 側でスキップ）
-      before_count:  beforeCount,
-      after_count:   afterCount,
-    };
-    if (!isNaN(headVal) && headVal > 0) growthData.head_width_mm = headVal;
-    if (noteVal)     growthData.note_private  = noteVal;
-    if (exchangeVal) growthData.exchange_type = exchangeVal;
-
-    // ── API呼び出し ───────────────────────────────────────
-    await API.growth.create(growthData);
-
-    // ── キャッシュ更新（growth.js と統一）──────────────────────
-    if (state.entityType === 'IND') {
-      Store.patchDBItem('individuals', 'ind_id', state.entityId,
-        { latest_weight_g: weightVal, current_stage: state.stage });
-      await Store.syncEntityType('individuals').catch(() => {});
-    }
-    if (state.entityType === 'LOT') {
-      const lotUpdates = {};
-      if (state.stage) lotUpdates.stage = state.stage;
-      if (afterCount !== undefined) {
-        lotUpdates.count = afterCount;
-        if (afterCount === 0) lotUpdates.status = 'individualized';
-      }
-      if (Object.keys(lotUpdates).length) {
-        Store.patchDBItem('lots', 'lot_id', state.entityId, lotUpdates);
-      }
-    }
-    await Store.syncEntityType('growth').catch(() => {});
-
-    // ── 完了UIへ切り替え ─────────────────────────────────
-    Pages._wmShowComplete(state.entityType, state.entityId, weightVal);
-
-  } catch (e) {
-    UI.toast('❌ 保存失敗: ' + (e.message || '不明なエラー'), 'error');
-    if (btn) { btn.disabled = false; btn.textContent = '💾 成長記録を保存'; }
-  }
-};
-
-// ─────────────────────────────────────────────────────────────────
-// Pages._wmShowComplete — 保存完了後の画面
-// ・「📷 次をスキャン」→ qr-scan（weight-modeタブ選択済みで戻る）
-// ・「詳細を見る」   → ind-detail または lot-detail
-// ─────────────────────────────────────────────────────────────────
-Pages._wmShowComplete = function (entityType, entityId, weight) {
-  const main = document.getElementById('main');
-  const body = main?.querySelector('.page-body');
-  if (!body) return;
-
-  const detailRoute = entityType === 'IND' ? 'ind-detail' : 'lot-detail';
-  const detailParam = entityType === 'IND' ? 'indId'      : 'lotId';
-
-  // ── 完了バナー ──────────────────────────────────────────────
-  const bannerEl = document.createElement('div');
-  bannerEl.style.cssText = [
-    'background:linear-gradient(135deg,rgba(45,122,82,.22),rgba(76,175,120,.08))',
-    'border:1px solid rgba(76,175,120,.45)',
-    'border-radius:var(--radius)',
-    'padding:20px 16px',
-    'text-align:center',
-    'margin-bottom:14px',
-  ].join(';');
-
-  const scanBtn = document.createElement('button');
-  scanBtn.className = 'btn btn-ghost';
-  scanBtn.style.cssText = 'flex:1;padding:12px';
-  scanBtn.textContent = '📷 次をスキャン';
-  scanBtn.onclick = () => routeTo('qr-scan', { mode: 'weight' });
-
-  const detailBtn = document.createElement('button');
-  detailBtn.className = 'btn btn-primary';
-  detailBtn.style.cssText = 'flex:1;padding:12px';
-  detailBtn.textContent = '詳細を見る';
-  detailBtn.onclick = () => {
-    const p = {};
-    p[detailParam] = entityId;
-    routeTo(detailRoute, p);
-  };
-
-  const btnRow = document.createElement('div');
-  btnRow.style.cssText = 'display:flex;gap:10px;margin-top:16px';
-  btnRow.appendChild(scanBtn);
-  btnRow.appendChild(detailBtn);
-
-  bannerEl.innerHTML =
-    '<div style="font-size:2.2rem;margin-bottom:6px">✅</div>' +
-    '<div style="font-size:1.15rem;font-weight:700;color:var(--green)">' + weight + 'g を記録しました</div>' +
-    '<div style="font-size:.78rem;color:var(--text3);margin-top:4px">GROWTHテーブルに保存完了</div>';
-  bannerEl.appendChild(btnRow);
-  body.insertBefore(bannerEl, body.firstChild);
-
-  // ── LOT の場合: 同ラインの次ロット選択バー ─────────────────
-  if (entityType !== 'LOT') { main.scrollTop = 0; return; }
-
-  const currentLot = Store.getLot(entityId);
-  if (!currentLot) { main.scrollTop = 0; return; }
-
-  const sameLine = Store.filterLots({ line_id: currentLot.line_id, status: 'active' })
-    .filter(l => l.lot_id !== entityId);
-  const candidates = sameLine.length
-    ? sameLine
-    : Store.filterLots({ status: 'active' }).filter(l => l.lot_id !== entityId).slice(0, 6);
-
-  if (!candidates.length) { main.scrollTop = 0; return; }
-
-  const nextBarEl = document.createElement('div');
-  nextBarEl.style.cssText = 'margin-top:10px';
-
-  const barLabel = document.createElement('div');
-  barLabel.style.cssText = 'font-size:.72rem;color:var(--text3);margin-bottom:6px;font-weight:700';
-  barLabel.textContent = '📦 次のロットへ（同ライン）';
-  nextBarEl.appendChild(barLabel);
-
-  const btnScroll = document.createElement('div');
-  btnScroll.style.cssText = 'display:flex;gap:7px;overflow-x:auto;padding-bottom:2px';
-
-  candidates.slice(0, 6).forEach(function(l) {
-    const line = Store.getLine(l.line_id);
-    const code = line ? (line.line_code || line.display_id) : l.display_id;
-
-    const btn = document.createElement('button');
-    btn.style.cssText = [
-      'flex-shrink:0', 'padding:6px 12px', 'border-radius:20px',
-      'background:var(--surface2)', 'border:1px solid var(--border)',
-      'font-size:.78rem', 'cursor:pointer', 'white-space:nowrap',
-    ].join(';');
-    btn.innerHTML =
-      '<span style="color:var(--gold);font-weight:700">' + code + '</span>' +
-      '<span style="color:var(--text3);margin-left:4px">' + l.count + '頭</span>';
-
-    // 安全なクロージャでルート遷移（JSON.stringify を使わない）
-    btn.onclick = (function(lotId, lotDisplayId, lotLineId) {
-      return function() {
-        const lot2 = Store.getLot(lotId);
-        const ln2  = Store.getLine(lotLineId);
-        if (lot2) {
-          routeTo('growth-rec', { targetType:'LOT', targetId:lot2.lot_id, displayId:lot2.display_id||lot2.lot_id });
-        } else {
-          routeTo('lot-detail', { lotId: lotId });
-        }
-      };
-    })(l.lot_id, l.display_id, l.line_id);
-
-    btnScroll.appendChild(btn);
-  });
-
-  // 閉じるボタン
-  const closeBtn = document.createElement('button');
-  closeBtn.style.cssText = [
-    'flex-shrink:0', 'padding:6px 12px', 'border-radius:20px',
-    'background:transparent', 'border:1px solid var(--border)',
-    'font-size:.78rem', 'cursor:pointer', 'color:var(--text3)',
-  ].join(';');
-  closeBtn.textContent = '✕';
-  closeBtn.onclick = () => nextBarEl.remove();
-  btnScroll.appendChild(closeBtn);
-
-  nextBarEl.appendChild(btnScroll);
-  bannerEl.insertAdjacentElement('afterend', nextBarEl);
-  main.scrollTop = 0;
-};
-
-// ─────────────────────────────────────────────────────────────────
-// Pages._wmToggleExtra — 追加メモ アコーディオン開閉
-// ─────────────────────────────────────────────────────────────────
-Pages._wmToggleExtra = function (btn) {
-  const body  = document.getElementById('wm-extra');
-  const arrow = btn?.querySelector('span:last-child');
-  if (!body) return;
-  const isOpen = body.classList.contains('open');
-  body.classList.toggle('open',   !isOpen);
-  body.classList.toggle('closed',  isOpen);
-  if (arrow) arrow.style.transform = isOpen ? '' : 'rotate(180deg)';
-};
-
-
-// ════════════════════════════════════════════════════════════════
-// T1交換 QR連続処理モード
-// qr-scan-t1 ページ
-// フロー: QRスキャン → ロット情報表示 → 分割数入力 → 保存 → ラベル → 次へ
-// ════════════════════════════════════════════════════════════════
+Pages._wmState   = {};
+Pages._wmSave    = function () { UI.toast('growth-rec で保存してください', 'info'); };
+Pages._wmAdjWeight   = function () {};
+Pages._wmUpdateDelta = function () {};
+Pages._wmCalcAttrition = function () {};
+Pages._wmShowComplete  = function () {};
+Pages._wmToggleExtra   = function () {};
+Pages._wmApplyPreset   = function () {};
+Pages._wmBtnSel        = function () {};
+Pages._wmBtnSelMat     = function () {};
+Pages._wmOnMatChange   = function () {};
+Pages._wmAdjStart      = function () {};
+Pages._wmAdjStop       = function () {};
+Pages._wmShowPendingPanel = function () {};
 
 Pages.qrScanT1 = function () {
   const main = document.getElementById('main');

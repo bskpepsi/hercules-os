@@ -97,7 +97,14 @@ Pages.growthRecord = function (params = {}) {
     ];
 
     main.innerHTML = `
-      ${UI.header('成長記録', { back: true })}
+      ${UI.header('成長記録', {
+        back: true,
+        backFn: targetId
+          ? (targetType === 'LOT'
+              ? "routeTo('lot-detail',{lotId:'" + targetId + "'})"
+              : "routeTo('ind-detail',{indId:'" + targetId + "'})") 
+          : "Store.back()"
+      })}
       <div class="page-body has-quick-bar">
 
         ${!isDirectMode ? `
@@ -307,7 +314,8 @@ Pages.growthRecord = function (params = {}) {
 
       <!-- 下部固定保存バー -->
       <div class="quick-action-bar">
-        <button class="btn btn-ghost btn-xl" style="flex:1" onclick="Store.back()">← 戻る</button>
+        <button class="btn btn-ghost btn-xl" style="flex:1"
+          id="gr-back-btn">← 戻る</button>
         <button class="btn btn-primary btn-xl" style="flex:2"
           onclick="Pages._grSave('${targetType}','${targetId}')">
           ✅ 保存
@@ -316,6 +324,18 @@ Pages.growthRecord = function (params = {}) {
 
     if (targetId) {
       Pages._grLoadHistory(targetType, targetId);
+    }
+    // 戻るボタン — addEventListener で安全にバインド（inline onclick のクォート問題を回避）
+    const _backBtn = document.getElementById('gr-back-btn');
+    if (_backBtn) {
+      _backBtn.addEventListener('click', function() {
+        if (!targetId) { Store.back(); return; }
+        if (targetType === 'LOT') {
+          routeTo('lot-detail', { lotId: targetId });
+        } else {
+          routeTo('ind-detail', { indId: targetId });
+        }
+      });
     }
   }
 

@@ -361,7 +361,7 @@ function _renderLotDetail(lot, main) {
         <button style="padding:14px 8px;border-radius:var(--radius);font-weight:700;font-size:.92rem;
           background:var(--green);color:#fff;border:none;cursor:pointer"
           onclick="routeTo('growth-rec',{targetType:'LOT',targetId:'${lot.lot_id}',displayId:'${lot.display_id}'})">
-          📷 記録
+          📷 成長記録
         </button>
         <button style="padding:14px 8px;border-radius:var(--radius);font-weight:700;font-size:.92rem;
           background:var(--surface3,#3a3a4a);color:var(--text1);border:1px solid var(--border);cursor:pointer"
@@ -756,9 +756,11 @@ Pages._lotSave = async function () {
 function _lotQuickActions(lotId) {
   UI.actionSheet([
     { label: '✏️ ロット情報を修正', fn: () => Pages._lotEdit(lotId) },
-    { label: '📋 成長記録を追加', fn: () => routeTo('growth-rec', { targetType: 'LOT', targetId: lotId }) },
+    { label: '📷 成長記録', fn: () => {
+        const _l = Store.getLot(lotId);
+        routeTo('growth-rec', { targetType: 'LOT', targetId: lotId, displayId: _l?.display_id || lotId });
+      } },
     { label: '🏷️ ラベル発行', fn: () => routeTo('label-gen', { targetType: 'LOT', targetId: lotId }) },
-    { label: '⚖️ 体重測定（QRスキャン）', fn: () => routeTo('qr-scan', { mode: 'weight' }) },
   ]);
 }
 
