@@ -15,32 +15,21 @@
 // ════════════════════════════════════════════════════════════════
 // QRスキャン画面 (qr-scan)
 // ════════════════════════════════════════════════════════════════
-// セッション変数（ページをまたいで維持）
-// ════════════════════════════════════════════════════════════════
-window._qrContinuousMode = window._qrContinuousMode || false;
-window._qrCameraStream   = window._qrCameraStream   || null;
-window._qrSoundOn   = (function(){ return localStorage.getItem('qr_sound')   !== 'off'; })();
-window._qrVibrateOn = (function(){ return localStorage.getItem('qr_vibrate') !== 'off'; })();
-
-// ════════════════════════════════════════════════════════════════
 Pages.qrScan = function (params = {}) {
   const main = document.getElementById('main');
   // モード: 'view' | 'diff' | 'weight'
-  let _scanMode = ['view','weight','diff','t1','t2'].includes(params.mode) ? params.mode : 'view';
+  let _scanMode = params.mode === 'weight' ? 'weight' : params.mode === 'diff' ? 'diff' : 'view';
 
   function _modeStyle(m) {
     if (m === _scanMode) {
-      const bg = m==='weight' ? 'var(--green)' : m==='diff' ? 'var(--blue)'
-               : m==='t1' ? 'var(--amber)' : m==='t2' ? '#9c6' : 'var(--gold)';
+      const bg = m==='weight' ? 'var(--green)' : m==='diff' ? 'var(--blue)' : 'var(--gold)';
       return `background:${bg};color:#fff;font-weight:700;`;
     }
     return 'color:var(--text3);background:transparent;';
   }
   function _modeDesc() {
-    if (_scanMode === 'weight') return '⚖️ QR → 体重入力 → 保存';
+    if (_scanMode === 'weight') return '⚖️ QR → 体重入力 → 保存（最短3タップ）';
     if (_scanMode === 'diff')   return '📝 QR → 未入力項目を補完する';
-    if (_scanMode === 't1')     return '🟡 QR → T1移行 体重入力 → ラベル';
-    if (_scanMode === 't2')     return '🟠 QR → T2初回移行 体重入力 → lot更新';
     return '🔍 QR → 個体・ロット・産卵セットの詳細を開く';
   }
 
@@ -49,20 +38,14 @@ Pages.qrScan = function (params = {}) {
       ${UI.header('📷 QRスキャン', { back: true })}
       <div class="page-body">
 
-        <!-- モードタブ（2行構成） -->
-        <div style="display:flex;background:var(--surface2);border-radius:10px;padding:3px;gap:3px;margin-bottom:3px">
+        <!-- 3モードタブ -->
+        <div style="display:flex;background:var(--surface2);border-radius:10px;padding:3px;gap:3px">
           <button style="flex:1;border:none;padding:7px 4px;border-radius:8px;cursor:pointer;font-size:.75rem;${_modeStyle('view')}"
             onclick="Pages._qrSwitchMode('view')">🔍 確認</button>
           <button style="flex:1;border:none;padding:7px 4px;border-radius:8px;cursor:pointer;font-size:.75rem;${_modeStyle('diff')}"
             onclick="Pages._qrSwitchMode('diff')">📝 差分</button>
           <button style="flex:1;border:none;padding:7px 4px;border-radius:8px;cursor:pointer;font-size:.75rem;${_modeStyle('weight')}"
             onclick="Pages._qrSwitchMode('weight')">⚖️ 体重</button>
-        </div>
-        <div style="display:flex;background:var(--surface2);border-radius:10px;padding:3px;gap:3px">
-          <button style="flex:1;border:none;padding:7px 4px;border-radius:8px;cursor:pointer;font-size:.75rem;${_modeStyle('t1')}"
-            onclick="Pages._qrSwitchMode('t1')">🟡 T1移行</button>
-          <button style="flex:1;border:none;padding:7px 4px;border-radius:8px;cursor:pointer;font-size:.75rem;${_modeStyle('t2')}"
-            onclick="Pages._qrSwitchMode('t2')">🟠 T2初回移行</button>
         </div>
         <div style="font-size:.72rem;color:var(--text3);padding:2px 4px;margin-top:-2px">${_modeDesc()}</div>
 
@@ -93,14 +76,7 @@ Pages.qrScan = function (params = {}) {
             <span style="font-size:1.4rem;margin-right:8px">📷</span>カメラで読み取る
           </button>
 
-          <!-- ラベル全体読み取り（AI解析）-->
-          <label id="qr-ai-label-btn" style="display:flex;align-items:center;justify-content:center;gap:8px;padding:12px;border:2px solid rgba(200,168,75,.5);border-radius:12px;cursor:pointer;margin-bottom:10px;font-size:.92rem;color:var(--amber);background:rgba(200,168,75,.06)">
-            <span style="font-size:1.3rem">🤖</span>
-            ラベル全体を読み取る（AI解析）
-            <input type="file" accept="image/*" capture="environment" style="display:none" onchange="Pages._qrReadLabelImage(this)">
-          </label>
-
-          <!-- QR画像ファイル読み取り -->
+          <!-- 画像ファイル読み取り -->
           <label style="display:flex;align-items:center;justify-content:center;gap:8px;padding:10px;border:2px dashed var(--border2);border-radius:10px;cursor:pointer;margin-bottom:10px;font-size:.85rem;color:var(--text3)">
             <span style="font-size:1.2rem">🖼️</span>QR画像を選択して読み取る
             <input type="file" accept="image/*" style="display:none" onchange="Pages._qrReadFromImage(this)">
@@ -146,25 +122,6 @@ SET:SET-XXXXXXXX"
         </div>
 
         <div id="scan-history-card"></div>
-
-        <!-- 音・バイブ設定 -->
-        <div class="card" style="padding:10px 14px">
-          <div style="font-size:.72rem;font-weight:700;color:var(--text2);margin-bottom:8px">🔔 フィードバック設定</div>
-          <div style="display:flex;gap:10px">
-            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;flex:1;font-size:.82rem">
-              <input type="checkbox" id="qr-sound-toggle" ${window._qrSoundOn?'checked':''}
-                style="width:18px;height:18px;cursor:pointer"
-                onchange="window._qrSoundOn=this.checked;localStorage.setItem('qr_sound',this.checked?'on':'off')">
-              🔔 成功音
-            </label>
-            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;flex:1;font-size:.82rem">
-              <input type="checkbox" id="qr-vibrate-toggle" ${window._qrVibrateOn?'checked':''}
-                style="width:18px;height:18px;cursor:pointer"
-                onchange="window._qrVibrateOn=this.checked;localStorage.setItem('qr_vibrate',this.checked?'on':'off')">
-              📳 バイブ
-            </label>
-          </div>
-        </div>
       </div>`;
 
     // CSSアニメーション注入
@@ -181,59 +138,9 @@ SET:SET-XXXXXXXX"
   Pages._qrSwitchMode = (m) => { _scanMode = m; render(); };
   render();
 
-  // 起動直後カメラ自動起動（保存後の連続スキャンモード）
+  // 起動直後カメラ自動起動（モード問わず）
   if (params.autoCamera) {
-    // 直前に保存したQRを一時的にdedup（同じQRを即再読取しない）
-    if (params.lastQrText) {
-      window._qrLastAutoIgnore = {
-        text: params.lastQrText,
-        until: Date.now() + 2000,
-      };
-    }
-    // 「自動起動中...」インジケータを表示
-    const _autoCamMsg = document.createElement('div');
-    _autoCamMsg.id = 'qr-autocam-msg';
-    _autoCamMsg.style.cssText = [
-      'position:fixed', 'top:56px', 'left:50%', 'transform:translateX(-50%)',
-      'background:rgba(45,122,82,.92)', 'color:#fff',
-      'padding:6px 16px', 'border-radius:20px', 'font-size:.78rem',
-      'z-index:9000', 'pointer-events:none', 'white-space:nowrap',
-      'box-shadow:0 2px 8px rgba(0,0,0,.25)',
-    ].join(';');
-    _autoCamMsg.textContent = '📷 カメラを自動起動中...';
-    document.body.appendChild(_autoCamMsg);
-
-    setTimeout(async () => {
-      try {
-        await Pages._qrStartCamera();
-        // 起動成功 → インジケータを消す
-        const msg = document.getElementById('qr-autocam-msg');
-        if (msg) msg.remove();
-      } catch (e) {
-        // 起動失敗 → エラー表示 + 再試行ボタン
-        const msg = document.getElementById('qr-autocam-msg');
-        if (msg) {
-          msg.style.background = 'rgba(200,50,50,.92)';
-          msg.style.pointerEvents = 'auto';
-          msg.style.cursor = 'pointer';
-          msg.innerHTML =
-            '⚠️ カメラ起動失敗 — '
-            + '<span style="text-decoration:underline;font-weight:700">再試行</span>';
-          msg.onclick = async () => {
-            msg.textContent = '📷 再試行中...';
-            msg.onclick = null;
-            try {
-              await Pages._qrStartCamera();
-              msg.remove();
-            } catch (e2) {
-              msg.textContent = '❌ カメラを起動できません（' + (e2.name || e2.message) + '）';
-              setTimeout(() => { if (msg.parentNode) msg.remove(); }, 5000);
-            }
-          };
-        }
-        console.warn('[autoCamera] start failed:', e.message);
-      }
-    }, 200);
+    setTimeout(() => Pages._qrStartCamera(), 300);
   }
 };
 
@@ -258,118 +165,46 @@ Pages._qrPreviewInput = function (val) {
 };
 
 // ── QR解析・モード別遷移 ─────────────────────────────────────
-// ── モード取得ヘルパー（_qrResolve / カメラスキャン共用）──────
-function _qrGetMode() {
-  const activeBtn = Array.from(document.querySelectorAll('button')).find(b =>
-    b.style.fontWeight === '700' && b.getAttribute('onclick')?.includes('_qrSwitchMode')
-  );
-  if (activeBtn) {
-    const m = activeBtn.getAttribute('onclick')?.match(/'(view|diff|weight|t1|t2)'/);
-    if (m) return m[1];
-  }
-  return 'view';
-}
-
-// ── QRテキストから Store キャッシュで即解決 ─────────────────────
-function _qrResolveFromCache(qrText) {
-  if (!qrText) return null;
-  const v = qrText.trim();
-  // IND:xxx / LOT:xxx / SET:xxx 形式
-  const [prefix, rawId] = v.split(':');
-  if (!rawId) return null;
-  const id = rawId.trim();
-  if (prefix === 'IND') {
-    const ind  = Store.getIndividual(id) ||
-                 (Store.getDB('individuals') || []).find(i => i.display_id === id);
-    if (!ind) return null;
-    const line = Store.getLine(ind.line_id) || {};
-    const lg   = _getLastGrowthFromStore('IND', ind.ind_id, ind.latest_weight_g);
-    return { entity_type:'IND', entity:ind, line, last_growth:lg, missing:[], label_type:'ind_fixed' };
-  }
-  if (prefix === 'LOT') {
-    const lot  = Store.getLot(id) ||
-                 (Store.getDB('lots') || []).find(l => l.display_id === id);
-    if (!lot) return null;
-    const line = Store.getLine(lot.line_id) || {};
-    const lg   = _getLastGrowthFromStore('LOT', lot.lot_id, lot.latest_weight_g);
-    return { entity_type:'LOT', entity:lot, line, last_growth:lg, missing:[], label_type:'multi_lot' };
-  }
-  if (prefix === 'SET') {
-    const sets = Store.getDB('pairings') || [];
-    const set  = sets.find(s => s.set_id === id || s.display_id === id);
-    if (!set) return null;
-    return { entity_type:'SET', entity:set, line:null, last_growth:null, missing:[], label_type:'set' };
-  }
-  if (prefix === 'PAR') {
-    const par = (Store.getDB('parents') || []).find(p => p.par_id === id || p.parent_display_id === id);
-    if (!par) return null;
-    return { entity_type:'PAR', entity:par, line:null, last_growth:null, missing:[], label_type:'parent' };
-  }
-  return null;
-}
-
-// ── モード別遷移（キャッシュ解決結果 or API結果を共用）──────────
-function _qrNavigate(mode, res, qrText) {
-  if (mode === 'weight') {
-    routeTo('weight-mode', { resolve_result: res, qr_text: qrText });
-  } else if (mode === 't1') {
-    if (res.entity_type === 'LOT') {
-      routeTo('t1-weight', { resolve_result: res, qr_text: qrText });
-    } else {
-      UI.toast('T1移行モードはロットQRを読み取ってください', 'info', 3000);
-    }
-  } else if (mode === 't2') {
-    if (res.entity_type === 'LOT') {
-      routeTo('t2-weight', { resolve_result: res, qr_text: qrText });
-    } else {
-      UI.toast('T2初回移行モードはロットQRを読み取ってください', 'info', 3000);
-    }
-  } else if (mode === 'diff') {
-    routeTo('qr-diff', { resolve_result: res, qr_text: qrText });
-  } else {
-    // 確認モード: 直接詳細画面へ
-    const eid = res.entity?.ind_id || res.entity?.lot_id || res.entity?.set_id || res.entity?.par_id;
-    if      (res.entity_type === 'IND' && eid) routeTo('ind-detail',     { indId: eid });
-    else if (res.entity_type === 'LOT' && eid) routeTo('lot-detail',     { lotId: eid });
-    else if (res.entity_type === 'SET' && eid) routeTo('pairing-detail', { pairingId: eid });
-    else if (res.entity_type === 'PAR' && eid) routeTo('parent-detail',  { parId: eid });
-    else routeTo('qr-diff', { resolve_result: res, qr_text: qrText });
-  }
-}
-
 Pages._qrResolve = async function () {
   const qrText = document.getElementById('qr-input')?.value?.trim();
   const errEl  = document.getElementById('qr-error');
   const btn    = document.getElementById('qr-resolve-btn');
   if (!qrText) { if (errEl) errEl.textContent = 'QRコードを入力してください'; return; }
   if (errEl) errEl.textContent = '';
-
-  const mode = _qrGetMode();
-
-  // ── STEP1: Storeキャッシュで即解決して即遷移（体感速度ゼロ）──
-  const cached = _qrResolveFromCache(qrText);
-  if (cached) {
-    Pages._qrSaveHistory(qrText, cached);
-    _qrNavigate(mode, cached, qrText);
-    // バックグラウンドでAPIを叩いてキャッシュ更新（遷移には影響しない）
-    API.scan.resolve(qrText).then(res => {
-      if (res?.entity) {
-        if (res.entity_type === 'IND') {
-          Store.patchDBItem('individuals', 'ind_id', res.entity.ind_id, res.entity);
-        } else if (res.entity_type === 'LOT') {
-          Store.patchDBItem('lots', 'lot_id', res.entity.lot_id, res.entity);
-        }
-      }
-    }).catch(() => {}); // バックグラウンド失敗は無視
-    return;
-  }
-
-  // ── STEP2: キャッシュになければAPIを叩く（200ms以上かかることを示す）──
   if (btn) { btn.disabled = true; btn.textContent = '⏳ 解析中...'; }
+
   try {
     const res = await API.scan.resolve(qrText);
     Pages._qrSaveHistory(qrText, res);
-    _qrNavigate(mode, res, qrText);
+
+    // 選択中モードをボタンのfontWeightで判定
+    const btns = document.querySelectorAll('[onclick*="_qrSwitchMode"]');
+    let mode = 'view';
+    btns.forEach(b => {
+      if (b.style.fontWeight === '700' || b.style.background.includes('var(--green)')) mode = 'weight';
+      else if (b.style.fontWeight === '700' || b.style.background.includes('var(--blue)')) mode = 'diff';
+    });
+    // より確実な判定: 選択中ボタンのonclick属性から取得
+    const activeBtn = Array.from(document.querySelectorAll('button')).find(b =>
+      b.style.fontWeight === '700' && b.onclick && b.getAttribute('onclick')?.includes('_qrSwitchMode')
+    );
+    if (activeBtn) {
+      const m = activeBtn.getAttribute('onclick')?.match(/'(view|diff|weight)'/);
+      if (m) mode = m[1];
+    }
+
+    if (mode === 'weight') {
+      routeTo('weight-mode', { resolve_result: res, qr_text: qrText });
+    } else if (mode === 'diff') {
+      routeTo('qr-diff', { resolve_result: res, qr_text: qrText });
+    } else {
+      // 確認モード: 直接詳細画面へ
+      const eid = res.entity?.ind_id || res.entity?.lot_id || res.entity?.set_id;
+      if (res.entity_type === 'IND' && eid)      routeTo('ind-detail',     { indId: eid });
+      else if (res.entity_type === 'LOT' && eid) routeTo('lot-detail',     { lotId: eid });
+      else if (res.entity_type === 'SET' && eid) routeTo('pairing-detail', { pairingId: eid });
+      else routeTo('qr-diff', { resolve_result: res, qr_text: qrText });
+    }
   } catch (e) {
     if (errEl) errEl.textContent = '❌ ' + (e.message || '解析に失敗しました');
   } finally {
@@ -412,79 +247,34 @@ Pages._qrRescanFromHistory = function (qrText) {
   Pages._qrResolve();
 };
 
-// ── jsQR アクセサ + 動的ロード ─────────────────────────────────
-function _getJsQR() {
-  return window.jsQR || (typeof globalThis !== 'undefined' && globalThis.jsQR) || null;
-}
-const _JSQR_SRCS = [
-  'js/lib/jsQR.min.js',
-  'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js',
-  'https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js',
-  'https://unpkg.com/jsqr@1.4.0/dist/jsQR.min.js',
-];
-async function _ensureJsQR() {
-  if (_getJsQR()) return true;
-  for (const url of _JSQR_SRCS) {
-    const ok = await new Promise(res => {
-      const s = document.createElement('script');
-      s.src = url;
-      s.onload  = () => { console.log('[scan] jsQR loaded:', url); res(true); };
-      s.onerror = () => { console.warn('[scan] jsQR fail:', url); res(false); };
-      document.head.appendChild(s);
-    });
-    if (ok && _getJsQR()) return true;
-  }
-  return false;
-}
-function _qrBeep() {
-  try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const osc = ctx.createOscillator(), gain = ctx.createGain();
-    osc.connect(gain); gain.connect(ctx.destination);
-    osc.frequency.value = 1760;
-    gain.gain.setValueAtTime(0.25, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12);
-    osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.12);
-  } catch(_) {}
-}
-
 // ── カメラスキャン ────────────────────────────────────────────
 Pages._qrStartCamera = async function () {
-  const jsQRReady = await _ensureJsQR();
-  if (!jsQRReady) {
-    UI.toast('QRライブラリをロードできませんでした。js/lib/jsQR.min.js を配置してください', 'error', 6000);
+  // jsQR確認（index.htmlで静的ロード済みのはずだが念のため）
+  if (typeof jsQR === 'undefined') {
+    UI.toast('QRライブラリ未ロード。ページを再読み込みしてください', 'error');
     return;
   }
   const card = document.getElementById('camera-card');
   if (!card) return;
+
   try {
-    let stream = window._qrCameraStream;
-    if (!stream || !stream.active) {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: { ideal: 'environment' },
-          width:  { ideal: 1280, min: 480 },
-          height: { ideal: 720,  min: 360 },
-        }
-      });
-      window._qrCameraStream = stream;
-      try {
-        const track = stream.getVideoTracks()[0];
-        if (track && track.applyConstraints) {
-          const caps = track.getCapabilities ? track.getCapabilities() : {};
-          const adv = {};
-          if (caps.focusMode && caps.focusMode.includes('continuous')) adv.focusMode = 'continuous';
-          if (caps.zoom && caps.zoom.max >= 1.5) adv.zoom = Math.min(1.5, caps.zoom.max);
-          if (Object.keys(adv).length) await track.applyConstraints({ advanced: [adv] }).catch(() => {});
-        }
-      } catch(_) {}
-    }
+    // 高解像度でリクエスト（Android最適化）
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: { ideal: 'environment' },
+        width:  { ideal: 1920, min: 640 },
+        height: { ideal: 1080, min: 480 },
+        focusMode: 'continuous',
+      }
+    });
     const video = document.getElementById('qr-video');
     if (!video) { stream.getTracks().forEach(t=>t.stop()); return; }
+
     video.srcObject = stream;
     card.style.display = 'block';
     const btn = document.getElementById('camera-btn');
     if (btn) btn.textContent = '📷 スキャン中...';
+
     video.addEventListener('loadedmetadata', () => { video.play(); }, { once: true });
     Pages._qrScanLoop(video);
   } catch (e) {
@@ -496,78 +286,43 @@ Pages._qrStartCamera = async function () {
 };
 
 Pages._qrScanLoop = function (video) {
-  const SCAN_W = 640;
-  const ac = document.createElement('canvas'), actx = ac.getContext('2d');
-  let frameCount = 0, resolved = false;
-  let _lastSeen = { code: '', ts: 0 };
-  const DEDUP_MS = 1200;
+  const canvas = document.getElementById('qr-canvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  let frameCount = 0;
 
   const scan = () => {
-    if (!video.srcObject || resolved) return;
+    if (!video.srcObject) return;
     frameCount++;
-    if (frameCount % 2 !== 0) { requestAnimationFrame(scan); return; }
-    if (video.readyState < video.HAVE_ENOUGH_DATA || video.videoWidth <= 0) {
-      requestAnimationFrame(scan); return;
-    }
-    const sw = SCAN_W, sh = Math.round(video.videoHeight * (SCAN_W / video.videoWidth));
-    if (ac.width !== sw || ac.height !== sh) { ac.width = sw; ac.height = sh; }
-    actx.drawImage(video, 0, 0, sw, sh);
-    const cw = Math.round(sw * 0.85), ch = Math.round(sh * 0.85);
-    const cx = Math.round((sw - cw) / 2), cy = Math.round((sh - ch) / 2);
-    const imageData = actx.getImageData(cx, cy, cw, ch);
-    const _fn = _getJsQR();
-    if (!_fn) { requestAnimationFrame(scan); return; }
-    const code = _fn(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'attemptBoth' });
+    // 毎フレームではなく3フレームに1回スキャン（負荷軽減）
+    if (frameCount % 3 !== 0) { requestAnimationFrame(scan); return; }
 
-    if (code && code.data) {
-      const now = Date.now();
-      if (code.data === _lastSeen.code && now - _lastSeen.ts < DEDUP_MS) {
-        requestAnimationFrame(scan); return;
+    if (video.readyState >= video.HAVE_ENOUGH_DATA && video.videoWidth > 0) {
+      canvas.width  = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+      // inversionAttemptsを'attemptBoth'にして白地・黒地両対応
+      const code = jsQR(imageData.data, imageData.width, imageData.height, {
+        inversionAttempts: 'attemptBoth',
+      });
+
+      if (code && code.data) {
+        Pages._qrStopCamera();
+        const input = document.getElementById('qr-input');
+        if (input) { input.value = code.data; Pages._qrPreviewInput(code.data); }
+        if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+        const status = document.getElementById('scan-status');
+        if (status) { status.textContent = '✅ 読み取り成功！'; status.style.color = 'var(--green)'; }
+        setTimeout(() => Pages._qrResolve(), 200);
+        return;
       }
-      _lastSeen = { code: code.data, ts: now };
-      // 保存直後の同一QR再読取を防止（autoCamera 復帰時のみ発動）
-      const _ign = window._qrLastAutoIgnore;
-      if (_ign && _ign.text === code.data && Date.now() < _ign.until) {
-        requestAnimationFrame(scan); return;
-      }
-      resolved = true;
-      if (!window._qrContinuousMode) Pages._qrStopCamera();
-      const input = document.getElementById('qr-input');
-      if (input) { input.value = code.data; Pages._qrPreviewInput(code.data); }
-      if (window._qrVibrateOn && navigator.vibrate) navigator.vibrate(80);
-      if (window._qrSoundOn) _qrBeep();
-      const status = document.getElementById('scan-status');
-      if (status) { status.textContent = '✅ 読み取り成功！'; status.style.color = 'var(--green)'; }
-      // キャッシュ即解決 → 即遷移
-      const _qrData = code.data;
-      const _mode   = _qrGetMode();
-      const _cached = _qrResolveFromCache(_qrData);
-      if (_cached) {
-        Pages._qrSaveHistory(_qrData, _cached);
-        _qrNavigate(_mode, _cached, _qrData);
-        API.scan.resolve(_qrData).then(res => {
-          if (res?.entity) {
-            if (res.entity_type === 'IND') Store.patchDBItem('individuals','ind_id',res.entity.ind_id,res.entity);
-            else if (res.entity_type === 'LOT') Store.patchDBItem('lots','lot_id',res.entity.lot_id,res.entity);
-          }
-        }).catch(() => {});
-      } else {
-        Pages._qrResolve();
-      }
-      if (window._qrContinuousMode) {
-        setTimeout(() => {
-          resolved = false;
-          if (status) { status.textContent = 'スキャン中…'; status.style.color = 'var(--green)'; }
-          requestAnimationFrame(scan);
-        }, DEDUP_MS);
-      }
-      return;
     }
     requestAnimationFrame(scan);
   };
   requestAnimationFrame(scan);
 };
-
 
 Pages._qrStopCamera = function () {
   const video = document.getElementById('qr-video');
@@ -579,10 +334,10 @@ Pages._qrStopCamera = function () {
 };
 
 // ── 画像ファイルからQR読み取り ────────────────────────────────
-Pages._qrReadFromImage = async function (input) {
+Pages._qrReadFromImage = function (input) {
   const file = input?.files?.[0];
   if (!file) return;
-  const _jsqrReady = await _ensureJsQR(); if (!_jsqrReady) { UI.toast('QRライブラリ未ロード', 'error'); return; }
+  if (typeof jsQR === 'undefined') { UI.toast('QRライブラリ未ロード', 'error'); return; }
 
   const reader = new FileReader();
   reader.onload = function (e) {
@@ -594,8 +349,9 @@ Pages._qrReadFromImage = async function (input) {
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0);
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const _fn2 = _getJsQR();
-      const code = _fn2 ? _fn2(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'attemptBoth' }) : null;
+      const code = jsQR(imageData.data, imageData.width, imageData.height, {
+        inversionAttempts: 'attemptBoth',
+      });
       if (code && code.data) {
         const qrInput = document.getElementById('qr-input');
         if (qrInput) { qrInput.value = code.data; Pages._qrPreviewInput(code.data); }
@@ -611,93 +367,6 @@ Pages._qrReadFromImage = async function (input) {
   // inputをリセット（同じ画像を再選択できるように）
   input.value = '';
 };
-
-// ── ラベル全体を読み取る（AI解析）────────────────────────────────
-Pages._qrReadLabelImage = async function (input) {
-  const file = input?.files?.[0];
-  if (!file) return;
-  input.value = '';
-
-  const geminiKey = Store.getSetting('gemini_key') || localStorage.getItem('gemini_key') || '';
-  if (!geminiKey) {
-    UI.toast('Gemini APIキーが未設定です。設定画面で登録してください。', 'error', 5000);
-    return;
-  }
-
-  UI.toast('🤖 AI解析中...（最大40秒）', 'info', 5000);
-  const resultEl = document.getElementById('qr-ai-result');
-
-  try {
-    // ① 画像圧縮 → base64
-    const compressed = await compressImageToBase64(file, 1280, 0.85);
-
-    // ② まず同じ画像からQRコードを読んで対象を特定
-    const img = new Image();
-    await new Promise(res => { img.onload = res; img.src = compressed.dataUrl; });
-    const tmpCanvas = document.createElement('canvas');
-    tmpCanvas.width = img.width; tmpCanvas.height = img.height;
-    tmpCanvas.getContext('2d').drawImage(img, 0, 0);
-    const imgData = tmpCanvas.getContext('2d').getImageData(0, 0, tmpCanvas.width, tmpCanvas.height);
-    const _fn = _getJsQR();
-    let qrData = null;
-    if (_fn) {
-      const code = _fn(imgData.data, imgData.width, imgData.height, { inversionAttempts: 'attemptBoth' });
-      if (code?.data) qrData = code.data;
-    }
-
-    // ③ GeminiでAI解析
-    const aiResult = await API.gemini.analyzeImage(compressed.base64, compressed.mimeType, 'label');
-
-    // ④ 結果を表示（qr-input / ai-result エリアに反映）
-    let displayText = '';
-    if (qrData) {
-      displayText = qrData;
-      const inp = document.getElementById('qr-input');
-      if (inp) { inp.value = qrData; Pages._qrPreviewInput(qrData); }
-    }
-
-    // AI解析結果カードを表示
-    const historyCard = document.getElementById('scan-history-card');
-    if (historyCard) {
-      const aiCard = document.createElement('div');
-      aiCard.className = 'card';
-      aiCard.style.cssText = 'border-color:rgba(200,168,75,.4);background:rgba(200,168,75,.06);margin-top:8px';
-      const rows = [
-        ['🏷 ID',        aiResult.individual_id || '—'],
-        ['性別',          aiResult.sex           || '—'],
-        ['孵化',          [aiResult.hatch_year, aiResult.hatch_month, aiResult.hatch_period].filter(Boolean).join('/') || '—'],
-        ['現在体重',       aiResult.current_weight ? aiResult.current_weight + 'g' : '—'],
-        ['現在マット',     aiResult.current_mat   || '—'],
-        ['ライン/メモ',   aiResult.line           || '—'],
-      ].filter(([,v]) => v !== '—');
-      let innerHtml = '<div style="font-size:.72rem;font-weight:700;color:var(--amber);margin-bottom:6px">🤖 AI解析結果</div>';
-      rows.forEach(([k,v]) => {
-        innerHtml += '<div style="display:flex;gap:8px;font-size:.78rem;padding:2px 0">'
-          + '<span style="color:var(--text3);min-width:70px">' + k + '</span>'
-          + '<span style="color:var(--text1)">' + v + '</span></div>';
-      });
-      if (aiResult.weight_history?.length) {
-        innerHtml += '<div style="font-size:.72rem;color:var(--text3);margin-top:6px">体重履歴: ' +
-          aiResult.weight_history.map(h => h.date + ' ' + h.weight + 'g').join(' / ') + '</div>';
-      }
-      if (qrData) {
-        innerHtml += '<button class="btn btn-amber btn-full" style="margin-top:8px;font-size:.82rem" onclick="Pages._qrResolve()">🔍 このQRで解析・遷移</button>';
-      }
-      innerHtml += '<button class="btn btn-ghost btn-sm" style="margin-top:4px;width:100%;font-size:.72rem" onclick="this.parentElement.parentElement.remove()">✕ 閉じる</button>';
-      aiCard.innerHTML = innerHtml;
-      historyCard.insertAdjacentElement('beforebegin', aiCard);
-    }
-
-    if (qrData) {
-      UI.toast('✅ AI解析完了。QRコードも検出しました。', 'success', 3000);
-    } else {
-      UI.toast('✅ AI解析完了。QRコードは未検出です。', 'success', 3000);
-    }
-  } catch (e) {
-    UI.toast('❌ AI解析失敗: ' + (e.message || '不明なエラー'), 'error', 5000);
-  }
-};
-
 
 Pages.qrDiff = function (params = {}) {
   const res = params.resolve_result;
@@ -1009,7 +678,8 @@ Pages._qrDiffSave = async function (entityType, entityId) {
     }
 
     // DBキャッシュを更新
-    await syncAll(true).catch(() => {});
+    await Store.syncEntityType(entityType === 'LOT' ? 'lots'
+      : entityType === 'IND' ? 'individuals' : 'pairings');
 
     UI.toast(`✅ 保存しました（${Object.keys(updates).length}件更新）`, 'success');
 
@@ -1052,797 +722,369 @@ Pages._qrDiffSave = async function (entityType, entityId) {
 //   Phase4: セッションモード       — 複数個体の連続スキャンと集計
 // ════════════════════════════════════════════════════════════════
 
-
-// ════════════════════════════════════════════════════════════════
-// 体重測定モード (weight-mode)  ─ 新UI版
-// ════════════════════════════════════════════════════════════════
-
-// ── 体重閾値 ─────────────────────────────────────────────────────
+// ── 体重閾値定義（将来的に設定画面から変更可能にする拡張ポイント）──
 const WM_THRESHOLDS = [
   { min: 170, badge: '⭐ 超大型候補', color: '#c8a84b', bg: 'rgba(200,168,75,.15)' },
   { min: 150, badge: '🔥 大型候補',   color: 'var(--amber)', bg: 'rgba(224,144,64,.12)' },
 ];
 
-// ── プリセット定義 ────────────────────────────────────────────────
-const _WM_PRESETS = {
-  normal: { label: '通常',    mat:'',   molt:false, stage:'', container:'', exchange:'' },
-  t1:     { label: 'T1移行', mat:'T1', molt:false, stage:'L1L2', container:'2.7L', exchange:'全交換' },
-  t2:     { label: 'T2初回移行',  mat:'T2', molt:true,  stage:'L3',     container:'2.7L', exchange:'全交換' },
-};
-function _wmGetPresetId() { return localStorage.getItem('wm_preset') || 'normal'; }
-function _wmSetPresetId(id) { localStorage.setItem('wm_preset', id); }
-function _wmGetLastInput() {
-  try { const s = localStorage.getItem('wm_last_input'); if (s) return JSON.parse(s); } catch(_) {}
-  const p = _WM_PRESETS[_wmGetPresetId()] || _WM_PRESETS.normal;
-  return { mat:p.mat, molt:p.molt, stage:p.stage, container:p.container, exchange:p.exchange, sizeCat:'' };
-}
-function _wmSaveLastInput(obj) {
-  const prev = _wmGetLastInput(), merged = {};
-  Object.keys(obj).forEach(k => {
-    const nv = obj[k], ov = prev[k];
-    merged[k] = (nv===''||nv===null||nv===undefined) && ov!=null && ov!=='' ? ov : nv;
-  });
-  try { localStorage.setItem('wm_last_input', JSON.stringify(merged)); } catch(_) {}
-  window._wmLastInput = merged;
-}
-window._wmLastInput = _wmGetLastInput();
-
-// ── Storeキャッシュから最新成長記録 ──────────────────────────────
-function _getLastGrowthFromStore(targetType, targetId, fallbackWeight) {
-  const records = Store.getGrowthRecords(targetId);
-  if (records && records.length) {
-    const weighted = records
-      .filter(r => r.weight_g != null && String(r.weight_g) !== '' && parseFloat(r.weight_g) > 0)
-      .slice().sort((a, b) => String(b.record_date||'').localeCompare(String(a.record_date||'')));
-    if (weighted.length) return weighted[0];
-  }
-  if (fallbackWeight != null && String(fallbackWeight)!=='' && parseFloat(fallbackWeight) > 0)
-    return { weight_g: parseFloat(fallbackWeight), record_date: '', age_days: '' };
-  return null;
-}
-
-// ── 個体詳細から直接体重測定（QRスキャン省略）──────────────────────
-Pages._indDirectWeight = async function (indId) {
-  const ind = Store.getIndividual(indId);
-  const line = ind ? Store.getLine(ind.line_id) : null;
-  routeTo('weight-mode', {
-    resolve_result: {
-      entity_type: 'IND',
-      entity:      ind || { ind_id: indId, display_id: indId },
-      line:        line || {},
-      last_growth: _getLastGrowthFromStore('IND', indId, ind?.latest_weight_g),
-    },
-    from:    'ind-detail',  // weightMode に渡す遷移元識別子
-    fromId:  indId,
-  });
-};
-
+/**
+ * Pages.weightMode — 体重測定画面のメインレンダラ
+ * params.resolve_result: resolveQR のレスポンス（必須）
+ * qr-scan 画面から routeTo('weight-mode', { resolve_result, qr_text }) で遷移
+ */
 Pages.weightMode = function (params = {}) {
   const res = params.resolve_result;
   if (!res || !res.entity) { routeTo('qr-scan', { mode: 'weight' }); return; }
 
-  // 遷移元判定（個体詳細から来た場合は戻り先・保存後遷移を変える）
-  const _fromDirect = params.from === 'ind-detail';
-  const _fromId     = params.fromId || '';
-  const _backFn     = _fromDirect
-    ? `routeTo('ind-detail',{indId:'${params.fromId||''}'})`
-    : "routeTo('qr-scan',{mode:'weight'})";
-  const _rescanFn   = _fromDirect
-    ? `routeTo('ind-detail',{indId:'${params.fromId||''}'})`
-    : "routeTo('qr-scan',{mode:'weight'})";
-
   const main = document.getElementById('main');
   const { entity_type, entity, line, last_growth } = res;
+
   const displayId = entity.display_id || '—';
   const isLot     = entity_type === 'LOT';
   const stage     = (isLot ? entity.stage : entity.current_stage) || '—';
   const stageDisp = (typeof STAGE_LABELS !== 'undefined' && STAGE_LABELS[stage]) || stage;
+  const ageDays   = entity._age?.totalDays ?? entity.ageDays ?? '—';
   const container = (isLot ? entity.container_size : entity.current_container) || '';
   const matType   = (isLot ? entity.mat_type : entity.current_mat) || '';
   const lineDisp  = line?.line_code || line?.display_id || '';
   const entityId  = (isLot ? entity.lot_id : entity.ind_id) || '';
-  const lotCount  = isLot ? (parseInt(entity.count,10)||0) : 0;
+  const lotCount  = isLot ? (parseInt(entity.count, 10) || 0) : 0;
 
-  const _lgA = last_growth && last_growth.weight_g != null && String(last_growth.weight_g) !== '' ? last_growth : null;
-  const _lgB = _lgA ? null : _getLastGrowthFromStore(entity_type, entityId, entity.latest_weight_g);
-  const _lg  = _lgA || _lgB || null;
-  const prevWeight  = _lg && parseFloat(_lg.weight_g) > 0 ? parseFloat(_lg.weight_g) : null;
-  const prevDate    = _lg?.record_date || '';
-  const prevAgeDays = _lg?.age_days    || '';
+  const prevWeight  = (last_growth?.weight_g != null && last_growth.weight_g !== '')
+    ? parseFloat(last_growth.weight_g) : null;
+  const prevDate    = last_growth?.record_date || '';
+  const prevAgeDays = last_growth?.age_days    || '';
 
-  Pages._wmState = { entityType: entity_type, entityId, stage, container, matType,
-                     prevWeight, prevDate, displayId, lotCount,
-                     fromDirect: _fromDirect, fromId: _fromId,
-                     lastQrText: params.qr_text || '' };  // 保存後dedup用
-
-  const _wmPresetId = _wmGetPresetId();
-  const _liRaw = _wmGetLastInput();
-  const _li    = { ..._liRaw, sizeCat: _liRaw.sizeCat || (entity.size_category||'') };
-  const _showMolt = (_li.mat||'') === 'T2';
-
-  const _hatchDate = entity.hatch_date;
-  const _ageObj    = _hatchDate ? Store.calcAge(_hatchDate) : null;
-  const _cleanId   = displayId.startsWith('IND-') ? displayId.slice(4)
-                   : displayId.startsWith('LOT-') ? displayId.slice(4) : displayId;
-  const _sex = entity.sex || '';
-  const _sexHtml = _sex === '♂'
-    ? '<span style="color:#5b9cf6;font-size:.9rem;font-weight:700">♂</span>'
-    : _sex === '♀'
-    ? '<span style="color:#f471b5;font-size:.9rem;font-weight:700">♀</span>' : '';
-  const _todayIso = new Date().toISOString().split('T')[0];
+  Pages._wmState = {
+    entityType : entity_type,
+    entityId   : entityId,
+    stage      : stage,
+    container  : container,
+    matType    : matType,
+    prevWeight : prevWeight,
+    displayId  : displayId,
+    lotCount   : lotCount,
+  };
 
   main.innerHTML = `
-    ${UI.header('⚖️ 体重測定', { back: true, backFn: _backFn })}
-    <div style="position:absolute;top:14px;right:14px;z-index:10">
-      <button onclick="${_rescanFn}"
-        style="background:none;border:none;cursor:pointer;font-size:1.3rem;padding:6px;
-        color:var(--text3);opacity:.7" title="${_fromDirect?'個体詳細へ':'再スキャン'}">${_fromDirect?'↩':'🔄'}</button>
-    </div>
+    ${UI.header('⚖️ 体重測定', { back: true, backFn: "routeTo('qr-scan',{mode:'weight'})" })}
     <div class="page-body has-quick-bar">
 
+      <!-- ① コンパクト情報バー -->
       <div class="quick-info-bar">
         <div style="flex:1;min-width:0">
-          <div style="display:flex;align-items:center;gap:6px">
-            <div class="quick-info-id" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_cleanId}</div>
-            ${_sexHtml}
-          </div>
+          <div class="quick-info-id"
+            style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${displayId}</div>
           <div style="display:flex;gap:5px;align-items:center;margin-top:4px;flex-wrap:wrap">
-            <span style="background:rgba(76,175,120,.15);color:var(--green);font-size:.68rem;padding:1px 6px;border-radius:99px;font-weight:600">${stageDisp}</span>
-            ${isLot ? '<span style="font-size:.7rem;color:var(--text3)">'+(entity.count||'?')+'頭</span>' : ''}
-            ${lineDisp ? '<span style="font-size:.68rem;color:var(--text3)">L:'+lineDisp+'</span>' : ''}
+            <span style="background:rgba(76,175,120,.15);color:var(--green);
+              font-size:.68rem;padding:1px 6px;border-radius:99px;font-weight:600">${stageDisp}</span>
+            ${isLot
+              ? `<span style="font-size:.7rem;color:var(--text3)">${entity.count || '?'}頭</span>`
+              : `<span style="font-size:.7rem;color:var(--text3)">${entity.sex || ''}</span>`}
+            ${lineDisp
+              ? `<span style="font-size:.68rem;color:var(--text3)">L:${lineDisp}</span>` : ''}
           </div>
         </div>
         <div style="text-align:right;flex-shrink:0">
-          ${_ageObj
-            ? '<div style="font-size:1rem;font-weight:700;color:var(--text1)">'+_ageObj.totalDays+'日</div>'+
-              '<div style="font-size:.7rem;color:var(--text3)">'+_ageObj.weeks+'</div>'+
-              '<div style="font-size:.7rem;color:var(--text3)">'+_ageObj.months+'</div>'
-            : '<div class="quick-info-age">'+prevWeight+'g</div>'}
+          <div class="quick-info-age">${ageDays !== '—' ? ageDays : '—'}</div>
+          <div class="quick-info-age-label">日齢</div>
         </div>
       </div>
 
-      <!-- プリセットバー -->
-      <div style="display:flex;gap:5px;margin-bottom:6px">
-        <button class="btn btn-sm ${_wmPresetId==='normal'?'btn-primary':'btn-ghost'}" style="flex:1;font-size:.75rem"
-          data-preset="normal" onclick="Pages._wmApplyPreset('normal')">通常</button>
-        <button class="btn btn-sm ${_wmPresetId==='t1'?'btn-primary':'btn-ghost'}" style="flex:1;font-size:.75rem"
-          data-preset="t1" onclick="Pages._wmApplyPreset('t1')">T1移行</button>
-        <button class="btn btn-sm ${_wmPresetId==='t2'?'btn-primary':'btn-ghost'}" style="flex:1;font-size:.75rem"
-          data-preset="t2" onclick="Pages._wmApplyPreset('t2')">T2初回移行</button>
-      </div>
-
-      <!-- 体重 + 微調整ボタン -->
-      <div class="card" style="border-color:rgba(76,175,120,.35);padding:14px">
-        <div style="text-align:center;font-size:.72rem;font-weight:700;color:var(--text3);letter-spacing:.08em;margin-bottom:8px">体重 (g)</div>
-        <div style="display:flex;align-items:center;justify-content:center;gap:6px;margin-bottom:8px">
-          <button class="btn btn-ghost btn-sm" style="min-width:44px;font-size:.85rem"
-            onclick="Pages._wmAdjWeight(-10)" onmousedown="Pages._wmAdjStart(-10)" onmouseup="Pages._wmAdjStop()" ontouchend="Pages._wmAdjStop()">−10</button>
-          <button class="btn btn-ghost btn-sm" style="min-width:44px;font-size:.85rem"
-            onclick="Pages._wmAdjWeight(-1)" onmousedown="Pages._wmAdjStart(-1)" onmouseup="Pages._wmAdjStop()" ontouchend="Pages._wmAdjStop()">−1</button>
-          <input id="wm-weight" type="number" inputmode="decimal" step="0.1" min="0.1" max="999.9"
-            placeholder="0.0" autocomplete="off" class="num-input-xl" style="width:140px;color:var(--green)"
+      <!-- ② 体重入力 -->
+      <div class="card" style="border-color:rgba(76,175,120,.35);padding:16px 14px">
+        <div style="text-align:center;font-size:.72rem;font-weight:700;
+          color:var(--text3);letter-spacing:.08em;margin-bottom:10px">体重 (g)</div>
+        <div style="display:flex;align-items:center;justify-content:center;gap:8px">
+          <input
+            id="wm-weight"
+            type="number" inputmode="decimal" step="0.1" min="0.1" max="999.9"
+            placeholder="0.0" autocomplete="off"
+            class="num-input-xl"
+            style="width:180px;color:var(--green)"
             oninput="Pages._wmUpdateDelta(this.value)"
             onkeydown="if(event.key==='Enter'&&!event.isComposing){Pages._wmSave()}">
-          <button class="btn btn-ghost btn-sm" style="min-width:44px;font-size:.85rem"
-            onclick="Pages._wmAdjWeight(+1)" onmousedown="Pages._wmAdjStart(+1)" onmouseup="Pages._wmAdjStop()" ontouchend="Pages._wmAdjStop()">+1</button>
-          <button class="btn btn-ghost btn-sm" style="min-width:44px;font-size:.85rem"
-            onclick="Pages._wmAdjWeight(+10)" onmousedown="Pages._wmAdjStart(+10)" onmouseup="Pages._wmAdjStop()" ontouchend="Pages._wmAdjStop()">+10</button>
+          <span style="font-size:1.4rem;color:var(--text3);font-weight:600;flex-shrink:0">g</span>
         </div>
-        <div style="text-align:center;font-size:.72rem;color:var(--text3)">g</div>
-        <div id="wm-delta" style="text-align:center;min-height:28px;margin-top:8px;font-size:.92rem;transition:all .15s">
+        <div id="wm-delta"
+          style="text-align:center;min-height:28px;margin-top:8px;font-size:.92rem;transition:all .15s">
           ${prevWeight !== null
-            ? '<span style="color:var(--text3)">前回 <b>'+prevWeight+'g</b>'+(prevDate?' （'+prevDate+'）':'')+'</span>'
-            : '<span style="color:var(--text3)">前回体重なし・初回記録</span>'}
+            ? `<span style="color:var(--text3)">前回 <b>${prevWeight}g</b> から —</span>`
+            : `<span style="color:var(--text3)">（初回記録）</span>`}
         </div>
       </div>
 
-      ${isLot ? `<div class="card" style="padding:14px">
-        <div style="font-size:.72rem;font-weight:700;color:var(--text2);margin-bottom:10px">🔢 頭数変化（マット交換時）</div>
+      <!-- ③ LOT 専用: before/after 頭数（growth.js と統一ロジック） -->
+      ${isLot ? `
+      <div class="card" style="padding:14px">
+        <div style="font-size:.72rem;font-weight:700;color:var(--text2);margin-bottom:10px">
+          🔢 頭数変化（マット交換時）
+        </div>
         <div class="count-row">
           <div>
             <div style="font-size:.68rem;color:var(--text3);margin-bottom:4px;text-align:center">交換前</div>
-            <input id="wm-before" type="number" inputmode="numeric" class="num-input-xl" style="font-size:2rem"
-              min="0" max="999" placeholder="${lotCount||'—'}" value="${lotCount||''}" oninput="Pages._wmCalcAttrition()">
+            <input id="wm-before" type="number" inputmode="numeric"
+              class="num-input-xl" style="font-size:2rem"
+              min="0" max="999" placeholder="${lotCount || '—'}" value="${lotCount || ''}"
+              oninput="Pages._wmCalcAttrition()">
           </div>
           <div class="count-row-arrow">→</div>
           <div>
             <div style="font-size:.68rem;color:var(--text3);margin-bottom:4px;text-align:center">交換後</div>
-            <input id="wm-after" type="number" inputmode="numeric" class="num-input-xl" style="font-size:2rem"
-              min="0" max="999" placeholder="—" oninput="Pages._wmCalcAttrition()">
+            <input id="wm-after" type="number" inputmode="numeric"
+              class="num-input-xl" style="font-size:2rem"
+              min="0" max="999" placeholder="—"
+              oninput="Pages._wmCalcAttrition()">
           </div>
         </div>
         <div id="wm-attrition" class="count-attrition"></div>
       </div>` : ''}
 
-      <!-- 同時更新パネル -->
-      <div class="card" style="margin-top:8px;padding:12px 14px">
-        <div class="form-section">
-
-          <!-- 記録日 -->
-          <div class="field">
-            <label class="field-label">記録日</label>
-            <input id="wm-record-date" type="date" class="input" value="${_todayIso}" max="${_todayIso}">
-          </div>
-
-          <!-- 区分 -->
-          <div class="field">
-            <label class="field-label">区分</label>
-            ${isLot ? `
-              <div style="display:flex;gap:8px">
-                ${['大','中','小'].map(c => {
-                  const chk = (_li.sizeCat||'').split(',').map(s=>s.trim()).includes(c);
-                  return '<label style="flex:1;display:flex;align-items:center;justify-content:center;gap:5px;'+
-                    'padding:9px;border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:.85rem">'+
-                    '<input type="checkbox" class="wm-size-cat-chk" value="'+c+'" '+(chk?'checked':'')+
-                    ' style="width:16px;height:16px">'+c+'</label>';
-                }).join('')}
-              </div>` : `
-              <input type="hidden" id="wm-size-cat" value="${_li.sizeCat||''}">
-              <div style="display:flex;gap:6px">
-                ${[['大','大'],['中','中'],['小','小'],['','—']].map(([v,l]) =>
-                  '<button class="btn btn-sm '+(_li.sizeCat===v?'btn-primary':'btn-ghost')+'" '+
-                  'style="flex:1" data-wm="size-cat" data-val="'+v+'" '+
-                  'onclick="Pages._wmBtnSel(this,\'wm-size-cat\')">'+l+'</button>'
-                ).join('')}
-              </div>`}
-          </div>
-
-          <!-- 容器 -->
-          <div class="field">
-            <label class="field-label">容器</label>
-            <input type="hidden" id="wm-container" value="${_li.container||''}">
-            <div style="display:flex;gap:6px">
-              ${[['1.8L','1.8L'],['2.7L','2.7L'],['4.8L','4.8L'],['','—']].map(([v,l]) =>
-                '<button class="btn btn-sm '+(_li.container===v?'btn-primary':'btn-ghost')+'" '+
-                'style="flex:1" data-wm="container" data-val="'+v+'" '+
-                'onclick="Pages._wmBtnSel(this,\'wm-container\')">'+l+'</button>'
-              ).join('')}
-            </div>
-          </div>
-
-          <!-- 交換種別 -->
-          <div class="field">
-            <label class="field-label">交換種別</label>
-            <input type="hidden" id="wm-exchange" value="${_li.exchange||''}">
-            <div style="display:flex;gap:6px">
-              ${[['全交換','全交換'],['追加','追加'],['','なし']].map(([v,l]) =>
-                '<button class="btn btn-sm '+(_li.exchange===v?'btn-primary':'btn-ghost')+'" '+
-                'style="flex:1" data-wm="exchange" data-val="'+v+'" '+
-                'onclick="Pages._wmBtnSel(this,\'wm-exchange\')">'+l+'</button>'
-              ).join('')}
-            </div>
-          </div>
-
-          <!-- マット -->
-          <div class="field">
-            <label class="field-label">マット</label>
-            <input type="hidden" id="wm-mat" value="${_li.mat||''}">
-            <div style="display:flex;gap:6px">
-              ${[['T1','T1'],['T2','T2'],['T3','T3'],['','—']].map(([v,l]) =>
-                '<button class="btn btn-sm '+(_li.mat===v?'btn-primary':'btn-ghost')+'" '+
-                'style="flex:1" data-wm="mat" data-val="'+v+'" '+
-                'onclick="Pages._wmBtnSelMat(this)">'+l+'</button>'
-              ).join('')}
-            </div>
-          </div>
-
-          <!-- モルト（T2のみ） -->
-          <div class="field" id="wm-molt-field" style="${_showMolt?'':'display:none'}">
-            <label style="display:flex;align-items:center;gap:10px;cursor:pointer">
-              <input type="checkbox" id="wm-molt-check" ${_li.molt?'checked':''}
-                style="width:20px;height:20px;cursor:pointer">
-              <span class="field-label" style="margin:0">モルト使用 <span style="font-size:.7rem;color:var(--text3)">(T2)</span></span>
-            </label>
-          </div>
-
-          <!-- ステージ -->
-          <div class="field">
-            <label class="field-label">ステージ</label>
-            <input type="hidden" id="wm-stage" value="${_li.stage||''}">
-            <div style="display:flex;gap:6px;flex-wrap:wrap">
-              ${[['L1L2','L1L2'],['L3','L3'],['PREPUPA','前蛹'],['PUPA','蛹'],['ADULT_PRE','未後食'],['ADULT','活動中'],['','—']].map(([v,l]) =>
-                '<button class="btn btn-sm '+(_li.stage===v?'btn-primary':'btn-ghost')+'" '+
-                'style="flex:1;min-width:40px;font-size:.75rem" data-wm="stage" data-val="'+v+'" '+
-                'onclick="Pages._wmBtnSel(this,\'wm-stage\')">'+l+'</button>'
-              ).join('')}
-            </div>
-          </div>
-
-          <!-- 頭幅/メモ（折りたたみ） -->
-          <div>
-            <div class="collapse-toggle" onclick="Pages._wmToggleExtra(this)" style="margin-top:4px">
-              <span style="font-size:.78rem;color:var(--text3)">📝 頭幅 / メモ（任意）</span>
-              <span style="font-size:.7rem;transition:transform .2s">▼</span>
-            </div>
-            <div id="wm-extra" class="collapse-body closed">
-              <div style="margin-top:6px">
-                <input id="wm-head" class="input" type="number" inputmode="decimal" step="0.1" min="0" max="99"
-                  placeholder="頭幅 (mm)" style="margin-bottom:6px">
-                <textarea id="wm-note" class="input" rows="2" placeholder="観察メモ（状態・色艶など）"></textarea>
+      <!-- ④ 追加（折りたたみ） -->
+      <div style="margin-top:8px">
+        <div class="collapse-toggle" onclick="Pages._wmToggleExtra(this)">
+          <span>📝 追加メモ（任意）</span>
+          <span style="font-size:.7rem;transition:transform .2s">▼</span>
+        </div>
+        <div id="wm-extra" class="collapse-body closed">
+          <div class="card" style="border-radius:0 0 var(--radius) var(--radius);margin-top:-1px">
+            <div class="form-section">
+              <div class="field">
+                <label class="field-label">頭幅 (mm)</label>
+                <input id="wm-head" class="input" type="number"
+                  inputmode="decimal" step="0.1" min="0" max="99" placeholder="例: 38.5">
+              </div>
+              <div class="field">
+                <label class="field-label">観察メモ</label>
+                <textarea id="wm-note" class="input" rows="2"
+                  placeholder="幼虫の状態、色艶、活動性など"></textarea>
+              </div>
+              <div class="field">
+                <label class="field-label">交換種別</label>
+                <select id="wm-exchange" class="input">
+                  <option value="">体重測定のみ</option>
+                  <option value="マット交換">マット交換</option>
+                  <option value="容器交換">容器交換</option>
+                  <option value="マット+容器交換">マット+容器交換</option>
+                </select>
               </div>
             </div>
           </div>
-
         </div>
       </div>
 
-      ${prevWeight !== null ? `<div class="card" style="padding:10px 14px;margin-top:8px">
+      ${prevWeight !== null ? `
+      <div class="card" style="padding:10px 14px;margin-top:8px">
         <div style="font-size:.68rem;color:var(--text3);margin-bottom:4px">前回記録</div>
         <div style="display:flex;align-items:baseline;gap:10px">
-          <span style="font-size:1.5rem;font-weight:700;color:var(--text2);font-family:var(--font-mono)">${prevWeight}g</span>
-          <span style="font-size:.75rem;color:var(--text3)">${prevDate||'（日付不明）'}${prevAgeDays?' / '+prevAgeDays+'日齢':''}</span>
+          <span style="font-size:1.5rem;font-weight:700;color:var(--text2);
+            font-family:var(--font-mono)">${prevWeight}g</span>
+          <span style="font-size:.75rem;color:var(--text3)">
+            ${prevDate}${prevAgeDays ? ` / ${prevAgeDays}日齢` : ''}
+          </span>
         </div>
       </div>` : ''}
 
     </div>
 
+    <!-- 下部固定アクションバー -->
     <div class="quick-action-bar">
-      <button id="wm-save-btn" class="btn btn-gold btn-xl" style="flex:1" onclick="Pages._wmSave()">
-        💾 保存して次へ
+      <button class="btn btn-ghost btn-xl" style="flex:1"
+        onclick="routeTo('qr-scan',{mode:'weight'})">
+        📷 スキャン
+      </button>
+      <button id="wm-save-btn" class="btn btn-gold btn-xl" style="flex:2"
+        onclick="Pages._wmSave()">
+        💾 保存
       </button>
     </div>`;
 
+  // 体重入力にフォーカス（キーボード即表示）
   setTimeout(() => document.getElementById('wm-weight')?.focus(), 120);
 };
 
+// LOT の before/after から減耗数を自動計算して表示
 Pages._wmCalcAttrition = function () {
-  const before = parseInt(document.getElementById('wm-before')?.value, 10);
-  const after  = parseInt(document.getElementById('wm-after')?.value,  10);
-  const dispEl = document.getElementById('wm-attrition');
+  const beforeEl = document.getElementById('wm-before');
+  const afterEl  = document.getElementById('wm-after');
+  const dispEl   = document.getElementById('wm-attrition');
   if (!dispEl) return;
-  if (isNaN(before) || isNaN(after)) { dispEl.textContent = ''; return; }
+
+  const before = parseInt(beforeEl?.value, 10);
+  const after  = parseInt(afterEl?.value,  10);
+
+  if (isNaN(before) || isNaN(after)) {
+    dispEl.textContent = '';
+    return;
+  }
   const attrition = before - after;
-  if (attrition > 0)        { dispEl.textContent = `減耗 ${attrition} 頭`; dispEl.style.color = 'var(--red)'; }
-  else if (attrition === 0) { dispEl.textContent = '変化なし'; dispEl.style.color = 'var(--text3)'; }
-  else                      { dispEl.textContent = `⚠️ 後の方が多い (${Math.abs(attrition)}頭増)`; dispEl.style.color = 'var(--amber)'; }
+  if (attrition > 0) {
+    dispEl.textContent  = `減耗 ${attrition} 頭`;
+    dispEl.style.color  = 'var(--red)';
+  } else if (attrition === 0) {
+    dispEl.textContent  = '変化なし';
+    dispEl.style.color  = 'var(--text3)';
+  } else {
+    dispEl.textContent  = `⚠️ 後の方が多い (${Math.abs(attrition)}頭増)`;
+    dispEl.style.color  = 'var(--amber)';
+  }
 };
 
-Pages._wmUpdateDelta = function (rawVal) {
-  const el = document.getElementById('wm-delta');
-  if (!el) return;
-  const cur      = parseFloat(rawVal);
-  const prev     = Pages._wmState?.prevWeight ?? null;
-  const prevDate = Pages._wmState?.prevDate   || '';
 
+Pages._wmUpdateDelta = function (rawVal) {
+  const el   = document.getElementById('wm-delta');
+  if (!el) return;
+
+  const cur  = parseFloat(rawVal);
+  const prev = Pages._wmState?.prevWeight ?? null;
+
+  // 未入力 or 不正値
   if (!rawVal || isNaN(cur) || cur <= 0) {
-    if (prev !== null) {
-      el.innerHTML = '<span style="color:var(--text3)">前回 <b>'+prev+'g</b>'+(prevDate?' （'+prevDate+'）':'')+'</span>';
-    } else {
-      el.innerHTML = '<span style="color:var(--text3)">前回体重なし・初回記録</span>';
-    }
+    el.innerHTML = prev !== null
+      ? `<span style="color:var(--text3)">前回 <b>${prev}g</b> から —</span>`
+      : `<span style="color:var(--text3)">（前回体重なし・初回記録）</span>`;
     return;
   }
 
+  // ── 閾値バッジを判定 ──────────────────────────────────────
   let thresholdHtml = '';
   for (const t of WM_THRESHOLDS) {
     if (cur >= t.min) {
-      thresholdHtml = '<div style="display:inline-block;background:'+t.bg+';border:1px solid '+t.color+';'+
-        'border-radius:99px;padding:3px 12px;font-size:.82rem;font-weight:700;color:'+t.color+';margin-bottom:4px">'+t.badge+'</div>';
-      break;
+      thresholdHtml = `
+        <div style="
+          display:inline-block;
+          background:${t.bg};
+          border:1px solid ${t.color};
+          border-radius:99px;
+          padding:3px 12px;
+          font-size:.82rem;
+          font-weight:700;
+          color:${t.color};
+          margin-bottom:4px">
+          ${t.badge}
+        </div>`;
+      break; // 最上位の閾値のみ表示
     }
   }
 
+  // ── 前回比 ────────────────────────────────────────────────
   if (prev === null) {
-    el.innerHTML = thresholdHtml + '<div style="color:var(--text2)">📝 初回記録: <b>'+cur+'g</b></div>';
+    el.innerHTML = `
+      ${thresholdHtml}
+      <div style="color:var(--text2)">📝 初回記録: <b>${cur}g</b></div>`;
     return;
   }
 
-  const diff     = Math.round((cur - prev) * 10) / 10;
-  const isPos    = diff > 0, isNeg = diff < 0;
-  const arrow    = isPos ? '↑' : isNeg ? '↓' : '→';
-  const color    = isPos ? 'var(--green)' : isNeg ? 'var(--red)' : 'var(--text3)';
-  const sign     = isPos ? '+' : '';
-  const celebrate= isPos && diff >= 5 ? ' 🎉' : '';
-  const dateStr  = prevDate ? '（'+prevDate+'）' : '';
+  const diff  = Math.round((cur - prev) * 10) / 10;
+  const isPos = diff > 0;
+  const isNeg = diff < 0;
+  const arrow = isPos ? '↑' : isNeg ? '↓' : '→';
+  const color = isPos ? 'var(--green)' : isNeg ? 'var(--red)' : 'var(--text3)';
+  const sign  = isPos ? '+' : '';
+  // +5g以上はお祝いを表示
+  const celebEmoji = isPos && diff >= 5 ? ' 🎉' : '';
 
-  let perDayHtml = '';
-  if (prevDate) {
-    const recDateRaw = document.getElementById('wm-record-date')?.value || '';
-    const recDateStr = recDateRaw || new Date().toISOString().split('T')[0];
-    const elapsed    = Math.round((new Date(recDateStr) - new Date(prevDate.replace(/\//g,'-'))) / 86400000);
-    if (elapsed > 0) {
-      const pd = (diff/elapsed).toFixed(2), pds = parseFloat(pd)>=0?'+':'';
-      perDayHtml = '<div style="font-size:.72rem;color:var(--text3);margin-top:2px">1日あたり <b style="color:'+color+'">'+pds+pd+'g</b> （'+elapsed+'日間）</div>';
-    }
-  }
-
-  el.innerHTML = thresholdHtml +
-    '<span style="color:'+color+';font-weight:700;font-size:1.1rem">'+arrow+' '+sign+diff+'g'+celebrate+'</span>'+
-    '<span style="color:var(--text3);font-size:.75rem;margin-left:6px">前回 '+prev+'g'+dateStr+'</span>'+
-    perDayHtml;
+  el.innerHTML = `
+    ${thresholdHtml}
+    <span style="color:${color};font-weight:700;font-size:1.1rem">
+      ${arrow} ${sign}${diff}g${celebEmoji}
+    </span>
+    <span style="color:var(--text3);font-size:.75rem;margin-left:6px">
+      （前回 ${prev}g）
+    </span>`;
 };
-
-// ═══════════════════════════════════════════════════════════════
-// 楽観的保存インフラ
-//   _wmPendingQueue: 保存待ち/失敗レコードの一覧
-//   _wmEnqueue:      保存ジョブを登録して即バックグラウンド送信
-//   _wmRetry:        失敗レコードの再送
-// ═══════════════════════════════════════════════════════════════
-// ── pending キュー永続化（localStorage バックアップ）──────────────
-const _WM_QUEUE_KEY = 'wm_pending_queue';
-
-function _wmQueueLoad() {
-  try {
-    const s = localStorage.getItem(_WM_QUEUE_KEY);
-    return s ? JSON.parse(s) : [];
-  } catch(_) { return []; }
-}
-function _wmQueueSave(q) {
-  try {
-    // synced は localStorage には残さず、pending / failed のみ永続化
-    const persisted = q.filter(j => j.status !== 'synced');
-    localStorage.setItem(_WM_QUEUE_KEY, JSON.stringify(persisted));
-  } catch(_) {}
-}
-
-// ページ起動時に localStorage から復元（前回の失敗分を引き継ぐ）
-window._wmPendingQueue = (function () {
-  const stored = _wmQueueLoad();
-  // pending は再起動後は failed に降格（送信中断扱い）
-  return stored.map(j => j.status === 'pending' ? { ...j, status: 'failed', error: '再起動により中断' } : j);
-})();
-
-function _wmGenReqId() {
-  return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-}
-
-// 保存ジョブを非同期でバックグラウンド送信
-// growthData, entityType, entityId, entityUpdates を受け取る
-async function _wmBackgroundSave(job) {
-  const { id, growthData, entityType, entityId, entityUpdates } = job;
-
-  try {
-    // growth + entity 更新を並列で送信
-    const tasks = [API.growth.create(growthData)];
-    if (Object.keys(entityUpdates).length) {
-      if (entityType === 'IND') {
-        tasks.push(API.individual.update({ ind_id: entityId, ...entityUpdates }));
-      } else if (entityType === 'LOT') {
-        tasks.push(API.lot.update({ lot_id: entityId, ...entityUpdates }));
-      }
-    }
-    await Promise.all(tasks);
-
-    // 成功
-    const entry = window._wmPendingQueue.find(q => q.id === id);
-    if (entry) entry.status = 'synced';
-    UI.toast('✅ ' + growthData.weight_g + 'g を保存しました', 'success', 2500);
-    _wmUpdatePendingBadge();
-  } catch (e) {
-    const entry = window._wmPendingQueue.find(q => q.id === id);
-    if (entry) {
-      entry.status  = 'failed';
-      entry.error   = e.message || '不明なエラー';
-      entry.retries = (entry.retries || 0) + 1;
-    }
-    console.error('[wmSave] background save failed:', e.message);
-    UI.toast('❌ 保存失敗 (' + growthData.weight_g + 'g) — 再送ボタンを確認してください', 'error', 6000);
-    _wmUpdatePendingBadge();
-  }
-}
-
-// QR画面のヘッダー付近に失敗バッジを表示
-function _wmUpdatePendingBadge() {
-  // 更新のたびに localStorage へ書き戻す（永続化）
-  _wmQueueSave(window._wmPendingQueue);
-
-  const failed  = window._wmPendingQueue.filter(q => q.status === 'failed');
-  const pending = window._wmPendingQueue.filter(q => q.status === 'pending');
-
-  // 既存バッジを更新 or 作成
-  let badge = document.getElementById('wm-pending-badge');
-  if (!badge) {
-    badge = document.createElement('div');
-    badge.id = 'wm-pending-badge';
-    badge.style.cssText = [
-      'position:fixed', 'bottom:80px', 'right:12px', 'z-index:9999',
-      'padding:8px 12px', 'border-radius:10px', 'font-size:.78rem',
-      'cursor:pointer', 'box-shadow:0 2px 8px rgba(0,0,0,.3)',
-    ].join(';');
-    badge.onclick = () => Pages._wmShowPendingPanel();
-    document.body.appendChild(badge);
-  }
-
-  if (failed.length) {
-    badge.style.background   = 'var(--red, #e05555)';
-    badge.style.color        = '#fff';
-    badge.style.display      = 'block';
-    badge.textContent        = '❌ ' + failed.length + '件 保存失敗 → タップして再送';
-  } else if (pending.length) {
-    badge.style.background   = 'rgba(200,168,75,.9)';
-    badge.style.color        = '#1a1200';
-    badge.style.display      = 'block';
-    badge.textContent        = '⏳ ' + pending.length + '件 保存中...';
-  } else {
-    badge.style.display = 'none';
-  }
-}
-
-// 失敗レコードの再送パネル
-Pages._wmShowPendingPanel = function () {
-  const failed = window._wmPendingQueue.filter(q => q.status === 'failed');
-  if (!failed.length) { UI.toast('失敗した記録はありません', 'info'); return; }
-
-  const panel = document.createElement('div');
-  panel.style.cssText = [
-    'position:fixed', 'inset:0', 'z-index:10000',
-    'background:rgba(0,0,0,.6)',
-    'display:flex', 'align-items:flex-end',
-  ].join(';');
-
-  const inner = document.createElement('div');
-  inner.style.cssText = [
-    'background:var(--surface1, #1e1e2e)',
-    'border-radius:16px 16px 0 0',
-    'padding:20px 16px', 'width:100%',
-    'max-height:70vh', 'overflow-y:auto',
-  ].join(';');
-  inner.innerHTML = '<div style="font-size:.9rem;font-weight:700;margin-bottom:12px;color:var(--amber)">❌ 保存失敗 — 再送</div>';
-
-  failed.forEach(job => {
-    const row = document.createElement('div');
-    row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)';
-    row.innerHTML =
-      '<div style="flex:1;font-size:.82rem">'
-      + '<b>' + job.growthData.weight_g + 'g</b>'
-      + ' <span style="color:var(--text3)">' + (job.growthData.target_id || '') + ' / ' + (job.growthData.record_date || '') + '</span>'
-      + '<br><span style="font-size:.72rem;color:var(--red)">' + (job.error || '不明なエラー') + '</span>'
-      + '</div>'
-      + '<button class="btn btn-primary btn-sm" style="flex-shrink:0" data-job-id="' + job.id + '">再送</button>';
-    row.querySelector('button').onclick = async function () {
-      const jid = this.dataset.jobId;
-      const entry = window._wmPendingQueue.find(q => q.id === jid);
-      if (!entry) return;
-      entry.status  = 'pending';
-      entry.error   = '';
-      this.disabled = true;
-      this.textContent = '送信中...';
-      panel.remove();
-      _wmUpdatePendingBadge();
-      await _wmBackgroundSave(entry);
-    };
-    inner.appendChild(row);
-  });
-
-  const closeBtn = document.createElement('button');
-  closeBtn.className = 'btn btn-ghost btn-full';
-  closeBtn.style.marginTop = '12px';
-  closeBtn.textContent = '閉じる';
-  closeBtn.onclick = () => panel.remove();
-  inner.appendChild(closeBtn);
-
-  panel.appendChild(inner);
-  panel.onclick = (e) => { if (e.target === panel) panel.remove(); };
-  document.body.appendChild(panel);
-};
-
-// キューのクリーンアップ（synced を古いものから削除）
-function _wmCleanQueue() {
-  const limit = 20;
-  const synced = window._wmPendingQueue.filter(q => q.status === 'synced');
-  if (synced.length > limit) {
-    const ids = synced.slice(0, synced.length - limit).map(q => q.id);
-    window._wmPendingQueue = window._wmPendingQueue.filter(q => !ids.includes(q.id));
-  }
-  _wmQueueSave(window._wmPendingQueue);  // 整理後も永続化
-}
-
-
-// 起動時: localStorage に失敗/未送信があればバッジ復元
-(function _wmRestoreBadgeOnLoad() {
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', _wmUpdatePendingBadge);
-  } else {
-    // 少し遅延してDOMが安定してから
-    setTimeout(_wmUpdatePendingBadge, 800);
-  }
-})();
-
-
-Pages._wmSave = function () {
-  // 楽観的UI: バリデーション → ローカル即反映 → 即遷移 → 裏でAPI保存
-  const state     = Pages._wmState;
-  const weightEl  = document.getElementById('wm-weight');
-  const rawVal    = weightEl?.value;
-  const weightVal = parseFloat(rawVal);
-  if (!rawVal || isNaN(weightVal) || weightVal <= 0 || weightVal > 999.9) {
-    UI.toast('体重を入力してください（0.1〜999.9g）', 'error');
-    weightEl?.focus(); return;
-  }
-  if (!state?.entityId) { UI.toast('対象IDが不明です。再スキャンしてください', 'error'); return; }
-
-  const btn = document.getElementById('wm-save-btn');
-  // 楽観的UIのため即遷移 → btn の disabled 表示は短時間で消える
-  if (btn) { btn.disabled = true; btn.textContent = '⏳...'; }
-
-  try {
-    const headVal      = parseFloat(document.getElementById('wm-head')?.value);
-    const noteVal      = document.getElementById('wm-note')?.value?.trim() || '';
-    const exchangeVal  = document.getElementById('wm-exchange')?.value || '';
-    const matVal       = document.getElementById('wm-mat')?.value       || '';
-    const stageVal     = document.getElementById('wm-stage')?.value     || '';
-    const containerVal = document.getElementById('wm-container')?.value || '';
-    const recordDateRaw= document.getElementById('wm-record-date')?.value || '';
-    const recordDateVal= recordDateRaw ? recordDateRaw.replace(/-/g,'/') : new Date().toISOString().split('T')[0].replace(/-/g,'/');
-    const isT2         = (matVal || state.matType) === 'T2';
-    const moltChecked  = isT2 ? (document.getElementById('wm-molt-check')?.checked||false) : false;
-    const matNote      = (isT2 && moltChecked) ? ' [T2(M)]' : '';
-    const _chks = document.querySelectorAll('.wm-size-cat-chk:checked');
-    const sizeCatVal = _chks.length > 0
-      ? Array.from(_chks).map(c=>c.value).join(',')
-      : (document.getElementById('wm-size-cat')?.value || '');
-    const effectiveStage    = stageVal     || state.stage     || '';
-    const effectiveContainer= containerVal || state.container || '';
-    const effectiveMat      = matVal       || state.matType   || '';
-    const beforeRaw   = document.getElementById('wm-before')?.value;
-    const afterRaw    = document.getElementById('wm-after')?.value;
-    const beforeCount = beforeRaw !== undefined && beforeRaw !== '' ? parseInt(beforeRaw,10) : undefined;
-    const afterCount  = afterRaw  !== undefined && afterRaw  !== '' ? parseInt(afterRaw, 10) : undefined;
-
-    // ── growthData 構築 ────────────────────────────────────────
-    const client_request_id = _wmGenReqId();
-    const growthData = {
-      target_type:        state.entityType,
-      target_id:          state.entityId,
-      record_date:        recordDateVal,
-      stage:              effectiveStage,
-      weight_g:           weightVal,
-      container:          effectiveContainer,
-      mat_type:           effectiveMat,
-      before_count:       beforeCount,
-      after_count:        afterCount,
-      client_request_id,            // 重複防止 ID
-    };
-    if (!isNaN(headVal) && headVal > 0) growthData.head_width_mm = headVal;
-    if (noteVal || matNote) growthData.note_private = (noteVal+matNote).trim();
-    if (exchangeVal) growthData.exchange_type = exchangeVal;
-
-    // ── entityUpdates 構築 ────────────────────────────────────
-    const entityUpdates = {};
-    if (state.entityType === 'IND') {
-      entityUpdates.latest_weight_g = weightVal;
-      if (stageVal)     entityUpdates.current_stage     = stageVal;
-      if (containerVal) entityUpdates.current_container = containerVal;
-      if (matVal)       entityUpdates.current_mat       = matVal;
-      if (sizeCatVal)   entityUpdates.size_category     = sizeCatVal;
-      entityUpdates.mat_molt = moltChecked;
-    } else if (state.entityType === 'LOT') {
-      if (stageVal)     entityUpdates.stage          = stageVal;
-      if (containerVal) entityUpdates.container_size = containerVal;
-      if (matVal)       entityUpdates.mat_type       = matVal;
-      if (sizeCatVal)   entityUpdates.size_category  = sizeCatVal;
-      entityUpdates.mat_molt = moltChecked;
-      if (afterCount !== undefined) {
-        entityUpdates.count = afterCount;
-        if (afterCount === 0) entityUpdates.status = 'individualized';
-      }
-    }
-
-    // ── ① ローカル即時反映（画面遷移前に完了） ─────────────────
-    try {
-      Store.addGrowthRecord(state.entityId, {
-        target_type: state.entityType, target_id: state.entityId,
-        record_date: recordDateVal, weight_g: weightVal,
-        stage: effectiveStage, mat_type: effectiveMat, container: effectiveContainer,
-      });
-    } catch(_) {}
-    if (Object.keys(entityUpdates).length) {
-      if (state.entityType === 'IND') {
-        Store.patchDBItem('individuals', 'ind_id', state.entityId, entityUpdates);
-      } else if (state.entityType === 'LOT') {
-        Store.patchDBItem('lots', 'lot_id', state.entityId, entityUpdates);
-      }
-    }
-    _wmSaveLastInput({ mat:matVal, molt:moltChecked, stage:stageVal,
-                       container:containerVal, exchange:exchangeVal, sizeCat:sizeCatVal });
-
-    // ── ② ペンディングキューに積む ───────────────────────────────
-    const job = {
-      id:            client_request_id,
-      growthData,
-      entityType:    state.entityType,
-      entityId:      state.entityId,
-      entityUpdates,
-      status:        'pending',
-      retries:       0,
-      error:         '',
-    };
-    window._wmPendingQueue.push(job);
-    _wmUpdatePendingBadge();
-    _wmCleanQueue();
-
-    // ══════════════════════════════════════════════════════════
-    // ── ③ 即遷移（ユーザーを待たせない） ─────────────────────────
-    // ⚠️  この行より前に以下を入れてはいけない:
-    //   - syncAll() / API 呼び出し / 重い await
-    //   - 再計算・通信を伴う処理
-    // 許容: Store 更新・lastInput 保存・queue 追加（同期・軽量）のみ
-    // ══════════════════════════════════════════════════════════
-    if (state.fromDirect && state.fromId) {
-      routeTo('ind-detail', { indId: state.fromId });
-    } else {
-      routeTo('qr-scan', {
-        mode:       'weight',
-        autoCamera:  true,
-        lastQrText:  state.lastQrText || '',
-      });
-    }
-
-    // ── ④ バックグラウンドでAPI保存（遷移後に非同期実行）──────────
-    _wmBackgroundSave(job);
-
-  } catch (e) {
-    // バリデーション後の同期エラー（ほぼ起きないが念のため）
-    UI.toast('❌ 保存処理エラー: ' + (e.message||'不明なエラー'), 'error');
-    if (btn) { btn.disabled = false; btn.textContent = '💾 保存して次へ'; }
-  }
-};
-
-// ── ボタン式セレクタ ─────────────────────────────────────────────
-Pages._wmBtnSel = function (btn, hiddenId) {
-  const group = btn.dataset.wm;
-  document.querySelectorAll('[data-wm="'+group+'"]').forEach(b => {
-    b.className = 'btn btn-sm btn-ghost'; b.style.flex = '1';
-  });
-  btn.className = 'btn btn-sm btn-primary'; btn.style.flex = '1';
-  const h = document.getElementById(hiddenId);
-  if (h) h.value = btn.dataset.val;
-};
-Pages._wmBtnSelMat = function (btn) {
-  Pages._wmBtnSel(btn, 'wm-mat');
-  Pages._wmOnMatChange(btn.dataset.val);
-};
-Pages._wmOnMatChange = function (matVal) {
-  const f = document.getElementById('wm-molt-field');
-  if (!f) return;
-  const isT2 = matVal === 'T2';
-  f.style.display = isT2 ? '' : 'none';
-  if (!isT2) { const mc = document.getElementById('wm-molt-check'); if (mc) mc.checked = false; }
-};
-
-// ── プリセット適用 ───────────────────────────────────────────────
-Pages._wmApplyPreset = function (presetId) {
-  if (!_WM_PRESETS[presetId]) return;
-  _wmSetPresetId(presetId);
-  const p = _WM_PRESETS[presetId];
-  const setH = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
-  setH('wm-mat',p.mat); setH('wm-stage',p.stage); setH('wm-container',p.container); setH('wm-exchange',p.exchange);
-  ['mat','stage','container','exchange'].forEach(g => {
-    document.querySelectorAll('[data-wm="'+g+'"]').forEach(b => {
-      const target = g==='mat'?p.mat:g==='stage'?p.stage:g==='container'?p.container:p.exchange;
-      b.className = 'btn btn-sm '+(b.dataset.val===target?'btn-primary':'btn-ghost'); b.style.flex='1';
-    });
-  });
-  const mc = document.getElementById('wm-molt-check'); if (mc) mc.checked = !!p.molt;
-  Pages._wmOnMatChange(p.mat);
-  ['normal','t1','t2'].forEach(id => {
-    const b = document.querySelector('[data-preset="'+id+'"]');
-    if (b) { b.className='btn btn-sm '+(id===presetId?'btn-primary':'btn-ghost'); b.style.flex='1'; b.style.fontSize='.75rem'; }
-  });
-  _wmSaveLastInput({ mat:p.mat, molt:p.molt, stage:p.stage, container:p.container, exchange:p.exchange, sizeCat:'' });
-  UI.toast(p.label+' モードを適用しました', 'success', 1500);
-};
-
-// ── 体重微調整 ───────────────────────────────────────────────────
-Pages._wmAdjWeight = function (delta) {
-  const el = document.getElementById('wm-weight');
-  if (!el) return;
-  el.value = Math.max(0, Math.round(((parseFloat(el.value)||0) + delta) * 10) / 10);
-  Pages._wmUpdateDelta(el.value);
-};
-let _wmAdjTimer = null, _wmAdjInterval = null;
-Pages._wmAdjStart = function (delta) {
-  _wmAdjTimer = setTimeout(() => { _wmAdjInterval = setInterval(() => Pages._wmAdjWeight(delta), 100); }, 350);
-};
-Pages._wmAdjStop = function () {
-  if (_wmAdjTimer)    { clearTimeout(_wmAdjTimer);   _wmAdjTimer = null; }
-  if (_wmAdjInterval) { clearInterval(_wmAdjInterval); _wmAdjInterval = null; }
-};
-
 
 // ─────────────────────────────────────────────────────────────────
-// _wmShowComplete は「保存して次へ」導線に統合済みのため廃止
-// 旧互換のため定義は残すが何もしない
+// Pages._wmSave — 成長記録を GROWTHテーブルに保存
+// 既存の API.growth.create (= createGrowthRecord) を利用
+// IND の場合は individual.latest_weight_g も自動更新される（GAS側で処理）
+// ─────────────────────────────────────────────────────────────────
+Pages._wmSave = async function () {
+  const state    = Pages._wmState;
+  const weightEl = document.getElementById('wm-weight');
+  const rawVal   = weightEl?.value;
+  const weightVal = parseFloat(rawVal);
+
+  // バリデーション
+  if (!rawVal || isNaN(weightVal) || weightVal <= 0 || weightVal > 999.9) {
+    UI.toast('体重を入力してください（0.1〜999.9g）', 'error');
+    weightEl?.focus();
+    return;
+  }
+  if (!state?.entityId) {
+    UI.toast('対象IDが不明です。再スキャンしてください', 'error');
+    return;
+  }
+
+  const btn = document.getElementById('wm-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ 保存中...'; }
+
+  try {
+    // ── 成長記録データを構築（growth.js の _grSave と統一ロジック）──
+    const headVal     = parseFloat(document.getElementById('wm-head')?.value);
+    const noteVal     = document.getElementById('wm-note')?.value?.trim() || '';
+    const exchangeVal = document.getElementById('wm-exchange')?.value || '';
+
+    // LOT 専用: before_count / after_count（growth.js と同一計算）
+    const beforeRaw = document.getElementById('wm-before')?.value;
+    const afterRaw  = document.getElementById('wm-after')?.value;
+    const beforeCount = (beforeRaw !== undefined && beforeRaw !== '')
+      ? parseInt(beforeRaw, 10) : undefined;
+    const afterCount  = (afterRaw  !== undefined && afterRaw  !== '')
+      ? parseInt(afterRaw,  10) : undefined;
+
+    const growthData = {
+      target_type:   state.entityType,
+      target_id:     state.entityId,
+      stage:         state.stage   || '',
+      weight_g:      weightVal,
+      container:     state.container || '',
+      mat_type:      state.matType   || '',
+      // LOT の頭数変化（undefined のまま送ると GAS 側でスキップ）
+      before_count:  beforeCount,
+      after_count:   afterCount,
+    };
+    if (!isNaN(headVal) && headVal > 0) growthData.head_width_mm = headVal;
+    if (noteVal)     growthData.note_private  = noteVal;
+    if (exchangeVal) growthData.exchange_type = exchangeVal;
+
+    // ── API呼び出し ───────────────────────────────────────
+    await API.growth.create(growthData);
+
+    // ── キャッシュ更新（growth.js と統一）──────────────────────
+    if (state.entityType === 'IND') {
+      Store.patchDBItem('individuals', 'ind_id', state.entityId,
+        { latest_weight_g: weightVal, current_stage: state.stage });
+      await Store.syncEntityType('individuals').catch(() => {});
+    }
+    if (state.entityType === 'LOT') {
+      const lotUpdates = {};
+      if (state.stage) lotUpdates.stage = state.stage;
+      if (afterCount !== undefined) {
+        lotUpdates.count = afterCount;
+        if (afterCount === 0) lotUpdates.status = 'individualized';
+      }
+      if (Object.keys(lotUpdates).length) {
+        Store.patchDBItem('lots', 'lot_id', state.entityId, lotUpdates);
+      }
+    }
+    await Store.syncEntityType('growth').catch(() => {});
+
+    // ── 完了UIへ切り替え ─────────────────────────────────
+    Pages._wmShowComplete(state.entityType, state.entityId, weightVal);
+
+  } catch (e) {
+    UI.toast('❌ 保存失敗: ' + (e.message || '不明なエラー'), 'error');
+    if (btn) { btn.disabled = false; btn.textContent = '💾 成長記録を保存'; }
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────
+// Pages._wmShowComplete — 保存完了後の画面
+// ・「📷 次をスキャン」→ qr-scan（weight-modeタブ選択済みで戻る）
+// ・「詳細を見る」   → ind-detail または lot-detail
+// ─────────────────────────────────────────────────────────────────
 Pages._wmShowComplete = function (entityType, entityId, weight) {
   const main = document.getElementById('main');
   const body = main?.querySelector('.page-body');
@@ -1981,315 +1223,6 @@ Pages._wmToggleExtra = function (btn) {
   if (arrow) arrow.style.transform = isOpen ? '' : 'rotate(180deg)';
 };
 
-
-// ════════════════════════════════════════════════════════════════
-// T1移行 体重専用入力モード  /  page: 't1-weight'
-// 2頭同時入力 + 区分 + 保存後ラベル発行
-// ════════════════════════════════════════════════════════════════
-window._t1wState = window._t1wState || { headCount: 2, sameWeight: false, lotId: '', displayId: '' };
-
-Pages.t1WeightMode = function (params = {}) {
-  const res = params.resolve_result;
-  if (!res || !res.entity || res.entity_type !== 'LOT') {
-    routeTo('qr-scan'); return;
-  }
-  const main = document.getElementById('main');
-  const { entity, line } = res;
-  const lotId    = entity.lot_id;
-  const displayId = entity.display_id || lotId;
-  const lineDisp  = line?.line_code || line?.display_id || '';
-  window._t1wState = { ...window._t1wState, lotId, displayId };
-
-  function _render() {
-    const st = window._t1wState;
-    const isSame = st.sameWeight;
-    const todayIso = new Date().toISOString().split('T')[0];
-    main.innerHTML = `
-      ${UI.header('🟡 T1移行 体重入力', { back: true, backFn: "routeTo('qr-scan')" })}
-      <div class="page-body" style="padding-bottom:80px">
-        <div class="quick-info-bar">
-          <div style="flex:1">
-            <div class="quick-info-id">${displayId}</div>
-            <div style="font-size:.72rem;color:var(--text3)">${lineDisp ? 'L:'+lineDisp : ''}</div>
-          </div>
-          <div style="background:rgba(45,122,82,.15);color:var(--green);font-size:.75rem;padding:2px 10px;border-radius:99px;font-weight:700">T1移行</div>
-        </div>
-
-        <!-- 体重入力 -->
-        <div class="card" style="padding:14px">
-          <div style="font-size:.72rem;font-weight:700;color:var(--text2);margin-bottom:8px">体重 (g)</div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px">
-            <div>
-              <div style="font-size:.68rem;color:var(--text3);margin-bottom:4px">体重①</div>
-              <input id="t1w-w1" type="number" inputmode="decimal" step="0.1" min="0.1" max="999.9"
-                placeholder="0.0" class="num-input-xl" style="width:100%;color:var(--green)"
-                oninput="${isSame ? 'document.getElementById(\'t1w-w2\').value=this.value' : ''}">
-            </div>
-            <div>
-              <div style="font-size:.68rem;color:var(--text3);margin-bottom:4px">体重②</div>
-              <input id="t1w-w2" type="number" inputmode="decimal" step="0.1" min="0.1" max="999.9"
-                placeholder="0.0" class="num-input-xl" style="width:100%;color:var(--green)"
-                ${isSame ? 'readonly style="width:100%;opacity:.6;color:var(--green)"' : ''}>
-            </div>
-          </div>
-          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:.8rem">
-            <input type="checkbox" id="t1w-same" ${isSame?'checked':''}
-              onchange="window._t1wState.sameWeight=this.checked;Pages._t1wRender()"
-              style="width:18px;height:18px">
-            2匹とも同じ体重
-          </label>
-        </div>
-
-        <!-- 区分 -->
-        <div class="card" style="padding:12px 14px">
-          <div style="font-size:.72rem;font-weight:700;color:var(--text2);margin-bottom:8px">区分</div>
-          <div style="display:flex;gap:8px">
-            ${['大','中','小'].map(c => {
-              const checked = (entity.size_category||'').split(',').map(s=>s.trim()).includes(c);
-              return '<label style="flex:1;display:flex;align-items:center;justify-content:center;gap:5px;'+
-                'padding:9px;border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:.85rem">'+
-                '<input type="checkbox" class="t1w-cat-chk" value="'+c+'" '+(checked?'checked':'')+
-                ' style="width:16px;height:16px">'+c+'</label>';
-            }).join('')}
-          </div>
-        </div>
-
-        <!-- 記録日 -->
-        <div class="card" style="padding:12px 14px">
-          <label class="field-label">記録日</label>
-          <input id="t1w-date" type="date" class="input" value="${todayIso}" max="${todayIso}">
-        </div>
-      </div>
-
-      <div class="quick-action-bar">
-        <button id="t1w-save-btn" class="btn btn-gold btn-xl" style="flex:1" onclick="Pages._t1wSave()">
-          💾 保存してラベルへ
-        </button>
-      </div>`;
-    setTimeout(() => document.getElementById('t1w-w1')?.focus(), 80);
-  }
-
-  window._t1wRender = _render;
-  _render();
-};
-
-Pages._t1wSave = async function () {
-  const st = window._t1wState;
-  const w1 = parseFloat(document.getElementById('t1w-w1')?.value);
-  const w2 = parseFloat(document.getElementById('t1w-w2')?.value);
-  if (isNaN(w1) || w1 <= 0) { UI.toast('体重①を入力してください', 'error'); return; }
-  if (isNaN(w2) || w2 <= 0) { UI.toast('体重②を入力してください', 'error'); return; }
-
-  const cats = Array.from(document.querySelectorAll('.t1w-cat-chk:checked')).map(c => c.value);
-  const recDate = (document.getElementById('t1w-date')?.value || new Date().toISOString().split('T')[0]).replace(/-/g,'/');
-
-  const btn = document.getElementById('t1w-save-btn');
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ 保存中...'; }
-
-  try {
-    // LOT 本体更新
-    const updates = {};
-    if (cats.length) updates.size_category = cats.join(',');
-    if (Object.keys(updates).length) {
-      await API.lot.update({ lot_id: st.lotId, ...updates }).catch(e => console.warn('[t1wSave]', e.message));
-      Store.patchDBItem('lots', 'lot_id', st.lotId, updates);
-    }
-
-    // growth records（体重①と②を別レコード）
-    const base = { target_type:'LOT', target_id:st.lotId, record_date:recDate,
-                   stage:'L1', mat_type:'T1', exchange_type:'全交換' };
-    await API.growth.create({ ...base, weight_g:w1, note_private:'T1移行 体重①' });
-    if (w2 !== w1) {
-      await API.growth.create({ ...base, weight_g:w2, note_private:'T1移行 体重②' });
-    }
-    Store.addGrowthRecord(st.lotId, { ...base, weight_g:w1 });
-
-    UI.toast('✅ T1移行データを保存しました', 'success');
-    // ラベル発行へ遷移
-    routeTo('label-gen', { targetType: 'LOT', targetId: st.lotId });
-  } catch (e) {
-    UI.toast('❌ 保存失敗: ' + (e.message||'不明なエラー'), 'error');
-    if (btn) { btn.disabled = false; btn.textContent = '💾 保存してラベルへ'; }
-  }
-};
-
-// ════════════════════════════════════════════════════════════════
-// T2初回 体重専用入力モード  /  page: 't2-weight'
-// 2頭同時入力 + 頭数分岐（2匹=lot継続 / 単独=分割へ）
-// ════════════════════════════════════════════════════════════════
-window._t2wState = window._t2wState || {
-  lotId:'', displayId:'', headCount:2, sameWeight:false, moltOn:true
-};
-
-Pages.t2WeightMode = function (params = {}) {
-  const res = params.resolve_result;
-  if (!res || !res.entity || res.entity_type !== 'LOT') {
-    routeTo('qr-scan'); return;
-  }
-  const main = document.getElementById('main');
-  const { entity, line } = res;
-  const lotId     = entity.lot_id;
-  const displayId = entity.display_id || lotId;
-  const lineDisp  = line?.line_code || line?.display_id || '';
-  window._t2wState = { ...window._t2wState, lotId, displayId };
-
-  function _render() {
-    const st = window._t2wState;
-    const isSame = st.sameWeight;
-    const is2    = st.headCount === 2;
-    const moltOn = st.moltOn !== false;
-    const todayIso = new Date().toISOString().split('T')[0];
-
-    main.innerHTML = `
-      ${UI.header('🟠 T2初回移行 体重入力', { back: true, backFn: "routeTo('qr-scan')" })}
-      <div class="page-body" style="padding-bottom:80px">
-        <div class="quick-info-bar">
-          <div style="flex:1">
-            <div class="quick-info-id">${displayId}</div>
-            <div style="font-size:.72rem;color:var(--text3)">${lineDisp ? 'L:'+lineDisp : ''}</div>
-          </div>
-          <div style="background:rgba(200,168,75,.15);color:var(--amber);font-size:.75rem;padding:2px 10px;border-radius:99px;font-weight:700">T2初回移行</div>
-        </div>
-
-        <!-- 固定バッジ -->
-        <div style="display:flex;gap:6px;padding:4px 0">
-          ${['T2マット','L3','全交換'].map(l=>'<span style="font-size:.68rem;padding:2px 8px;border-radius:20px;background:rgba(200,168,75,.12);color:var(--amber);border:1px solid rgba(200,168,75,.3)">'+l+'</span>').join('')}
-        </div>
-
-        <!-- 頭数 -->
-        <div class="card" style="padding:12px 14px">
-          <div style="font-size:.72rem;font-weight:700;color:var(--text2);margin-bottom:8px">頭数</div>
-          <div style="display:flex;gap:8px">
-            <button class="btn ${is2?'btn-primary':'btn-ghost'}" style="flex:1"
-              onclick="window._t2wState.headCount=2;Pages._t2wRender()">🫧 2匹（ロット継続）</button>
-            <button class="btn ${!is2?'btn-primary':'btn-ghost'}" style="flex:1"
-              onclick="window._t2wState.headCount=1;Pages._t2wRender()">🐛 単独（分割へ）</button>
-          </div>
-          ${!is2 ? '<div style="font-size:.72rem;color:var(--blue);margin-top:6px">保存後に分割モーダルへ進みます。</div>' : ''}
-        </div>
-
-        <!-- 体重入力 -->
-        <div class="card" style="padding:14px">
-          <div style="font-size:.72rem;font-weight:700;color:var(--text2);margin-bottom:8px">体重 (g)</div>
-          ${is2 ? `
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px">
-            <div>
-              <div style="font-size:.68rem;color:var(--text3);margin-bottom:4px">体重①</div>
-              <input id="t2w-w1" type="number" inputmode="decimal" step="0.1" min="0.1" max="999.9"
-                placeholder="0.0" class="num-input-xl" style="width:100%;color:var(--green)"
-                oninput="${isSame ? 'document.getElementById(\'t2w-w2\').value=this.value' : ''}">
-            </div>
-            <div>
-              <div style="font-size:.68rem;color:var(--text3);margin-bottom:4px">体重②</div>
-              <input id="t2w-w2" type="number" inputmode="decimal" step="0.1" min="0.1" max="999.9"
-                placeholder="0.0" class="num-input-xl" style="width:100%;color:var(--green)"
-                ${isSame ? 'readonly style="width:100%;opacity:.6;color:var(--green)"' : ''}>
-            </div>
-          </div>
-          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:.8rem">
-            <input type="checkbox" id="t2w-same" ${isSame?'checked':''}
-              onchange="window._t2wState.sameWeight=this.checked;Pages._t2wRender()"
-              style="width:18px;height:18px">
-            2匹とも同じ体重
-          </label>` : `
-          <input id="t2w-w1" type="number" inputmode="decimal" step="0.1" min="0.1" max="999.9"
-            placeholder="0.0" class="num-input-xl" style="width:100%;color:var(--green)">`}
-        </div>
-
-        <!-- モルト（T2固定ON、変更可）-->
-        <div class="card" style="padding:12px 14px">
-          <label style="display:flex;align-items:center;gap:12px;cursor:pointer">
-            <input type="checkbox" id="t2w-molt" ${moltOn?'checked':''}
-              onchange="window._t2wState.moltOn=this.checked"
-              style="width:22px;height:22px;cursor:pointer">
-            <span style="font-size:.85rem;font-weight:700;color:var(--text2)">モルト使用</span>
-          </label>
-        </div>
-
-        <!-- 容器 -->
-        <div class="card" style="padding:12px 14px">
-          <div style="font-size:.72rem;font-weight:700;color:var(--text2);margin-bottom:6px">容器</div>
-          <div style="display:flex;gap:8px">
-            ${['1.8L','2.7L','4.8L'].map(s => {
-              const isActive = entity.container_size===s || (!entity.container_size && s==='2.7L');
-              return '<button class="btn '+(isActive?'btn-primary':'btn-ghost')+'" style="flex:1" data-cont="'+s+'" onclick="Pages._t2wSelectContainer(this.dataset.cont)">'+s+'</button>';
-            }).join('')}
-          </div>
-        </div>
-
-        <!-- 記録日 -->
-        <div class="card" style="padding:12px 14px">
-          <label class="field-label">記録日</label>
-          <input id="t2w-date" type="date" class="input" value="${todayIso}" max="${todayIso}">
-        </div>
-      </div>
-
-      <div class="quick-action-bar">
-        <button id="t2w-save-btn" class="btn btn-gold btn-xl" style="flex:1" onclick="Pages._t2wSave()">
-          ${is2 ? '💾 保存して次へ' : '💾 保存して分割へ →'}
-        </button>
-      </div>`;
-    setTimeout(() => document.getElementById('t2w-w1')?.focus(), 80);
-  }
-
-  window._t2wRender = _render;
-  _render();
-};
-
-Pages._t2wSelectContainer = function (val) {
-  window._t2wSelectedContainer = val;
-  // data-cont 属性でボタンを特定（id は付与していないため）
-  document.querySelectorAll('[data-cont]').forEach(b => {
-    b.className = 'btn ' + (b.dataset.cont === val ? 'btn-primary' : 'btn-ghost');
-    b.style.flex = '1';
-  });
-};
-
-Pages._t2wSave = async function () {
-  const st  = window._t2wState;
-  const w1  = parseFloat(document.getElementById('t2w-w1')?.value);
-  const w2  = st.headCount === 2 ? parseFloat(document.getElementById('t2w-w2')?.value) : w1;
-  if (isNaN(w1) || w1 <= 0) { UI.toast('体重を入力してください', 'error'); return; }
-  if (st.headCount === 2 && (isNaN(w2) || w2 <= 0)) { UI.toast('体重②を入力してください', 'error'); return; }
-
-  const moltOn  = document.getElementById('t2w-molt')?.checked !== false;
-  const container = window._t2wSelectedContainer || '2.7L';
-  const recDate = (document.getElementById('t2w-date')?.value || new Date().toISOString().split('T')[0]).replace(/-/g,'/');
-
-  const btn = document.getElementById('t2w-save-btn');
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ 保存中...'; }
-
-  try {
-    // LOT 本体更新
-    const updates = { mat_type:'T2', mat_molt:moltOn, stage:'L3', container_size:container, exchange_type:'全交換' };
-    await API.lot.update({ lot_id: st.lotId, ...updates }).catch(e => console.warn('[t2wSave]', e.message));
-    Store.patchDBItem('lots', 'lot_id', st.lotId, updates);
-
-    // growth records
-    const base = { target_type:'LOT', target_id:st.lotId, record_date:recDate,
-                   stage:'L3', mat_type:'T2', exchange_type:'全交換',
-                   container:container, note_private:'T2初回移行'+(moltOn?' [T2(M)]':'') };
-    await API.growth.create({ ...base, weight_g:w1 });
-    if (st.headCount === 2 && w2 !== w1) {
-      await API.growth.create({ ...base, weight_g:w2, note_private:(base.note_private)+' 体重②' });
-    }
-    Store.addGrowthRecord(st.lotId, { ...base, weight_g:w1 });
-
-    UI.toast('✅ T2初回移行データを保存しました', 'success');
-
-    if (st.headCount === 2) {
-      routeTo('lot-detail', { lotId: st.lotId });
-    } else {
-      // 単独 → 分割モーダルへ
-      window.__t2SplitWeight = w1;
-      await syncAll(true).catch(() => {});
-      routeTo('lot-detail', { lotId: st.lotId, openSplit: true });
-    }
-  } catch (e) {
-    UI.toast('❌ 保存失敗: ' + (e.message||'不明なエラー'), 'error');
-    if (btn) { btn.disabled = false; btn.textContent = st.headCount===2?'💾 保存して次へ':'💾 保存して分割へ →'; }
-  }
-};
 
 // ════════════════════════════════════════════════════════════════
 // T1交換 QR連続処理モード
@@ -2545,6 +1478,3 @@ Pages._t1StartCamera = async function () {
 
 // ルーティング登録
 window.PAGES['qr-scan-t1'] = () => Pages.qrScanT1();
-window.PAGES['weight-mode']  = () => Pages.weightMode(Store.getParams());
-window.PAGES['t1-weight']    = () => Pages.t1WeightMode(Store.getParams());
-window.PAGES['t2-weight']    = () => Pages.t2WeightMode(Store.getParams());

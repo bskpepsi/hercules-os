@@ -135,7 +135,7 @@ Pages.labelGen = function (params = {}) {
                    プレビューを生成中...
                  </div>
                </div>
-               <div id="lbl-qr-hidden" style="display:none"></div>`
+               <div id="lbl-qr-hidden" style="position:absolute;left:-9999px;top:-9999px;width:96px;height:96px;overflow:hidden"></div>`
             : `<div style="color:var(--text3);font-size:.85rem;text-align:center;padding:20px">
                  対象を選択するとプレビューが表示されます
                </div>`}
@@ -304,11 +304,17 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
 
   setTimeout(() => {
     let qrSrc = '';
-    const qrImg = qrDiv?.querySelector('img') || qrDiv?.querySelector('canvas');
-    if (qrImg) {
-      try {
-        qrSrc = qrImg.tagName === 'CANVAS' ? qrImg.toDataURL('image/png') : qrImg.src;
-      } catch(e) {}
+    // canvas優先（QRCode.jsはcanvasを先に生成してからimgに変換）
+    const qrCanvas = qrDiv?.querySelector('canvas');
+    const qrImg    = qrDiv?.querySelector('img');
+    if (qrCanvas && qrCanvas.width > 0 && qrCanvas.height > 0) {
+      try { qrSrc = qrCanvas.toDataURL('image/png'); } catch(e) {}
+    }
+    if (!qrSrc && qrImg && qrImg.src && !qrImg.src.startsWith('data:') === false) {
+      qrSrc = qrImg.src;
+    }
+    if (!qrSrc && qrImg && qrImg.src) {
+      qrSrc = qrImg.src;
     }
 
     const html = _buildLabelHTML(ld, qrSrc);
@@ -330,7 +336,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
       // スクロールして見えるように
       bar.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
-  }, 300);
+  }, 500);
 };
 
 // ── HTMLラベル構築 ────────────────────────────────────────────────
@@ -359,8 +365,8 @@ function _buildLabelHTML(ld, qrSrc) {
 
   const recRowsHtml = recRows.map(r => {
     if (!r) return isLot
-      ? `<tr><td style="border:1px solid #ccc;padding:1px 2px;width:24mm"></td><td style="border:1px solid #ccc;padding:1px 2px;width:14mm"></td><td style="border:1px solid #ccc;padding:1px 2px;width:14mm"></td><td style="border:1px solid #ccc;padding:1px 2px;width:15mm"></td></tr>`
-      : `<tr><td style="border:1px solid #ccc;padding:1px 2px;width:26mm"></td><td style="border:1px solid #ccc;padding:1px 2px;width:18mm"></td><td style="border:1px solid #ccc;padding:1px 2px;width:20mm"></td></tr>`;
+      ? `<tr><td style="border:1px solid #ccc;padding:1px 2px;width:22mm">&nbsp;</td><td style="border:1px solid #ccc;padding:1px 2px;width:14mm">&nbsp;</td><td style="border:1px solid #ccc;padding:1px 2px;width:14mm">&nbsp;</td><td style="border:1px solid #ccc;padding:1px 2px;width:17mm">&nbsp;</td></tr>`
+      : `<tr><td style="border:1px solid #ccc;padding:1px 2px;width:22mm">&nbsp;</td><td style="border:1px solid #ccc;padding:1px 2px;width:18mm">&nbsp;</td><td style="border:1px solid #ccc;padding:1px 2px;width:23mm">&nbsp;</td></tr>`;
     const d = String(r.record_date || '').replace(/\d{4}\//,'');
     const w = r.weight_g ? r.weight_g + 'g' : '';
     return isLot
