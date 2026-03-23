@@ -158,8 +158,8 @@ Pages._qrPreviewInput = function (val) {
   const el = document.getElementById('qr-preview');
   if (!el) return;
   const v = (val || '').trim();
-  const labels = { LOT: '🟡 ロット', IND: '🟢 個体', SET: '🟠 産卵セット' };
-  const type = v.startsWith('LOT:') ? 'LOT' : v.startsWith('IND:') ? 'IND' : v.startsWith('SET:') ? 'SET' : null;
+  const labels = { LOT: '🟡 ロット', IND: '🟢 個体', SET: '🟠 産卵セット', PAR: '👑 種親' };
+  const type = v.startsWith('LOT:') ? 'LOT' : v.startsWith('IND:') ? 'IND' : v.startsWith('SET:') ? 'SET' : v.startsWith('PAR:') ? 'PAR' : null;
   el.innerHTML = type
     ? `<span style="color:var(--green)">${labels[type]} : ${v.split(':')[1]}</span>`
     : v ? `<span style="color:var(--red)">⚠️ フォーマット不正（LOT: / IND: / SET: で始まる必要があります）</span>` : '';
@@ -211,14 +211,16 @@ function _qrLocalResolve(v) {
   const parts = (v || '').split(':');
   if (parts.length < 2) return null;
   const prefix = parts[0].toUpperCase();
-  const id     = parts.slice(1).join(':').trim();  // IDに':'が含まれるケースも考慮
+  const id     = parts.slice(1).join(':').trim();
 
   if (prefix === 'IND') {
     const ind = Store.getIndividual(id)
       || (Store.getDB('individuals') || []).find(i => i.display_id === id);
     if (!ind) return null;
     const line = Store.getLine(ind.line_id) || {};
-    const lg   = _getLastGrowthFromStore('IND', ind.ind_id, ind.latest_weight_g);
+    // 最新体重をキャッシュから取得（外部関数依存なし）
+    const recs = Store.getGrowthRecords(ind.ind_id) || [];
+    const lg   = recs.filter(r => r.weight_g && +r.weight_g > 0).slice(-1)[0] || null;
     return { entity_type: 'IND', entity: ind, line, last_growth: lg, missing: [], label_type: 'ind_fixed' };
   }
   if (prefix === 'LOT') {
@@ -226,11 +228,14 @@ function _qrLocalResolve(v) {
       || (Store.getDB('lots') || []).find(l => l.display_id === id);
     if (!lot) return null;
     const line = Store.getLine(lot.line_id) || {};
-    const lg   = _getLastGrowthFromStore('LOT', lot.lot_id, lot.latest_weight_g);
+    const recs = Store.getGrowthRecords(lot.lot_id) || [];
+    const lg   = recs.filter(r => r.weight_g && +r.weight_g > 0).slice(-1)[0] || null;
     return { entity_type: 'LOT', entity: lot, line, last_growth: lg, missing: [], label_type: 'multi_lot' };
   }
   if (prefix === 'PAR') {
-    const par = (Store.getDB('parents') || []).find(p => p.par_id === id || p.parent_display_id === id);
+    const par = (Store.getDB('parents') || []).find(p =>
+      p.par_id === id || p.parent_display_id === id
+    );
     if (!par) return null;
     return { entity_type: 'PAR', entity: par, line: null, last_growth: null, missing: [], label_type: 'parent' };
   }
