@@ -319,21 +319,40 @@ function _renderLotDetail(lot, main) {
         </button>
       </div>` : ''}
 
-      <div class="card card-gold">
-        <div class="lot-detail-header">
-          <div class="lot-detail-left">
-            <div class="lot-detail-line">${lineCode}</div>
-            <div class="lot-detail-id">${lot.display_id}</div>
+      <div class="card card-gold" style="padding:14px 16px">
+        <!-- 1行目: ラインコード（主識別子） -->
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:1.35rem;font-weight:800;color:var(--gold);letter-spacing:.02em;line-height:1">
+              ${lineCode || '—'}
+            </span>
+            <span style="font-size:.72rem;color:var(--text3);font-family:var(--font-mono);
+              overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:160px">
+              ${lot.display_id}
+            </span>
           </div>
-          <div class="lot-detail-center">
-            <div class="lot-detail-count">${lot.count}<span style="font-size:.9rem;font-weight:400;color:var(--text3)">頭</span></div>
-            ${stageLife
-              ? `<span style="font-size:.75rem;font-weight:700;color:var(--blue);padding:2px 8px;border:1px solid rgba(91,168,232,.4);border-radius:6px">${_lotDisplayStageLabel(stageLife)}</span>`
-              : `<span style="font-size:.75rem;font-weight:700;color:var(--blue);padding:2px 8px;border:1px solid rgba(91,168,232,.4);border-radius:6px">${_lotDisplayStageLabel(dispStage !== '—' ? dispStage : lot.stage)}</span>`}
+          <!-- 頭数 -->
+          <div style="text-align:right">
+            <span style="font-size:1.6rem;font-weight:800;color:var(--text1);line-height:1">${lot.count}</span>
+            <span style="font-size:.9rem;font-weight:600;color:var(--text3)">頭</span>
           </div>
-          <div class="lot-detail-right">
-            ${age ? `<div style="font-size:.68rem;color:var(--text3)">日齢</div><div style="font-weight:700;font-size:1rem;line-height:1.1">${age.days}日</div>` : ''}
+        </div>
+        <!-- 2行目: ステージ + 日齢 -->
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+            <span style="font-size:.78rem;font-weight:700;color:var(--blue);
+              padding:3px 10px;border:1px solid rgba(91,168,232,.4);border-radius:20px;
+              background:rgba(91,168,232,.08)">
+              ${_lotDisplayStageLabel(stageLife || (dispStage !== '—' ? dispStage : lot.stage))}
+            </span>
           </div>
+          ${age ? `<div style="text-align:right;flex-shrink:0">
+            <div style="font-size:.65rem;color:var(--text3);text-align:right">日齢</div>
+            <div style="font-weight:700;font-size:1.05rem;color:var(--text1);line-height:1.1">
+              ${age.days}
+            </div>
+            ${age.totalDays >= 14 ? `<div style="font-size:.65rem;color:var(--text3)">${age.weeks}</div>` : ''}
+          </div>` : ''}
         </div>
         ${alertBadge ? `<div style="margin-top:8px">${alertBadge}</div>` : ''}
       </div>

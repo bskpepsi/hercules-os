@@ -44,19 +44,22 @@ Pages.growthRecord = function (params = {}) {
     const inds      = Store.filterIndividuals({ status:'alive' });
     const lots      = Store.filterLots({ status:'active' });
     const today     = new Date().toISOString().split('T')[0];
+    // 詳細画面から来た場合は対象確定済み → 選択UIを非表示
+    const isDirectMode = !!targetId;
 
     main.innerHTML = `
-      ${UI.header('成長記録入力', { back: true })}
+      ${UI.header('成長記録', { back: true })}
       <div class="page-body has-quick-bar">
 
-        <!-- 対象選択 -->
+        <!-- 対象選択（直行モード以外のみ表示） -->
+        ${!isDirectMode ? `
         <div class="card">
           <div class="card-title">記録対象</div>
           <div style="display:flex;gap:8px;margin-bottom:10px">
             <button class="pill ${targetType==='IND'?'active':''}"
-              onclick="Pages._grSetType('IND')">個体(IND)</button>
+              onclick="Pages._grSetType('IND')">個体</button>
             <button class="pill ${targetType==='LOT'?'active':''}"
-              onclick="Pages._grSetType('LOT')">ロット(LOT)</button>
+              onclick="Pages._grSetType('LOT')">ロット</button>
           </div>
           ${targetType === 'IND' ? `
             <select id="gr-target" class="input" onchange="Pages._grTargetChange(this.value,'IND')">
@@ -73,10 +76,13 @@ Pages.growthRecord = function (params = {}) {
                   ${l.display_id} ${stageLabel(l.stage)} (${l.count}頭)</option>`
               ).join('')}
             </select>`}
-          ${targetId ? `<div style="margin-top:6px;font-size:.78rem;color:var(--text3)">
-            対象: <b style="color:var(--gold)">${displayId || targetId}</b>
-          </div>` : ''}
-        </div>
+        </div>` : `
+        <!-- 直行モード: 対象確定済みのためヘッダーバッジのみ表示 -->
+        <div style="background:var(--surface2);border-radius:var(--radius-sm);padding:8px 12px;
+          display:flex;align-items:center;gap:8px;margin-bottom:2px">
+          <span style="font-size:.72rem;color:var(--text3)">${targetType === 'LOT' ? 'ロット' : '個体'}</span>
+          <span style="font-weight:700;color:var(--gold);font-size:.88rem;font-family:var(--font-mono)">${displayId || targetId}</span>
+        </div>`}
 
         <!-- 日齢表示（現在の日齢 / 記録時点との区別） -->
         ${targetId && age ? `<div class="card" style="background:rgba(91,168,232,.07);border-color:rgba(91,168,232,.25)">

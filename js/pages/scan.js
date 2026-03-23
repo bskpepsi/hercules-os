@@ -39,8 +39,8 @@ Pages.qrScan = function (params = {}) {
   function _modeDesc() {
     if (_scanMode === 'weight') return '⚖️ QR → 体重入力 → 保存';
     if (_scanMode === 'diff')   return '📝 QR → 未入力項目を補完する';
-    if (_scanMode === 't1')     return '🟡 QR → L1L2マット交換 体重入力 → ラベル';
-    if (_scanMode === 't2')     return '🟠 QR → L3（T2）初回 体重入力 → lot更新';
+    if (_scanMode === 't1')     return '🟡 QR → T1移行 体重入力 → ラベル';
+    if (_scanMode === 't2')     return '🟠 QR → T2初回移行 体重入力 → lot更新';
     return '🔍 QR → 個体・ロット・産卵セットの詳細を開く';
   }
 
@@ -60,9 +60,9 @@ Pages.qrScan = function (params = {}) {
         </div>
         <div style="display:flex;background:var(--surface2);border-radius:10px;padding:3px;gap:3px">
           <button style="flex:1;border:none;padding:7px 4px;border-radius:8px;cursor:pointer;font-size:.75rem;${_modeStyle('t1')}"
-            onclick="Pages._qrSwitchMode('t1')">🟡 L1L2交換</button>
+            onclick="Pages._qrSwitchMode('t1')">🟡 T1移行</button>
           <button style="flex:1;border:none;padding:7px 4px;border-radius:8px;cursor:pointer;font-size:.75rem;${_modeStyle('t2')}"
-            onclick="Pages._qrSwitchMode('t2')">🟠 L3初回</button>
+            onclick="Pages._qrSwitchMode('t2')">🟠 T2初回移行</button>
         </div>
         <div style="font-size:.72rem;color:var(--text3);padding:2px 4px;margin-top:-2px">${_modeDesc()}</div>
 
@@ -316,13 +316,13 @@ function _qrNavigate(mode, res, qrText) {
     if (res.entity_type === 'LOT') {
       routeTo('t1-weight', { resolve_result: res, qr_text: qrText });
     } else {
-      UI.toast('L1L2交換モードはロットQRを読み取ってください', 'info', 3000);
+      UI.toast('T1移行モードはロットQRを読み取ってください', 'info', 3000);
     }
   } else if (mode === 't2') {
     if (res.entity_type === 'LOT') {
       routeTo('t2-weight', { resolve_result: res, qr_text: qrText });
     } else {
-      UI.toast('L3初回モードはロットQRを読み取ってください', 'info', 3000);
+      UI.toast('T2初回移行モードはロットQRを読み取ってください', 'info', 3000);
     }
   } else if (mode === 'diff') {
     routeTo('qr-diff', { resolve_result: res, qr_text: qrText });
@@ -1066,8 +1066,8 @@ const WM_THRESHOLDS = [
 // ── プリセット定義 ────────────────────────────────────────────────
 const _WM_PRESETS = {
   normal: { label: '通常',    mat:'',   molt:false, stage:'', container:'', exchange:'' },
-  t1:     { label: 'L1L2交換', mat:'T1', molt:false, stage:'L1L2', container:'2.7L', exchange:'全交換' },
-  t2:     { label: 'L3初回',  mat:'T2', molt:true,  stage:'L3',     container:'2.7L', exchange:'全交換' },
+  t1:     { label: 'T1移行', mat:'T1', molt:false, stage:'L1L2', container:'2.7L', exchange:'全交換' },
+  t2:     { label: 'T2初回移行',  mat:'T2', molt:true,  stage:'L3',     container:'2.7L', exchange:'全交換' },
 };
 function _wmGetPresetId() { return localStorage.getItem('wm_preset') || 'normal'; }
 function _wmSetPresetId(id) { localStorage.setItem('wm_preset', id); }
@@ -1206,9 +1206,9 @@ Pages.weightMode = function (params = {}) {
         <button class="btn btn-sm ${_wmPresetId==='normal'?'btn-primary':'btn-ghost'}" style="flex:1;font-size:.75rem"
           data-preset="normal" onclick="Pages._wmApplyPreset('normal')">通常</button>
         <button class="btn btn-sm ${_wmPresetId==='t1'?'btn-primary':'btn-ghost'}" style="flex:1;font-size:.75rem"
-          data-preset="t1" onclick="Pages._wmApplyPreset('t1')">L1L2交換</button>
+          data-preset="t1" onclick="Pages._wmApplyPreset('t1')">T1移行</button>
         <button class="btn btn-sm ${_wmPresetId==='t2'?'btn-primary':'btn-ghost'}" style="flex:1;font-size:.75rem"
-          data-preset="t2" onclick="Pages._wmApplyPreset('t2')">L3初回</button>
+          data-preset="t2" onclick="Pages._wmApplyPreset('t2')">T2初回移行</button>
       </div>
 
       <!-- 体重 + 微調整ボタン -->
@@ -2005,14 +2005,14 @@ Pages.t1WeightMode = function (params = {}) {
     const isSame = st.sameWeight;
     const todayIso = new Date().toISOString().split('T')[0];
     main.innerHTML = `
-      ${UI.header('🟡 L1L2マット交換 体重入力', { back: true, backFn: "routeTo('qr-scan')" })}
+      ${UI.header('🟡 T1移行 体重入力', { back: true, backFn: "routeTo('qr-scan')" })}
       <div class="page-body" style="padding-bottom:80px">
         <div class="quick-info-bar">
           <div style="flex:1">
             <div class="quick-info-id">${displayId}</div>
             <div style="font-size:.72rem;color:var(--text3)">${lineDisp ? 'L:'+lineDisp : ''}</div>
           </div>
-          <div style="background:rgba(45,122,82,.15);color:var(--green);font-size:.75rem;padding:2px 10px;border-radius:99px;font-weight:700">L1L2交換</div>
+          <div style="background:rgba(45,122,82,.15);color:var(--green);font-size:.75rem;padding:2px 10px;border-radius:99px;font-weight:700">T1移行</div>
         </div>
 
         <!-- 体重入力 -->
@@ -2098,13 +2098,13 @@ Pages._t1wSave = async function () {
     // growth records（体重①と②を別レコード）
     const base = { target_type:'LOT', target_id:st.lotId, record_date:recDate,
                    stage:'L1', mat_type:'T1', exchange_type:'全交換' };
-    await API.growth.create({ ...base, weight_g:w1, note_private:'L1L2交換 体重①' });
+    await API.growth.create({ ...base, weight_g:w1, note_private:'T1移行 体重①' });
     if (w2 !== w1) {
-      await API.growth.create({ ...base, weight_g:w2, note_private:'L1L2交換 体重②' });
+      await API.growth.create({ ...base, weight_g:w2, note_private:'T1移行 体重②' });
     }
     Store.addGrowthRecord(st.lotId, { ...base, weight_g:w1 });
 
-    UI.toast('✅ L1L2交換データを保存しました', 'success');
+    UI.toast('✅ T1移行データを保存しました', 'success');
     // ラベル発行へ遷移
     routeTo('label-gen', { targetType: 'LOT', targetId: st.lotId });
   } catch (e) {
@@ -2141,14 +2141,14 @@ Pages.t2WeightMode = function (params = {}) {
     const todayIso = new Date().toISOString().split('T')[0];
 
     main.innerHTML = `
-      ${UI.header('🟠 L3（T2）初回 体重入力', { back: true, backFn: "routeTo('qr-scan')" })}
+      ${UI.header('🟠 T2初回移行 体重入力', { back: true, backFn: "routeTo('qr-scan')" })}
       <div class="page-body" style="padding-bottom:80px">
         <div class="quick-info-bar">
           <div style="flex:1">
             <div class="quick-info-id">${displayId}</div>
             <div style="font-size:.72rem;color:var(--text3)">${lineDisp ? 'L:'+lineDisp : ''}</div>
           </div>
-          <div style="background:rgba(200,168,75,.15);color:var(--amber);font-size:.75rem;padding:2px 10px;border-radius:99px;font-weight:700">L3初回</div>
+          <div style="background:rgba(200,168,75,.15);color:var(--amber);font-size:.75rem;padding:2px 10px;border-radius:99px;font-weight:700">T2初回移行</div>
         </div>
 
         <!-- 固定バッジ -->
@@ -2268,14 +2268,14 @@ Pages._t2wSave = async function () {
     // growth records
     const base = { target_type:'LOT', target_id:st.lotId, record_date:recDate,
                    stage:'L3', mat_type:'T2', exchange_type:'全交換',
-                   container:container, note_private:'L3初回'+(moltOn?' [T2(M)]':'') };
+                   container:container, note_private:'T2初回移行'+(moltOn?' [T2(M)]':'') };
     await API.growth.create({ ...base, weight_g:w1 });
     if (st.headCount === 2 && w2 !== w1) {
       await API.growth.create({ ...base, weight_g:w2, note_private:(base.note_private)+' 体重②' });
     }
     Store.addGrowthRecord(st.lotId, { ...base, weight_g:w1 });
 
-    UI.toast('✅ L3初回データを保存しました', 'success');
+    UI.toast('✅ T2初回移行データを保存しました', 'success');
 
     if (st.headCount === 2) {
       routeTo('lot-detail', { lotId: st.lotId });
