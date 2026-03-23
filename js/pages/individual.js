@@ -548,7 +548,7 @@ function _renderDetail(ind, main) {
       <!-- ヘッダーカード -->
       <div class="card card-gold">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-          <span style="font-size:1.8rem">${ind.sex || '?'}</span>
+          <span style="font-size:1.8rem;font-weight:700;color:${ind.sex==='♂'?'var(--male,#5ba8e8)':ind.sex==='♀'?'var(--female,#f06292)':'var(--text3)'}">${ind.sex || '?'}</span>
           <div>
             <div style="font-family:var(--font-mono);font-size:.85rem;color:var(--gold)">${dispId}</div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">

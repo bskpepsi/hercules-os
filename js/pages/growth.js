@@ -26,12 +26,12 @@ const GR_MODE_PRESETS = {
 // ── ボタン式グループヘルパー ────────────────────────────────────
 // min-height: 48px で押しやすいサイズ確保
 function _grBtnGroup(id, items, active, onClickFn) {
-  return '<div style="display:flex;gap:6px;flex-wrap:wrap">'
+  return '<div style="display:flex;gap:8px;flex-wrap:wrap">'
     + items.map(it => {
         const on = it.val === active;
         return `<button type="button"
-          style="padding:12px 16px;border-radius:10px;font-size:.92rem;font-weight:700;
-            cursor:pointer;min-height:52px;flex:1;
+          style="padding:13px 0;border-radius:10px;font-size:.95rem;font-weight:700;
+            cursor:pointer;min-height:52px;min-width:64px;flex:1;
             border:1px solid ${on ? 'var(--green)' : 'var(--border)'};
             background:${on ? 'var(--green)' : 'var(--surface2)'};
             color:${on ? '#fff' : 'var(--text2)'}"
@@ -47,6 +47,8 @@ Pages.growthRecord = function (params = {}) {
   let targetId   = params.targetId   || '';
   let displayId  = params.displayId  || '';
   let _mode      = params._preset    || 'normal';
+  // QRスキャンから来た場合: 保存後に再スキャン画面へ戻る
+  const _fromQR  = !!(params._fromQR || params._preset);  // presetはQRモードから
 
   let _photoB64  = null;
   let _photoMime = null;
@@ -142,7 +144,7 @@ Pages.growthRecord = function (params = {}) {
         + ['大','中','小','—'].map(function(val) {
             const on = val === '—' ? !_selSizeCat : (_selSizeCat || '').split(',').map(s => s.trim()).includes(val);
             return '<button type="button"'
-              + ' style="flex:1;min-height:52px;border-radius:10px;font-size:.92rem;font-weight:700;cursor:pointer;'
+              + ' style="flex:1;min-height:52px;min-width:60px;border-radius:10px;font-size:.95rem;font-weight:700;cursor:pointer;'
               + 'border:1px solid ' + (on ? 'var(--green)' : 'var(--border)') + ';'
               + 'background:' + (on ? 'var(--green)' : 'var(--surface2)') + ';'
               + 'color:' + (on ? '#fff' : 'var(--text2)') + '"'
@@ -181,7 +183,7 @@ Pages.growthRecord = function (params = {}) {
             <div class="quick-info-id" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${displayId}</div>
             <div style="display:flex;gap:5px;align-items:center;margin-top:4px;flex-wrap:wrap">
               <span style="background:rgba(76,175,120,.15);color:var(--green);font-size:.68rem;padding:1px 6px;border-radius:99px;font-weight:600">${stageDisp}</span>
-              ${isLot ? `<span style="font-size:.7rem;color:var(--text3)">${count}頭</span>` : `<span style="font-size:.7rem;color:var(--text3)">${sex}</span>`}
+              ${isLot ? `<span style="font-size:.7rem;color:var(--text3)">${count}頭</span>` : `<span style="font-size:.8rem;font-weight:700;color:${sex==='♂'?'var(--male,#5ba8e8)':sex==='♀'?'var(--female,#f06292)':'var(--text3)'}">${sex}</span>`}
               ${lineDisp ? `<span style="font-size:.68rem;color:var(--text3)">L:${lineDisp}</span>` : ''}
             </div>
           </div>
@@ -200,22 +202,22 @@ Pages.growthRecord = function (params = {}) {
         </div>` : ''}
 
         <!-- ③ 体重入力 -->
-        <div class="card" style="border-color:rgba(76,175,120,.35);padding:16px 14px">
+        <div class="card" style="border-color:rgba(76,175,120,.35);padding:14px 10px">
           <div style="text-align:center;font-size:.72rem;font-weight:700;color:var(--text3);letter-spacing:.08em;margin-bottom:10px">体重 (g)</div>
-          <div style="display:flex;align-items:center;justify-content:center;gap:6px;margin-bottom:8px">
-            <button class="btn btn-ghost" style="min-width:54px;min-height:52px;font-size:.95rem;font-weight:700;border-radius:10px"
+          <div style="display:flex;align-items:stretch;gap:2px;margin-bottom:8px;width:100%;box-sizing:border-box">
+            <button class="btn btn-ghost" style="width:42px;min-width:42px;max-width:42px;min-height:52px;font-size:.78rem;font-weight:700;border-radius:8px;padding:0;flex-shrink:0"
               id="gr-adj-m10" data-delta="-10">−10</button>
-            <button class="btn btn-ghost" style="min-width:54px;min-height:52px;font-size:.95rem;font-weight:700;border-radius:10px"
+            <button class="btn btn-ghost" style="width:36px;min-width:36px;max-width:36px;min-height:52px;font-size:.78rem;font-weight:700;border-radius:8px;padding:0;flex-shrink:0"
               id="gr-adj-m1" data-delta="-1">−1</button>
             <input id="gr-weight" type="number" inputmode="decimal" step="0.1" min="0" max="999.9"
               placeholder="0.0" autocomplete="off"
-              style="width:180px;font-size:2.6rem;font-weight:700;text-align:center;
-                border:2px solid var(--gold);border-radius:10px;padding:10px 8px;
-                background:var(--bg2);color:var(--green)"
+              style="flex:1;min-width:0;font-size:2.1rem;font-weight:700;text-align:center;
+                border:2px solid var(--gold);border-radius:10px;padding:8px 0;
+                background:var(--bg2);color:var(--green);box-sizing:border-box"
               oninput="Pages._grLiveUpdate(this.value,${prevWeight})">
-            <button class="btn btn-ghost" style="min-width:54px;min-height:52px;font-size:.95rem;font-weight:700;border-radius:10px"
+            <button class="btn btn-ghost" style="width:36px;min-width:36px;max-width:36px;min-height:52px;font-size:.78rem;font-weight:700;border-radius:8px;padding:0;flex-shrink:0"
               id="gr-adj-p1" data-delta="1">+1</button>
-            <button class="btn btn-ghost" style="min-width:54px;min-height:52px;font-size:.95rem;font-weight:700;border-radius:10px"
+            <button class="btn btn-ghost" style="width:42px;min-width:42px;max-width:42px;min-height:52px;font-size:.78rem;font-weight:700;border-radius:8px;padding:0;flex-shrink:0"
               id="gr-adj-p10" data-delta="10">+10</button>
           </div>
           <div style="text-align:center;font-size:.78rem;color:var(--text3);margin-bottom:6px">g</div>
@@ -612,8 +614,14 @@ Pages.growthRecord = function (params = {}) {
       var histEl = document.getElementById('gr-history');
       if (histEl && cached) histEl.innerHTML = UI.weightTable(cached);
       if (btn) { btn.disabled = false; btn.textContent = '💾 保存して次へ'; }
-      if (type === 'LOT') _grShowNextLotBar(id);
-      if (type === 'IND') setTimeout(function() { var w = document.getElementById('gr-weight'); if (w) w.focus(); }, 200);
+      if (_fromQR) {
+        // QR記録モードから来た場合: 再スキャンへ（次の対象を読める状態）
+        setTimeout(function() { routeTo('qr-scan', { mode: 'weight', autoCamera: true }); }, 800);
+      } else if (type === 'LOT') {
+        _grShowNextLotBar(id);
+      } else {
+        setTimeout(function() { var w = document.getElementById('gr-weight'); if (w) w.focus(); }, 200);
+      }
     } catch (e) {
       if (btn) { btn.disabled = false; btn.textContent = '💾 保存して次へ'; }
     }

@@ -199,7 +199,7 @@ Pages._qrResolve = async function () {
       const _eid = _ent.ind_id || _ent.lot_id || '';
       const _ety = res.entity_type || 'IND';
       if (_eid) {
-        routeTo('growth-rec', { targetType: _ety, targetId: _eid, displayId: _ent.display_id || _eid });
+        routeTo('growth-rec', { targetType: _ety, targetId: _eid, displayId: _ent.display_id || _eid, _fromQR: true });
       } else {
         UI.toast('対象が特定できませんでした', 'error'); routeTo('qr-scan');
       }
@@ -260,7 +260,26 @@ Pages._qrRescanFromHistory = function (qrText) {
 Pages._qrStartCamera = async function () {
   // jsQR確認（index.htmlで静的ロード済みのはずだが念のため）
   if (typeof jsQR === 'undefined') {
-    UI.toast('QRライブラリ（jsQR）未ロード。ネットワーク接続を確認して再読み込みしてください', 'error');
+    // jsQR 未ロード: フォールバックCDNから再ロードを試みる
+    UI.toast('QRライブラリを読み込み中...', 'info', 3000);
+    var _retryUrls = [
+      'vendor/jsQR.min.js',
+      'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js',
+      'https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js',
+      'https://unpkg.com/jsqr@1.4.0/dist/jsQR.js'
+    ];
+    var _retryLoad = function(urls, idx) {
+      if (idx >= urls.length) {
+        UI.toast('QRライブラリの読み込みに失敗しました。ページを再読み込みしてください', 'error');
+        return;
+      }
+      var s = document.createElement('script');
+      s.src = urls[idx];
+      s.onload  = function() { setTimeout(function() { Pages._qrStartCamera(); }, 300); };
+      s.onerror = function() { _retryLoad(urls, idx + 1); };
+      document.head.appendChild(s);
+    };
+    _retryLoad(_retryUrls, 0);
     return;
   }
   const card = document.getElementById('camera-card');

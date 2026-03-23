@@ -8,14 +8,37 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#0d1a0d">
   <title>HerculesOS</title>
-  <link rel="stylesheet" href="css/styles.css?v=20260401a">
+  <link rel="stylesheet" href="css/styles.css?v=20260403b">
 
   <!-- qrcode.js (ラベル用QRコード生成) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
   <!-- Chart.js (体重推移グラフ) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-  <!-- jsQR (カメラQRスキャン用) -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js"></script>
+  <!-- jsQR (カメラQRスキャン用) — ローカル最優先・CDNフォールバック -->
+  <!-- ★ デプロイ時: https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js を
+       vendor/jsQR.min.js としてリポジトリに配置してください -->
+  <script>
+    (function() {
+      // 優先順位: ローカル → jsdelivr → cdnjs → unpkg
+      var JSQR_URLS = [
+        'vendor/jsQR.min.js',
+        'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js',
+        'https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js',
+        'https://unpkg.com/jsqr@1.4.0/dist/jsQR.js'
+      ];
+      var _idx = 0;
+      function loadNext() {
+        if (_idx >= JSQR_URLS.length) { window._jsqrLoadFailed = true; return; }
+        var s = document.createElement('script');
+        s.src = JSQR_URLS[_idx++];
+        s.async = false;
+        s.onerror = function() { loadNext(); };
+        s.onload  = function() { window._jsqrLoaded = true; };
+        document.head.appendChild(s);
+      }
+      loadNext();
+    })();
+  </script>
 </head>
 <body>
 
@@ -64,32 +87,32 @@
 <div id="toast"></div>
 
 <!-- ════ JS 読み込み（順序厳守） ════ -->
-<!-- バージョンクエリ ?v=20260401a でキャッシュを強制更新         -->
+<!-- バージョンクエリ ?v=20260403b でキャッシュを強制更新         -->
 <!-- デプロイ時に値を変えるだけでよい（例: 20260322b, 20260323a） -->
-<script src="js/config.js?v=20260401a"></script>
-<script src="js/api.js?v=20260401a"></script>
-<script src="js/store.js?v=20260401a"></script>
+<script src="js/config.js?v=20260403b"></script>
+<script src="js/api.js?v=20260403b"></script>
+<script src="js/store.js?v=20260403b"></script>
 <!-- normalize.js: 表示正規化（config.js の後・app.js の前に必須） -->
-<script src="js/normalize.js?v=20260401a"></script>
-<script src="js/app.js?v=20260401a"></script>
+<script src="js/normalize.js?v=20260403b"></script>
+<script src="js/app.js?v=20260403b"></script>
 <!-- pages/ — 読み込み順: individual → lot → growth → dashboard → manage系 -->
-<script src="js/pages/individual.js?v=20260401a"></script>
-<script src="js/pages/lot.js?v=20260401a"></script>
-<script src="js/pages/growth.js?v=20260401a"></script>
-<script src="js/pages/dashboard.js?v=20260401a"></script>
-<script src="js/pages/parent.js?v=20260401a"></script>
-<script src="js/pages/bloodline.js?v=20260401a"></script>
-<script src="js/pages/pairing.js?v=20260401a"></script>
-<script src="js/pages/label.js?v=20260401a"></script>
-<script src="js/pages/manage.js?v=20260401a"></script>
-<script src="js/pages/settings.js?v=20260401a"></script>
-<script src="js/pages/scan.js?v=20260401a"></script>
+<script src="js/pages/individual.js?v=20260403b"></script>
+<script src="js/pages/lot.js?v=20260403b"></script>
+<script src="js/pages/growth.js?v=20260403b"></script>
+<script src="js/pages/dashboard.js?v=20260403b"></script>
+<script src="js/pages/parent.js?v=20260403b"></script>
+<script src="js/pages/bloodline.js?v=20260403b"></script>
+<script src="js/pages/pairing.js?v=20260403b"></script>
+<script src="js/pages/label.js?v=20260403b"></script>
+<script src="js/pages/manage.js?v=20260403b"></script>
+<script src="js/pages/settings.js?v=20260403b"></script>
+<script src="js/pages/scan.js?v=20260403b"></script>
 <!-- Phase2 拡張（v2ページ：parent_v2 / bloodline_v2 が v1 のルーティングを上書き） -->
-<script src="js/pages/bloodline_v2.js?v=20260401a"></script>
-<script src="js/pages/parent_v2.js?v=20260401a"></script>
-<script src="js/pages/analysis.js?v=20260401a"></script>
+<script src="js/pages/bloodline_v2.js?v=20260403b"></script>
+<script src="js/pages/parent_v2.js?v=20260403b"></script>
+<script src="js/pages/analysis.js?v=20260403b"></script>
 <!-- Phase5/6: 販売管理（sale.js は manage.js より後に読む） -->
-<script src="js/pages/sale.js?v=20260401a"></script>
+<script src="js/pages/sale.js?v=20260403b"></script>
 
 </body>
 </html>
