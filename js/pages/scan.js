@@ -28,7 +28,7 @@ Pages.qrScan = function (params = {}) {
     return 'color:var(--text3);background:transparent;';
   }
   function _modeDesc() {
-    if (_scanMode === 'weight') return '⚖️ QR → 体重入力 → 保存（最短3タップ）';
+    if (_scanMode === 'weight') return '📷 QR → 成長記録（growth.jsへ転送）';
     if (_scanMode === 'diff')   return '📝 QR → 未入力項目を補完する';
     return '🔍 QR → 個体・ロット・産卵セットの詳細を開く';
   }
@@ -45,7 +45,7 @@ Pages.qrScan = function (params = {}) {
           <button style="flex:1;border:none;padding:7px 4px;border-radius:8px;cursor:pointer;font-size:.75rem;${_modeStyle('diff')}"
             onclick="Pages._qrSwitchMode('diff')">📝 差分</button>
           <button style="flex:1;border:none;padding:7px 4px;border-radius:8px;cursor:pointer;font-size:.75rem;${_modeStyle('weight')}"
-            onclick="Pages._qrSwitchMode('weight')">⚖️ 体重</button>
+            onclick="Pages._qrSwitchMode('weight')">📷 記録</button>
         </div>
         <div style="font-size:.72rem;color:var(--text3);padding:2px 4px;margin-top:-2px">${_modeDesc()}</div>
 
@@ -194,15 +194,24 @@ Pages._qrResolve = async function () {
     }
 
     if (mode === 'weight') {
-      routeTo('weight-mode', { resolve_result: res, qr_text: qrText });
+      // growth-rec（新UI）に統一
+      const _ent = res.entity || {};
+      const _eid = _ent.ind_id || _ent.lot_id || '';
+      const _ety = res.entity_type || 'IND';
+      if (_eid) {
+        routeTo('growth-rec', { targetType: _ety, targetId: _eid, displayId: _ent.display_id || _eid });
+      } else {
+        UI.toast('対象が特定できませんでした', 'error'); routeTo('qr-scan');
+      }
     } else if (mode === 'diff') {
       routeTo('qr-diff', { resolve_result: res, qr_text: qrText });
     } else {
       // 確認モード: 直接詳細画面へ
-      const eid = res.entity?.ind_id || res.entity?.lot_id || res.entity?.set_id;
-      if (res.entity_type === 'IND' && eid)      routeTo('ind-detail',     { indId: eid });
+      const eid = res.entity?.ind_id || res.entity?.lot_id || res.entity?.set_id || res.entity?.par_id;
+      if      (res.entity_type === 'IND' && eid) routeTo('ind-detail',     { indId: eid });
       else if (res.entity_type === 'LOT' && eid) routeTo('lot-detail',     { lotId: eid });
       else if (res.entity_type === 'SET' && eid) routeTo('pairing-detail', { pairingId: eid });
+      else if (res.entity_type === 'PAR' && eid) routeTo('parent-detail',  { parId: eid });
       else routeTo('qr-diff', { resolve_result: res, qr_text: qrText });
     }
   } catch (e) {
@@ -731,7 +740,7 @@ const WM_THRESHOLDS = [
 /**
  * Pages.weightMode — 体重測定画面のメインレンダラ
  * params.resolve_result: resolveQR のレスポンス（必須）
- * qr-scan 画面から routeTo('weight-mode', { resolve_result, qr_text }) で遷移
+ * qr-scan 画面から growth-rec へリダイレクト（weight-mode は薄いラッパー）
  */
 Pages.weightMode = function (params = {}) {
   const res = params.resolve_result;
@@ -1177,14 +1186,7 @@ Pages._wmShowComplete = function (entityType, entityId, weight) {
         const lot2 = Store.getLot(lotId);
         const ln2  = Store.getLine(lotLineId);
         if (lot2) {
-          routeTo('weight-mode', {
-            resolve_result: {
-              entity_type: 'LOT',
-              entity:      lot2,
-              line:        ln2 || {},
-              last_growth: null,
-            },
-          });
+          routeTo('growth-rec', { targetType:'LOT', targetId:lot2.lot_id, displayId:lot2.display_id||lot2.lot_id });
         } else {
           routeTo('lot-detail', { lotId: lotId });
         }
@@ -1478,3 +1480,21 @@ Pages._t1StartCamera = async function () {
 
 // ルーティング登録
 window.PAGES['qr-scan-t1'] = () => Pages.qrScanT1();
+
+// weight-mode / t1-weight / t2-weight は growth-rec への薄いラッパー
+window.PAGES['weight-mode'] = () => {
+  const p = Store.getParams(), res = p.resolve_result, ent = (res && res.entity) || {};
+  const eid = ent.ind_id || ent.lot_id || '', ety = (res && res.entity_type) || 'IND';
+  eid ? routeTo('growth-rec', { targetType:ety, targetId:eid, displayId:ent.display_id||eid })
+      : routeTo('qr-scan');
+};
+window.PAGES['t1-weight'] = () => {
+  const p = Store.getParams(), ent = ((p.resolve_result||{}).entity)||{}, eid = ent.lot_id||'';
+  eid ? routeTo('growth-rec', { targetType:'LOT', targetId:eid, displayId:ent.display_id||eid, _preset:'t1' })
+      : routeTo('qr-scan', { mode:'weight' });
+};
+window.PAGES['t2-weight'] = () => {
+  const p = Store.getParams(), ent = ((p.resolve_result||{}).entity)||{}, eid = ent.lot_id||'';
+  eid ? routeTo('growth-rec', { targetType:'LOT', targetId:eid, displayId:ent.display_id||eid, _preset:'t2' })
+      : routeTo('qr-scan', { mode:'weight' });
+};
