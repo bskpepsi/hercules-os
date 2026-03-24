@@ -395,15 +395,10 @@ function _renderLineDetail(line, main) {
           onclick="routeTo('ind-list',{line_id:'${line.line_id}'})">
           🐛 個体一覧<br><span style="font-size:1.1rem">${aliveInds.length}</span>
         </button>
-        <button style="grid-column:1/-1;padding:13px 8px;border-radius:var(--radius);font-weight:700;font-size:.9rem;
+        <button style="grid-column:1/2;padding:12px 8px;border-radius:var(--radius);font-weight:700;font-size:.9rem;
           background:rgba(155,89,182,.85);color:#fff;border:none;cursor:pointer"
           onclick="routeTo('egg-lot-bulk',{lineId:'${line.line_id}'})">
           🥚 卵ロット一括作成
-        </button>
-        <button style="grid-column:1/2;padding:12px 8px;border-radius:var(--radius);font-weight:700;font-size:.88rem;
-          background:var(--gold);color:#1a1a1a;border:none;cursor:pointer"
-          onclick="routeTo('lot-new',{lineId:'${line.line_id}'})">
-          ＋ ロット追加
         </button>
         <button style="grid-column:2/3;padding:12px 8px;border-radius:var(--radius);font-weight:700;font-size:.88rem;
           background:var(--surface3,#3a3a4a);color:var(--text1);border:1px solid var(--border);cursor:pointer"
