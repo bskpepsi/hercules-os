@@ -58,9 +58,13 @@ function _detailPageKey(targetType, targetId) {
 // ── ラベル生成ページ ─────────────────────────────────────────────
 Pages.labelGen = function (params = {}) {
   const main = document.getElementById('main');
-  let targetType = params.targetType || 'IND';
-  let targetId   = params.targetId   || '';
-  let labelType  = params.labelType  || _defaultLabelType(targetType);
+  let targetType      = params.targetType || 'IND';
+  let targetId        = params.targetId   || '';
+  let labelType       = params.labelType  || _defaultLabelType(targetType);
+  // 卵ロット一括発行キューパラメータ
+  const _eblQueueIdx   = params._eblQueueIdx   !== undefined ? parseInt(params._eblQueueIdx,10)   : -1;
+  const _eblQueueTotal = params._eblQueueTotal  !== undefined ? parseInt(params._eblQueueTotal,10) : 0;
+  const _inEblQueue    = _eblQueueIdx >= 0 && _eblQueueTotal > 0;
 
   const inds = Store.filterIndividuals({ status: 'alive' });
   const lots = Store.filterLots({ status: 'active' });
@@ -70,10 +74,17 @@ Pages.labelGen = function (params = {}) {
   const isDirectMode = !!params.targetId;
   const origin       = isDirectMode ? _detailPageKey(targetType, targetId) : null;
 
-  // ヘッダーの戻るボタン: 直行モードは元の詳細に戻る、それ以外は Store.back()
-  const headerOpts = isDirectMode && origin
-    ? { back: true, backFn: `routeTo('${origin.page}',${JSON.stringify(origin.params)})` }
-    : { back: true };
+  // ヘッダーの戻るボタン
+  // 一括発行キューモード → 完了画面へ戻る / 直行モード → 詳細へ / それ以外 → Store.back()
+  // ヘッダー戻るボタン
+  // 一括発行キューモード → 完了一覧へ直接戻る（前のラベルではなく一覧へ）
+  // 直行モード            → 詳細画面へ
+  // それ以外             → Store.back()
+  const headerOpts = _inEblQueue
+    ? { back: true, backFn: "routeTo('egg-lot-bulk',{_showComplete:true})" }
+    : (isDirectMode && origin
+        ? { back: true, backFn: `routeTo('${origin.page}',${JSON.stringify(origin.params)})` }
+        : { back: true });
 
   function render() {
     main.innerHTML = `
@@ -160,8 +171,23 @@ Pages.labelGen = function (params = {}) {
               <button class="btn btn-ghost" style="flex:1"
                 onclick="Pages._lblGenerate('${targetType}','${targetId}','${labelType}')">🔄 再生成</button>
             </div>
-            ${origin ? `
-            <!-- 戻るショートカット -->
+            ${_inEblQueue ? `
+            <!-- 一括発行キューナビゲーション -->
+            <div style="display:flex;gap:8px;margin-top:4px">
+              <div style="font-size:.72rem;color:var(--text3);padding:4px 0;flex:1;text-align:center">
+                ${_eblQueueIdx+1} / ${_eblQueueTotal}枚目
+              </div>
+            </div>
+            ${_eblQueueIdx + 1 < _eblQueueTotal ? `
+            <button class="btn btn-primary btn-full" style="margin-top:4px;font-weight:700"
+              onclick="window._eblGoNextLabel(${_eblQueueIdx})">
+              次のラベルへ →（${_eblQueueIdx+2}/${_eblQueueTotal}枚目）
+            </button>` : `
+            <button class="btn btn-ghost btn-full" style="margin-top:4px;font-weight:700;color:var(--green)"
+              onclick="window._eblGoNextLabel(${_eblQueueIdx})">
+              ✅ 完了画面へ戻る（全${_eblQueueTotal}枚発行済み）
+            </button>`}` : origin ? `
+            <!-- 通常の詳細戻り -->
             <button class="btn btn-ghost btn-full" style="margin-top:2px;font-size:.82rem"
               onclick="routeTo('${origin.page}',${JSON.stringify(origin.params)})">
               ← ${targetType==='IND'?'個体':targetType==='LOT'?'ロット':targetType==='PAR'?'種親':'詳細'}に戻る
