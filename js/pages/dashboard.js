@@ -236,9 +236,9 @@ function _renderDashboard(main) {
           <div style="font-size:1.6rem;margin-bottom:3px">📷</div>
           <div style="font-weight:700;font-size:.88rem">QRスキャン</div>
         </button>
-        <button onclick="routeTo('pairing-list')" style="padding:16px 8px;border:none;border-radius:14px;background:linear-gradient(135deg,rgba(155,89,182,.85),rgba(187,143,206,.8));color:#fff;cursor:pointer;text-align:center;box-shadow:0 3px 12px rgba(155,89,182,.3)">
+        <button onclick="routeTo('egg-lot-bulk')" style="padding:16px 8px;border:none;border-radius:14px;background:linear-gradient(135deg,rgba(155,89,182,.85),rgba(187,143,206,.8));color:#fff;cursor:pointer;text-align:center;box-shadow:0 3px 12px rgba(155,89,182,.3)">
           <div style="font-size:1.6rem;margin-bottom:3px">🥚</div>
-          <div style="font-weight:700;font-size:.88rem">採卵記録</div>
+          <div style="font-weight:700;font-size:.88rem">卵ロット一括</div>
         </button>
         <button onclick="routeTo('label-gen')" style="padding:16px 8px;border:none;border-radius:14px;background:linear-gradient(135deg,rgba(202,164,48,.85),rgba(212,181,100,.8));color:#fff;cursor:pointer;text-align:center;box-shadow:0 3px 12px rgba(202,164,48,.3)">
           <div style="font-size:1.6rem;margin-bottom:3px">🏷️</div>

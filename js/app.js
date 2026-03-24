@@ -28,6 +28,7 @@ window.PAGES = {
   'ind-detail':  () => Pages.individualDetail(Store.getParams().indId || _pid()),
   'ind-new':     () => Pages.individualNew(Store.getParams()),
   'growth-rec':  () => Pages.growthRecord(Store.getParams()),
+  'egg-lot-bulk':() => Pages.eggLotBulk(Store.getParams()),
   'lot-list':    () => Pages.lotList(),
   'lot-detail':  () => Pages.lotDetail(Store.getParams().lotId || _pid()),
   'lot-new':     () => Pages.lotNew(Store.getParams()),

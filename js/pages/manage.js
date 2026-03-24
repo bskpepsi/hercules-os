@@ -55,7 +55,7 @@ Pages.manage = function () {
       icon: '💰', label: '販売管理', count: (() => {
         const inds = Store.getDB('individuals') || [];
         return inds.filter(i => i.status === 'sold').length;
-      })(), unit: '頭販売済',
+      })(), unit: '頭販売済み',
       page: 'sale-list', newPage: null,
       sub: (() => {
         const inds = Store.getDB('individuals') || [];
@@ -104,6 +104,10 @@ Pages.manage = function () {
           <button class="btn btn-ghost" onclick="routeTo('label-gen')"
             style="grid-column:span 2;border-color:rgba(200,168,75,.4);color:var(--gold)">
             🏷️ ラベル発行・QRコード生成
+          </button>
+          <button class="btn btn-ghost" onclick="routeTo('egg-lot-bulk')"
+            style="grid-column:span 2;border-color:rgba(155,89,182,.4);color:#c39bd3;font-weight:700">
+            🥚 卵ロット一括作成
           </button>
         </div>
       </div>
@@ -390,6 +394,11 @@ function _renderLineDetail(line, main) {
           background:var(--green);color:#fff;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:4px"
           onclick="routeTo('ind-list',{line_id:'${line.line_id}'})">
           🐛 個体一覧<br><span style="font-size:1.1rem">${aliveInds.length}</span>
+        </button>
+        <button style="grid-column:1/-1;padding:13px 8px;border-radius:var(--radius);font-weight:700;font-size:.9rem;
+          background:rgba(155,89,182,.85);color:#fff;border:none;cursor:pointer"
+          onclick="routeTo('egg-lot-bulk',{lineId:'${line.line_id}'})">
+          🥚 卵ロット一括作成
         </button>
         <button style="grid-column:1/2;padding:12px 8px;border-radius:var(--radius);font-weight:700;font-size:.88rem;
           background:var(--gold);color:#1a1a1a;border:none;cursor:pointer"
