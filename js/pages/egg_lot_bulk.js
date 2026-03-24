@@ -81,6 +81,49 @@ function _renderCompleteStatic(main, results, lineId, line) {
     </div>`;
 }
 
+// ── ライン卵配分集計（採卵総数・配分済み・未配分を計算） ─────────
+function _eblCalcLineStats(lineId) {
+  if (!lineId) return null;
+
+  var lots     = Store.getDB('lots')        || [];
+  var inds     = Store.getDB('individuals') || [];
+  var pairings = Store.getDB('pairings')    || [];
+  var eggRecs  = Store.getDB('egg_records') || [];
+
+  var linePairs  = pairings.filter(function(p) { return p.line_id === lineId; });
+  var setPairIds = {};
+  linePairs.forEach(function(p) { setPairIds[p.set_id] = true; });
+
+  var lineEggRecs = eggRecs.filter(function(r) { return setPairIds[r.set_id]; });
+
+  // 採卵総数（egg_records から / フォールバック: pairings.total_eggs）
+  var totalEggs = lineEggRecs.length > 0
+    ? lineEggRecs.reduce(function(s,r){ return s + (parseInt(r.egg_count,10)||0); }, 0)
+    : linePairs.reduce(function(s,p){ return s + (parseInt(p.total_eggs,10)||0); }, 0);
+
+  // 腐卵数
+  var rottenEggs = lineEggRecs.reduce(function(s,r){ return s + (parseInt(r.failed_count,10)||0); }, 0);
+
+  // このラインの全ロット
+  var allLots   = lots.filter(function(l){ return l.line_id === lineId; });
+  var allLotIds = {};
+  allLots.forEach(function(l){ allLotIds[l.lot_id] = true; });
+
+  // ロット化累計（ルートロットのみ）
+  var rootLots     = allLots.filter(function(l){ return !l.parent_lot_id || l.parent_lot_id === ''; });
+  var lotInitTotal = rootLots.reduce(function(s,l){ return s + (parseInt(l.initial_count,10)||0); }, 0);
+
+  // 直接個体化数
+  var lineInds   = inds.filter(function(i){ return i.line_id === lineId; });
+  var directInds = lineInds.filter(function(i){ return !i.lot_id || i.lot_id === '' || !allLotIds[i.lot_id]; });
+
+  var distributed = lotInitTotal + directInds.length;
+  var unallocated = Math.max(0, totalEggs - rottenEggs - distributed);
+
+  return { totalEggs: totalEggs, rottenEggs: rottenEggs, distributed: distributed, unallocated: unallocated };
+}
+
+
 Pages.eggLotBulk = function (params = {}) {
   const main = document.getElementById('main');
 
@@ -165,11 +208,18 @@ Pages.eggLotBulk = function (params = {}) {
       return `<option value="${l.line_id}" ${l.line_id === _selLineId ? 'selected' : ''}>${label}</option>`;
     }).join('');
 
-    const filledRows = _rows.filter(r => parseInt(r.count, 10) > 0);
-    const totalEggs  = filledRows.reduce((s, r) => s + (parseInt(r.count, 10) || 0), 0);
-    const lotCount   = filledRows.filter(r => parseInt(r.count, 10) >= 2).length;
-    const indCount   = filledRows.filter(r => parseInt(r.count, 10) === 1).length;
-    const canSave    = _selLineId && filledRows.length > 0;
+    const filledRows    = _rows.filter(r => parseInt(r.count, 10) > 0);
+    const thisInputTotal= filledRows.reduce((s, r) => s + (parseInt(r.count, 10) || 0), 0);
+    const lotCount      = filledRows.filter(r => parseInt(r.count, 10) >= 2).length;
+    const indCount      = filledRows.filter(r => parseInt(r.count, 10) === 1).length;
+    // 後方互換のため内部変数名を維持
+    const totalEggs     = thisInputTotal;
+
+    // ── ライン集計（採卵数・配分済み・未配分） ──────────────────
+    const _stats   = _selLineId ? _eblCalcLineStats(_selLineId) : null;
+    const _unalloc = _stats ? _stats.unallocated : null;
+    const _overLimit = _stats !== null && thisInputTotal > _stats.unallocated;
+    const canSave  = _selLineId && filledRows.length > 0 && !_overLimit;
 
     main.innerHTML = `
       ${UI.header('🥚 卵ロット一括作成', { back: true })}
@@ -199,7 +249,49 @@ Pages.eggLotBulk = function (params = {}) {
           </div>
         </div>
 
-        <!-- ② 共通初期値（変更可能） -->
+        <!-- ② ライン卵配分サマリ -->
+        ${_stats ? `
+        <div style="border-radius:10px;padding:12px 14px;
+          border:1px solid ${_overLimit ? 'rgba(224,80,80,.45)' : 'rgba(45,122,82,.3)'};
+          background:${_overLimit ? 'rgba(224,80,80,.06)' : 'rgba(45,122,82,.05)'}">
+          <div style="font-size:.72rem;font-weight:700;
+            color:${_overLimit ? 'var(--red,#e05050)' : 'var(--text2)'};margin-bottom:8px">
+            ${_overLimit ? '⚠️ 入力数が未配分数を超えています' : '🥚 卵の配分状況'}
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:4px;text-align:center">
+            <div style="background:var(--surface2);border-radius:6px;padding:6px 2px">
+              <div style="font-size:.58rem;color:var(--text3)">採卵総数</div>
+              <div style="font-weight:700;font-size:.95rem;color:var(--amber)">${_stats.totalEggs}</div>
+            </div>
+            <div style="background:var(--surface2);border-radius:6px;padding:6px 2px">
+              <div style="font-size:.58rem;color:var(--text3)">配分済み</div>
+              <div style="font-weight:700;font-size:.95rem;color:var(--text2)">${_stats.distributed}</div>
+            </div>
+            <div style="background:var(--surface2);border-radius:6px;padding:6px 2px">
+              <div style="font-size:.58rem;color:var(--text3)">未配分</div>
+              <div style="font-weight:700;font-size:.95rem;
+                color:${_stats.unallocated <= 0 ? 'var(--red,#e05050)' : 'var(--green)'}">
+                ${_stats.unallocated}
+              </div>
+            </div>
+            <div style="background:var(--surface2);border-radius:6px;padding:6px 2px">
+              <div style="font-size:.58rem;color:var(--text3)">今回入力</div>
+              <div style="font-weight:700;font-size:.95rem;
+                color:${_overLimit ? 'var(--red,#e05050)' : 'var(--blue)'}">
+                ${thisInputTotal}
+              </div>
+            </div>
+            <div style="background:var(--surface2);border-radius:6px;padding:6px 2px">
+              <div style="font-size:.58rem;color:var(--text3)">登録後残り</div>
+              <div style="font-weight:700;font-size:.95rem;
+                color:${(_stats.unallocated - thisInputTotal) < 0 ? 'var(--red,#e05050)' : 'var(--text2)'}">
+                ${_stats.unallocated - thisInputTotal}
+              </div>
+            </div>
+          </div>
+        </div>` : ''}
+
+        <!-- ③ 共通初期値（変更可能） -->
         <div class="card">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
             <div class="card-title" style="margin:0">共通初期値</div>
@@ -328,7 +420,7 @@ Pages.eggLotBulk = function (params = {}) {
         <button class="btn btn-ghost btn-xl" style="flex:1" id="ebl-back-btn">← 戻る</button>
         <button class="btn btn-gold btn-xl" style="flex:2" id="ebl-save-btn"
           onclick="Pages._eblSave()" ${canSave ? '' : 'disabled'}>
-          🥚 登録してラベル発行
+          ${_overLimit ? '⚠️ 未配分数を超えています' : '🥚 登録してラベル発行'}
         </button>
       </div>`;
 
@@ -408,6 +500,16 @@ Pages.eggLotBulk = function (params = {}) {
       return !isNaN(n) && n > 0;
     });
     if (targets.length === 0) { UI.toast('卵数を1以上入力してください', 'error'); return; }
+
+    // ── 保存時バリデーション: 未配分数チェック ──────────────────
+    const _saveStats = _eblCalcLineStats(_selLineId);
+    if (_saveStats) {
+      const _saveTotal = targets.reduce(function(s, r) { return s + (parseInt(r.count,10)||0); }, 0);
+      if (_saveTotal > _saveStats.unallocated) {
+        UI.toast('今回入力（' + _saveTotal + '個）が未配分数（' + _saveStats.unallocated + '個）を超えています', 'error', 5000);
+        return;
+      }
+    }
 
     const saveBtn = document.getElementById('ebl-save-btn');
     const backBtn = document.getElementById('ebl-back-btn');
