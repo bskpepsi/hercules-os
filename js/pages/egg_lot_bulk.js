@@ -418,9 +418,10 @@ Pages.eggLotBulk = function (params = {}) {
     const stage = _commonStage || 'L1L2';
     const line  = (Store.getDB('lines') || []).find(l => l.line_id === _selLineId);
 
-    // ── LOT行とIND行に分ける ──────────────────────────────────
-    const lotRows = targets.filter(r => parseInt(r.count, 10) >= 2);
-    const indRows = targets.filter(r => parseInt(r.count, 10) === 1);
+    // ── LOT行とIND行に分ける（入力順を保持するため _rowPos を付与）──
+    const targetsWithPos = targets.map(function(r, i) { return Object.assign({}, r, { _rowPos: i }); });
+    const lotRows = targetsWithPos.filter(r => parseInt(r.count, 10) >= 2);
+    const indRows = targetsWithPos.filter(r => parseInt(r.count, 10) === 1);
 
     const results = [];
     const errors  = [];
@@ -428,6 +429,7 @@ Pages.eggLotBulk = function (params = {}) {
     // ── ① ロット一括作成（createLotBulk: 1回のAPI呼び出し） ──
     if (lotRows.length > 0) {
       try {
+        console.time('[EBL] createLotBulk');
         const payload = {
           line_id:        _selLineId,
           stage,
@@ -440,11 +442,15 @@ Pages.eggLotBulk = function (params = {}) {
           })),
         };
         const res = await API.lot.createBulk(payload);
+        console.timeEnd('[EBL] createLotBulk');
         // createLotBulk returns { created: [{lot_id, display_id, count},...] }
         (res.created || []).forEach((r, i) => {
           const row  = lotRows[i];
           const date = (row.collectDate || _commonDate || _todayYMD()).replace(/-/g, '/');
-          results.push({ type: 'LOT', id: r.lot_id, displayId: r.display_id, count: r.count, date });
+          const _lRow = lotRows[i] || {};
+          results.push({ type: 'LOT', id: r.lot_id, displayId: r.display_id, count: r.count, date,
+            container: _lRow.container || _commonContainer || '1.8L',
+            _rowPos: _lRow._rowPos !== undefined ? _lRow._rowPos : i });
         });
       } catch (e) {
         errors.push('ロット一括作成失敗: ' + (e.message || '不明なエラー'));
@@ -454,6 +460,7 @@ Pages.eggLotBulk = function (params = {}) {
     // ── ② 個体一括作成（createIndividualBulk: 1回のAPI呼び出し） ──
     if (indRows.length > 0) {
       try {
+        console.time('[EBL] createIndividualBulk');
         const payload = {
           line_id: _selLineId,
           individuals: indRows.map(row => ({
@@ -466,10 +473,14 @@ Pages.eggLotBulk = function (params = {}) {
           })),
         };
         const res = await API.individual.createBulk(payload);
+        console.timeEnd('[EBL] createIndividualBulk');
         (res.created || []).forEach((r, i) => {
           const row  = indRows[i];
           const date = (row.collectDate || _commonDate || _todayYMD()).replace(/-/g, '/');
-          results.push({ type: 'IND', id: r.ind_id, displayId: r.display_id, count: 1, date });
+          const _iRow = indRows[i] || {};
+          results.push({ type: 'IND', id: r.ind_id, displayId: r.display_id, count: 1, date,
+            container: _iRow.container || _commonContainer || '1.8L',
+            _rowPos: _iRow._rowPos !== undefined ? _iRow._rowPos : (lotRows.length + i) });
         });
       } catch (e) {
         errors.push('個別化一括作成失敗: ' + (e.message || '不明なエラー'));
@@ -484,8 +495,42 @@ Pages.eggLotBulk = function (params = {}) {
       return;
     }
 
-    try { await syncAll(true); } catch(_) {}
+    // ── syncAll を排除: API 戻り値を使って Store を直接パッチ ──
+    // getAllData（8シート読み込み）は呼ばない → ~15秒短縮
+    results.forEach(function(r) {
+      if (r.type === 'LOT') {
+        Store.addDBItem('lots', {
+          lot_id:         r.id,
+          display_id:     r.displayId,
+          line_id:        _selLineId,
+          stage:          _commonStage || 'L1L2',
+          count:          r.count,
+          initial_count:  r.count,
+          container_size: r.container || _commonContainer || '1.8L',
+          mat_type:       _commonMat || 'T0',
+          status:         'active',
+          note:           '採卵日: ' + r.date,
+        });
+      } else {
+        Store.addDBItem('individuals', {
+          ind_id:            r.id,
+          display_id:        r.displayId,
+          line_id:           _selLineId,
+          current_stage:     _commonStage || 'L1L2',
+          current_mat:       _commonMat   || 'T0',
+          current_container: r.container || _commonContainer || '1.8L',
+          status:            'larva',
+          individual_date:   r.date,
+          note_private:      '採卵日: ' + r.date + '（卵1個・個別化）',
+        });
+      }
+    });
 
+    // バックグラウンドで非同期同期（完了画面の表示をブロックしない）
+    setTimeout(function() { syncAll(true).catch(function(){}); }, 2000);
+
+    // 入力行順にソート（LOT/IND 混在でも元の並び順を維持）
+    results.sort(function(a, b) { return (a._rowPos || 0) - (b._rowPos || 0); });
     _savedResults = results;
     _renderComplete(results, line);
   };
