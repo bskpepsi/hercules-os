@@ -85,37 +85,54 @@ function _renderCompleteStatic(main, results, lineId, line) {
 function _eblCalcLineStats(lineId) {
   if (!lineId) return null;
 
-  var lots     = Store.getDB('lots')        || [];
-  var inds     = Store.getDB('individuals') || [];
-  var pairings = Store.getDB('pairings')    || [];
-  var eggRecs  = Store.getDB('egg_records') || [];
+  var lots        = Store.getDB('lots')        || [];
+  var inds        = Store.getDB('individuals') || [];
+  var allPairings = Store.getDB('pairings')    || [];
+  var eggRecs     = Store.getDB('egg_records') || [];
 
-  var linePairs  = pairings.filter(function(p) { return p.line_id === lineId; });
+  // ── ラインオブジェクトを取得（後方互換フィルタに必要）──────────
+  var line = Store.getLine(lineId);
+
+  // ── manage.js と完全同一のペアリングフィルタ ──────────────────
+  // 後方互換: line_id 未設定のレガシーデータは父母 par_id で照合
+  var linePairs = allPairings.filter(function(p) {
+    if (p.line_id === lineId) return true;
+    if (!p.line_id && line && line.father_par_id && line.mother_par_id) {
+      return (p.father_par_id === line.father_par_id &&
+              p.mother_par_id === line.mother_par_id);
+    }
+    return false;
+  });
+
+  // set_id のルックアップ用ハッシュ
   var setPairIds = {};
   linePairs.forEach(function(p) { setPairIds[p.set_id] = true; });
 
   var lineEggRecs = eggRecs.filter(function(r) { return setPairIds[r.set_id]; });
 
-  // 採卵総数（egg_records から / フォールバック: pairings.total_eggs）
+  // ── 採卵総数 ─────────────────────────────────────────────────
+  // egg_records があれば egg_count の合計、なければ pairings.total_eggs
   var totalEggs = lineEggRecs.length > 0
     ? lineEggRecs.reduce(function(s,r){ return s + (parseInt(r.egg_count,10)||0); }, 0)
     : linePairs.reduce(function(s,p){ return s + (parseInt(p.total_eggs,10)||0); }, 0);
 
-  // 腐卵数
+  // ── 腐卵数 ───────────────────────────────────────────────────
   var rottenEggs = lineEggRecs.reduce(function(s,r){ return s + (parseInt(r.failed_count,10)||0); }, 0);
 
-  // このラインの全ロット
+  // ── このラインの全ロット ─────────────────────────────────────
   var allLots   = lots.filter(function(l){ return l.line_id === lineId; });
   var allLotIds = {};
   allLots.forEach(function(l){ allLotIds[l.lot_id] = true; });
 
-  // ロット化累計（ルートロットのみ）
+  // ロット化累計（ルートロットの initial_count のみ：分割子ロットを除外）
   var rootLots     = allLots.filter(function(l){ return !l.parent_lot_id || l.parent_lot_id === ''; });
   var lotInitTotal = rootLots.reduce(function(s,l){ return s + (parseInt(l.initial_count,10)||0); }, 0);
 
-  // 直接個体化数
+  // 直接個体化数（lot_id 未設定 or このラインのロットに属さない個体）
   var lineInds   = inds.filter(function(i){ return i.line_id === lineId; });
-  var directInds = lineInds.filter(function(i){ return !i.lot_id || i.lot_id === '' || !allLotIds[i.lot_id]; });
+  var directInds = lineInds.filter(function(i){
+    return !i.lot_id || i.lot_id === '' || !allLotIds[i.lot_id];
+  });
 
   var distributed = lotInitTotal + directInds.length;
   var unallocated = Math.max(0, totalEggs - rottenEggs - distributed);
