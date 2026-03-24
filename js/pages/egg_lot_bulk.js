@@ -395,7 +395,9 @@ Pages.eggLotBulk = function (params = {}) {
     render(true);
   };
 
-  // ── 保存処理 ─────────────────────────────────────────────────
+  // ── 保存処理（一括API版: LOT は createLotBulk、IND は createIndividualBulk）──
+  // 従来: N件 × 1回API = N × ~7秒 ≒ 20秒
+  // 改善: 最大2回API（LOT一括 + IND一括）= ~4秒以下
   Pages._eblSave = async function() {
     _readDom();
 
@@ -412,47 +414,65 @@ Pages.eggLotBulk = function (params = {}) {
     if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '⏳ 登録中...'; }
     if (backBtn) backBtn.disabled = true;
 
+    const mat   = _commonMat   || 'T0';
+    const stage = _commonStage || 'L1L2';
+    const line  = (Store.getDB('lines') || []).find(l => l.line_id === _selLineId);
+
+    // ── LOT行とIND行に分ける ──────────────────────────────────
+    const lotRows = targets.filter(r => parseInt(r.count, 10) >= 2);
+    const indRows = targets.filter(r => parseInt(r.count, 10) === 1);
+
     const results = [];
     const errors  = [];
-    const line    = (Store.getDB('lines') || []).find(l => l.line_id === _selLineId);
 
-    for (const row of targets) {
-      const n         = parseInt(row.count, 10);
-      const date      = (row.collectDate || _commonDate || _todayYMD()).replace(/-/g, '/');
-      const container = row.container || _commonContainer || '1.8L';
-      const mat       = _commonMat    || 'T0';
-      const stage     = _commonStage  || 'L1L2';
-
-      if (n >= 2) {
-        try {
-          const res = await API.lot.create({
-            line_id:        _selLineId,
-            stage,
-            count:          n,
-            initial_count:  n,
-            container_size: container,
+    // ── ① ロット一括作成（createLotBulk: 1回のAPI呼び出し） ──
+    if (lotRows.length > 0) {
+      try {
+        const payload = {
+          line_id:        _selLineId,
+          stage,
+          mat_type:       mat,
+          lots: lotRows.map(row => ({
+            count:          parseInt(row.count, 10),
+            container_size: row.container || _commonContainer || '1.8L',
             mat_type:       mat,
-            note:           '採卵日: ' + date,
-          });
-          results.push({ type: 'LOT', id: res.lot_id, displayId: res.display_id, count: n, date });
-        } catch (e) {
-          errors.push(`ロット(${n}個): ${e.message || '不明なエラー'}`);
-        }
-      } else {
-        try {
-          const res = await API.individual.create({
-            line_id:           _selLineId,
+            note:           '採卵日: ' + (row.collectDate || _commonDate || _todayYMD()).replace(/-/g, '/'),
+          })),
+        };
+        const res = await API.lot.createBulk(payload);
+        // createLotBulk returns { created: [{lot_id, display_id, count},...] }
+        (res.created || []).forEach((r, i) => {
+          const row  = lotRows[i];
+          const date = (row.collectDate || _commonDate || _todayYMD()).replace(/-/g, '/');
+          results.push({ type: 'LOT', id: r.lot_id, displayId: r.display_id, count: r.count, date });
+        });
+      } catch (e) {
+        errors.push('ロット一括作成失敗: ' + (e.message || '不明なエラー'));
+      }
+    }
+
+    // ── ② 個体一括作成（createIndividualBulk: 1回のAPI呼び出し） ──
+    if (indRows.length > 0) {
+      try {
+        const payload = {
+          line_id: _selLineId,
+          individuals: indRows.map(row => ({
             current_stage:     stage,
             current_mat:       mat,
-            current_container: container,
-            individual_date:   date,
-            note_private:      '採卵日: ' + date + '（卵1個・個別化）',
+            current_container: row.container || _commonContainer || '1.8L',
+            individual_date:   (row.collectDate || _commonDate || _todayYMD()).replace(/-/g, '/'),
+            note_private:      '採卵日: ' + (row.collectDate || _commonDate || _todayYMD()).replace(/-/g, '/') + '（卵1個・個別化）',
             status:            'larva',
-          });
-          results.push({ type: 'IND', id: res.ind_id, displayId: res.display_id, count: 1, date });
-        } catch (e) {
-          errors.push(`個別化(1頭): ${e.message || '不明なエラー'}`);
-        }
+          })),
+        };
+        const res = await API.individual.createBulk(payload);
+        (res.created || []).forEach((r, i) => {
+          const row  = indRows[i];
+          const date = (row.collectDate || _commonDate || _todayYMD()).replace(/-/g, '/');
+          results.push({ type: 'IND', id: r.ind_id, displayId: r.display_id, count: 1, date });
+        });
+      } catch (e) {
+        errors.push('個別化一括作成失敗: ' + (e.message || '不明なエラー'));
       }
     }
 

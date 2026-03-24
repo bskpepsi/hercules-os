@@ -76,7 +76,8 @@ const API = (() => {
 
   // ── 個体 ──────────────────────────────────────────────────────
   const individual = {
-    create:          (d)  => call('createIndividual', d),
+    create:          (d)  => call('createIndividual',     d),
+    createBulk:      (d)  => call('createIndividualBulk', d),  // { line_id, individuals:[...] }
     list:            (f)  => call('getIndividuals',   f || {}),
     get:             (id) => call('getIndividual',    { ind_id: id }),
     update:          (d)  => call('updateIndividual', d),
