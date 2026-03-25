@@ -331,8 +331,8 @@ function _renderLineDetail(line, main) {
     !i.lot_id || i.lot_id === '' || !allLotIds.has(i.lot_id)
   );
 
-  // ⑤ 未ロット卵 = MAX(採卵数 - 腐卵数 - ロット化累計 - 直接個体化数, 0)
-  //    ロット内減耗はロット化後の話なので未ロット卵には含めない
+  // ⑤ 未配分卵 = MAX(採卵数 - 腐卵数 - 配分済み, 0)
+  //    配分済み = ロット化累計 + 直接個体化数（ロット内減耗は配分後のため含まない）
   const unLotEggs   = Math.max(0, totalEggs - rottenEggs - lotInitTotal - directInds.length);
 
   // ⑥ 現在ロット内頭数 = SUM(active lots.count)
@@ -368,7 +368,7 @@ function _renderLineDetail(line, main) {
             <div style="font-weight:700;font-size:1rem;color:var(--amber)">${totalEggs}</div>
           </div>
           <div style="text-align:center;background:var(--surface2);border-radius:6px;padding:8px 2px">
-            <div style="font-size:.6rem;color:var(--text3)">未ロット卵</div>
+            <div style="font-size:.6rem;color:var(--text3)">未配分卵</div>
             <div style="font-weight:700;font-size:1rem;color:var(--text2)">${unLotEggs}</div>
           </div>
           <div style="text-align:center;background:var(--surface2);border-radius:6px;padding:8px 2px">
