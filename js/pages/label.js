@@ -476,6 +476,7 @@ function _buildLabelHTML(ld, qrSrc) {
 </style></head><body>
 <div class="lbl-wrap">
   <div class="lbl-header">${headerLabel} &nbsp;|&nbsp; HerculesOS</div>
+  <!-- 上段: QR専用ブロック(左) + 基本情報+性別(右) -->
   <div class="lbl-top">
     <div class="lbl-qr">${qrHtml}</div>
     <div class="lbl-info">
@@ -483,12 +484,13 @@ function _buildLabelHTML(ld, qrSrc) {
       <div style="font-size:7px;color:#555;margin-top:1px">L: <b>${ld.line_code||'—'}</b></div>
       ${ld.hatch_date ? `<div style="font-size:6px;color:#777">孵化: ${ld.hatch_date}</div>` : ''}
       ${isLot && ld.count ? `<div style="font-size:6px;color:#777">${ld.count}頭</div>` : ''}
+      ${isLot ? `<div style="font-size:6.5px;margin-top:1px">${chk('♂',ld.sex_hint==='♂')}${chk('♀',ld.sex_hint==='♀')}${chk('混合',ld.sex_hint==='混合')}</div>` : ''}
       ${!isLot && ld.sex ? `<div style="font-size:7px;color:${ld.sex==='♂'?'#3366cc':'#cc3366'};font-weight:700">${ld.sex}</div>` : ''}
     </div>
   </div>
+  <!-- 中段: 区分/マット/モルト/ステージのみ（♂♀ここに置かない） -->
   <div class="lbl-mid">
     <div class="lbl-checks">
-      ${isLot ? `<div>${chk('♂',ld.sex_hint==='♂')}${chk('♀',ld.sex_hint==='♀')}${chk('混合',ld.sex_hint==='混合')}</div>` : ''}
       <div>区分: ${chk('大',sexCats.includes('大'))}${chk('中',sexCats.includes('中'))}${chk('小',sexCats.includes('小'))}</div>
       <div>マット: ${['T0','T1','T2','T3'].map(m => chk(m, ld.mat_type===m)).join('')}</div>
       <div>モルト: ${chk('ON',ld.mat_molt===true||ld.mat_molt==='true')}${chk('OFF',!ld.mat_molt||ld.mat_molt==='false')}</div>
