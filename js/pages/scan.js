@@ -17,21 +17,29 @@
 // ════════════════════════════════════════════════════════════════
 Pages.qrScan = function (params = {}) {
   const main = document.getElementById('main');
-  // モード: 'view' | 'diff' | 'weight'
-  let _scanMode = params.mode === 'weight' ? 'weight' : params.mode === 'diff' ? 'diff' : 'view';
-  window._qrScanMode = _scanMode;  // 外部から参照できるようにグローバルへ
+  // 3モード: confirm(情報確認) / transition(移行編成) / record(継続・追加読取り)
+  const _modeMap = { 'view':'confirm','weight':'record','diff':'record','t1':'transition','t2':'transition','t3':'transition','t1_add':'transition' };
+  let _scanMode = _modeMap[params.mode] || params.mode || 'confirm';
+  if (!['confirm','transition','record'].includes(_scanMode)) _scanMode = 'confirm';
+  // 移行編成サブモード (t1/t2/t3)
+  window._qrTransMode = (params.mode === 't2') ? 't2' : (params.mode === 't3') ? 't3' : 't1';
+  window._qrAddingToSession = (params.mode === 't1_add');  // セッションへ追加読取り中
+  window._qrScanMode = _scanMode;
 
   function _modeStyle(m) {
     if (m === _scanMode) {
-      const bg = m==='weight' ? 'var(--green)' : m==='diff' ? 'var(--blue)' : 'var(--gold)';
+      const bg = m==='transition' ? 'var(--green)' : m==='record' ? 'var(--blue)' : 'var(--gold)';
       return `background:${bg};color:#fff;font-weight:700;`;
     }
     return 'color:var(--text3);background:transparent;';
   }
   function _modeDesc() {
-    if (_scanMode === 'weight') return '📷 QR → 成長記録（growth.jsへ転送）';
-    if (_scanMode === 'diff')   return '📝 QR → 未入力項目を補完する';
-    return '🔍 QR → 個体・ロット・産卵セットの詳細を開く';
+    if (_scanMode === 'transition') {
+      const sub = { t1:'T1移行', t2:'T2移行', t3:'T3移行' }[window._qrTransMode] || 'T1移行';
+      return `🔄 移行編成 — ${sub}: T0ロットQRを読んでセッションを開始`;
+    }
+    if (_scanMode === 'record') return '📷 継続・追加読取り: QR → 成長記録';
+    return '🔍 情報確認: QR → 詳細画面を開く';
   }
 
   function render() {
@@ -41,13 +49,22 @@ Pages.qrScan = function (params = {}) {
 
         <!-- 3モードタブ -->
         <div style="display:flex;background:var(--surface2);border-radius:10px;padding:3px;gap:3px">
-          <button style="flex:1;border:none;padding:7px 4px;border-radius:8px;cursor:pointer;font-size:.75rem;${_modeStyle('view')}"
-            onclick="Pages._qrSwitchMode('view')">🔍 確認</button>
-          <button style="flex:1;border:none;padding:7px 4px;border-radius:8px;cursor:pointer;font-size:.75rem;${_modeStyle('diff')}"
-            onclick="Pages._qrSwitchMode('diff')">📝 差分</button>
-          <button style="flex:1;border:none;padding:7px 4px;border-radius:8px;cursor:pointer;font-size:.75rem;${_modeStyle('weight')}"
-            onclick="Pages._qrSwitchMode('weight')">📷 記録</button>
+          <button style="flex:1;border:none;padding:7px 4px;border-radius:8px;cursor:pointer;font-size:.75rem;${_modeStyle('confirm')}"
+            onclick="Pages._qrSwitchMode('confirm')">🔍 情報確認</button>
+          <button style="flex:1;border:none;padding:7px 4px;border-radius:8px;cursor:pointer;font-size:.75rem;${_modeStyle('transition')}"
+            onclick="Pages._qrSwitchMode('transition')">🔄 移行編成</button>
+          <button style="flex:1;border:none;padding:7px 4px;border-radius:8px;cursor:pointer;font-size:.75rem;${_modeStyle('record')}"
+            onclick="Pages._qrSwitchMode('record')">📷 継続読取り</button>
         </div>
+        <!-- 移行編成サブモード -->
+        ${_scanMode === 'transition' ? `
+        <div style="display:flex;gap:4px;padding:4px 0">
+          ${['t1','t2','t3'].map(m => `<button style="flex:1;padding:5px;border-radius:7px;font-size:.75rem;cursor:pointer;
+            border:1px solid ${window._qrTransMode===m?'var(--green)':'var(--border)'};
+            background:${window._qrTransMode===m?'rgba(76,175,120,.15)':'var(--surface2)'};
+            color:${window._qrTransMode===m?'var(--green)':'var(--text3)'};font-weight:${window._qrTransMode===m?'700':'400'}"
+            onclick="Pages._qrSetTransMode('${m}')">${m.toUpperCase()}移行</button>`).join('')}
+        </div>` : ''}
         <div style="font-size:.72rem;color:var(--text3);padding:2px 4px;margin-top:-2px">${_modeDesc()}</div>
 
         <!-- カメラエリア -->
@@ -136,7 +153,16 @@ SET:SET-XXXXXXXX"
     setTimeout(() => Pages._qrRenderHistory(), 50);
   }
 
-  Pages._qrSwitchMode = (m) => { _scanMode = m; window._qrScanMode = m; render(); };
+  Pages._qrSwitchMode = function(m) {
+    _scanMode = m;
+    window._qrScanMode = m;
+    window._qrAddingToSession = false; // モード切替時は追加読取りを解除
+    render();
+  };
+  Pages._qrSetTransMode = function(m) {
+    window._qrTransMode = m;
+    render();
+  };
   render();
 
   // 起動直後カメラ自動起動（モード問わず）
@@ -169,39 +195,49 @@ Pages._qrPreviewInput = function (val) {
 
 // モード別遷移（ローカル/API両方から呼ばれる共通ルーター）
 function _qrNavigate(mode, res, qrText) {
-  if (mode === 'weight') {
+  if (mode === 'transition') {
+    const ent = res.entity || {};
+    const sub = window._qrTransMode || 't1';
+    // 追加読取りモード（既存セッションへロットを追加）
+    if (window._qrAddingToSession) {
+      const ok = Pages._t1TryAddLot && Pages._t1TryAddLot(ent.lot_id);
+      if (!ok) routeTo('qr-scan', { mode: 't1_add' });
+      return;
+    }
+    if (sub === 't1') {
+      if (res.entity_type === 'LOT' && ent.lot_id) {
+        Pages.t1SessionStart(ent.lot_id);
+      } else if (res.entity_type === 'BU') {
+        UI.toast('移行編成モードではT0ロットのQRを読んでください', 'info', 2500);
+      } else {
+        UI.toast('T1移行: ロットのQRを読んでください', 'info', 2500);
+      }
+    } else {
+      UI.toast(sub.toUpperCase() + '移行は準備中です', 'info', 2000);
+    }
+  } else if (mode === 'record') {
+    // 継続・追加読取り: 成長記録へ（既存の weight モードと同等）
     const _ent = res.entity || {};
-    const _eid = _ent.ind_id || _ent.lot_id || '';
+    const _eid = _ent.ind_id || _ent.lot_id || _ent.unit_id || '';
     const _ety = res.entity_type || 'IND';
     if (_eid) {
       routeTo('growth-rec', { targetType: _ety, targetId: _eid, displayId: _ent.display_id || _eid, _fromQR: true });
     } else {
-      UI.toast('対象が特定できませんでした', 'error'); routeTo('qr-scan');
-    }
-  } else if (mode === 'diff') {
-    routeTo('qr-diff', { resolve_result: res, qr_text: qrText });
-  } else if (mode === 't1') {
-    if (res.entity_type === 'LOT') {
-      const _e1 = res.entity || {};
-      routeTo('growth-rec', { targetType: 'LOT', targetId: _e1.lot_id || '', displayId: _e1.display_id || '', _preset: 't1' });
-    } else {
-      UI.toast('T1移行モードはロットQRを読み取ってください', 'info', 3000);
-    }
-  } else if (mode === 't2') {
-    if (res.entity_type === 'LOT') {
-      const _e2 = res.entity || {};
-      routeTo('growth-rec', { targetType: 'LOT', targetId: _e2.lot_id || '', displayId: _e2.display_id || '', _preset: 't2' });
-    } else {
-      UI.toast('T2初回移行モードはロットQRを読み取ってください', 'info', 3000);
+      UI.toast('対象が特定できませんでした', 'error');
     }
   } else {
-    // 確認モード: 直接詳細画面へ
-    const eid = res.entity?.ind_id || res.entity?.lot_id || res.entity?.set_id || res.entity?.par_id;
+    // 確認モード: 既存詳細画面へ直接遷移
+    const eid = (res.entity || {}).ind_id || (res.entity || {}).lot_id ||
+                (res.entity || {}).set_id || (res.entity || {}).par_id;
     if      (res.entity_type === 'IND' && eid) routeTo('ind-detail',     { indId: eid });
     else if (res.entity_type === 'LOT' && eid) routeTo('lot-detail',     { lotId: eid });
     else if (res.entity_type === 'SET' && eid) routeTo('pairing-detail', { pairingId: eid });
     else if (res.entity_type === 'PAR' && eid) routeTo('parent-detail',  { parId: eid });
-    else routeTo('qr-diff', { resolve_result: res, qr_text: qrText });
+    else if (res.entity_type === 'BU')  {
+      // BU: display_id ベースで unit-detail へ（Phase 2 で実装）
+      UI.toast('BU: ' + ((res.entity || {}).display_id || '不明'), 'info', 2000);
+    }
+    else UI.toast('対象が特定できませんでした', 'error');
   }
 }
 
@@ -244,6 +280,14 @@ function _qrLocalResolve(v) {
     if (!set) return null;
     return { entity_type: 'SET', entity: set, line: null, last_growth: null, missing: [], label_type: 'set' };
   }
+  if (prefix === 'BU') {
+    // BU: display_id ベースで解決（unit_id はフォールバック）
+    const units = Store.getDB('breeding_units') || [];
+    const unit  = units.find(u => u.display_id === id) || units.find(u => u.unit_id === id);
+    if (!unit) return null;
+    return { entity_type: 'BU', entity: unit, resolved_id: unit.display_id };
+  }
+
   return null;
 }
 

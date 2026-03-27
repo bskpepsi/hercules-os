@@ -40,7 +40,8 @@ window._lastLabelType = {};  // { IND: 'ind_fixed', LOT: 'multi_lot', ... }
 // ── デフォルトラベル種別 ──────────────────────────────────────
 function _defaultLabelType(targetType) {
   if (window._lastLabelType[targetType]) return window._lastLabelType[targetType];
-  if (targetType === 'LOT') return 'multi_lot';
+  if (targetType === 'LOT')  return 'multi_lot';
+  if (targetType === 'UNIT') return 't1_unit';
   if (targetType === 'SET') return 'set';
   if (targetType === 'PAR') return 'parent';
   return 'ind_fixed';
@@ -51,7 +52,8 @@ function _detailPageKey(targetType, targetId) {
   if (targetType === 'IND') return { page: 'ind-detail',    params: { indId: targetId } };
   if (targetType === 'LOT') return { page: 'lot-detail',    params: { lotId: targetId } };
   if (targetType === 'PAR') return { page: 'parent-detail', params: { parId: targetId } };
-  if (targetType === 'SET') return { page: 'pairing-detail',params: { pairingId: targetId } };
+  if (targetType === 'SET')  return { page: 'pairing-detail',params: { pairingId: targetId } };
+  if (targetType === 'UNIT') return { page: 't1-session',    params: {} };  // BU: → t1-session
   return null;
 }
 
@@ -61,6 +63,13 @@ Pages.labelGen = function (params = {}) {
   let targetType      = params.targetType || 'IND';
   let targetId        = params.targetId   || '';
   let labelType       = params.labelType  || _defaultLabelType(targetType);
+  // UNIT モード: displayId ベースで動作（unit_id は保存前にない場合あり）
+  const _isUnitMode   = targetType === 'UNIT';
+  const _unitDisplayId= params.displayId  || targetId || '';
+  const _unitForSale  = !!params.forSale;
+  // backRoute 対応（t1-session などカスタム戻り先）
+  const _backRoute    = params.backRoute  || null;
+  const _backParam    = params.backParam  || (params.labeledDisplayId ? { labeledDisplayId: params.labeledDisplayId } : {});
   // 卵ロット一括発行キューパラメータ
   const _eblQueueIdx   = params._eblQueueIdx   !== undefined ? parseInt(params._eblQueueIdx,10)   : -1;
   const _eblQueueTotal = params._eblQueueTotal  !== undefined ? parseInt(params._eblQueueTotal,10) : 0;
@@ -71,7 +80,7 @@ Pages.labelGen = function (params = {}) {
   const pars = Store.getDB('parents') || [];
 
   // 詳細画面から来た場合は直行モード
-  const isDirectMode = !!params.targetId;
+  const isDirectMode = !!params.targetId || _isUnitMode;
   const origin       = isDirectMode ? _detailPageKey(targetType, targetId) : null;
 
   // ヘッダーの戻るボタン
@@ -80,11 +89,13 @@ Pages.labelGen = function (params = {}) {
   // 一括発行キューモード → 完了一覧へ直接戻る（前のラベルではなく一覧へ）
   // 直行モード            → 詳細画面へ
   // それ以外             → Store.back()
-  const headerOpts = _inEblQueue
-    ? { back: true, backFn: "routeTo('egg-lot-bulk',{_showComplete:true})" }
-    : (isDirectMode && origin
-        ? { back: true, backFn: `routeTo('${origin.page}',${JSON.stringify(origin.params)})` }
-        : { back: true });
+  const headerOpts = _backRoute
+    ? { back: true, backFn: `routeTo('${_backRoute}',${JSON.stringify(_backParam)})` }
+    : _inEblQueue
+      ? { back: true, backFn: "routeTo('egg-lot-bulk',{_showComplete:true})" }
+      : (isDirectMode && origin
+          ? { back: true, backFn: `routeTo('${origin.page}',${JSON.stringify(origin.params)})` }
+          : { back: true });
 
   function render() {
     main.innerHTML = `
@@ -204,7 +215,9 @@ Pages.labelGen = function (params = {}) {
 
     if (targetId) {
       // 直行モードは即座に自動生成、手動モードも選択後に自動生成
-      setTimeout(() => Pages._lblGenerate(targetType, targetId, labelType), 150);
+      // UNIT モードは targetId が空でも displayId があれば生成可能
+    const _autoTargetId = (_isUnitMode && !targetId) ? _unitDisplayId : targetId;
+    setTimeout(() => Pages._lblGenerate(targetType, _autoTargetId, labelType), 150);
     }
   }
 
@@ -297,6 +310,28 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         records:      [],
         label_type:   'parent',
       };
+    } else if (targetType === 'UNIT') {
+      // UNIT: displayId ベース（unit_id は保存前にないケースあり）
+      const unit = Store.getUnitByDisplayId(_unitDisplayId)
+        || (Store.getDB('breeding_units') || []).find(u => u.display_id === _unitDisplayId || u.unit_id === targetId)
+        || {};
+      const lineId = unit.line_id || '';
+      const line   = lineId ? (Store.getLine(lineId) || {}) : {};
+      ld = {
+        qr_text:        `BU:${_unitDisplayId}`,
+        display_id:     _unitDisplayId,
+        line_code:      line.line_code || line.display_id || '',
+        stage_code:     'T1',
+        head_count:     unit.head_count || 2,
+        size_category:  unit.size_category || '',
+        hatch_date:     unit.hatch_date || '',
+        mat_type:       unit.mat_type  || 'T1',
+        for_sale:       _unitForSale,
+        members:        unit.members   || [],
+        records:        [],
+        label_type:     't1_unit',
+        note_private:   unit.note || '',
+      };
     } else {
       const set = (Store.getDB('pairings') || []).find(p => p.set_id === targetId) || {};
       ld = {
@@ -380,8 +415,9 @@ function _buildLabelHTML(ld, qrSrc) {
     `<span style="margin-right:4px"><span style="font-size:7px">${checked ? '■' : '□'}</span>${label}</span>`;
   const sexCats = (ld.size_category || '').split(',').map(s => s.trim());
 
-  if (lt === 'set')    return _buildSetLabelHTML(ld, qrHtml);
-  if (lt === 'parent') return _buildParentLabelHTML(ld, qrHtml);
+  if (lt === 'set')     return _buildSetLabelHTML(ld, qrHtml);
+  if (lt === 'parent')  return _buildParentLabelHTML(ld, qrHtml);
+  if (lt === 't1_unit') return _buildT1UnitLabelHTML(ld, qrHtml);
 
   const isLot = lt === 'multi_lot' || lt === 'egg_lot';
   const records = ld.records || [];
@@ -562,3 +598,118 @@ window._currentLabel = window._currentLabel || { displayId:'', fileName:'', html
 window._lastLabelType = window._lastLabelType || {};
 
 window.PAGES['label-gen'] = () => Pages.labelGen(Store.getParams());
+
+// ════════════════════════════════════════════════════════════════
+// T1飼育ユニット ラベル (t1_unit)
+// QR: BU:{display_id}
+// サイズ: 70mm × 50mm
+// ════════════════════════════════════════════════════════════════
+function _buildT1UnitLabelHTML(ld, qrHtml) {
+  const forSale = !!ld.for_sale;
+  const hc      = ld.head_count || 2;
+  const size    = ld.size_category || '';
+  const hdate   = (ld.hatch_date || '').replace(/\d{4}\//,'');
+  const mat     = ld.mat_type || 'T1';
+  const lineCode= ld.line_code || '';
+
+  // 販売候補バッジ（forSale=true のときだけ表示）
+  const saleBadge = forSale
+    ? `<span style="background:#e05050;color:#fff;font-size:5.5px;font-weight:700;
+        padding:0.5px 3px;border-radius:2px;margin-left:3px">販売候補</span>`
+    : '';
+
+  // 区分チェックボックス（大/中/小）
+  const chk = (label, checked) =>
+    `<span style="margin-right:4px"><span style="font-size:6.5px">${checked?'■':'□'}</span>${label}</span>`;
+
+  const bigChk  = chk('大', size==='大');
+  const midChk  = chk('中', size==='中');
+  const smlChk  = chk('小', size==='小');
+
+  // マット / ステージのチェックボックス行
+  const matRow   = ['T0','T1','T2','T3'].map(m => chk(m, mat===m)).join('');
+  const stageRow = ['L1L2','L3','前蛹'].map(s => chk(s, false)).join('');
+
+  // 記録行（体重①②）
+  const weightRow = (slot, initWeight) => `
+    <tr>
+      <td style="border:1px solid #ccc;padding:1px 2px;width:20mm;font-size:6px">&nbsp;</td>
+      <td style="border:1px solid #ccc;padding:1px 2px;width:14mm;font-size:6.5px;text-align:right">
+        ${initWeight ? initWeight + 'g' : '&nbsp;'}
+      </td>
+      <td style="border:1px solid #ccc;padding:1px 2px;width:14mm;font-size:6px">&nbsp;</td>
+      <td style="border:1px solid #ccc;padding:1px 2px;width:10mm;font-size:5.5px">①${slot}</td>
+    </tr>`;
+
+  // 初期体重を members から取得
+  const m1w = (ld.members && ld.members[0]) ? ld.members[0].weight_g : '';
+  const m2w = (ld.members && ld.members[1]) ? ld.members[1].weight_g : '';
+
+  const recRows = `
+    <tr style="background:#f0f8ff">
+      <td style="border:1px solid #ccc;padding:1px 2px;font-size:5.5px;font-weight:700">日付</td>
+      <td style="border:1px solid #ccc;padding:1px 2px;font-size:5.5px;font-weight:700">体重①g</td>
+      <td style="border:1px solid #ccc;padding:1px 2px;font-size:5.5px;font-weight:700">体重②g</td>
+      <td style="border:1px solid #ccc;padding:1px 2px;font-size:5.5px;font-weight:700">交換</td>
+    </tr>
+    <tr>
+      <td style="border:1px solid #ccc;padding:1px 2px;font-size:5.5px">T1移行</td>
+      <td style="border:1px solid #ccc;padding:1px 2px;font-size:6.5px;text-align:right">${m1w ? m1w+'g' : '&nbsp;'}</td>
+      <td style="border:1px solid #ccc;padding:1px 2px;font-size:6.5px;text-align:right">${m2w ? m2w+'g' : '&nbsp;'}</td>
+      <td style="border:1px solid #ccc;padding:1px 2px;font-size:5.5px">全交換</td>
+    </tr>
+    ${['','','',''].map(() => `
+    <tr>
+      <td style="border:1px solid #ccc;padding:1px 2px;width:20mm">&nbsp;</td>
+      <td style="border:1px solid #ccc;padding:1px 2px;width:14mm">&nbsp;</td>
+      <td style="border:1px solid #ccc;padding:1px 2px;width:14mm">&nbsp;</td>
+      <td style="border:1px solid #ccc;padding:1px 2px;width:10mm">&nbsp;</td>
+    </tr>`).join('')}`;
+
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>
+  @page { size: 70mm 50mm; margin: 0; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { width:70mm; height:50mm; font-family:'Noto Sans JP',sans-serif;
+    font-size:7px; background:#fff; color:#111; overflow:hidden; }
+  .lbl-wrap { width:70mm; height:50mm; display:flex; flex-direction:column; }
+</style>
+</head><body>
+<div class="lbl-wrap">
+  <!-- ヘッダー -->
+  <div style="background:#2d7a52;color:#fff;font-size:7px;font-weight:700;
+    padding:1mm 2mm;height:4mm;display:flex;align-items:center;gap:4px">
+    <span>⑥ T1飼育ユニット (${hc}頭)</span>
+    ${saleBadge}
+  </div>
+
+  <!-- 上部: QR + 基本情報 -->
+  <div style="display:flex;height:13mm;padding:1mm 1.5mm;gap:1.5mm">
+    <div style="flex-shrink:0">${qrHtml}</div>
+    <div style="flex:1;min-width:0">
+      <div style="font-size:8.5px;font-weight:700;font-family:monospace;
+        color:#1a3a1a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+        ${ld.display_id}
+      </div>
+      <div style="font-size:6.5px;color:#444;margin-top:1px">
+        ${lineCode}　孵化: ${hdate}
+      </div>
+      <!-- 区分チェック -->
+      <div style="font-size:6.5px;margin-top:2px">${bigChk}${midChk}${smlChk}</div>
+      <!-- マットチェック -->
+      <div style="font-size:6px;margin-top:1px">${matRow}</div>
+      <!-- ステージチェック -->
+      <div style="font-size:6px;margin-top:1px">${stageRow}</div>
+    </div>
+  </div>
+
+  <!-- 記録表 -->
+  <div style="flex:1;padding:0 1.5mm 1mm">
+    <table style="width:100%;border-collapse:collapse;table-layout:fixed">
+      ${recRows}
+    </table>
+  </div>
+</div>
+</body></html>`;
+}

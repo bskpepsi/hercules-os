@@ -243,7 +243,7 @@ const API = (() => {
     getLotEvents:      (d) => call('getLotEvents',       d || {}),
   };
 
-return { system, line, lot, individual, growth, parent, bloodline, pairing, label, drive, gemini, backup, scan, phase2, integrity };
+return { system, line, lot, individual, growth, parent, bloodline, pairing, label, drive, gemini, backup, scan, phase2, integrity, t1 };
 })();
 
 // ── Gemini プロンプト ──────────────────────────────────────────

@@ -352,12 +352,21 @@ const Store = (() => {
     return list;
   }
 
+  // ── breeding_units ─────────────────────────────────────────────
+  function getUnitByDisplayId(displayId) {
+    return (_db.breeding_units || []).find(u => u.display_id === displayId) || null;
+  }
+  function getUnit(unitId) {
+    return (_db.breeding_units || []).find(u => u.unit_id === unitId) || null;
+  }
+
   return {
     navigate, back, getPage, getParams, getPrev,
     setLoading, isLoading, toast,
     setDB, patchDBItem, addDBItem, getDB,
     getIndividual, getLine, getLot, getParent, getBloodline,
     getIndividualsByLine, getIndividualsByLot,
+    getUnitByDisplayId, getUnit,
     calcAge, formatRecordAge,
     getVerdict,
     setGrowthRecords, getGrowthRecords, addGrowthRecord,
