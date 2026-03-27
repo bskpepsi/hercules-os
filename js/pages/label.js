@@ -407,9 +407,10 @@ function _buildLabelHTML(ld, qrSrc) {
   const stageLbl = typeof stageLabel === 'function' ? (stageLabel(_rawStage) || _rawStage || '') : _rawStage;
   const matLbl   = ld.mat_type ? (ld.mat_type + (ld.mat_molt ? '(M)' : '')) : '';
   const noteShort = (ld.note_private || '').slice(0, 40);
+  // QRコード: 周囲に静穏領域（白余白）を確保して可読性を最優先
   const qrHtml   = qrSrc
-    ? `<img src="${qrSrc}" style="width:45px;height:45px;display:block">`
-    : '<div style="width:45px;height:45px;background:#eee;display:flex;align-items:center;justify-content:center;font-size:8px">QR</div>';
+    ? `<div style="display:inline-block;background:#fff;padding:3px;line-height:0"><img src="${qrSrc}" style="width:48px;height:48px;display:block"></div>`
+    : '<div style="display:inline-block;background:#eee;padding:3px;width:54px;height:54px;display:flex;align-items:center;justify-content:center;font-size:8px;line-height:1.2;text-align:center">QR</div>';
 
   const chk = (label, checked) =>
     `<span style="margin-right:4px"><span style="font-size:7px">${checked ? '■' : '□'}</span>${label}</span>`;
@@ -422,7 +423,11 @@ function _buildLabelHTML(ld, qrSrc) {
   const isLot = lt === 'multi_lot' || lt === 'egg_lot';
   const records = ld.records || [];
   const maxRows  = isLot ? 6 : 7;
-  const recRows  = records.slice(0, maxRows);
+  // 古い順（上）→ 新しい順（下）に並べる
+  const sortedRecs = records.slice().sort((a,b) => String(a.record_date||'').localeCompare(String(b.record_date||'')));
+  // 最新 maxRows 件を取って古い順に並べる（最新N件だけ表示、それを古い順に）
+  const recentRecs = sortedRecs.slice(-maxRows);
+  const recRows    = [...recentRecs];
   while (recRows.length < maxRows) recRows.push(null);
 
   const recRowsHtml = recRows.map(r => {
@@ -449,7 +454,7 @@ function _buildLabelHTML(ld, qrSrc) {
   .lbl-wrap { width:70mm; height:50mm; display:flex; flex-direction:column; }
   .lbl-header { background:${headerColor}; color:#fff; font-size:7px; font-weight:700;
     padding:1mm 2mm; height:4mm; display:flex; align-items:center; }
-  .lbl-top { display:flex; height:14mm; padding:1mm; gap:1mm; }
+  .lbl-top { display:flex; height:15mm; padding:1mm 1mm 0; gap:2mm; }
   .lbl-qr { flex-shrink:0; }
   .lbl-info { flex:1; min-width:0; font-size:7px; line-height:1.4; }
   .lbl-info-id { font-size:8px; font-weight:700; color:#1a3a1a; font-family:monospace;
