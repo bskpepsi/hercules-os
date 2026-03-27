@@ -408,9 +408,10 @@ function _buildLabelHTML(ld, qrSrc) {
   const matLbl   = ld.mat_type ? (ld.mat_type + (ld.mat_molt ? '(M)' : '')) : '';
   const noteShort = (ld.note_private || '').slice(0, 40);
   // QRコード: 周囲に静穏領域（白余白）を確保して可読性を最優先
+  // QR: 専用固定幅ブロック内に配置。padding で静穏領域確保、周囲に文字を近づけない
   const qrHtml   = qrSrc
-    ? `<div style="display:inline-block;background:#fff;padding:3px;line-height:0"><img src="${qrSrc}" style="width:48px;height:48px;display:block"></div>`
-    : '<div style="display:inline-block;background:#eee;padding:3px;width:54px;height:54px;display:flex;align-items:center;justify-content:center;font-size:8px;line-height:1.2;text-align:center">QR</div>';
+    ? `<div style="background:#fff;padding:4px;display:inline-block;line-height:0;border:1px solid #f0f0f0"><img src="${qrSrc}" style="width:44px;height:44px;display:block"></div>`
+    : '<div style="background:#f5f5f5;padding:4px;display:inline-flex;width:52px;height:52px;align-items:center;justify-content:center;font-size:7px;text-align:center;line-height:1.2">QR</div>';
 
   const chk = (label, checked) =>
     `<span style="margin-right:4px"><span style="font-size:7px">${checked ? '■' : '□'}</span>${label}</span>`;
@@ -454,11 +455,11 @@ function _buildLabelHTML(ld, qrSrc) {
   .lbl-wrap { width:70mm; height:50mm; display:flex; flex-direction:column; }
   .lbl-header { background:${headerColor}; color:#fff; font-size:7px; font-weight:700;
     padding:1mm 2mm; height:4mm; display:flex; align-items:center; }
-  .lbl-top { display:flex; height:15mm; padding:1mm 1mm 0; gap:2mm; }
-  .lbl-qr { flex-shrink:0; }
-  .lbl-info { flex:1; min-width:0; font-size:7px; line-height:1.4; }
+  .lbl-top { display:flex; height:16mm; padding:1mm 1mm 0; gap:0; }
+  .lbl-qr { flex-shrink:0; width:18mm; display:flex; align-items:flex-start; justify-content:center; padding-right:2mm; }
+  .lbl-info { flex:1; min-width:0; font-size:7px; line-height:1.5; padding-left:1mm; border-left:1px solid #ddd; }
   .lbl-info-id { font-size:8px; font-weight:700; color:#1a3a1a; font-family:monospace;
-    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-bottom:1px; }
   .lbl-mid { display:flex; height:8mm; padding:0.5mm 1mm; gap:4mm; align-items:center; }
   .lbl-checks { font-size:6.5px; line-height:1.6; }
   .lbl-bottom { display:flex; flex:1; padding:0.5mm 1mm; gap:1mm; }
@@ -689,10 +690,10 @@ function _buildT1UnitLabelHTML(ld, qrHtml) {
     ${saleBadge}
   </div>
 
-  <!-- 上部: QR + 基本情報 -->
-  <div style="display:flex;height:13mm;padding:1mm 1.5mm;gap:1.5mm">
-    <div style="flex-shrink:0">${qrHtml}</div>
-    <div style="flex:1;min-width:0">
+  <!-- 上部: QR（左専用ブロック）+ 基本情報（右） -->
+  <div style="display:flex;height:14mm;padding:1mm 1.5mm 0;gap:0">
+    <div style="flex-shrink:0;width:18mm;display:flex;align-items:flex-start;justify-content:center;padding-right:2mm">${qrHtml}</div>
+    <div style="flex:1;min-width:0;padding-left:1mm;border-left:1px solid #ddd">
       <div style="font-size:8.5px;font-weight:700;font-family:monospace;
         color:#1a3a1a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
         ${ld.display_id}
