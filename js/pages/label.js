@@ -455,12 +455,47 @@ function _buildLabelHTML(ld, qrSrc) {
   .lbl-wrap { width:70mm; height:50mm; display:flex; flex-direction:column; }
   .lbl-header { background:${headerColor}; color:#fff; font-size:7px; font-weight:700;
     padding:1mm 2mm; height:4mm; display:flex; align-items:center; }
-  .lbl-top { display:flex; height:16mm; padding:1mm 1mm 0; gap:0; }
-  .lbl-qr { flex-shrink:0; width:18mm; display:flex; align-items:flex-start; justify-content:center; padding-right:2mm; }
-  .lbl-info { flex:1; min-width:0; font-size:7px; line-height:1.5; padding-left:1mm; border-left:1px solid #ddd; }
+  /* lbl-top: 2行×2列 grid。QRは左1列全行、右列を上段情報/下段性別で分割 */
+  .lbl-top {
+    display: grid;
+    grid-template-columns: 16mm 1fr;
+    grid-template-rows: auto auto;
+    padding: 1mm 1mm 0;
+    gap: 0;
+    min-height: 16mm;
+  }
+  /* QR: 左列、2行span。縦いっぱいを専有 */
+  .lbl-qr {
+    grid-column: 1;
+    grid-row: 1 / 3;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-right: 2mm;
+  }
+  /* 右上: 基本情報 */
+  .lbl-info {
+    grid-column: 2;
+    grid-row: 1;
+    font-size: 7px;
+    line-height: 1.5;
+    padding-left: 1mm;
+    border-left: 1px solid #ddd;
+  }
   .lbl-info-id { font-size:8px; font-weight:700; color:#1a3a1a; font-family:monospace;
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-bottom:1px; }
-  .lbl-mid { display:flex; height:8mm; padding:0.5mm 1mm; gap:4mm; align-items:center; }
+  /* 右下: 性別行。QRのgrid-row:1の高さの外に確実に配置される */
+  .lbl-sex {
+    grid-column: 2;
+    grid-row: 2;
+    font-size: 6.5px;
+    line-height: 1.4;
+    padding-left: 1mm;
+    padding-top: 1px;
+    border-left: 1px solid #ddd;
+    border-top: 1px dotted #eee;
+  }
+  .lbl-mid { display:flex; height:7mm; padding:0.5mm 1mm; gap:4mm; align-items:center; }
   .lbl-checks { font-size:6.5px; line-height:1.6; }
   .lbl-bottom { display:flex; flex:1; padding:0.5mm 1mm; gap:1mm; }
   .lbl-table-wrap { flex:1; }
@@ -476,17 +511,20 @@ function _buildLabelHTML(ld, qrSrc) {
 </style></head><body>
 <div class="lbl-wrap">
   <div class="lbl-header">${headerLabel} &nbsp;|&nbsp; HerculesOS</div>
-  <!-- 上段: QR専用ブロック(左) + 基本情報+性別(右) -->
+  <!-- 上段: 2×2 grid。左列=QR(全行span)、右上=基本情報、右下=性別 -->
   <div class="lbl-top">
+    <!-- 左列全行: QR専用 -->
     <div class="lbl-qr">${qrHtml}</div>
+    <!-- 右上: display_id / L / 孵化日 / 頭数 のみ -->
     <div class="lbl-info">
       <div class="lbl-info-id">${ld.display_id}</div>
       <div style="font-size:7px;color:#555;margin-top:1px">L: <b>${ld.line_code||'—'}</b></div>
       ${ld.hatch_date ? `<div style="font-size:6px;color:#777">孵化: ${ld.hatch_date}</div>` : ''}
       ${isLot && ld.count ? `<div style="font-size:6px;color:#777">${ld.count}頭</div>` : ''}
-      ${isLot ? `<div style="font-size:6.5px;margin-top:1px">${chk('♂',ld.sex_hint==='♂')}${chk('♀',ld.sex_hint==='♀')}${chk('混合',ld.sex_hint==='混合')}</div>` : ''}
       ${!isLot && ld.sex ? `<div style="font-size:7px;color:${ld.sex==='♂'?'#3366cc':'#cc3366'};font-weight:700">${ld.sex}</div>` : ''}
     </div>
+    <!-- 右下: 性別。grid-row:2 なので QR(grid-row:1/3)の右下に入り、QR高さ帯の外 -->
+    ${isLot ? `<div class="lbl-sex">${chk('♂',ld.sex_hint==='♂')}${chk('♀',ld.sex_hint==='♀')}${chk('混合',ld.sex_hint==='混合')}</div>` : '<div class="lbl-sex"></div>'}
   </div>
   <!-- 中段: 区分/マット/モルト/ステージのみ（♂♀ここに置かない） -->
   <div class="lbl-mid">
