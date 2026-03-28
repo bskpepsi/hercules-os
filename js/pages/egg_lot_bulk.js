@@ -511,7 +511,9 @@ Pages.eggLotBulk = function (params = {}) {
     _readDom();
 
     // デバッグ: API グローバル確認
+    console.log('[EBL] save - typeof API=', typeof API, '/ window.API=', !!window.API);
     if (typeof API === 'undefined') {
+      console.error('[EBL] API is undefined at save time!');
       UI.toast('APIが読み込まれていません。ページを再読み込みしてください', 'error'); return;
     }
     if (!_selLineId) { UI.toast('ラインを選択してください', 'error'); return; }

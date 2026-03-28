@@ -86,6 +86,7 @@ Pages.parentDetail = async function (parId) {
   if (par) _renderParDetail(par, main);
   else main.innerHTML = UI.header('種親詳細', {}) + UI.spinner();
   try {
+    console.log('[PARENT_DETAIL] typeof API=', typeof API, '/ window.API=', !!window.API);
     const res = await API.parent.get(parId);
     par = res.parent;
     Store.patchDBItem('parents', 'par_id', parId, par);

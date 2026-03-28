@@ -25,6 +25,7 @@ Pages.saleList = async function () {
   main.innerHTML = UI.header('販売履歴', {}) + UI.spinner();
 
   try {
+    console.log('[SALE] typeof API=', typeof API, '/ window.API=', !!window.API);
     const res = await API.sale.list({});
     if (Store.getPage() !== 'sale-list') return;
     _renderSaleList(main, res.hists || [], res.total_revenue || 0);

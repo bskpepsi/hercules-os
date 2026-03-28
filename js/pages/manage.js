@@ -242,6 +242,7 @@ Pages.lineDetail = async function (lineId) {
   if (line) _renderLineDetail(line, main);
   else main.innerHTML = UI.header('ライン詳細', {}) + UI.spinner();
   try {
+    console.log('[LINE_DETAIL] typeof API=', typeof API, '/ window.API=', !!window.API);
     const res = await API.line.get(lineId);
     line = res.line;
     Store.patchDBItem('lines', 'line_id', lineId, line);

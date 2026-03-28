@@ -8,7 +8,9 @@
 
 'use strict';
 
+console.log('[API] file loaded start');
 var API = (() => {
+  console.log('[API] IIFE start');
   const TIMEOUT_MS = 30000;
 
   // ── 基底通信 ──────────────────────────────────────────────────
@@ -248,10 +250,13 @@ var API = (() => {
     reserveDisplayIds: (d) => call('reserveDisplayIds',   d),  // {line_id, count} → {display_ids:[]}
     createSession:     (d) => call('createT1Session',     d),  // 一括保存
   };
+  console.log('[API] t1 ready');
 
+console.log('[API] return object ready');
 return { system, line, lot, individual, growth, parent, bloodline, pairing, label, drive, gemini, backup, scan, phase2, integrity, t1 };
 })();
 window.API = API; // グローバル確保（const はwindowに乗らない環境対策）
+console.log('[API] window.API assigned', !!window.API);
 
 // ── Gemini プロンプト ──────────────────────────────────────────
 const GEMINI_PROMPTS = {

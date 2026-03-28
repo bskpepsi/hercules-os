@@ -60,6 +60,7 @@ window.PAGES = {
 
 // ── 起動（PAGES定義の後に配置することでPAGES参照を保証） ────────
 document.addEventListener('DOMContentLoaded', () => {
+  console.log('[APP] boot start - typeof API=', typeof API, '/ window.API=', !!window.API);
   Store.loadFromStorage();
   bindNav();
   bindGlobalEvents();
@@ -83,6 +84,7 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch(e) { /* ハッシュ解析失敗時は通常起動 */ }
   }
 
+  console.log('[APP] before first render - typeof API=', typeof API, '/ window.API=', !!window.API);
   routeTo(Store.getPage());
   syncIfNeeded();
 });
