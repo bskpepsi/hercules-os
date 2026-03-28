@@ -8,7 +8,7 @@
 
 'use strict';
 
-const API = (() => {
+var API = (() => {
   const TIMEOUT_MS = 30000;
 
   // ── 基底通信 ──────────────────────────────────────────────────
@@ -243,8 +243,15 @@ const API = (() => {
     getLotEvents:      (d) => call('getLotEvents',       d || {}),
   };
 
+  // ── T1移行セッション ─────────────────────────────────────────
+  const t1 = {
+    reserveDisplayIds: (d) => call('reserveDisplayIds',   d),  // {line_id, count} → {display_ids:[]}
+    createSession:     (d) => call('createT1Session',     d),  // 一括保存
+  };
+
 return { system, line, lot, individual, growth, parent, bloodline, pairing, label, drive, gemini, backup, scan, phase2, integrity, t1 };
 })();
+window.API = API; // グローバル確保（const はwindowに乗らない環境対策）
 
 // ── Gemini プロンプト ──────────────────────────────────────────
 const GEMINI_PROMPTS = {

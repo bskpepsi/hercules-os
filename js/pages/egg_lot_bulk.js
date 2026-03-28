@@ -510,6 +510,10 @@ Pages.eggLotBulk = function (params = {}) {
   Pages._eblSave = async function() {
     _readDom();
 
+    // デバッグ: API グローバル確認
+    if (typeof API === 'undefined') {
+      UI.toast('APIが読み込まれていません。ページを再読み込みしてください', 'error'); return;
+    }
     if (!_selLineId) { UI.toast('ラインを選択してください', 'error'); return; }
 
     const targets = _rows.filter(r => {
