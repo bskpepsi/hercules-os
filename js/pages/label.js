@@ -64,9 +64,15 @@ Pages.labelGen = function (params = {}) {
   let targetId        = params.targetId   || '';
   let labelType       = params.labelType  || _defaultLabelType(targetType);
   // UNIT モード: displayId ベースで動作（unit_id は保存前にない場合あり）
-  const _isUnitMode   = targetType === 'UNIT';
-  const _unitDisplayId= params.displayId  || targetId || '';
-  const _unitForSale  = !!params.forSale;
+  const _isUnitMode    = targetType === 'UNIT';
+  const _unitDisplayId = params.displayId  || targetId || '';
+  const _unitForSale   = !!params.forSale;
+  const _unitDraft     = params.unitDraft  || null;   // t1_session から渡される仮データ
+  console.log('[LABEL] params', { targetType, targetId, labelType, _isUnitMode, _unitDisplayId, _unitForSale, hasDraft: !!_unitDraft, backRoute: params.backRoute });
+  if (_isUnitMode) {
+    const _storeUnit = Store.getUnitByDisplayId ? Store.getUnitByDisplayId(_unitDisplayId) : null;
+    console.log('[LABEL] UNIT mode - store unit:', !!_storeUnit, '/ draft:', !!_unitDraft, '/ displayId:', _unitDisplayId);
+  }
   // backRoute 対応（t1-session などカスタム戻り先）
   const _backRoute    = params.backRoute  || null;
   const _backParam    = params.backParam  || (params.labeledDisplayId ? { labeledDisplayId: params.labeledDisplayId } : {});
@@ -98,6 +104,9 @@ Pages.labelGen = function (params = {}) {
           : { back: true });
 
   function render() {
+    if (_isUnitMode) {
+      console.log('[LABEL] render() UNIT mode - displayId:', _unitDisplayId, '/ isDirectMode:', isDirectMode);
+    }
     main.innerHTML = `
       ${UI.header('ラベル発行', headerOpts)}
       <div class="page-body">
@@ -146,7 +155,7 @@ Pages.labelGen = function (params = {}) {
 
         <!-- プレビューエリア -->
         <div class="card" id="lbl-preview-card">
-          ${targetId
+          ${(targetId || (_isUnitMode && _unitDisplayId))
             ? `<div class="card-title">プレビュー（70mm × 50mm）</div>
                <div id="lbl-html-preview" style="transform-origin:top left;margin-bottom:12px;
                  border:1px solid var(--border2);border-radius:4px;overflow:hidden;
@@ -213,11 +222,11 @@ Pages.labelGen = function (params = {}) {
 
       </div>`;
 
-    if (targetId) {
-      // 直行モードは即座に自動生成、手動モードも選択後に自動生成
-      // UNIT モードは targetId が空でも displayId があれば生成可能
-    const _autoTargetId = (_isUnitMode && !targetId) ? _unitDisplayId : targetId;
-    setTimeout(() => Pages._lblGenerate(targetType, _autoTargetId, labelType), 150);
+    // UNIT モードは targetId が空でも displayId があれば即自動生成
+    if (targetId || (_isUnitMode && _unitDisplayId)) {
+      const _autoTargetId = (_isUnitMode && !targetId) ? _unitDisplayId : targetId;
+      console.log('[LABEL] auto-generate', { targetType, _autoTargetId, labelType, _isUnitMode });
+      setTimeout(() => Pages._lblGenerate(targetType, _autoTargetId, labelType), 100);
     }
   }
 
@@ -311,17 +320,21 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         label_type:   'parent',
       };
     } else if (targetType === 'UNIT') {
-      // UNIT: displayId ベース（unit_id は保存前にないケースあり）
-      const unit = Store.getUnitByDisplayId(_unitDisplayId)
+      // UNIT: Store→draft→空 の優先度で fallback
+      console.log('[LABEL] _lblGenerate UNIT branch - displayId:', _unitDisplayId);
+      const storeUnit = (Store.getUnitByDisplayId && Store.getUnitByDisplayId(_unitDisplayId))
         || (Store.getDB('breeding_units') || []).find(u => u.display_id === _unitDisplayId || u.unit_id === targetId)
-        || {};
+        || null;
+      // Store にない場合は unitDraft（t1_session から渡された仮データ）を使う
+      const unit   = storeUnit || _unitDraft || {};
+      console.log('[LABEL] unit resolved - fromStore:', !!storeUnit, '/ fromDraft:', !storeUnit && !!_unitDraft);
       const lineId = unit.line_id || '';
       const line   = lineId ? (Store.getLine(lineId) || {}) : {};
       ld = {
         qr_text:        `BU:${_unitDisplayId}`,
         display_id:     _unitDisplayId,
-        line_code:      line.line_code || line.display_id || '',
-        stage_code:     'T1',
+        line_code:      unit.line_code || line.line_code || line.display_id || '',
+        stage_code:     unit.stage_phase || 'T1',
         head_count:     unit.head_count || 2,
         size_category:  unit.size_category || '',
         hatch_date:     unit.hatch_date || '',
@@ -387,10 +400,12 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
       dataUrl: null,
     };
 
+    console.log('[LABEL] preview render start - lt:', lt, '/ displayId:', ld.display_id);
     preview.innerHTML = `<iframe srcdoc="${html.replace(/"/g,'&quot;')}"
       style="width:264px;height:189px;border:none;transform-origin:top left"
       scrolling="no"></iframe>`;
 
+    console.log('[LABEL] preview render done - showing action bar');
     const bar = document.getElementById('lbl-action-bar');
     if (bar) {
       bar.style.display = 'block';

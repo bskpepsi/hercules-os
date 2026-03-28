@@ -292,33 +292,64 @@ function _qrLocalResolve(v) {
 }
 
 Pages._qrResolve = async function () {
+  const _t0 = performance.now();
   const qrText = document.getElementById('qr-input')?.value?.trim();
   const errEl  = document.getElementById('qr-error');
   const btn    = document.getElementById('qr-resolve-btn');
   if (!qrText) { if (errEl) errEl.textContent = 'QRコードを入力してください'; return; }
   if (errEl) errEl.textContent = '';
 
-  // ── 現在のスキャンモードを取得（window._qrScanMode が確実）──
-  const mode = window._qrScanMode || 'view';
+  console.log('[QR] recognized', qrText, 'at', _t0.toFixed(1), 'ms');
 
-  // ── ① ローカルで即解決（APIなし） ────────────────────────────
+  // ── 現在のスキャンモードを取得 ──
+  const mode = window._qrScanMode || 'confirm';
+
+  // ── ① ローカルキャッシュで即解決（APIなし） ──────────────────
+  const _t1 = performance.now();
+  console.log('[QR] local resolve start');
   const localRes = _qrLocalResolve(qrText);
+  const _localMs = (performance.now()-_t1).toFixed(1);
+  console.log('[QR] local resolve end', _localMs, 'ms / found:', !!localRes);
+
   if (localRes) {
+    // ローカル解決成功: ボタンを即「画面を開いています...」に切り替えて遷移
+    if (btn) { btn.textContent = '📂 画面を開いています...'; }
     Pages._qrSaveHistory(qrText, localRes);
+    const _t2 = performance.now();
+    console.log('[QR] navigate start (local path)');
     _qrNavigate(mode, localRes, qrText);
+    console.log('[QR] navigate triggered', (performance.now()-_t2).toFixed(1), 'ms');
+    console.log('[QR] total (local path)', (performance.now()-_t0).toFixed(1), 'ms');
     return;  // API呼び出しなし・即遷移
   }
 
   // ── ② ローカルで見つからない場合だけ API へ ──────────────────
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ 解析中...'; }
+  // 300ms 後にローディング表示（即解決できた場合はローディング出さない）
+  let _loadingTimer = setTimeout(() => {
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ 解析中...'; }
+  }, 300);
+  let _longLoadTimer = setTimeout(() => {
+    if (btn) btn.textContent = '⏳ ロット情報を確認中...';
+  }, 1200);
+
+  console.log('[QR] API fallback start');
+  const _t3 = performance.now();
   try {
     const res = await API.scan.resolve(qrText);
+    console.log('[QR] API fallback end', (performance.now()-_t3).toFixed(1), 'ms');
     Pages._qrSaveHistory(qrText, res);
+    const _t4 = performance.now();
+    console.log('[QR] navigate start (API)');
     _qrNavigate(mode, res, qrText);
+    console.log('[QR] navigate triggered', (performance.now()-_t4).toFixed(1), 'ms');
   } catch (e) {
+    console.error('[QR] API error', e.message);
     if (errEl) errEl.textContent = '❌ ' + (e.message || '解析に失敗しました');
   } finally {
+    clearTimeout(_loadingTimer);
+    clearTimeout(_longLoadTimer);
     if (btn) { btn.disabled = false; btn.textContent = '🔍 読み取り・確認'; }
+    console.log('[QR] total (API path)', (performance.now()-_t0).toFixed(1), 'ms');
   }
 };
 

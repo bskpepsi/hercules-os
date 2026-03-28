@@ -245,6 +245,12 @@ var API = (() => {
     getLotEvents:      (d) => call('getLotEvents',       d || {}),
   };
 
+  // ── 販売履歴 ─────────────────────────────────────────────────
+  const sale = {
+    list: (f)  => call('getSaleHists', f || {}),
+    get:  (id) => call('getSaleHist',  { hist_id: id }),
+  };
+
   // ── T1移行セッション ─────────────────────────────────────────
   const t1 = {
     reserveDisplayIds: (d) => call('reserveDisplayIds',   d),  // {line_id, count} → {display_ids:[]}
@@ -253,7 +259,7 @@ var API = (() => {
   console.log('[API] t1 ready');
 
 console.log('[API] return object ready');
-return { system, line, lot, individual, growth, parent, bloodline, pairing, label, drive, gemini, backup, scan, phase2, integrity, t1 };
+return { system, line, lot, individual, growth, parent, bloodline, pairing, label, drive, gemini, backup, scan, phase2, integrity, t1, sale };
 })();
 window.API = API; // グローバル確保（const はwindowに乗らない環境対策）
 console.log('[API] window.API assigned', !!window.API);

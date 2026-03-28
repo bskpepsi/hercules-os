@@ -26,6 +26,9 @@ Pages.saleList = async function () {
 
   try {
     console.log('[SALE] typeof API=', typeof API, '/ window.API=', !!window.API);
+    if (!API || !API.sale || typeof API.sale.list !== 'function') {
+      throw new Error('API.sale.list が未定義です。ページを再読み込みしてください。');
+    }
     const res = await API.sale.list({});
     if (Store.getPage() !== 'sale-list') return;
     _renderSaleList(main, res.hists || [], res.total_revenue || 0);

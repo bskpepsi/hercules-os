@@ -20,7 +20,11 @@ window._t1Session = window._t1Session || null;
 // セッション開始エントリーポイント
 // scan.js の T1移行モードから呼ばれる
 // ────────────────────────────────────────────────────────────────
+// T1セッション開始: 案A = まず画面遷移→画面内でreserveDisplayIds
+// QR認識後の待ち時間をなくし、即t1-session画面へ遷移する
 Pages.t1SessionStart = async function (lotId) {
+  const _ts0 = performance.now();
+  console.log('[T1] t1SessionStart called for lotId:', lotId);
   const lot = Store.getLot(lotId);
   if (!lot) { UI.toast('ロットが見つかりません', 'error'); return; }
   if (lot.t1_done) { UI.toast('このロットはT1移行済みです', 'error'); return; }
@@ -29,23 +33,43 @@ Pages.t1SessionStart = async function (lotId) {
     UI.toast('T0ロット以外はT1移行できません', 'error'); return;
   }
 
-  const btn = document.getElementById('qr-resolve-btn');
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ 処理中...'; }
+  // ── 案A: 先に画面遷移、画面内で初期化 ──────────────────────
+  // セッションを「初期化中」状態で作成して即遷移（APIを待たない）
+  window._t1Session = _buildSession(lot, []);   // displayIdPool は空で先行
+  window._t1Session._loading = true;             // 画面側でスピナーを出すフラグ
+  _saveSessionToStorage();
+  console.log('[T1] navigate first (before reserveDisplayIds)', (performance.now()-_ts0).toFixed(1), 'ms');
+  routeTo('t1-session');  // ← ここで即遷移。以下はバックグラウンドで実行
 
+  // ── reserveDisplayIds をバックグラウンドで実行 ────────────────
   try {
-    // display_id を予約（最大 lot.count 個予約）
+    console.log('[T1] reserveDisplayIds start (background)');
+    const _ts1 = performance.now();
     const res = await API.t1.reserveDisplayIds({
       line_id: lot.line_id,
       count:   lot.count,
     });
-
-    window._t1Session = _buildSession(lot, res.display_ids || []);
-    _saveSessionToStorage();
-    routeTo('t1-session');
+    console.log('[T1] reserveDisplayIds done', (performance.now()-_ts1).toFixed(1), 'ms / ids:', res.display_ids?.length);
+    // セッションに display_id を注入して再描画
+    if (window._t1Session && window._t1Session.lineId === lot.line_id) {
+      window._t1Session.displayIdPool  = res.display_ids || [];
+      window._t1Session.displayIdIndex = 0;
+      window._t1Session._loading       = false;
+      _saveSessionToStorage();
+      // 現在 t1-session 画面が開いていれば再描画
+      if (Store.getPage() === 't1-session') {
+        _renderT1Session(window._t1Session);
+      }
+    }
   } catch (e) {
-    UI.toast('セッション開始失敗: ' + (e.message || '通信エラー'), 'error');
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '🔍 読み取り・確認'; }
+    console.error('[T1] reserveDisplayIds error:', e);
+    if (window._t1Session) {
+      window._t1Session._loading = false;
+      window._t1Session._loadError = e.message || '通信エラー';
+      _saveSessionToStorage();
+      if (Store.getPage() === 't1-session') _renderT1Session(window._t1Session);
+    }
+    UI.toast('ユニット番号の予約に失敗しました: ' + (e.message || '通信エラー'), 'error');
   }
 };
 
@@ -135,6 +159,37 @@ Pages.t1Session = function (params = {}) {
 function _renderT1Session(s) {
   const main = document.getElementById('main');
   if (!main) return;
+
+  // ローディング中バナー（reserveDisplayIds 待ち）
+  if (s._loading) {
+    const headerPart = UI.header('T1移行編成セッション', { back: true, backFn: "Pages._t1SessionBack()" });
+    main.innerHTML = `${headerPart}
+      <div class="page-body" style="padding-top:16px">
+        <div style="background:var(--surface2);border-radius:12px;padding:20px;text-align:center">
+          <div class="spinner" style="margin:0 auto 12px"></div>
+          <div style="font-weight:700;margin-bottom:4px">ユニット番号を予約中...</div>
+          <div style="font-size:.78rem;color:var(--text3)">初回のみ数秒かかります</div>
+        </div>
+        <div class="card" style="margin-top:12px;opacity:.5">
+          <div class="card-title">ロット情報</div>
+          <div style="font-family:var(--font-mono);font-size:.9rem;color:var(--gold)">${s.lots[0]?.display_id || '—'}</div>
+          <div style="font-size:.78rem;color:var(--text3)">${s.lots[0]?.count || 0}頭 / 孵化: ${s.lots[0]?.hatch_date || '—'}</div>
+        </div>
+      </div>`;
+    return;
+  }
+  console.log('[T1] first usable render start');
+  // エラー状態
+  if (s._loadError) {
+    main.innerHTML = UI.header('T1移行 — エラー', { back: true }) +
+      `<div class="page-body"><div class="card" style="border-color:rgba(224,80,80,.4)">
+        <div style="color:var(--red,#e05050);font-weight:700">⚠️ 初期化エラー</div>
+        <div style="font-size:.8rem;margin-top:6px">${s._loadError}</div>
+        <button class="btn btn-primary btn-full" style="margin-top:12px"
+          onclick="Pages.t1SessionStart('${s.lots[0]?.lot_id||''}')">再試行</button>
+      </div></div>`;
+    return;
+  }
 
   const stats    = _calcStats(s);
   const line     = Store.getLine(s.lineId);
@@ -290,13 +345,15 @@ function _renderIndividualRow(ind, lotIdx) {
     <div style="display:flex;gap:3px">${sizeBtns}</div>
     <div>
       <input type="number" inputmode="numeric" min="1" max="999" step="1"
+        id="w-${ind.lot_id}-${ind.lot_item_no}"
         placeholder="—" value="${ind.weight_g !== null ? ind.weight_g : ''}"
         style="width:60px;padding:5px 4px;text-align:center;border-radius:6px;
           border:1px solid var(--border);background:var(--bg2);
           font-size:.88rem;font-weight:700;color:var(--text1);
           ${isDead ? 'opacity:.35;pointer-events:none' : ''}"
         ${isDead ? 'disabled' : ''}
-        oninput="Pages._t1SetWeight('${ind.lot_id}',${ind.lot_item_no},this.value)">
+        onblur="Pages._t1CommitWeight('${ind.lot_id}',${ind.lot_item_no},this.value)"
+        onkeydown="if(event.key==='Enter'){this.blur();event.preventDefault();}">
     </div>
     <div style="display:flex;gap:3px">${statusBtns}</div>
     <input type="text" placeholder="メモ"
@@ -627,15 +684,41 @@ Pages._t1SetSize = function (lotId, itemNo, size) {
   _renderT1Session(window._t1Session);
 };
 
+// _t1SetWeight kept as alias for any external calls, but weight updates are now commit-on-blur
 Pages._t1SetWeight = function (lotId, itemNo, val) {
+  Pages._t1CommitWeight(lotId, itemNo, val);
+};
+
+// 体重確定（blur/Enter時のみ呼ばれる。入力中は再描画しない）
+Pages._t1CommitWeight = function (lotId, itemNo, val) {
   const ind = _findInd(window._t1Session, lotId, itemNo);
   if (!ind) return;
   const n = parseInt(val, 10);
-  ind.weight_g = (!val || isNaN(n) || n <= 0) ? null : Math.min(999, n);
+  const newWeight = (!val || isNaN(n) || n <= 0) ? null : Math.min(999, n);
+  if (ind.weight_g === newWeight) return;  // 変化なしなら再描画しない
+  ind.weight_g = newWeight;
   _saveSessionToStorage();
-  // 軽量再計算（サマリと未処理パネルだけ更新）
-  _partialRefresh();
+  // 全体再描画ではなくサマリ部分だけ更新
+  _updateSummaryOnly();
 };
+
+// サマリ・バッジだけを軽量更新（入力欄は触らない）
+function _updateSummaryOnly() {
+  const s = window._t1Session;
+  if (!s) return;
+  // 未処理パネルだけ更新
+  const unproc = document.querySelector('[id^="ebl-unproc"], .unproc-panel');
+  // サマリ部分のみ再生成して置き換え
+  const summaryEl = document.getElementById('t1-summary-area');
+  if (summaryEl) {
+    const stats = _calcStats(s);
+    const line  = Store.getLine(s.lineId);
+    const lineDisp = line ? (line.line_code || line.display_id) : s.lineId;
+    summaryEl.innerHTML = _renderSummary(s, stats).replace(/^<div[^>]*>/, '').replace(/<\/div>$/, '');
+  }
+  // バッジエリアは _partialRefresh で軽く更新
+  _partialRefresh();
+}
 
 Pages._t1SetStatus = function (lotId, itemNo, status) {
   const ind = _findInd(window._t1Session, lotId, itemNo);
@@ -759,14 +842,29 @@ Pages._t1PrintUnit = function (unitIdx) {
   const u = s.units[unitIdx];
   if (!u) return;
   _saveSessionToStorage();
-  routeTo('label-gen', {
-    targetType:      'UNIT',
-    displayId:       u.display_id,
-    labelType:       't1_unit',
-    forSale:         u.for_sale,
-    backRoute:       't1-session',
+  // unitDraft: Store未保存でもラベル描画できるよう最小データを渡す
+  const line = Store.getLine(s.lineId);
+  const labelParams = {
+    targetType:       'UNIT',
+    displayId:        u.display_id,
+    labelType:        't1_unit',
+    forSale:          u.for_sale,
+    backRoute:        't1-session',
     labeledDisplayId: u.display_id,
-  });
+    unitDraft: {
+      display_id:    u.display_id,
+      line_id:       s.lineId,
+      line_code:     line ? (line.line_code || line.display_id) : '',
+      size_category: u.size_category,
+      head_count:    (u.members || []).length,
+      for_sale:      u.for_sale,
+      stage_phase:   'T1',
+      mat_type:      'T1',
+      members:       u.members || [],
+    },
+  };
+  console.log('[T1] label route params', labelParams);
+  routeTo('label-gen', labelParams);
 };
 
 Pages._t1UnitMenu = function (unitIdx) {
