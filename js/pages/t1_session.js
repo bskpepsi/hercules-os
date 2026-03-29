@@ -143,13 +143,18 @@ function _restoreSessionFromStorage() {
 // ────────────────────────────────────────────────────────────────
 Pages.t1Session = function (params = {}) {
   // label-gen から戻ってきた場合: 印刷済みフラグ更新
-  const labeledId = params.labeledDisplayId;
+  const labeledId  = params.labeledDisplayId;
+  const singleIdx  = params.singleIdx !== undefined ? parseInt(params.singleIdx, 10) : -1;
   if (!window._t1Session) _restoreSessionFromStorage();
   if (!window._t1Session) { routeTo('qr-scan', { mode: 't1' }); return; }
 
   if (labeledId) {
     const u = window._t1Session.units.find(u => u.display_id === labeledId);
     if (u) u.labeled = true;
+    _saveSessionToStorage();
+  }
+  if (singleIdx >= 0 && window._t1Session.singles[singleIdx]) {
+    window._t1Session.singles[singleIdx].labeled = true;
     _saveSessionToStorage();
   }
 
@@ -533,14 +538,19 @@ function _renderSinglesAndSales(s) {
   if (hasSingles) {
     html += `<div style="font-size:.72rem;color:var(--text3);margin-bottom:4px">個別飼育（${s.singles.length}頭）</div>`;
     s.singles.forEach((ind, i) => {
-      html += `<div style="display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid var(--border2)">
-        <span style="font-weight:700">${ind.size_category}</span>
-        <span>${ind.weight_g}g</span>
+      html += `<div style="display:flex;align-items:center;gap:4px;padding:6px 0;border-bottom:1px solid var(--border2);flex-wrap:wrap">
+        <span style="font-weight:700;color:var(--text1)">${ind.size_category}</span>
+        <span style="font-weight:700">${ind.weight_g || '—'}g</span>
         <span style="font-size:.72rem;color:var(--text3)">${ind.lot_display_id} #${ind.lot_item_no}</span>
-        <button class="btn btn-ghost btn-sm" style="font-size:.68rem;margin-left:auto"
-          onclick="Pages._t1ReturnToUnproc('single',${i})">未処理に戻す</button>
-        <button class="btn btn-ghost btn-sm" style="font-size:.68rem;color:var(--amber)"
-          onclick="Pages._t1SingleToSale(${i})">販売候補へ</button>
+        ${ind.labeled ? '<span style="font-size:.65rem;color:var(--green)">✅印刷済</span>' : ''}
+        <div style="margin-left:auto;display:flex;gap:3px">
+          <button class="btn btn-primary btn-sm" style="font-size:.68rem"
+            onclick="Pages._t1PrintSingle(${i})">🏷️ ラベル</button>
+          <button class="btn btn-ghost btn-sm" style="font-size:.68rem"
+            onclick="Pages._t1ReturnToUnproc('single',${i})">戻す</button>
+          <button class="btn btn-ghost btn-sm" style="font-size:.68rem;color:var(--amber)"
+            onclick="Pages._t1SingleToSale(${i})">販売候補</button>
+        </div>
       </div>`;
     });
   }
@@ -958,6 +968,33 @@ Pages._t1SingleToSale = function (idx) {
   if (ind) ind.assigned_to = 'sale';
   s.saleIndividuals.push(entry);
   _renderT1Session(s);
+};
+
+Pages._t1PrintSingle = function (idx) {
+  const s = window._t1Session;
+  const ind = s.singles[idx];
+  if (!ind) return;
+  _saveSessionToStorage();
+  const line = Store.getLine(s.lineId);
+  const labelParams = {
+    targetType:  'IND_DRAFT',
+    labelType:   'ind_fixed',
+    backRoute:   't1-session',
+    singleIdx:   idx,
+    draftInd: {
+      line_id:       s.lineId,
+      line_code:     line ? (line.line_code || line.display_id) : '',
+      size_category: ind.size_category,
+      weight_g:      ind.weight_g,
+      stage_phase:   'T1',
+      mat_type:      'T1',
+      lot_id:        ind.lot_id,
+      lot_item_no:   ind.lot_item_no,
+      lot_display_id:ind.lot_display_id,
+    },
+  };
+  console.log('[T1] single label params', labelParams);
+  routeTo('label-gen', labelParams);
 };
 
 Pages._t1SaleToSingle = function (idx) {

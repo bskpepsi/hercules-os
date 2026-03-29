@@ -68,6 +68,20 @@ Pages.labelGen = function (params = {}) {
   const _unitDisplayId = params.displayId  || targetId || '';
   const _unitForSale   = !!params.forSale;
   const _unitDraft     = params.unitDraft  || null;   // t1_session から渡される仮データ
+  // UNIT / IND_DRAFT コンテキストをグローバルに保存（_lblGenerateはスコープ外のため）
+  const _isIndDraftMode = targetType === 'IND_DRAFT';
+  const _draftInd       = params.draftInd || null;
+  const _singleIdx      = params.singleIdx !== undefined ? params.singleIdx : -1;
+  if (_isUnitMode) {
+    window._lblUnitCtx = { displayId: _unitDisplayId, forSale: _unitForSale, draft: _unitDraft };
+  } else {
+    window._lblUnitCtx = null;
+  }
+  if (_isIndDraftMode) {
+    window._lblIndDraftCtx = { draftInd: _draftInd, singleIdx: _singleIdx, backRoute: params.backRoute };
+  } else {
+    window._lblIndDraftCtx = null;
+  }
   console.log('[LABEL] params', { targetType, targetId, labelType, _isUnitMode, _unitDisplayId, _unitForSale, hasDraft: !!_unitDraft, backRoute: params.backRoute });
   if (_isUnitMode) {
     const _storeUnit = Store.getUnitByDisplayId ? Store.getUnitByDisplayId(_unitDisplayId) : null;
@@ -86,7 +100,7 @@ Pages.labelGen = function (params = {}) {
   const pars = Store.getDB('parents') || [];
 
   // 詳細画面から来た場合は直行モード
-  const isDirectMode = !!params.targetId || _isUnitMode;
+  const isDirectMode = !!params.targetId || _isUnitMode || _isIndDraftMode;
   const origin       = isDirectMode ? _detailPageKey(targetType, targetId) : null;
 
   // ヘッダーの戻るボタン
@@ -95,6 +109,10 @@ Pages.labelGen = function (params = {}) {
   // 一括発行キューモード → 完了一覧へ直接戻る（前のラベルではなく一覧へ）
   // 直行モード            → 詳細画面へ
   // それ以外             → Store.back()
+  // IND_DRAFT: backParam には singleIdx を含める
+  if (_isIndDraftMode && _backRoute === 't1-session' && _singleIdx >= 0) {
+    if (!_backParam.singleIdx) Object.assign(_backParam, { singleIdx: _singleIdx });
+  }
   const headerOpts = _backRoute
     ? { back: true, backFn: `routeTo('${_backRoute}',${JSON.stringify(_backParam)})` }
     : _inEblQueue
@@ -155,7 +173,7 @@ Pages.labelGen = function (params = {}) {
 
         <!-- プレビューエリア -->
         <div class="card" id="lbl-preview-card">
-          ${(targetId || (_isUnitMode && _unitDisplayId))
+          ${(targetId || (_isUnitMode && _unitDisplayId) || _isIndDraftMode)
             ? `<div class="card-title">プレビュー（70mm × 50mm）</div>
                <div id="lbl-html-preview" style="transform-origin:top left;margin-bottom:12px;
                  border:1px solid var(--border2);border-radius:4px;overflow:hidden;
@@ -247,9 +265,21 @@ Pages.labelGen = function (params = {}) {
 
 // ── ラベル生成メイン ─────────────────────────────────────────────
 Pages._lblGenerate = async function (targetType, targetId, labelType) {
-  if (!targetId) return;
+  // UNIT モード: targetId は displayId として渡される。window._lblUnitCtx から補完
+  const _unitCtx    = window._lblUnitCtx    || {};
+  const _indDraftCtx = window._lblIndDraftCtx || {};
+  const _genDisplayId  = (targetType === 'UNIT')      ? (targetId || _unitCtx.displayId || '') : targetId;
+  const _genForSale    = (targetType === 'UNIT')      ? (!!_unitCtx.forSale) : false;
+  const _genUnitDraft  = (targetType === 'UNIT')      ? (_unitCtx.draft || null) : null;
+  const _genIndDraft   = (targetType === 'IND_DRAFT') ? (_indDraftCtx.draftInd || null) : null;
+
+  // UNIT: displayId, IND_DRAFT: draftInd, その他: targetId が必要
+  if (targetType === 'UNIT' && !_genDisplayId) return;
+  if (targetType === 'IND_DRAFT' && !_genIndDraft) return;
+  if (targetType !== 'UNIT' && targetType !== 'IND_DRAFT' && !targetId) return;
+
   const preview = document.getElementById('lbl-html-preview');
-  if (!preview) return;
+  if (!preview) { console.warn('[LABEL] lbl-html-preview not found'); return; }
 
   let ld;
   try {
@@ -321,29 +351,49 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
       };
     } else if (targetType === 'UNIT') {
       // UNIT: Store→draft→空 の優先度で fallback
-      console.log('[LABEL] _lblGenerate UNIT branch - displayId:', _unitDisplayId);
-      const storeUnit = (Store.getUnitByDisplayId && Store.getUnitByDisplayId(_unitDisplayId))
-        || (Store.getDB('breeding_units') || []).find(u => u.display_id === _unitDisplayId || u.unit_id === targetId)
+      console.log('[LABEL] _lblGenerate UNIT branch - displayId:', _genDisplayId, '/ hasDraft:', !!_genUnitDraft);
+      const storeUnit = (Store.getUnitByDisplayId && Store.getUnitByDisplayId(_genDisplayId))
+        || (Store.getDB('breeding_units') || []).find(u => u.display_id === _genDisplayId || u.unit_id === targetId)
         || null;
-      // Store にない場合は unitDraft（t1_session から渡された仮データ）を使う
-      const unit   = storeUnit || _unitDraft || {};
-      console.log('[LABEL] unit resolved - fromStore:', !!storeUnit, '/ fromDraft:', !storeUnit && !!_unitDraft);
+      const unit   = storeUnit || _genUnitDraft || {};
+      const _isFromDraft = !storeUnit && !!_genUnitDraft;
+      console.log('[LABEL] unit resolved - fromStore:', !!storeUnit, '/ fromDraft:', _isFromDraft, '/ unit:', unit.display_id || '(empty)');
       const lineId = unit.line_id || '';
       const line   = lineId ? (Store.getLine(lineId) || {}) : {};
       ld = {
-        qr_text:        `BU:${_unitDisplayId}`,
-        display_id:     _unitDisplayId,
+        qr_text:        `BU:${_genDisplayId}`,
+        display_id:     _genDisplayId,
         line_code:      unit.line_code || line.line_code || line.display_id || '',
         stage_code:     unit.stage_phase || 'T1',
         head_count:     unit.head_count || 2,
         size_category:  unit.size_category || '',
         hatch_date:     unit.hatch_date || '',
         mat_type:       unit.mat_type  || 'T1',
-        for_sale:       _unitForSale,
+        for_sale:       _genForSale,
         members:        unit.members   || [],
         records:        [],
         label_type:     't1_unit',
         note_private:   unit.note || '',
+      };
+    } else if (targetType === 'IND_DRAFT') {
+      // 個別飼育下書き: 保存前個体のラベル（T1セッション中）
+      const di = _genIndDraft || {};
+      const line = di.line_id ? (Store.getLine(di.line_id) || {}) : {};
+      console.log('[LABEL] IND_DRAFT branch - draft:', di);
+      ld = {
+        qr_text:      'IND:DRAFT',  // 保存前なのでdraft表示
+        display_id:   `${di.lot_display_id || ''}#${di.lot_item_no || '?'} (下書き)`,
+        line_code:    di.line_code || line.line_code || line.display_id || '',
+        stage_code:   di.stage_phase || 'T1',
+        sex:          '',
+        hatch_date:   '',
+        mat_type:     di.mat_type  || 'T1',
+        mat_molt:     false,
+        size_category:di.size_category || '',
+        note_private: `T1個別飼育 ${di.lot_display_id||''} #${di.lot_item_no||''}`,
+        records:      [],
+        label_type:   'ind_fixed',
+        _isDraft:     true,
       };
     } else {
       const set = (Store.getDB('pairings') || []).find(p => p.set_id === targetId) || {};
