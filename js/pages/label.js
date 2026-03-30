@@ -11,6 +11,11 @@
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
+// ── ビルド番号 ── 実機で最新ファイルが読み込まれているか確認用
+window._LABEL_BUILD = '20260330-v4';
+console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
+
+
 // ── ステージコード正規化（ラベル表示用）────────────────────────
 function _normStageForLabel(code) {
   if (!code) return '';
@@ -59,6 +64,13 @@ function _detailPageKey(targetType, targetId) {
 
 // ── ラベル生成ページ ─────────────────────────────────────────────
 Pages.labelGen = function (params = {}) {
+  window._LABEL_CALL_COUNT = (window._LABEL_CALL_COUNT || 0) + 1;
+  console.log('[LABEL] Pages.labelGen called #' + window._LABEL_CALL_COUNT, {
+    targetType: params.targetType,
+    targetId: params.targetId,
+    labelType: params.labelType,
+    displayId: params.displayId,
+  });
   const main = document.getElementById('main');
   let targetType      = params.targetType || 'IND';
   let targetId        = params.targetId   || '';
@@ -122,12 +134,23 @@ Pages.labelGen = function (params = {}) {
           : { back: true });
 
   function render() {
+    console.log('[LABEL] render() called - targetType:', targetType, '/ targetId:', targetId, '/ labelType:', labelType);
     if (_isUnitMode) {
       console.log('[LABEL] render() UNIT mode - displayId:', _unitDisplayId, '/ isDirectMode:', isDirectMode);
     }
     main.innerHTML = `
       ${UI.header('ラベル発行', headerOpts)}
       <div class="page-body">
+        <!-- デバッグパネル: build確認・params確認用 -->
+        <div style="font-size:10px;color:#888;line-height:1.6;padding:4px 8px;background:#f9f9f9;border-radius:6px;margin-bottom:6px;word-break:break-all">
+          build: <b>${window._LABEL_BUILD||'?'}</b> /
+          type: <b>${targetType}</b> /
+          id: <b>${targetId||'(empty)'}</b> /
+          lt: <b>${labelType||'(empty)'}</b> /
+          direct: <b>${isDirectMode}</b> /
+          unit: <b>${_isUnitMode}</b> /
+          draft: <b>${_isIndDraftMode}</b>
+        </div>
 
         ${!isDirectMode ? `
         <!-- 対象選択（直行モード以外のみ） -->
@@ -241,10 +264,18 @@ Pages.labelGen = function (params = {}) {
       </div>`;
 
     // UNIT モードは targetId が空でも displayId があれば即自動生成
-    if (targetId || (_isUnitMode && _unitDisplayId)) {
+    if (targetId || (_isUnitMode && _unitDisplayId) || _isIndDraftMode) {
       const _autoTargetId = (_isUnitMode && !targetId) ? _unitDisplayId : targetId;
-      console.log('[LABEL] auto-generate', { targetType, _autoTargetId, labelType, _isUnitMode });
+      console.log('[LABEL] auto-generate', { targetType, _autoTargetId, labelType, _isUnitMode, _isIndDraftMode });
       setTimeout(() => Pages._lblGenerate(targetType, _autoTargetId, labelType), 100);
+      // 安全フォールバック: 3秒後もスピナーのままならエラー表示
+      setTimeout(() => {
+        const _mountCheck = document.getElementById('lbl-html-preview');
+        if (_mountCheck && _mountCheck.querySelector('.spinner')) {
+          console.error('[LABEL] TIMEOUT: still showing spinner after 3s - force error');
+          _mountCheck.innerHTML = '<div style="color:#b00020;padding:20px;text-align:center;font-size:.85rem">ラベル生成がタイムアウトしました。<br>ページを再読み込みして再試行してください。</div>';
+        }
+      }, 3000);
     }
   }
 
@@ -265,6 +296,7 @@ Pages.labelGen = function (params = {}) {
 
 // ── ラベル生成メイン ─────────────────────────────────────────────
 Pages._lblGenerate = async function (targetType, targetId, labelType) {
+  console.log('[LABEL] _lblGenerate called', { targetType, targetId, labelType });
   // UNIT モード: targetId は displayId として渡される。window._lblUnitCtx から補完
   const _unitCtx    = window._lblUnitCtx    || {};
   const _indDraftCtx = window._lblIndDraftCtx || {};
@@ -274,16 +306,31 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
   const _genIndDraft   = (targetType === 'IND_DRAFT') ? (_indDraftCtx.draftInd || null) : null;
 
   // UNIT: displayId, IND_DRAFT: draftInd, その他: targetId が必要
-  if (targetType === 'UNIT' && !_genDisplayId) return;
-  if (targetType === 'IND_DRAFT' && !_genIndDraft) return;
-  if (targetType !== 'UNIT' && targetType !== 'IND_DRAFT' && !targetId) return;
+  if (targetType === 'UNIT' && !_genDisplayId) { console.warn('[LABEL] early return: UNIT no displayId'); return; }
+  if (targetType === 'IND_DRAFT' && !_genIndDraft) { console.warn('[LABEL] early return: IND_DRAFT no draftInd'); return; }
+  if (targetType !== 'UNIT' && targetType !== 'IND_DRAFT' && !targetId) {
+    console.warn('[LABEL] early return: no targetId for', targetType);
+    return;
+  }
 
   const preview = document.getElementById('lbl-html-preview');
-  if (!preview) { console.warn('[LABEL] lbl-html-preview not found'); return; }
+  console.log('[LABEL] preview mount check:', !!preview, '/ DOM lbl-html-preview count:', document.querySelectorAll('#lbl-html-preview').length);
+  if (!preview) {
+    console.error('[LABEL] FATAL: lbl-html-preview not found. render() may have re-run and replaced DOM.');
+    // Try to find it anywhere in DOM as fallback
+    const anyPreview = document.querySelector('[id="lbl-html-preview"]');
+    if (!anyPreview) {
+      console.error('[LABEL] Not found anywhere in DOM. Current page:', Store.getPage());
+      return;
+    }
+  }
+  console.log('[LABEL] preview mount found ✅');
 
   let ld;
   try {
+    console.log('[LABEL] generate start - targetType:', targetType, 'targetId:', targetId, 'lt:', labelType);
     if (targetType === 'IND') {
+      console.log('[LABEL] branch IND');
       const ind  = Store.getIndividual(targetId) || {};
       const line = Store.getLine(ind.line_id)    || {};
       const records = Store.getGrowthRecords(targetId) || [];
@@ -304,6 +351,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         label_type:   labelType || 'ind_fixed',
       };
     } else if (targetType === 'LOT') {
+      console.log('[LABEL] branch LOT - targetId:', targetId);
       const lot  = Store.getLot(targetId)     || {};
       const line = Store.getLine(lot.line_id) || {};
       const records = Store.getGrowthRecords(targetId) || [];
@@ -326,6 +374,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         label_type:   labelType || autoType,
       };
     } else if (targetType === 'PAR') {
+      console.log('[LABEL] branch PAR');
       const par = (Store.getDB('parents') || []).find(p => p.par_id === targetId) || {};
       const pTags = (() => { try { return JSON.parse(par.paternal_tags || '[]') || []; } catch(e) { return []; } })();
       const mTags = (() => { try { return JSON.parse(par.maternal_tags || '[]') || []; } catch(e) { return []; } })();
@@ -351,6 +400,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
       };
     } else if (targetType === 'UNIT') {
       // UNIT: Store→draft→空 の優先度で fallback
+      console.log('[LABEL] branch UNIT - displayId:', _genDisplayId, '/ hasDraft:', !!_genUnitDraft);
       console.log('[LABEL] _lblGenerate UNIT branch - displayId:', _genDisplayId, '/ hasDraft:', !!_genUnitDraft);
       const storeUnit = (Store.getUnitByDisplayId && Store.getUnitByDisplayId(_genDisplayId))
         || (Store.getDB('breeding_units') || []).find(u => u.display_id === _genDisplayId || u.unit_id === targetId)
@@ -376,6 +426,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         note_private:   unit.note || '',
       };
     } else if (targetType === 'IND_DRAFT') {
+      console.log('[LABEL] branch IND_DRAFT', _genIndDraft);
       // 個別飼育下書き: 保存前個体のラベル（T1セッション中）
       const di = _genIndDraft || {};
       const line = di.line_id ? (Store.getLine(di.line_id) || {}) : {};
@@ -396,6 +447,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         _isDraft:     true,
       };
     } else {
+      console.log('[LABEL] branch SET - targetId:', targetId);
       const set = (Store.getDB('pairings') || []).find(p => p.set_id === targetId) || {};
       ld = {
         qr_text:       `SET:${set.set_id || targetId}`,
@@ -408,7 +460,14 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
       };
     }
   } catch (e) {
+    console.error('[LABEL] generate error:', e.message, e.stack);
     UI.toast('ラベルデータ生成失敗: ' + e.message, 'error');
+    // preview 領域にエラーを表示（spinner 放置禁止）
+    const _errPrev = document.getElementById('lbl-html-preview');
+    if (_errPrev) {
+      _errPrev.innerHTML = `<div style="color:var(--red,#e05050);padding:16px;font-size:.8rem;text-align:center">
+        ⚠️ ラベル生成失敗<br><span style="font-size:.7rem;color:var(--text3)">${e.message}</span></div>`;
+    }
     return;
   }
 
@@ -427,6 +486,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
   }
 
   setTimeout(() => {
+    try {
     let qrSrc = '';
     // canvas優先（QRCode.jsはcanvasを先に生成してからimgに変換）
     const qrCanvas = qrDiv?.querySelector('canvas');
@@ -441,6 +501,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
       qrSrc = qrImg.src;
     }
 
+    console.log('[LABEL] html built - building label HTML');
     const html = _buildLabelHTML(ld, qrSrc);
     window._currentLabel = {
       displayId: ld.display_id,
@@ -450,17 +511,30 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
       dataUrl: null,
     };
 
-    console.log('[LABEL] preview render start - lt:', lt, '/ displayId:', ld.display_id);
-    preview.innerHTML = `<iframe srcdoc="${html.replace(/"/g,'&quot;')}"
+    console.log('[LABEL] preview render start - lt:', ld.label_type, '/ displayId:', ld.display_id);
+    // 再クエリ: クロージャ変数ではなく常にDOMから最新を取得（detached element対策）
+    const _previewNow = document.getElementById('lbl-html-preview');
+    if (!_previewNow) {
+      console.error('[LABEL] lbl-html-preview missing at render time (page navigated away?)');
+      return;
+    }
+    _previewNow.innerHTML = `<iframe srcdoc="${html.replace(/"/g,'&quot;')}"
       style="width:264px;height:189px;border:none;transform-origin:top left"
       scrolling="no"></iframe>`;
 
-    console.log('[LABEL] preview render done - showing action bar');
+    console.log('[LABEL] preview render done ✅ - showing action bar');
     const bar = document.getElementById('lbl-action-bar');
     if (bar) {
       bar.style.display = 'block';
-      // スクロールして見えるように
       bar.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+    } catch(stErr) {
+      console.error('[LABEL] preview render error:', stErr.message, stErr.stack);
+      const _errMount = document.getElementById('lbl-html-preview');
+      if (_errMount) {
+        _errMount.innerHTML = `<div style="color:var(--red,#e05050);padding:16px;font-size:.8rem;text-align:center">
+          ⚠️ ラベル描画エラー<br><span style="font-size:.7rem;color:var(--text3)">${stErr.message}</span></div>`;
+      }
     }
   }, 500);
 };

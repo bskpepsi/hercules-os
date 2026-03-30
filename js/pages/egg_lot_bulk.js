@@ -554,6 +554,7 @@ Pages.eggLotBulk = function (params = {}) {
     // ── ① ロット一括作成（createLotBulk: 1回のAPI呼び出し） ──
     if (lotRows.length > 0) {
       try {
+        console.log('[EGG_BULK] create lots start - count:', lotRows.length);
         console.time('[EBL] createLotBulk');
         const payload = {
           line_id:        _selLineId,
@@ -585,6 +586,8 @@ Pages.eggLotBulk = function (params = {}) {
     // ── ② 個体一括作成（createIndividualBulk: 1回のAPI呼び出し） ──
     if (indRows.length > 0) {
       try {
+        console.log('[EGG_BULK] create individuals start - count:', indRows.length);
+        console.log('[EGG_BULK] create individuals action = createIndividualBulk');
         console.time('[EBL] createIndividualBulk');
         const payload = {
           line_id: _selLineId,
@@ -599,6 +602,7 @@ Pages.eggLotBulk = function (params = {}) {
         };
         const res = await API.individual.createBulk(payload);
         console.timeEnd('[EBL] createIndividualBulk');
+        console.log('[EGG_BULK] create individuals response =', JSON.stringify(res).slice(0, 200));
         (res.created || []).forEach((r, i) => {
           const row  = indRows[i];
           const date = (row.collectDate || _commonDate || _todayYMD()).replace(/-/g, '/');
@@ -612,6 +616,7 @@ Pages.eggLotBulk = function (params = {}) {
       }
     }
 
+    console.log('[EGG_BULK] result summary - lots:', results.filter(r=>r.type==='LOT').length, '/ inds:', results.filter(r=>r.type==='IND').length, '/ errors:', errors.length);
     if (errors.length > 0) UI.toast('一部登録失敗: ' + errors.join(' / '), 'error', 6000);
 
     if (results.length === 0) {
