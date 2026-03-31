@@ -1,13 +1,16 @@
 // ════════════════════════════════════════════════════════════════
-// t2_session.js — T2移行編成セッション画面
+// t2_session.js v2.1 — T2移行編成セッション画面
 //
-// 設計:
-//   - 対象は BU（飼育ユニット）1件
-//   - members 2頭それぞれに decision を入力
-//   - decision: continue / individualize / sale / dead
-//   - 継続 → BU の stage_phase を更新
-//   - 個別化 / 販売候補 → individual 作成
-//   - 死亡 → growth_records ATTRITION
+// 運用ルール:
+//   - T1→T2 は必ずこの画面で確定（継続でも）
+//   - 継続読取りは同ステージ内での通常交換に使用
+//   - 状態(通常/死亡) と 判断(継続/個別化/販売候補) を分離
+//   - 死亡は「状態」で選んだ時点で decision='dead' 確定
+//
+// 初期値:
+//   - size_category は T1 時点の値を引き継ぎ（変更可）
+//   - weight_g は T2 で新規入力（空欄スタート）
+//   - status: 'normal', decision: null
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
@@ -19,7 +22,6 @@ window._t2Session = window._t2Session || null;
 Pages.t2SessionStart = async function (unitDisplayId) {
   console.log('[T2] t2SessionStart - displayId:', unitDisplayId);
 
-  // Store から BU を取得
   const unit = Store.getUnitByDisplayId(unitDisplayId)
     || (Store.getDB('breeding_units') || []).find(u => u.display_id === unitDisplayId);
 
@@ -33,100 +35,140 @@ Pages.t2SessionStart = async function (unitDisplayId) {
     UI.toast('このユニットはT2移行済みです', 'error'); return;
   }
 
-  // members を取得（source_lots / growth_records から由来ロット情報も合わせる）
   const members = _buildT2Members(unit);
   if (!members || members.length === 0) {
     UI.toast('ユニットのメンバー情報が取得できません', 'error'); return;
   }
 
-  // 由来ロット display_id リストを解決
   const originLotDisplayIds = _resolveOriginLotDisplayIds(unit);
 
   window._t2Session = {
-    unit_id:          unit.unit_id,
-    display_id:       unit.display_id,
-    line_id:          unit.line_id,
-    stage_phase:      unit.stage_phase || 'T1',
-    hatch_date:       unit.hatch_date  || '',
-    head_count:       unit.head_count  || members.length,
-    origin_lots:      originLotDisplayIds,
-    members:          members,
-    saving:           false,
+    unit_id:    unit.unit_id,
+    display_id: unit.display_id,
+    line_id:    unit.line_id,
+    stage_phase:unit.stage_phase || 'T1',
+    hatch_date: unit.hatch_date  || '',
+    head_count: unit.head_count  || members.length,
+    origin_lots:originLotDisplayIds,
+    members:    members,
+    saving:     false,
   };
 
   _saveT2SessionToStorage();
   routeTo('t2-session');
 };
 
-// ── メンバー構築 ─────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────
+// メンバー構築
+//
+// size_category の引き継ぎ優先順位:
+//   1. unit.members[i].size_category  (BU レコード内メンバー配列)
+//   2. unit.size_category             (BU レコード単体フラット値: 2頭同区分のケース)
+//   3. 成長記録の最新 size_category   (フォールバック)
+//   4. '' (未設定)
+//
+// weight_g は T2 で新規計測するため null でスタート。
+// ────────────────────────────────────────────────────────────────
 function _buildT2Members(unit) {
-  const storedMembers = unit.members || [];
-  // stored members が配列文字列の場合は parse
-  let parsed = storedMembers;
-  if (typeof storedMembers === 'string') {
-    try { parsed = JSON.parse(storedMembers); } catch(e) { parsed = []; }
+  // unit.members は JSON 文字列 or 配列
+  let parsedMembers = [];
+  const raw = unit.members;
+  if (Array.isArray(raw)) {
+    parsedMembers = raw;
+  } else if (typeof raw === 'string' && raw.trim()) {
+    try { parsedMembers = JSON.parse(raw); } catch(e) { parsedMembers = []; }
   }
 
-  // head_count 分の行を確保（最低2行）
-  const count = parseInt(unit.head_count, 10) || 2;
+  // フォールバック: 単体 size_category（ユニット全体に設定されている場合）
+  const unitSizeCategory = unit.size_category || '';
+
+  // 成長記録から slot ごとの最新 size_category を取得（フォールバック用）
+  const growthBySLot = _getT1GrowthBySLot(unit.unit_id);
+
+  const count = Math.max(parseInt(unit.head_count, 10) || 2, parsedMembers.length, 1);
   const result = [];
+
   for (let i = 0; i < count; i++) {
-    const src = parsed[i] || {};
+    const src = parsedMembers[i] || {};
+    const slotNo = i + 1;
+
+    // size_category の優先順位解決
+    const sizeCategory =
+      src.size_category
+      || (growthBySLot[slotNo] && growthBySLot[slotNo].size_category)
+      || unitSizeCategory
+      || '';
+
     result.push({
-      unit_slot_no:  i + 1,
-      lot_id:        src.lot_id        || '',
-      lot_item_no:   src.lot_item_no   || '',
-      lot_display_id:src.lot_display_id|| src.lot_id || '',
-      size_category: src.size_category || '',
-      weight_g:      null,   // T2で新たに計測
-      status:        'normal',
-      decision:      null,   // continue / individualize / sale / dead
+      unit_slot_no:  slotNo,
+      lot_id:        src.lot_id         || '',
+      lot_item_no:   src.lot_item_no    || '',
+      lot_display_id:src.lot_display_id || src.lot_id || '',
+      // T1 引き継ぎ値（初期表示・変更可）
+      size_category: sizeCategory,
+      // T1 体重は参照表示のみ（weight_g は T2 で新規入力）
+      t1_weight_g:   src.weight_g       || (growthBySLot[slotNo] && growthBySLot[slotNo].weight_g) || null,
+      // T2 入力値（空欄スタート）
+      weight_g:      null,
+      status:        'normal',   // normal / dead
+      decision:      null,       // continue / individualize / sale / dead
       memo:          '',
     });
   }
   return result;
 }
 
-// ── 由来ロット display_id リストを解決 ───────────────────────────
+// ── 成長記録から slot ごとの最新記録を取得 ────────────────────────
+function _getT1GrowthBySLot(unitId) {
+  if (!unitId) return {};
+  const records = Store.getGrowthRecords ? Store.getGrowthRecords(unitId) : [];
+  if (!records || records.length === 0) return {};
+
+  const bySlot = {};
+  records.forEach(r => {
+    const slot = parseInt(r.unit_slot_no, 10);
+    if (!slot) return;
+    // 最新（record_date 降順で最初）を保持
+    if (!bySlot[slot] || String(r.record_date) > String(bySlot[slot].record_date)) {
+      bySlot[slot] = r;
+    }
+  });
+  return bySlot;
+}
+
+// ── 由来ロット解決 ───────────────────────────────────────────────
 function _resolveOriginLotDisplayIds(unit) {
-  // source_lots: JSON文字列 or 配列
   let srcLots = [];
   if (unit.source_lots) {
     try {
       srcLots = typeof unit.source_lots === 'string'
-        ? JSON.parse(unit.source_lots) : unit.source_lots;
+        ? JSON.parse(unit.source_lots) : (unit.source_lots || []);
     } catch(e) {}
   }
-
-  // lot_id → display_id に変換
   if (srcLots.length > 0) {
     return srcLots.map(lid => {
       const lot = Store.getLot(lid);
       return lot ? (lot.display_id || lid) : lid;
     });
   }
-
-  // フォールバック: origin_lot_id
   if (unit.origin_lot_id) {
     const lot = Store.getLot(unit.origin_lot_id);
     return [lot ? (lot.display_id || unit.origin_lot_id) : unit.origin_lot_id];
   }
-
   return [];
 }
 
 // ── 由来ロット表示文字列 ─────────────────────────────────────────
 function _formatOriginLots(originLotDisplayIds) {
   if (!originLotDisplayIds || originLotDisplayIds.length === 0) return '—';
-  // display_id からライン部分を除いた短縮形（例: HM2026-A1-L02 → A1-L02）
   const short = originLotDisplayIds.map(d => {
-    const m = d.match(/[A-Z]\d+-L\d+/);
+    const m = d.match(/[A-Z0-9]+-L\d+/);
     return m ? m[0] : d;
   });
   return short.join(' / ');
 }
 
-// ── sessionStorage 永続化 ─────────────────────────────────────────
+// ── sessionStorage ───────────────────────────────────────────────
 function _saveT2SessionToStorage() {
   try { sessionStorage.setItem('_t2SessionData', JSON.stringify(window._t2Session)); } catch(e) {}
 }
@@ -143,7 +185,6 @@ function _restoreT2SessionFromStorage() {
 Pages.t2Session = function (params = {}) {
   if (!window._t2Session) _restoreT2SessionFromStorage();
   if (!window._t2Session) { routeTo('qr-scan', { mode: 't2' }); return; }
-
   _renderT2Session(window._t2Session);
 };
 
@@ -155,165 +196,215 @@ function _renderT2Session(s) {
   const lineDisp  = line ? (line.line_code || line.display_id) : s.line_id;
   const originStr = _formatOriginLots(s.origin_lots);
   const nextPhase = _nextStagePhase(s.stage_phase);
-
-  const allDecided = s.members.every(m => m.decision !== null);
   const allInputComplete = s.members.every(m => _isT2MemberComplete(m));
   const canSave   = allInputComplete && !s.saving;
 
+  // 保存中スピナー
+  if (s.saving) {
+    main.innerHTML = `
+      ${UI.header('T2移行編成セッション', { back: false })}
+      <div class="page-body" style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;gap:16px">
+        <div class="spinner" style="width:44px;height:44px;border-width:4px"></div>
+        <div style="font-size:.9rem;color:var(--text2);font-weight:600">T2移行を保存中...</div>
+        <div style="font-size:.75rem;color:var(--text3)">${s.display_id}</div>
+      </div>`;
+    return;
+  }
+
   main.innerHTML = `
     ${UI.header('T2移行編成セッション', { back: true, backFn: "Pages._t2SessionBack()" })}
-    <div class="page-body has-quick-bar" style="padding-bottom:80px">
+    <div class="page-body" style="padding-bottom:84px">
 
-      <!-- セッション概要 -->
-      <div style="background:var(--surface2);border-radius:10px;padding:10px 14px;font-size:.78rem;display:flex;flex-wrap:wrap;gap:6px;align-items:center">
-        <span style="font-weight:700;color:var(--gold);font-family:var(--font-mono)">${s.display_id}</span>
-        <span style="color:var(--text3)">${lineDisp}</span>
-        <span style="background:rgba(91,168,232,.15);color:var(--blue);padding:1px 6px;border-radius:4px;font-size:.72rem">
-          ${s.stage_phase} → ${nextPhase}
-        </span>
-        <span style="color:var(--text3)">${s.head_count}頭</span>
-        ${s.hatch_date ? `<span style="color:var(--text3)">孵化: ${s.hatch_date}</span>` : ''}
-        <span style="font-size:.72rem;color:var(--text3)">由来: ${originStr}</span>
-      </div>
-
-      <!-- 個体行 -->
-      <div class="card" style="margin-top:8px">
-        <div class="card-title">個体の状態・判断を入力</div>
-        <!-- 列ヘッダー -->
-        <div style="display:grid;grid-template-columns:30px 80px 70px 80px 100px 1fr;gap:4px;
-          font-size:.62rem;color:var(--text3);padding:0 0 6px;border-bottom:1px solid var(--border)">
-          <div>席</div><div>区分</div><div>体重</div><div>状態</div><div>判断</div><div>メモ</div>
+      <!-- ① ユニット概要バナー -->
+      <div style="background:var(--surface2);border-radius:10px;padding:12px 14px;font-size:.8rem">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+          <span style="font-weight:700;color:var(--gold);font-family:var(--font-mono);font-size:.9rem">${s.display_id}</span>
+          <span style="background:rgba(91,168,232,.15);color:var(--blue);padding:2px 8px;border-radius:5px;font-size:.72rem;font-weight:700">
+            ${s.stage_phase} → ${nextPhase}
+          </span>
+          <span style="color:var(--text3)">${lineDisp}　${s.head_count}頭</span>
         </div>
-        ${s.members.map((m, i) => _renderT2MemberRow(m, i, s)).join('')}
+        ${s.hatch_date ? `<div style="font-size:.72rem;color:var(--text3)">孵化: ${s.hatch_date}</div>` : ''}
+        <div style="font-size:.72rem;color:var(--text3)">由来ロット: ${originStr}</div>
       </div>
 
-      <!-- 判断サマリ -->
+      <!-- ② 運用説明 -->
+      <div style="background:rgba(91,168,232,.07);border:1px solid rgba(91,168,232,.25);border-radius:8px;padding:10px 12px;margin-top:8px;font-size:.76rem;color:var(--text2);line-height:1.6">
+        <b>T1→T2移行</b>を確定します。<br>
+        継続する場合も、個別化・販売候補・死亡の場合もすべてここで選んで保存してください。<br>
+        <span style="color:var(--text3)">※ T2移行後の通常交換は「継続読取りモード」を使います。</span>
+      </div>
+
+      <!-- ③ 個体ブロック（縦カード） -->
+      ${s.members.map((m, i) => _renderT2MemberCard(m, i, s)).join('')}
+
+      <!-- ④ 判断サマリ -->
       ${_renderT2Summary(s)}
 
-      <!-- 保存確認メッセージ -->
-      ${!allInputComplete && s.members.some(m => m.decision !== null) ? `
-      <div style="background:rgba(224,144,64,.08);border:1px solid rgba(224,144,64,.3);border-radius:8px;padding:10px;margin-top:8px;font-size:.78rem;color:var(--amber)">
-        ⚠️ 全員の判断と必要な情報を入力してから保存できます
+      <!-- ⑤ 未完了警告 -->
+      ${(!allInputComplete && s.members.some(m => m.decision !== null)) ? `
+      <div style="background:rgba(224,144,64,.08);border:1px solid rgba(224,144,64,.3);border-radius:8px;padding:10px 12px;margin-top:8px;font-size:.78rem;color:var(--amber)">
+        ⚠️ 全頭の判断が完了していません。体重・判断を確認してください。
       </div>` : ''}
 
     </div>
 
     <!-- 固定フッター -->
     <div class="quick-action-bar">
-      <button class="btn btn-ghost btn-xl" style="flex:1"
-        onclick="Pages._t2SessionCancel()">キャンセル</button>
-      <button class="btn btn-gold btn-xl" style="flex:2"
+      <button class="btn btn-ghost" style="flex:1;padding:14px 0"
+        onclick="Pages._t2SessionCancel()">破棄</button>
+      <button class="btn btn-gold" style="flex:2;padding:14px 0;font-weight:700;font-size:.95rem"
         ${canSave ? '' : 'disabled'}
         onclick="Pages._t2SessionSave()">
-        💾 T2移行を確定・保存
+        💾 T2移行を確定
       </button>
     </div>`;
 
   _saveT2SessionToStorage();
 }
 
-// ── 個体行描画 ──────────────────────────────────────────────────
-function _renderT2MemberRow(m, idx, s) {
-  const isDead = m.status === 'dead';
-  const hasDecision = m.decision !== null;
+// ── 個体カード（縦4段構成） ──────────────────────────────────────
+function _renderT2MemberCard(m, idx, s) {
+  const isDead    = m.status === 'dead';
+  const slotLabel = idx === 0 ? '1頭目' : idx === 1 ? '2頭目' : `${idx + 1}頭目`;
 
-  const decisionColors = {
-    continue:     'var(--blue)',
-    individualize:'var(--green)',
-    sale:         'var(--amber)',
-    dead:         'var(--red,#e05050)',
-  };
-  const decisionLabels = {
-    continue:     '継続',
-    individualize:'個別化',
-    sale:         '販売候補',
-    dead:         '死亡',
-  };
+  // カードの状態に応じたスタイル
+  const isComplete  = _isT2MemberComplete(m);
+  const cardBorder  = isDead
+    ? 'rgba(224,80,80,.35)'
+    : (isComplete ? 'rgba(76,175,120,.35)' : 'var(--border)');
+  const cardBg      = isDead
+    ? 'rgba(224,80,80,.04)'
+    : (isComplete ? 'rgba(76,175,120,.04)' : 'var(--surface1,var(--surface))');
 
-  const sizeBtns = ['大','中','小'].map(sz => {
+  // ── 区分ボタン（T1 引き継ぎ値が初期選択済み、変更可） ──
+  const sizeBtns = ['大', '中', '小'].map(sz => {
     const on = m.size_category === sz;
     return `<button type="button"
       onclick="Pages._t2SetSize(${idx},'${sz}')"
-      style="padding:4px 7px;border-radius:6px;font-size:.75rem;font-weight:700;cursor:pointer;
-        border:1px solid ${on?'var(--green)':'var(--border)'};
-        background:${on?'var(--green)':'var(--surface2)'};
-        color:${on?'#fff':'var(--text2)'};
-        ${isDead?'opacity:.35;pointer-events:none':''}"
-      ${isDead?'disabled':''}>${sz}</button>`;
+      style="min-width:48px;padding:8px 10px;border-radius:8px;font-size:.85rem;font-weight:700;cursor:pointer;
+        border:2px solid ${on ? 'var(--green)' : 'var(--border)'};
+        background:${on ? 'var(--green)' : 'var(--bg2)'};
+        color:${on ? '#fff' : 'var(--text2)'};
+        opacity:${isDead ? '.3' : '1'};
+        pointer-events:${isDead ? 'none' : 'auto'}"
+      ${isDead ? 'disabled' : ''}>${sz}</button>`;
   }).join('');
 
-  const statusBtns = [['通常','normal'],['死亡','dead']].map(([lbl,key]) => {
+  // T1 体重の参照表示（記録がある場合のみ）
+  const t1WeightRef = m.t1_weight_g
+    ? `<span style="font-size:.65rem;color:var(--text3);margin-left:4px">T1: ${m.t1_weight_g}g</span>`
+    : '';
+
+  // ── 状態ボタン ──
+  const statusBtns = [
+    { key: 'normal', lbl: '通常',    activeColor: 'var(--green)',        activeBg: 'var(--green)',            textOn: '#fff' },
+    { key: 'dead',   lbl: '💀 死亡', activeColor: 'var(--red,#e05050)',  activeBg: 'rgba(224,80,80,.18)',     textOn: 'var(--red,#e05050)' },
+  ].map(({ key, lbl, activeColor, activeBg, textOn }) => {
     const on = m.status === key;
     return `<button type="button"
       onclick="Pages._t2SetStatus(${idx},'${key}')"
-      style="padding:4px 7px;border-radius:6px;font-size:.75rem;font-weight:700;cursor:pointer;
-        border:1px solid ${on?(key==='dead'?'var(--red,#e05050)':'var(--green)'):'var(--border)'};
-        background:${on?(key==='dead'?'rgba(224,80,80,.2)':'var(--green)'):'var(--surface2)'};
-        color:${on?(key==='dead'?'var(--red,#e05050)':'#fff'):'var(--text2)'}">${lbl}</button>`;
+      style="flex:1;padding:9px 0;border-radius:8px;font-size:.85rem;font-weight:700;cursor:pointer;
+        border:2px solid ${on ? activeColor : 'var(--border)'};
+        background:${on ? activeBg : 'var(--bg2)'};
+        color:${on ? textOn : 'var(--text2)'}">${lbl}</button>`;
   }).join('');
 
-  const decisionBtns = ['continue','individualize','sale','dead'].map(dec => {
-    const on = m.decision === dec;
-    const col = decisionColors[dec];
-    const lbl = decisionLabels[dec];
+  // ── 判断ボタン（死亡時は非表示） ──
+  const decisionDefs = [
+    { key: 'continue',      lbl: '継続',     color: 'var(--blue)',  bg: 'rgba(91,168,232,.18)',  desc: '→ T2マットで2頭継続飼育します' },
+    { key: 'individualize', lbl: '個別化',   color: 'var(--green)', bg: 'rgba(76,175,120,.18)',  desc: '→ 個体台帳に登録して個別飼育へ' },
+    { key: 'sale',          lbl: '販売候補', color: 'var(--amber)', bg: 'rgba(224,144,64,.18)',  desc: '→ 販売候補として個体台帳に登録' },
+  ];
+  const decisionBtns = decisionDefs.map(({ key, lbl, color, bg }) => {
+    const on = m.decision === key;
     return `<button type="button"
-      onclick="Pages._t2SetDecision(${idx},'${dec}')"
-      style="padding:3px 6px;border-radius:5px;font-size:.7rem;font-weight:${on?'700':'400'};cursor:pointer;
-        border:1px solid ${on?col:'var(--border)'};
-        background:${on?`rgba(${_colorToRgb(col)},.15)`:'var(--surface2)'};
-        color:${on?col:'var(--text3)'}">${lbl}</button>`;
+      onclick="Pages._t2SetDecision(${idx},'${key}')"
+      style="flex:1;padding:9px 0;border-radius:8px;font-size:.82rem;font-weight:700;cursor:pointer;
+        border:2px solid ${on ? color : 'var(--border)'};
+        background:${on ? bg : 'var(--bg2)'};
+        color:${on ? color : 'var(--text2)'}">${lbl}</button>`;
   }).join('');
 
-  const rowBg = m.decision === 'dead' ? 'rgba(224,80,80,.04)'
-    : m.decision === 'continue' ? 'rgba(91,168,232,.04)'
-    : m.decision ? 'rgba(76,175,120,.04)' : 'transparent';
+  const selectedDecision = decisionDefs.find(d => d.key === m.decision);
+
+  // 完了バッジ
+  const completeBadge = isComplete
+    ? `<span style="font-size:.65rem;padding:2px 8px;border-radius:10px;font-weight:700;
+        background:${isDead ? 'rgba(224,80,80,.12)' : 'rgba(76,175,120,.12)'};
+        color:${isDead ? 'var(--red,#e05050)' : 'var(--green)'}">
+        ${isDead ? '💀 死亡' : '✅ 確定'}</span>`
+    : `<span style="font-size:.65rem;padding:2px 8px;border-radius:10px;font-weight:700;
+        background:rgba(224,144,64,.12);color:var(--amber)">未確定</span>`;
+
+  // 元ロット情報
+  const lotInfo = (m.lot_display_id || m.lot_id)
+    ? `<div style="font-size:.65rem;color:var(--text3);margin-bottom:6px">
+        元ロット: ${m.lot_display_id || m.lot_id}${m.lot_item_no ? ' #' + m.lot_item_no : ''}
+       </div>`
+    : '';
 
   return `
-  <div style="background:${rowBg};padding:6px 0;border-bottom:1px solid var(--border2)">
-    <!-- 上行: 席 / 区分 / 体重 / 状態 / 判断 / メモ -->
-    <div style="display:grid;grid-template-columns:30px 80px 70px 80px 100px 1fr;gap:4px;align-items:center">
-      <div style="text-align:center">
-        <div style="font-size:.8rem;font-weight:700;color:var(--gold)">席${m.unit_slot_no}</div>
-        <div style="font-size:.6rem;color:var(--text3)">${m.lot_display_id ? '#'+m.lot_item_no : ''}</div>
+  <div style="margin-top:10px;border-radius:12px;border:2px solid ${cardBorder};background:${cardBg};overflow:hidden">
+
+    <!-- ヘッダー -->
+    <div style="padding:10px 14px 8px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border2)">
+      <span style="font-size:.95rem;font-weight:800;color:var(--text1)">${slotLabel}</span>
+      ${completeBadge}
+    </div>
+
+    <!-- 1段目: 区分（T1引き継ぎ・変更可）+ 体重（T2新規入力） -->
+    <div style="padding:10px 14px 10px;border-bottom:1px solid var(--border2)">
+      ${lotInfo}
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <!-- 区分ボタン -->
+        <div style="display:flex;gap:6px">${sizeBtns}</div>
+        <!-- 体重入力 -->
+        <div style="display:flex;align-items:center;gap:4px;margin-left:auto">
+          <input type="number" inputmode="numeric" min="1" max="999" step="1"
+            placeholder="体重"
+            value="${m.weight_g !== null ? m.weight_g : ''}"
+            style="width:76px;padding:8px 6px;text-align:center;border-radius:8px;
+              border:2px solid ${m.weight_g ? 'var(--green)' : 'var(--border)'};
+              background:var(--bg2);font-size:1rem;font-weight:700;color:var(--text1);
+              opacity:${isDead ? '.3' : '1'};pointer-events:${isDead ? 'none' : 'auto'}"
+            ${isDead ? 'disabled' : ''}
+            onblur="Pages._t2CommitWeight(${idx},this.value)"
+            onkeydown="if(event.key==='Enter'){this.blur();event.preventDefault();}">
+          <span style="font-size:.8rem;color:var(--text3);font-weight:600">g</span>
+          ${t1WeightRef}
+        </div>
       </div>
-      <div style="display:flex;gap:2px">${sizeBtns}</div>
-      <input type="number" inputmode="numeric" min="1" max="999" step="1"
-        placeholder="—" value="${m.weight_g !== null ? m.weight_g : ''}"
-        style="width:62px;padding:5px 4px;text-align:center;border-radius:6px;
-          border:1px solid var(--border);background:var(--bg2);
-          font-size:.88rem;font-weight:700;color:var(--text1);
-          ${isDead?'opacity:.35;pointer-events:none':''}"
-        ${isDead?'disabled':''}
-        onblur="Pages._t2CommitWeight(${idx},this.value)"
-        onkeydown="if(event.key==='Enter'){this.blur();event.preventDefault();}">
-      <div style="display:flex;gap:2px">${statusBtns}</div>
-      <div style="display:flex;gap:2px;flex-wrap:wrap">${decisionBtns}</div>
-      <input type="text" placeholder="メモ"
+    </div>
+
+    <!-- 2段目: 状態 -->
+    <div style="padding:10px 14px 10px;border-bottom:1px solid var(--border2)">
+      <div style="font-size:.72rem;font-weight:700;color:var(--text3);margin-bottom:7px;text-transform:uppercase;letter-spacing:.05em">状態</div>
+      <div style="display:flex;gap:8px">${statusBtns}</div>
+      ${isDead ? `<div style="font-size:.72rem;color:var(--red,#e05050);margin-top:7px;opacity:.85">死亡として記録します（体重・判断の入力不要）</div>` : ''}
+    </div>
+
+    <!-- 3段目: 判断（通常時のみ表示） -->
+    ${!isDead ? `
+    <div style="padding:10px 14px 10px;border-bottom:1px solid var(--border2)">
+      <div style="font-size:.72rem;font-weight:700;color:var(--text3);margin-bottom:7px;text-transform:uppercase;letter-spacing:.05em">判断</div>
+      <div style="display:flex;gap:6px">${decisionBtns}</div>
+      ${selectedDecision ? `<div style="font-size:.7rem;color:var(--text3);margin-top:6px">${selectedDecision.desc}</div>` : ''}
+    </div>` : ''}
+
+    <!-- 4段目: メモ -->
+    <div style="padding:8px 14px 10px">
+      <input type="text" placeholder="メモ（任意）"
         value="${m.memo || ''}"
-        style="width:100%;padding:4px 6px;border-radius:6px;border:1px solid var(--border);
-          background:var(--bg2);font-size:.72rem"
+        style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--border);
+          background:var(--bg2);font-size:.82rem;color:var(--text1);box-sizing:border-box"
         oninput="Pages._t2SetMemo(${idx},this.value)">
     </div>
-    ${m.lot_display_id ? `
-    <div style="font-size:.62rem;color:var(--text3);padding-left:34px;margin-top:2px">
-      元ロット: ${m.lot_display_id}${m.lot_item_no ? ' #'+m.lot_item_no : ''}
-      ${m.size_category ? ' / '+m.size_category : ''}
-    </div>` : ''}
+
   </div>`;
 }
 
-// 色をRGB値に変換（簡易版）
-function _colorToRgb(cssVar) {
-  const map = {
-    'var(--blue)':'91,168,232',
-    'var(--green)':'76,175,120',
-    'var(--amber)':'224,144,64',
-    'var(--red,#e05050)':'224,80,80',
-  };
-  return map[cssVar] || '128,128,128';
-}
-
-// ── サマリ描画 ───────────────────────────────────────────────────
+// ── サマリ ───────────────────────────────────────────────────────
 function _renderT2Summary(s) {
   const cnt = {
     continue:     s.members.filter(m => m.decision === 'continue').length,
@@ -322,41 +413,60 @@ function _renderT2Summary(s) {
     dead:         s.members.filter(m => m.decision === 'dead').length,
     undecided:    s.members.filter(m => m.decision === null).length,
   };
+  const allDone = cnt.undecided === 0;
 
   return `
-  <div style="background:var(--surface2);border-radius:10px;padding:10px 14px;margin-top:8px;font-size:.78rem">
-    <div style="font-weight:700;color:var(--text2);margin-bottom:6px">判断サマリ</div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px">
-      <div style="color:var(--blue)">継続: <b>${cnt.continue}頭</b></div>
-      <div style="color:var(--green)">個別化: <b>${cnt.individualize}頭</b></div>
-      <div style="color:var(--amber)">販売候補: <b>${cnt.sale}頭</b></div>
-      <div style="color:var(--red,#e05050)">死亡: <b>${cnt.dead}頭</b></div>
+  <div style="background:var(--surface2);border-radius:10px;padding:12px 14px;margin-top:12px">
+    <div style="font-size:.78rem;font-weight:700;color:var(--text2);margin-bottom:8px">判断サマリ</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:.8rem">
+      <div style="display:flex;align-items:center;gap:6px">
+        <span style="width:8px;height:8px;border-radius:50%;background:var(--blue);flex-shrink:0"></span>
+        <span>継続</span><b style="margin-left:auto;color:var(--blue)">${cnt.continue}頭</b>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <span style="width:8px;height:8px;border-radius:50%;background:var(--green);flex-shrink:0"></span>
+        <span>個別化</span><b style="margin-left:auto;color:var(--green)">${cnt.individualize}頭</b>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <span style="width:8px;height:8px;border-radius:50%;background:var(--amber);flex-shrink:0"></span>
+        <span>販売候補</span><b style="margin-left:auto;color:var(--amber)">${cnt.sale}頭</b>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <span style="width:8px;height:8px;border-radius:50%;background:var(--red,#e05050);flex-shrink:0"></span>
+        <span>死亡</span><b style="margin-left:auto;color:var(--red,#e05050)">${cnt.dead}頭</b>
+      </div>
     </div>
-    ${cnt.undecided > 0 ? `<div style="color:var(--amber);margin-top:4px;font-size:.72rem">⚠️ 未判断: ${cnt.undecided}頭</div>` : '<div style="color:var(--green);margin-top:4px;font-size:.72rem">✅ 全員判断済み</div>'}
+    <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border2);font-size:.75rem;
+      color:${allDone ? 'var(--green)' : 'var(--amber)'}">
+      ${allDone ? '✅ 全頭の判断が完了しています' : `⚠️ 未判断: ${cnt.undecided}頭`}
+    </div>
   </div>`;
 }
 
-// ── 次のステージフェーズ ─────────────────────────────────────────
+// ── 次フェーズ ───────────────────────────────────────────────────
 function _nextStagePhase(current) {
-  const map = { T1:'T2', T2:'T3', T3:'T3（最終）' };
-  return map[current] || (current + '→次');
+  const map = { T1: 'T2', T2: 'T3', T3: 'T3（最終）' };
+  return map[current] || current + '→次';
 }
 
 // ── 入力完了判定 ─────────────────────────────────────────────────
+// dead → weight 不要 → complete
+// それ以外 → decision 必須 + weight 必須
 function _isT2MemberComplete(m) {
-  if (m.decision === null) return false;
-  if (m.decision === 'dead') return true; // 死亡は体重不要
-  // 継続・個別化・販売候補: 体重必須
+  if (m.decision === 'dead') return true;
+  if (m.decision === null)   return false;
   return m.weight_g !== null && m.weight_g > 0;
 }
 
 // ════════════════════════════════════════════════════════════════
-// ユーザーアクションハンドラ
+// アクションハンドラ
 // ════════════════════════════════════════════════════════════════
 
 Pages._t2SetSize = function (idx, size) {
   const s = window._t2Session;
   if (!s) return;
+  if (s.members[idx].status === 'dead') return;
+  // 同じボタンを押したらトグル解除
   s.members[idx].size_category = s.members[idx].size_category === size ? '' : size;
   _renderT2Session(s);
 };
@@ -366,9 +476,15 @@ Pages._t2SetStatus = function (idx, status) {
   if (!s) return;
   s.members[idx].status = status;
   if (status === 'dead') {
-    s.members[idx].weight_g     = null;
-    s.members[idx].size_category= '';
-    s.members[idx].decision     = 'dead';
+    // 死亡確定: decision を 'dead' に固定し体重・区分をクリア
+    s.members[idx].decision      = 'dead';
+    s.members[idx].weight_g      = null;
+    s.members[idx].size_category = '';
+  } else {
+    // 通常に戻したとき: 死亡判断のみリセット（他の判断は保持）
+    if (s.members[idx].decision === 'dead') {
+      s.members[idx].decision = null;
+    }
   }
   _renderT2Session(s);
 };
@@ -376,11 +492,8 @@ Pages._t2SetStatus = function (idx, status) {
 Pages._t2SetDecision = function (idx, decision) {
   const s = window._t2Session;
   if (!s) return;
+  if (s.members[idx].status === 'dead') return; // 死亡時は操作不可
   s.members[idx].decision = decision;
-  if (decision === 'dead') {
-    s.members[idx].status    = 'dead';
-    s.members[idx].weight_g  = null;
-  }
   _renderT2Session(s);
 };
 
@@ -392,7 +505,6 @@ Pages._t2CommitWeight = function (idx, val) {
   if (s.members[idx].weight_g === newW) return;
   s.members[idx].weight_g = newW;
   _saveT2SessionToStorage();
-  // 軽量更新（体重入力中は全再描画しない）
   clearTimeout(Pages._t2RefreshTimer);
   Pages._t2RefreshTimer = setTimeout(() => _renderT2Session(window._t2Session), 200);
 };
@@ -402,15 +514,15 @@ Pages._t2SetMemo = function (idx, val) {
   if (s) { s.members[idx].memo = val; _saveT2SessionToStorage(); }
 };
 
-// ── 戻る / キャンセル ───────────────────────────────────────────
+// ── 戻る / 破棄 ─────────────────────────────────────────────────
 Pages._t2SessionBack = function () {
-  if (confirm('セッションを一時中断しますか？（内容は保存されます）')) {
+  if (confirm('セッションを中断しますか？（入力内容は一時保存されます）')) {
     routeTo('qr-scan', { mode: 't2' });
   }
 };
 
 Pages._t2SessionCancel = function () {
-  if (confirm('セッションを破棄しますか？（入力内容は失われます）')) {
+  if (confirm('セッションを破棄しますか？（入力内容は消えます）')) {
     window._t2Session = null;
     sessionStorage.removeItem('_t2SessionData');
     routeTo('qr-scan', { mode: 't2' });
@@ -423,30 +535,33 @@ Pages._t2SessionSave = async function () {
   if (!s || s.saving) return;
 
   if (!s.members.every(m => _isT2MemberComplete(m))) {
-    UI.toast('全員の判断と必要な情報を入力してください', 'error'); return;
+    UI.toast('全頭の判断を完了してください（体重も入力してください）', 'error'); return;
   }
 
-  const continueCount = s.members.filter(m => m.decision === 'continue').length;
-  const indCount      = s.members.filter(m => m.decision === 'individualize').length;
-  const saleCount     = s.members.filter(m => m.decision === 'sale').length;
-  const deadCount     = s.members.filter(m => m.decision === 'dead').length;
-  const nextPhase     = _nextStagePhase(s.stage_phase);
+  const continueCount     = s.members.filter(m => m.decision === 'continue').length;
+  const individualizeCount= s.members.filter(m => m.decision === 'individualize').length;
+  const saleCount         = s.members.filter(m => m.decision === 'sale').length;
+  const deadCount         = s.members.filter(m => m.decision === 'dead').length;
+  const nextPhase         = _nextStagePhase(s.stage_phase);
 
-  const msg = `T2移行を確定します（取り消せません）\n\n`
-    + `ユニット: ${s.display_id}\n`
-    + `継続: ${continueCount}頭 → ${nextPhase}維持\n`
-    + `個別化: ${indCount}頭 → 個体台帳へ\n`
-    + `販売候補: ${saleCount}頭\n`
-    + `死亡: ${deadCount}頭\n\n`
-    + `由来ロット: ${_formatOriginLots(s.origin_lots)}`;
+  const confirmMsg =
+    `T2移行を確定します（取り消せません）\n\n` +
+    `ユニット: ${s.display_id}\n` +
+    `由来ロット: ${_formatOriginLots(s.origin_lots)}\n\n` +
+    `継続: ${continueCount}頭 → ${nextPhase}ユニット維持\n` +
+    `個別化: ${individualizeCount}頭 → 個体台帳へ\n` +
+    `販売候補: ${saleCount}頭\n` +
+    `死亡: ${deadCount}頭`;
 
-  if (!confirm(msg)) return;
+  if (!confirm(confirmMsg)) return;
 
   s.saving = true;
   _renderT2Session(s);
 
   try {
-    const today = new Date().toISOString().split('T')[0].replace(/-/g,'/');
+    const today = new Date().toISOString().split('T')[0].replace(/-/g, '/');
+
+    // payload: dead の場合は weight_g / size_category を null で送る
     const payload = {
       transaction_type:       'T2_SESSION',
       session_date:           today,
@@ -455,33 +570,45 @@ Pages._t2SessionSave = async function () {
       decisions: s.members.map(m => ({
         unit_slot_no:  m.unit_slot_no,
         decision:      m.decision,
-        weight_g:      m.weight_g,
-        size_category: m.size_category,
-        lot_id:        m.lot_id,
-        lot_item_no:   m.lot_item_no,
-        memo:          m.memo || '',
+        weight_g:      m.decision === 'dead' ? null : m.weight_g,
+        size_category: m.decision === 'dead' ? null : (m.size_category || null),
+        lot_id:        m.lot_id      || '',
+        lot_item_no:   m.lot_item_no || '',
+        memo:          m.memo        || '',
       })),
     };
 
+    console.log('[T2] save payload', payload);
     const res = await API.t2.createSession(payload);
+    console.log('[T2] save response', res);
 
-    // Store 更新
+    // Store を更新（patchDBItem があれば差分更新、なければ全置換）
     if (res && res.updated_unit) {
-      Store.patchDBItem('breeding_units', 'unit_id', s.unit_id, res.updated_unit);
+      if (typeof Store.patchDBItem === 'function') {
+        Store.patchDBItem('breeding_units', 'unit_id', s.unit_id, res.updated_unit);
+      } else {
+        const units = (Store.getDB('breeding_units') || []).map(u =>
+          u.unit_id === s.unit_id ? Object.assign({}, u, res.updated_unit) : u
+        );
+        Store.setDB('breeding_units', units);
+      }
     }
-    if (res && res.created_individuals && Array.isArray(res.created_individuals)) {
-      res.created_individuals.forEach(ind => Store.addDBItem('individuals', ind));
+    if (res && Array.isArray(res.created_individuals)) {
+      res.created_individuals.forEach(ind => {
+        if (typeof Store.addDBItem === 'function') Store.addDBItem('individuals', ind);
+      });
     }
 
     window._t2Session = null;
     sessionStorage.removeItem('_t2SessionData');
-    UI.toast('T2移行を完了しました ✅', 'success');
+    UI.toast('T2移行を完了しました ✅', 'success', 3000);
     routeTo('qr-scan', { mode: 't2' });
+
   } catch (e) {
     console.error('[T2] save error:', e);
     s.saving = false;
     _renderT2Session(s);
-    UI.toast('保存失敗: ' + (e.message || '通信エラー'), 'error');
+    UI.toast('保存失敗: ' + (e.message || '通信エラー'), 'error', 5000);
   }
 };
 
