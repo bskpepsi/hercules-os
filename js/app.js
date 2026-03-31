@@ -50,6 +50,8 @@ window.PAGES = {
   'settings':    () => Pages.settings(),
   // ── QRスキャン ───────────────────────────────────────────────
   'qr-scan':     () => Pages.qrScan(Store.getParams()),
+  't1-session':  () => Pages.t1Session ? Pages.t1Session(Store.getParams()) : null,
+  't2-session':  () => Pages.t2Session ? Pages.t2Session(Store.getParams()) : null,
   'qr-diff':     () => Pages.qrDiff(Store.getParams()),
   'weight-mode': () => Pages.weightMode(Store.getParams()),
   // ── 販売管理（sale.js でも window.PAGES['sale-list'] を自己登録するが、ここにも定義して確実に接続）

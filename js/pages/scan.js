@@ -112,7 +112,8 @@ Pages.qrScan = function (params = {}) {
               placeholder="例:
 LOT:LOT-XXXXXXXX
 IND:IND-XXXXXXXX
-SET:SET-XXXXXXXX"
+SET:SET-XXXXXXXX
+BU:HM2026-A1-U01"
               style="font-family:var(--font-mono);font-size:.88rem"
               oninput="Pages._qrPreviewInput(this.value)"></textarea>
             <div id="qr-preview" style="font-size:.72rem;margin-top:4px"></div>
@@ -132,6 +133,7 @@ SET:SET-XXXXXXXX"
               ['IND:IND-xxxxx', '個体ラベル', 'var(--green)'],
               ['LOT:LOT-xxxxx', 'ロットラベル', 'var(--amber)'],
               ['SET:SET-xxxxx', '産卵セットラベル', 'var(--gold)'],
+              ['BU:HM2026-A1-U01', '飼育ユニット (T2移行用)', 'var(--blue)'],
             ].map(([code,label,col])=>`<div style="display:flex;gap:8px;padding:3px 0">
               <span style="font-family:var(--font-mono);color:${col};min-width:140px">${code}</span>
               <span>${label}</span>
@@ -184,11 +186,16 @@ Pages._qrPreviewInput = function (val) {
   const el = document.getElementById('qr-preview');
   if (!el) return;
   const v = (val || '').trim();
-  const labels = { LOT: '🟡 ロット', IND: '🟢 個体', SET: '🟠 産卵セット', PAR: '👑 種親' };
-  const type = v.startsWith('LOT:') ? 'LOT' : v.startsWith('IND:') ? 'IND' : v.startsWith('SET:') ? 'SET' : v.startsWith('PAR:') ? 'PAR' : null;
+  const labels = { LOT: '🟡 ロット', IND: '🟢 個体', SET: '🟠 産卵セット', PAR: '👑 種親', BU: '🔵 飼育ユニット' };
+  const type = v.startsWith('LOT:') ? 'LOT'
+    : v.startsWith('IND:') ? 'IND'
+    : v.startsWith('SET:') ? 'SET'
+    : v.startsWith('PAR:') ? 'PAR'
+    : v.startsWith('BU:')  ? 'BU'
+    : null;
   el.innerHTML = type
-    ? `<span style="color:var(--green)">${labels[type]} : ${v.split(':')[1]}</span>`
-    : v ? `<span style="color:var(--red)">⚠️ フォーマット不正（LOT: / IND: / SET: で始まる必要があります）</span>` : '';
+    ? `<span style="color:var(--green)">${labels[type]} : ${v.slice(v.indexOf(':')+1)}</span>`
+    : v ? `<span style="color:var(--red)">⚠️ フォーマット不正（LOT: / IND: / SET: / BU: で始まる必要があります）</span>` : '';
 };
 
 // ── QR解析・モード別遷移 ─────────────────────────────────────
@@ -211,6 +218,14 @@ function _qrNavigate(mode, res, qrText) {
         UI.toast('移行編成モードではT0ロットのQRを読んでください', 'info', 2500);
       } else {
         UI.toast('T1移行: ロットのQRを読んでください', 'info', 2500);
+      }
+    } else if (sub === 't2') {
+      if (res.entity_type === 'BU' && (ent.display_id || ent.unit_id)) {
+        Pages.t2SessionStart && Pages.t2SessionStart(ent.display_id || ent.unit_id);
+      } else if (res.entity_type === 'LOT') {
+        UI.toast('T2移行は BU（飼育ユニット）のQRを読んでください', 'error', 3000);
+      } else {
+        UI.toast('T2移行: BU ラベル（BU:...）を読み取ってください', 'error', 3000);
       }
     } else {
       UI.toast(sub.toUpperCase() + '移行は準備中です', 'info', 2000);

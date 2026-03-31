@@ -253,13 +253,18 @@ var API = (() => {
 
   // ── T1移行セッション ─────────────────────────────────────────
   const t1 = {
-    reserveDisplayIds: (d) => call('reserveDisplayIds',   d),  // {line_id, count} → {display_ids:[]}
-    createSession:     (d) => call('createT1Session',     d),  // 一括保存
+    reserveDisplayIds: (d) => call('reserveDisplayIds',   d),
+    createSession:     (d) => call('createT1Session',     d),
+  };
+
+  // ── T2移行セッション ─────────────────────────────────────────
+  const t2 = {
+    createSession: (d) => call('createT2Session', d),
   };
   console.log('[API] t1 ready');
 
 console.log('[API] return object ready');
-return { system, line, lot, individual, growth, parent, bloodline, pairing, label, drive, gemini, backup, scan, phase2, integrity, t1, sale };
+return { system, line, lot, individual, growth, parent, bloodline, pairing, label, drive, gemini, backup, scan, phase2, integrity, t1, t2, sale };
 })();
 window.API = API; // グローバル確保（const はwindowに乗らない環境対策）
 console.log('[API] window.API assigned', !!window.API);
