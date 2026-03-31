@@ -110,6 +110,7 @@ function _buildT2Members(unit) {
       t1_weight_g:   src.weight_g       || (growthBySLot[slotNo] && growthBySLot[slotNo].weight_g) || null,
       // T2 入力値（空欄スタート）
       weight_g:      null,
+      sex:           '不明',     // 不明 / ♂ / ♀（将来T3で引き継ぎ）
       status:        'normal',   // normal / dead
       decision:      null,       // continue / individualize / sale / dead
       memo:          '',
@@ -296,6 +297,21 @@ function _renderT2MemberCard(m, idx, s) {
     ? `<span style="font-size:.65rem;color:var(--text3);margin-left:4px">T1: ${m.t1_weight_g}g</span>`
     : '';
 
+  // ── 性別ボタン ──
+  const sexOptions = ['不明', '♂', '♀'];
+  const sexBtns = sexOptions.map(sx => {
+    const on = m.sex === sx;
+    const col = sx === '♂' ? '#3366cc' : sx === '♀' ? '#cc3366' : 'var(--text3)';
+    return `<button type="button"
+      onclick="Pages._t2SetSex(${idx},'${sx}')"
+      style="flex:1;padding:7px 0;border-radius:8px;font-size:.85rem;font-weight:700;cursor:pointer;
+        border:2px solid ${on ? col : 'var(--border)'};
+        background:${on ? (sx==='♂'?'rgba(51,102,204,.15)':sx==='♀'?'rgba(204,51,102,.15)':'var(--surface2)') : 'var(--bg2)'};
+        color:${on ? col : 'var(--text2)'};
+        opacity:${isDead ? '.3' : '1'};pointer-events:${isDead ? 'none' : 'auto'}"
+      ${isDead ? 'disabled' : ''}>${sx}</button>`;
+  }).join('');
+
   // ── 状態ボタン ──
   const statusBtns = [
     { key: 'normal', lbl: '通常',    activeColor: 'var(--green)',        activeBg: 'var(--green)',            textOn: '#fff' },
@@ -376,6 +392,13 @@ function _renderT2MemberCard(m, idx, s) {
         </div>
       </div>
     </div>
+
+    <!-- 1.5段目: 性別 -->
+    ${!isDead ? `
+    <div style="padding:8px 14px 10px;border-bottom:1px solid var(--border2)">
+      <div style="font-size:.72rem;font-weight:700;color:var(--text3);margin-bottom:7px;text-transform:uppercase;letter-spacing:.05em">性別</div>
+      <div style="display:flex;gap:6px">${sexBtns}</div>
+    </div>` : ''}
 
     <!-- 2段目: 状態 -->
     <div style="padding:10px 14px 10px;border-bottom:1px solid var(--border2)">
@@ -509,6 +532,16 @@ Pages._t2CommitWeight = function (idx, val) {
   Pages._t2RefreshTimer = setTimeout(() => _renderT2Session(window._t2Session), 200);
 };
 
+Pages._t2SetSex = function (idx, sex) {
+  const s = window._t2Session;
+  if (!s || s.members[idx].status === 'dead') return;
+  s.members[idx].sex = sex;
+  _saveT2SessionToStorage();
+  // 性別はサマリに影響しないので軽量更新（再描画不要）
+  // ボタンのスタイルだけ切り替えたい場合は再描画する
+  _renderT2Session(s);
+};
+
 Pages._t2SetMemo = function (idx, val) {
   const s = window._t2Session;
   if (s) { s.members[idx].memo = val; _saveT2SessionToStorage(); }
@@ -572,6 +605,7 @@ Pages._t2SessionSave = async function () {
         decision:      m.decision,
         weight_g:      m.decision === 'dead' ? null : m.weight_g,
         size_category: m.decision === 'dead' ? null : (m.size_category || null),
+        sex:           m.decision === 'dead' ? '不明' : (m.sex || '不明'),
         lot_id:        m.lot_id      || '',
         lot_item_no:   m.lot_item_no || '',
         memo:          m.memo        || '',

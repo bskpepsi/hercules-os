@@ -37,8 +37,16 @@ var API = (() => {
       clearTimeout(tid);
 
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = await res.json();
-      if (!json.ok) throw new Error(json.error || '不明なエラー');
+      const text = await res.text();
+      let json;
+      try {
+        json = JSON.parse(text);
+      } catch(_) {
+        // GAS がHTMLエラーページを返した（GAS例外 or デプロイ未更新）
+        const preview = text.replace(/<[^>]+>/g,'').slice(0,120).trim();
+        throw new Error('GASがJSONを返しませんでした。GASのデプロイを確認してください。\n詳細: ' + preview);
+      }
+      if (!json.ok) throw new Error(json.error || '不明なエラー（GAS処理失敗）');
       return json.data;
 
     } catch (e) {
