@@ -567,6 +567,15 @@ Pages._t2SessionSave = async function () {
   const s = window._t2Session;
   if (!s || s.saving) return;
 
+  // ── 保存前診断ログ（通信トラブル切り分け用） ──
+  console.log('[T2_SAVE] ===== save triggered =====');
+  console.log('[T2_SAVE] window.__API_BUILD :', window.__API_BUILD || '(not set - OLD api.js!)');
+  console.log('[T2_SAVE] typeof API        :', typeof API);
+  console.log('[T2_SAVE] typeof API.t2     :', typeof (window.API && window.API.t2));
+  console.log('[T2_SAVE] typeof API.t2.createSession:', typeof (window.API && window.API.t2 && window.API.t2.createSession));
+  console.log('[T2_SAVE] CONFIG.GAS_URL    :', (window.CONFIG && window.CONFIG.GAS_URL || '').slice(0,80) || '(unset)');
+  console.log('[T2_SAVE] session            :', { unit_id: s.unit_id, display_id: s.display_id, membersCount: s.members.length });
+
   if (!s.members.every(m => _isT2MemberComplete(m))) {
     UI.toast('全頭の判断を完了してください（体重も入力してください）', 'error'); return;
   }

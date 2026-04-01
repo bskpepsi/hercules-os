@@ -8,9 +8,10 @@
 
 'use strict';
 
-console.log('[API] file loaded start');
+window.__API_BUILD = '20260401k';
+console.log('[API] ===== api.js LOADED BUILD=' + window.__API_BUILD + ' =====');
 var API = (() => {
-  console.log('[API] IIFE start');
+  console.log('[API] IIFE start - BUILD:', window.__API_BUILD);
   const TIMEOUT_MS = 30000;
 
   // ── 基底通信 ──────────────────────────────────────────────────
@@ -18,12 +19,27 @@ var API = (() => {
     const url = CONFIG.GAS_URL || localStorage.getItem(CONFIG.LS_KEYS.GAS_URL) || '';
     if (!url) throw new Error('GAS URLが設定されていません。設定画面から入力してください。');
 
+    // GAS URL 診断ログ（action=createT2Session 時は必ず出力）
+    if (action === 'createT2Session' || !window.__gasUrlLogged) {
+      console.log('[API] GAS_URL (first 80):', url.slice(0, 80));
+      console.log('[API] CONFIG.GAS_URL:', (CONFIG.GAS_URL || '').slice(0, 80) || '(unset)');
+      window.__gasUrlLogged = true;
+    }
+
     // GASはGETリクエストでCORSを回避する
     const params = new URLSearchParams({
       action,
       payload: JSON.stringify(payload),
     });
     const fullUrl = `${url}?${params.toString()}`;
+
+    // ── 診断ログ（常時出力、通信トラブル切り分け用） ──
+    console.log('[API] call start', {
+      action,
+      urlBase: url.slice(0, 60) + (url.length > 60 ? '...' : ''),
+      payloadKeys: Object.keys(payload),
+      fullUrlLength: fullUrl.length,
+    });
 
     const ctrl = new AbortController();
     const tid  = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
@@ -36,22 +52,53 @@ var API = (() => {
       });
       clearTimeout(tid);
 
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      console.log('[API] response received', { action, status: res.status, ok: res.ok, url: res.url?.slice(0,80) });
+
+      if (!res.ok) throw new Error(`HTTP ${res.status} (action=${action})`);
+
       const text = await res.text();
+      console.log('[API] response text (first 200):', text.slice(0, 200));
+
       let json;
       try {
         json = JSON.parse(text);
       } catch(_) {
-        // GAS がHTMLエラーページを返した（GAS例外 or デプロイ未更新）
-        const preview = text.replace(/<[^>]+>/g,'').slice(0,120).trim();
-        throw new Error('GASがJSONを返しませんでした。GASのデプロイを確認してください。\n詳細: ' + preview);
+        // GAS が HTML エラーページを返した（GAS内部例外 or デプロイ未更新）
+        const preview = text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 150).trim();
+        console.error('[API] NON-JSON response for action=' + action + ':', preview);
+        throw new Error(
+          'GASがJSONを返しませんでした。\n' +
+          '原因: GAS側で例外が発生したか、Config.gsのデプロイが古い可能性があります。\n' +
+          'GASエディタのログで [T2] の出力を確認してください。\n' +
+          '詳細: ' + preview
+        );
       }
-      if (!json.ok) throw new Error(json.error || '不明なエラー（GAS処理失敗）');
+
+      if (!json.ok) {
+        console.error('[API] GAS error for action=' + action + ':', json.error);
+        throw new Error(json.error || '不明なGASエラー (action=' + action + ')');
+      }
+
+      console.log('[API] call success', { action });
       return json.data;
 
     } catch (e) {
       clearTimeout(tid);
-      if (e.name === 'AbortError') throw new Error('タイムアウト（30秒）。通信環境を確認してください。');
+      if (e.name === 'AbortError') {
+        throw new Error('タイムアウト（30秒）。通信環境を確認してください。(action=' + action + ')');
+      }
+      // Failed to fetch = ネットワーク到達不能 or CORS
+      if (e.message === 'Failed to fetch') {
+        console.error('[API] Failed to fetch for action=' + action + '. URL base:', url.slice(0, 80));
+        throw new Error(
+          '通信失敗 (Failed to fetch)\n' +
+          '確認事項:\n' +
+          '1. ネットワーク接続を確認してください\n' +
+          '2. 設定画面のGAS URLが最新のデプロイURLか確認してください\n' +
+          '3. GASデプロイの「アクセス: 全員」設定を確認してください\n' +
+          '(action=' + action + ')'
+        );
+      }
       throw e;
     }
   }
