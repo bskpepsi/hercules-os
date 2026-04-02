@@ -172,6 +172,15 @@ Pages.eggLotBulk = function (params = {}) {
     { id: 3, count: '', collectDate: '', container: '1.8L' },
   ];
 
+  // ── 有効行判定（空白行を除外） ──────────────────────────────────
+  // 有効行 = 卵数 > 0 かつ 採卵日あり（共通日または行個別日）
+  function _isValidEggRow(row) {
+    const n = parseInt(row.count, 10);
+    if (isNaN(n) || n <= 0) return false;
+    const hasDate = !!(row.collectDate || _commonDate);
+    return hasDate;
+  }
+
   // ── ヘルパー ──────────────────────────────────────────────────
   function _todayYMD() { return new Date().toISOString().split('T')[0]; }
 
@@ -225,7 +234,7 @@ Pages.eggLotBulk = function (params = {}) {
       return `<option value="${l.line_id}" ${l.line_id === _selLineId ? 'selected' : ''}>${label}</option>`;
     }).join('');
 
-    const filledRows    = _rows.filter(r => parseInt(r.count, 10) > 0);
+    const filledRows    = _rows.filter(_isValidEggRow);
     const thisInputTotal= filledRows.reduce((s, r) => s + (parseInt(r.count, 10) || 0), 0);
     const lotCount      = filledRows.filter(r => parseInt(r.count, 10) >= 2).length;
     const indCount      = filledRows.filter(r => parseInt(r.count, 10) === 1).length;
@@ -549,11 +558,14 @@ Pages.eggLotBulk = function (params = {}) {
     }
     if (!_selLineId) { UI.toast('ラインを選択してください', 'error'); return; }
 
-    const targets = _rows.filter(r => {
-      const n = parseInt(r.count, 10);
-      return !isNaN(n) && n > 0;
-    });
-    if (targets.length === 0) { UI.toast('卵数を1以上入力してください', 'error'); return; }
+    const targets = _rows.filter(_isValidEggRow);
+    const _skipped = _rows.length - targets.length;
+    console.log('[EGG_BULK] rows total   :', _rows.length);
+    console.log('[EGG_BULK] rows valid   :', targets.length);
+    console.log('[EGG_BULK] rows skipped :', _skipped, '(空白行 / 採卵日未入力)');
+    if (targets.length === 0) {
+      UI.toast('有効な行がありません。卵数と採卵日を入力してください', 'error'); return;
+    }
 
     // ── 保存時バリデーション: 未配分数チェック ──────────────────
     const _saveStats = _eblCalcLineStats(_selLineId);
@@ -578,6 +590,8 @@ Pages.eggLotBulk = function (params = {}) {
     const targetsWithPos = targets.map(function(r, i) { return Object.assign({}, r, { _rowPos: i }); });
     const lotRows = targetsWithPos.filter(r => parseInt(r.count, 10) >= 2);
     const indRows = targetsWithPos.filter(r => parseInt(r.count, 10) === 1);
+    console.log('[EGG_BULK] valid payload lots       :', lotRows.length, lotRows.map(r => r.count + '個'));
+    console.log('[EGG_BULK] valid payload individuals:', indRows.length);
 
     const results = [];
     const errors  = [];
