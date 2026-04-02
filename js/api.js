@@ -15,7 +15,7 @@ var API = (() => {
   const TIMEOUT_MS = 30000;
 
   // ── 基底通信 ──────────────────────────────────────────────────
-  async function call(action, payload = {}) {
+  async function call(action, payload = {}, _retryCount = 0) {
     const url = CONFIG.GAS_URL || localStorage.getItem(CONFIG.LS_KEYS.GAS_URL) || '';
     if (!url) throw new Error('GAS URLが設定されていません。設定画面から入力してください。');
 
@@ -90,12 +90,16 @@ var API = (() => {
       // Failed to fetch = ネットワーク到達不能 or CORS
       if (e.message === 'Failed to fetch') {
         console.error('[API] Failed to fetch for action=' + action + '. URL base:', url.slice(0, 80));
+        // 1回だけ自動リトライ（ネットワーク一時断・GASコールドスタート対策）
+        if (_retryCount === 0) {
+          console.warn('[API] Retrying in 2s... (action=' + action + ')');
+          await new Promise(r => setTimeout(r, 2000));
+          return call(action, payload, 1);
+        }
         throw new Error(
-          '通信失敗 (Failed to fetch)\n' +
-          '確認事項:\n' +
-          '1. ネットワーク接続を確認してください\n' +
-          '2. 設定画面のGAS URLが最新のデプロイURLか確認してください\n' +
-          '3. GASデプロイの「アクセス: 全員」設定を確認してください\n' +
+          '通信失敗\n' +
+          'GAS URL: ' + url.slice(0, 60) + '\n' +
+          '確認: ①ネットワーク ②設定画面のGAS URL ③GASデプロイの「アクセス: 全員」設定\n' +
           '(action=' + action + ')'
         );
       }

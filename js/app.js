@@ -65,6 +65,12 @@ window.PAGES = {
 document.addEventListener('DOMContentLoaded', () => {
   console.log('[APP] boot start - typeof API=', typeof API, '/ window.API=', !!window.API);
   Store.loadFromStorage();
+  // CONFIG.GAS_URL を確実にセット（Store.loadFromStorage()内でセットされるが二重確認）
+  if (!CONFIG.GAS_URL) {
+    const _savedUrl = localStorage.getItem(CONFIG.LS_KEYS.GAS_URL) || '';
+    if (_savedUrl) { CONFIG.GAS_URL = _savedUrl; }
+  }
+  console.log('[APP] CONFIG.GAS_URL set:', !!CONFIG.GAS_URL, CONFIG.GAS_URL ? CONFIG.GAS_URL.slice(0,60)+'...' : '(empty)');
   bindNav();
   bindGlobalEvents();
   renderNav();
