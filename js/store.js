@@ -359,6 +359,28 @@ const Store = (() => {
   function getUnit(unitId) {
     return (_db.breeding_units || []).find(u => u.unit_id === unitId) || null;
   }
+  // 指定ロットに由来するユニット一覧を返す
+  function getUnitsByOriginLotId(lotId) {
+    if (!lotId) return [];
+    const units = _db.breeding_units || [];
+    return units.filter(u => {
+      // source_lots (JSON配列) に含まれるか
+      if (u.source_lots) {
+        try {
+          const arr = typeof u.source_lots === 'string' ? JSON.parse(u.source_lots) : u.source_lots;
+          if (Array.isArray(arr) && arr.includes(lotId)) return true;
+        } catch(_) {}
+      }
+      // origin_lot_id が一致するか
+      if (u.origin_lot_id === lotId) return true;
+      // members の lot_id に含まれるか
+      try {
+        const mems = typeof u.members === 'string' ? JSON.parse(u.members) : (u.members || []);
+        if (Array.isArray(mems) && mems.some(m => m.lot_id === lotId)) return true;
+      } catch(_) {}
+      return false;
+    });
+  }
 
   return {
     navigate, back, getPage, getParams, getPrev,
@@ -366,7 +388,7 @@ const Store = (() => {
     setDB, patchDBItem, addDBItem, getDB,
     getIndividual, getLine, getLot, getParent, getBloodline,
     getIndividualsByLine, getIndividualsByLot,
-    getUnitByDisplayId, getUnit,
+    getUnitByDisplayId, getUnit, getUnitsByOriginLotId,
     calcAge, formatRecordAge,
     getVerdict,
     setGrowthRecords, getGrowthRecords, addGrowthRecord,

@@ -383,7 +383,8 @@ Pages.eggLotBulk = function (params = {}) {
                 <input type="number" id="ebl-cnt-${row.id}" class="input"
                   style="text-align:center;font-size:1rem;font-weight:700;padding:8px 2px"
                   placeholder="0" min="0" max="99" value="${row.count}"
-                  oninput="Pages._eblOnCountInput(${row.id},this.value)">
+                  onblur="Pages._eblCommitCount(${row.id},this.value)"
+                  onkeydown="if(event.key==='Enter'){this.blur();event.preventDefault();}">
                 <div id="ebl-badge-${row.id}" style="text-align:center;margin-top:2px;min-height:16px">
                   ${_rowBadge(row.count)}
                 </div>
@@ -482,13 +483,35 @@ Pages.eggLotBulk = function (params = {}) {
     render(true);
   };
 
+  // 旧ハンドラは互換性のため残す（外部から呼ばれる場合）
   Pages._eblOnCountInput = function(id, val) {
-    const row = _rows.find(r => r.id === id);
-    if (row) row.count = val;
-    const badgeEl = document.getElementById('ebl-badge-' + id);
-    if (badgeEl) badgeEl.innerHTML = _rowBadge(val);
-    _readDom(); render(true);
+    Pages._eblCommitCount(id, val);
   };
+  // 新ハンドラ: blur時のみ確定（入力中は再描画しない）
+  Pages._eblCommitCount = function(id, val) {
+    const row = _rows.find(r => r.id === id);
+    if (!row) return;
+    const n = parseInt(val, 10);
+    const newCount = (!val || isNaN(n) || n < 0) ? 0 : Math.min(99, n);
+    if (row.count === String(newCount) || row.count === newCount) {
+      // バッジだけ更新（値が同じでも表示を確定）
+      const badgeEl = document.getElementById('ebl-badge-' + id);
+      if (badgeEl) badgeEl.innerHTML = _rowBadge(newCount);
+      return;
+    }
+    row.count = newCount;
+    // バッジだけ軽量更新（フォーカスを奪わない）
+    const badgeEl = document.getElementById('ebl-badge-' + id);
+    if (badgeEl) badgeEl.innerHTML = _rowBadge(newCount);
+    // サマリ行など軽量更新（全体 render は行わない）
+    _updateEblSummary();
+  };
+  // サマリのみ軽量更新
+  function _updateEblSummary() {
+    _readDom();
+    const summEl = document.getElementById('ebl-summary');
+    if (summEl) summEl.innerHTML = _buildSummaryHtml();
+  }
 
   Pages._eblAddRow = function() {
     _readDom();
@@ -510,6 +533,14 @@ Pages.eggLotBulk = function (params = {}) {
   Pages._eblSave = async function() {
     _readDom();
 
+    // ── 保存前診断ログ ──────────────────────────────────────────
+    console.log('[EGG_BULK] ===== save triggered =====');
+    console.log('[EGG_BULK] build          :', '20260402a');
+    console.log('[EGG_BULK] __API_BUILD    :', window.__API_BUILD || '(not set - OLD api.js!)');
+    console.log('[EGG_BULK] CONFIG.GAS_URL :', (window.CONFIG && window.CONFIG.GAS_URL || '').slice(0,80) || '(unset)');
+    console.log('[EGG_BULK] typeof API     :', typeof API);
+    console.log('[EGG_BULK] typeof API.lot.createBulk:', typeof (window.API && window.API.lot && window.API.lot.createBulk));
+    console.log('[EGG_BULK] typeof API.individual.createBulk:', typeof (window.API && window.API.individual && window.API.individual.createBulk));
     // デバッグ: API グローバル確認
     console.log('[EBL] save - typeof API=', typeof API, '/ window.API=', !!window.API);
     if (typeof API === 'undefined') {

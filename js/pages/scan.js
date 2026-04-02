@@ -249,8 +249,16 @@ function _qrNavigate(mode, res, qrText) {
     else if (res.entity_type === 'SET' && eid) routeTo('pairing-detail', { pairingId: eid });
     else if (res.entity_type === 'PAR' && eid) routeTo('parent-detail',  { parId: eid });
     else if (res.entity_type === 'BU')  {
-      // BU: display_id ベースで unit-detail へ（Phase 2 で実装）
-      UI.toast('BU: ' + ((res.entity || {}).display_id || '不明'), 'info', 2000);
+      // BU: unit-detail へ遷移
+      const _buEnt = res.entity || {};
+      const _buDid = _buEnt.display_id || _buEnt.unit_id || '';
+      console.log('[QR] BU confirm - displayId:', _buDid, '/ entity:', _buEnt);
+      if (_buDid) {
+        console.log('[QR] routeTo unit-detail with unitDisplayId:', _buDid);
+        routeTo('unit-detail', { unitDisplayId: _buDid });
+      } else {
+        UI.toast('BU情報が取得できませんでした', 'error');
+      }
     }
     else UI.toast('対象が特定できませんでした', 'error');
   }

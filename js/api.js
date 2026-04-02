@@ -8,8 +8,8 @@
 
 'use strict';
 
-window.__API_BUILD = '20260401k';
-console.log('[API] ===== api.js LOADED BUILD=' + window.__API_BUILD + ' =====');
+window.__API_BUILD = '20260402a';
+console.log('[API] ===== api.js LOADED BUILD=20260402a =====');
 var API = (() => {
   console.log('[API] IIFE start - BUILD:', window.__API_BUILD);
   const TIMEOUT_MS = 30000;
