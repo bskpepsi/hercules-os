@@ -70,7 +70,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const _savedUrl = localStorage.getItem(CONFIG.LS_KEYS.GAS_URL) || '';
     if (_savedUrl) { CONFIG.GAS_URL = _savedUrl; }
   }
-  console.log('[APP] CONFIG.GAS_URL set:', !!CONFIG.GAS_URL, CONFIG.GAS_URL ? CONFIG.GAS_URL.slice(0,60)+'...' : '(empty)');
+  console.log('[APP] CONFIG.GAS_URL raw    :', (CONFIG.GAS_URL || '').slice(0, 70) || '(empty)');
+  console.log('[APP] localStorage gas_url  :', (localStorage.getItem(CONFIG.LS_KEYS.GAS_URL) || '').slice(0, 70) || '(empty)');
+  console.log('[APP] final GAS_URL         :', CONFIG.GAS_URL ? CONFIG.GAS_URL.slice(0, 70) : '(not set)');
   bindNav();
   bindGlobalEvents();
   renderNav();

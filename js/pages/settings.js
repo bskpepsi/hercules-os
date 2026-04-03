@@ -136,61 +136,23 @@ function _renderSettings(main) {
         </div>
       </div>
 
-      <!-- ステージ目安日齢（編集可能） -->
+      <!-- ステージ目安日齢 -->
       <div class="card">
-        <div class="card-title">📅 ステージ目安日齢（自動判定ルール）</div>
-        <div style="font-size:.78rem;color:var(--text2);margin-bottom:10px;line-height:1.6">
-          孵化日からの日齢でステージを自動判定します。<br>
-          各ステージの開始日齢を変更できます。<br>
-          <span style="color:var(--text3)">※ 前蛹以降は自動で ∞ になります</span>
+        <div class="card-title">📅 ステージ目安日齢（デフォルト値）</div>
+        <div style="font-size:.78rem;color:var(--text2);margin-bottom:8px">
+          孵化日からのおおよその日齢でステージを自動判定します。<br>
+          変更はGASの設定シートから行ってください。
         </div>
-        ${(() => {
-          // 保存済みルールがあれば使う、なければデフォルト
-          let rules = DEFAULT_STAGE_AGE_RULES;
-          const saved = Store.getSetting('stage_age_rules');
-          if (saved) {
-            try { rules = JSON.parse(saved); } catch(e) {}
-          }
-          // 編集対象: L1〜PREPUPA（前蛹以降は手入力不要）
-          const editable = [
-            { code:'L1L2',    label:'L1L2（L1/L2期）'  },
-            { code:'L3',      label:'L3'               },
-            { code:'PREPUPA', label:'前蛹'              },
-          ];
-          return '<div style="font-size:.82rem">'
-            + '<div style="display:grid;grid-template-columns:80px 1fr 60px;gap:4px;padding:4px 0;'
-            + 'font-size:.72rem;color:var(--text3);border-bottom:2px solid var(--border);margin-bottom:4px">'
-            + '<span>ステージ</span><span style="padding-left:8px">開始日齢（孵化後）</span><span style="text-align:right">単位</span>'
-            + '</div>'
-            + editable.map((s, idx) => {
-                const rule     = rules.find(r => r.code === s.code) || {};
-                const minDays  = rule.minDays !== undefined ? rule.minDays : '';
-                const color    = (typeof stageColor === 'function') ? stageColor(s.code) : 'var(--text1)';
-                const isLast   = idx === editable.length - 1;
-                return '<div style="display:grid;grid-template-columns:80px 1fr 60px;gap:4px;padding:5px 0;'
-                  + 'border-bottom:1px solid var(--border);align-items:center">'
-                  + '<span style="font-weight:700;color:' + color + '">' + s.label + '</span>'
-                  + '<input type="number" min="0" max="9999" id="sar-' + s.code + '"'
-                  + ' class="input" style="font-size:.82rem;text-align:right"'
-                  + ' value="' + minDays + '"'
-                  + (isLast ? ' placeholder="450"' : '')
-                  + '>'
-                  + '<span style="font-size:.75rem;color:var(--text3);text-align:right;padding-left:4px">日〜</span>'
-                  + '</div>';
-              }).join('')
-            + '<div style="font-size:.72rem;color:var(--text3);padding:6px 0 2px">'
-            + '💡 例: L1L2=0（日齢0〜）, L3=150（日齢150〜）, 前蛹=350（日齢350〜）'
-            + '</div>'
-            + '</div>';
-        })()}
-        <button class="btn btn-primary btn-full" style="margin-top:10px"
-                onclick="Pages._saveStageAgeRules()">
-          ステージ目安を保存
-        </button>
-        <button class="btn btn-ghost btn-sm" style="margin-top:6px;width:100%"
-                onclick="Pages._resetStageAgeRules()">
-          ↺ デフォルトに戻す
-        </button>
+        <div style="font-size:.8rem">
+          ${DEFAULT_STAGE_AGE_RULES.map(r =>
+            `<div style="display:flex;gap:8px;padding:5px 0;border-bottom:1px solid var(--border)">
+              <span style="min-width:80px;color:var(--text3)">
+                ${r.minDays}〜${r.maxDays === 9999 ? '∞' : r.maxDays}日
+              </span>
+              <span style="color:${stageColor(r.code)};font-weight:600">${r.label}</span>
+            </div>`
+          ).join('')}
+        </div>
       </div>
 
       <!-- データ管理 -->
@@ -258,128 +220,27 @@ function _renderSettings(main) {
       </div>
 
       <!-- Phase2: 後食・ペアリング設定 -->
-      <div class="card settings-card">
-        <div class="card-title">🍽️ 後食・ペアリング設定</div>
-
-        <div class="setting-form-group">
-          <label class="setting-label">♂後食待機日数（日）</label>
-          <input id="set-male-wait" class="input setting-input" type="number" min="1" max="90"
-                 value="${Store.getSetting('male_pairing_wait_days') || '14'}">
-        </div>
-
-        <div class="setting-form-group">
-          <label class="setting-label">♀後食待機日数（日）</label>
-          <input id="set-female-wait" class="input setting-input" type="number" min="1" max="90"
-                 value="${Store.getSetting('female_pairing_wait_days') || '14'}">
-        </div>
-
-        <div class="setting-form-group">
-          <label class="setting-label">♂ペアリング間隔最小日数（日）</label>
-          <input id="set-pairing-interval" class="input setting-input" type="number" min="1" max="60"
-                 value="${Store.getSetting('male_pairing_interval_min_days') || '7'}">
-        </div>
-        <div class="setting-desc">
-          この日数未満でペアリングすると<br>
-          警告が表示されます
-        </div>
-
-        <div class="setting-form-group" style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
-          <label class="setting-label">🥚 産卵セット交換間隔（日）</label>
-          <input id="set-exchange-days" class="input setting-input" type="number" min="1" max="30"
-                 value="${Store.getSetting('pairing_set_exchange_days') || '7'}">
-        </div>
-        <div class="setting-desc">
-          セット開始からこの日数後に<br>
-          交換リマインドを表示します<br>
-          （初期値: 7日）
-        </div>
-
-        <button class="btn btn-primary btn-full" style="margin-top:14px"
-                onclick="Pages._savePairingSettings()">後食・ペアリング設定を保存</button>
-      </div>
-
-
-      <!-- Phase6: ステージ・マット・交換設定 -->
       <div class="card">
-        <div class="card-title">🌱 ステージ・マット・交換設定</div>
-
-        <!-- 交換目安方式 -->
-        <div style="font-size:.82rem;font-weight:700;color:var(--text2);margin-bottom:8px">🔄 交換目安の計算方式</div>
-        <div class="setting-form-group">
-          <label class="setting-label">計算方式を選択</label>
-          <select id="set-exchange-mode" class="input setting-input"
-                  onchange="Pages._onExchangeModeChange(this.value)">
-            <option value="normal" ${Store.getSetting('mat_exchange_mode') !== 'hybrid' ? 'selected' : ''}>
-              通常版（マット基準のみ）
-            </option>
-            <option value="hybrid" ${Store.getSetting('mat_exchange_mode') === 'hybrid' ? 'selected' : ''}>
-              ハイブリッド版（マット基準 + 飼育補正）
-            </option>
-          </select>
-        </div>
-        <div id="set-mode-desc-normal"
-             style="font-size:.72rem;color:var(--text3);margin-bottom:12px;line-height:1.6;${Store.getSetting('mat_exchange_mode') === 'hybrid' ? 'display:none' : ''}">
-          次回交換日 = 最終交換日 + マット別交換日数<br>
-          シンプルで分かりやすい計算です。
-        </div>
-        <div id="set-mode-desc-hybrid"
-             style="font-size:.72rem;color:var(--text3);margin-bottom:12px;line-height:1.6;${Store.getSetting('mat_exchange_mode') === 'hybrid' ? '' : 'display:none'}">
-          基本: マット別交換日数<br>
-          + L3後期: × 1.2倍（長め）<br>
-          + 多頭飼育: × 0.85倍（早め）<br>
-          + 前蛹/蛹/成虫: 交換停止
-        </div>
-
-        <!-- アラート日数 -->
-        <div style="font-size:.82rem;font-weight:700;color:var(--text2);margin-bottom:8px">⚠️ 交換アラート日数</div>
+        <div class="card-title">🍽️ 後食・ペアリング設定</div>
         <div class="form-group">
-          <label class="form-label">注意（期限前・後の許容日数）</label>
-          <input id="set-alert-caution" class="input" type="number" min="1" max="30"
-                 value="${Store.getSetting('alert_caution_days') || '7'}">
-          <div class="form-hint">交換期限の前後この日数以内で 🟡 注意を表示（初期: 7日）</div>
-          <label class="form-label" style="margin-top:12px">警告（超過からの日数しきい値）</label>
-          <input id="set-alert-warning" class="input" type="number" min="1" max="30"
-                 value="${Store.getSetting('alert_warning_days') || '7'}">
-          <div class="form-hint">期限超過後この日数を超えると 🔴 警告へ格上げ（初期: 7日）</div>
-        </div>
+          <label class="form-label">♂後食待機日数（日）</label>
+          <input id="set-male-wait" class="form-input" type="number" min="1" max="90"
+                 value="${Store.getSetting('male_pairing_wait_days') || '14'}">
+          <label class="form-label" style="margin-top:12px">♀後食待機日数（日）</label>
+          <input id="set-female-wait" class="form-input" type="number" min="1" max="90"
+                 value="${Store.getSetting('female_pairing_wait_days') || '14'}">
+          <label class="form-label" style="margin-top:12px">♂ペアリング間隔最小日数（日）</label>
+          <input id="set-pairing-interval" class="form-input" type="number" min="1" max="60"
+                 value="${Store.getSetting('male_pairing_interval_min_days') || '7'}">
+          <div class="form-hint">この日数未満でペアリングすると警告が表示されます</div>
 
-        <!-- マット別交換日数 -->
-        <div style="font-size:.82rem;font-weight:700;color:var(--text2);margin:14px 0 6px">📅 マット別交換日数</div>
-        <div style="font-size:.72rem;color:var(--text3);margin-bottom:10px;line-height:1.5">
-          次回交換日 = 最終交換日 + 下記日数<br>
-          ステージは交換周期に使いません
+          <label class="form-label" style="margin-top:16px">🥚 産卵セット交換間隔（日）</label>
+          <input id="set-exchange-days" class="form-input" type="number" min="1" max="30"
+                 value="${Store.getSetting('pairing_set_exchange_days') || '7'}">
+          <div class="form-hint">セット開始からこの日数後に交換リマインドを表示します（初期値: 7日）</div>
+          <button class="btn btn-primary btn-full" style="margin-top:12px"
+                  onclick="Pages._savePairingSettings()">後食・ペアリング設定を保存</button>
         </div>
-        ${[
-          { code:'T0',       label:'T0マット',      default: 60  },
-          { code:'T1',       label:'T1マット',      default: 90  },
-          { code:'T2',       label:'T2マット（M含）', default: 90  },
-          { code:'T3',       label:'T3マット',      default: 120 },
-          { code:'MDカブト', label:'MDカブトマット', default: 60  },
-        ].map(m => `
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-            <span style="min-width:110px;font-size:.82rem;color:var(--text2)">${m.label}</span>
-            <input type="number" class="input" min="1" max="365"
-                   id="set-exd-${m.code}"
-                   value="${Store.getSetting('exchange_days_' + m.code) || m.default}"
-                   style="width:72px;font-size:.82rem">
-            <span style="font-size:.78rem;color:var(--text3)">日</span>
-          </div>`).join('')}
-
-        <!-- モルト設定 -->
-        <div style="font-size:.82rem;font-weight:700;color:var(--text2);margin:14px 0 8px">🧪 モルト設定</div>
-        <div class="form-group">
-          <label style="display:flex;align-items:center;gap:8px;font-size:.82rem;cursor:pointer">
-            <input type="checkbox" id="set-molt-enabled"
-              ${Store.getSetting('molt_enabled') !== 'false' ? 'checked' : ''}>
-            T2マット交換時にモルト使用チェックを表示する
-          </label>
-          <div class="form-hint">チェックすると T2(M) として記録されます</div>
-        </div>
-
-        <button class="btn btn-primary btn-full" style="margin-top:12px"
-                onclick="Pages._saveExchangeSettings()">
-          交換・アラート設定を保存
-        </button>
       </div>
 
       <!-- バックアップ管理 -->
@@ -483,33 +344,100 @@ function _renderSettings(main) {
 
 // ── GAS URL 保存・テスト ─────────────────────────────────────────
 Pages._setGasUrl = async function () {
-  const url = document.getElementById('set-gas-url')?.value?.trim();
+  var url = (document.getElementById('set-gas-url') || {}).value;
+  url = url ? url.trim() : '';
   if (!url) { UI.toast('URLを入力してください', 'error'); return; }
-  const resultEl = document.getElementById('gas-test-result');
-  resultEl.innerHTML = '<div style="font-size:.8rem;color:var(--text3);margin-top:6px">接続テスト中...</div>';
 
-  // 保存
+  var resultEl = document.getElementById('gas-test-result');
+
+  console.log('[SETTINGS] ===== connect test start =====');
+  console.log('[SETTINGS] ===== connect test start =====');
+  console.log('[SETTINGS] __INDEX_BUILD :', window.__INDEX_BUILD || '(not set)');
+  console.log('[SETTINGS] __API_BUILD   :', window.__API_BUILD   || '(not set)');
+  console.log('[SETTINGS] input GAS_URL :', url);
+
   Store.setSetting('gas_url', url);
   CONFIG.GAS_URL = url;
   localStorage.setItem(CONFIG.LS_KEYS.GAS_URL, url);
+  console.log('[SETTINGS] saved GAS_URL:', CONFIG.GAS_URL);
 
-  // 接続テスト
+  resultEl.innerHTML = '<div style="font-size:.8rem;color:var(--text3);margin-top:8px">'
+    + '⏳ 接続テスト中... <span style="font-size:.7rem">(' + url.slice(0, 50) + ')</span></div>';
+
+  if (!url.includes('/exec')) {
+    console.warn('[SETTINGS] URL missing /exec:', url);
+    resultEl.innerHTML = '<div style="background:rgba(224,144,64,.1);border:1px solid rgba(224,144,64,.4);'
+      + 'border-radius:8px;padding:10px;margin-top:8px;font-size:.8rem">'
+      + '<b style="color:var(--amber)">⚠️ URL に /exec がありません</b><br>'
+      + '<span>GASウェブアプリURLは <code>.../exec</code> の形式です。</span></div>';
+    return;
+  }
+
   try {
-    const res = await API.system.getSettings();
-    resultEl.innerHTML = `<div style="font-size:.8rem;color:var(--green);margin-top:6px">
-      ✅ 接続成功！設定を読み込みました。</div>`;
-    // 設定をキャッシュに保存
-    if (res && typeof res === 'object') {
-      Object.entries(res).forEach(([k, v]) => Store.setSetting(k, v));
+    var testUrl = url + '?action=getSettings&payload={}';
+    console.log('[SETTINGS] raw fetch URL:', testUrl);
+
+    var fetchRes = await fetch(testUrl, { method: 'GET', redirect: 'follow' });
+    console.log('[SETTINGS] response status:', fetchRes.status, 'ok:', fetchRes.ok);
+    var rawText = await fetchRes.text();
+    console.log('[SETTINGS] response text (first 300):', rawText.slice(0, 300));
+
+    var json;
+    try { json = JSON.parse(rawText); } catch(_e) {
+      var preview = rawText.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 120).trim();
+      console.error('[SETTINGS] non-JSON response:', preview);
+      resultEl.innerHTML = '<div style="background:rgba(224,80,80,.08);border:1px solid rgba(224,80,80,.3);'
+        + 'border-radius:8px;padding:12px;margin-top:8px;font-size:.82rem">'
+        + '<b style="color:var(--red,#e05050)">❌ GASがHTMLを返しました（JSON未返却）</b>'
+        + '<ul style="margin:8px 0 0 18px;font-size:.78rem;line-height:1.8">'
+        + '<li>GASデプロイの「アクセス: <b>全員</b>」を確認</li>'
+        + '<li>Config.gs / Code.gs を最新版で保存・再デプロイ</li>'
+        + '<li>デプロイを「新バージョン」で更新したか確認</li>'
+        + '</ul>'
+        + '<div style="margin-top:6px;font-size:.68rem;color:var(--text3)">受信内容: ' + preview + '</div>'
+        + '</div>';
+      return;
     }
-    UI.toast('GAS URLを保存しました', 'success');
-    // ダッシュボードに戻り、データ同期
-    setTimeout(() => syncAll(false), 500);
+
+    if (!json.ok) {
+      console.error('[SETTINGS] GAS ok:false:', json.error);
+      resultEl.innerHTML = '<div style="background:rgba(224,80,80,.08);border:1px solid rgba(224,80,80,.3);'
+        + 'border-radius:8px;padding:12px;margin-top:8px;font-size:.82rem">'
+        + '<b style="color:var(--red,#e05050)">❌ GASエラー: ' + (json.error || '不明') + '</b>'
+        + '<div style="font-size:.75rem;color:var(--text3);margin-top:4px">GASエディタのログを確認してください。</div>'
+        + '</div>';
+      return;
+    }
+
+    console.log('[SETTINGS] SUCCESS:', json.data);
+    resultEl.innerHTML = '<div style="background:rgba(76,175,120,.08);border:1px solid rgba(76,175,120,.4);'
+      + 'border-radius:8px;padding:12px;margin-top:8px;font-size:.82rem">'
+      + '<b style="color:var(--green)">✅ 接続成功！GAS URLを保存しました。</b>'
+      + '<div style="font-size:.72rem;color:var(--text3);margin-top:4px">URL: ' + url.slice(0, 60) + '</div>'
+      + '</div>';
+
+    var res = json.data;
+    if (res && typeof res === 'object') {
+      Object.keys(res).forEach(function(k) { Store.setSetting(k, res[k]); });
+    }
+    UI.toast('GAS URLを保存しました ✅', 'success');
+    setTimeout(function() { if (typeof syncAll === 'function') syncAll(false); }, 500);
+
   } catch (e) {
-    resultEl.innerHTML = `<div style="font-size:.8rem;color:var(--red);margin-top:6px">
-      ❌ 接続失敗: ${e.message}<br>
-      <span style="color:var(--text3)">URLを確認し、デプロイ設定（実行:自分、アクセス:全員）を確認してください。</span>
-    </div>`;
+    var isFailed = e.message.indexOf('Failed to fetch') !== -1;
+    console.error('[SETTINGS] fetch error:', e.message);
+    resultEl.innerHTML = '<div style="background:rgba(224,80,80,.08);border:1px solid rgba(224,80,80,.3);'
+      + 'border-radius:8px;padding:12px;margin-top:8px;font-size:.82rem">'
+      + '<b style="color:var(--red,#e05050)">❌ '
+      + (isFailed ? '通信失敗 (Failed to fetch)' : '接続失敗: ' + e.message) + '</b>'
+      + '<ol style="margin:8px 0 0 18px;font-size:.78rem;line-height:1.9">'
+      + '<li>URLが <code>.../exec</code> の形式か確認</li>'
+      + '<li>GASデプロイの「アクセス: <b>全員</b>」を確認</li>'
+      + '<li>同URLをブラウザで直接開けるか確認（JSONが表示されるはず）</li>'
+      + '<li>GASを「新バージョン」で再デプロイ</li>'
+      + '</ol>'
+      + '<div style="margin-top:8px;font-size:.68rem;color:var(--text3)">試したURL: ' + url.slice(0, 80) + '</div>'
+      + '</div>';
   }
 };
 
@@ -733,108 +661,6 @@ Pages._bkLoadHistory = async function () {
     if (el) el.innerHTML = '<div style="font-size:.75rem;color:var(--text3)">履歴の取得に失敗しました</div>';
   }
 };
-
-// ── Phase6: 交換・アラート設定保存 ──────────────────────────────
-Pages._onExchangeModeChange = function (mode) {
-  // 方式説明の表示切替
-  const normalDesc = document.getElementById('set-mode-desc-normal');
-  const hybridDesc = document.getElementById('set-mode-desc-hybrid');
-  if (normalDesc) normalDesc.style.display = mode === 'hybrid' ? 'none' : '';
-  if (hybridDesc) hybridDesc.style.display = mode === 'hybrid' ? '' : 'none';
-};
-
-Pages._saveExchangeSettings = async function () {
-  // マット別交換日数（ステージ別は廃止）
-  const mats = ['T0', 'T1', 'T2', 'T3', 'MDカブト'];
-  const updates = {};
-
-  const modeEl    = document.getElementById('set-exchange-mode');
-  const cautionEl = document.getElementById('set-alert-caution');
-  const warningEl = document.getElementById('set-alert-warning');
-  const moltEl    = document.getElementById('set-molt-enabled');
-  if (modeEl)    updates['mat_exchange_mode'] = modeEl.value;
-  if (cautionEl) updates['alert_caution_days'] = cautionEl.value;
-  if (warningEl) updates['alert_warning_days'] = warningEl.value;
-  if (moltEl)    updates['molt_enabled']       = moltEl.checked ? 'true' : 'false';
-
-  mats.forEach(code => {
-    const el = document.getElementById('set-exd-' + code);
-    if (el) updates['exchange_days_' + code] = el.value;
-  });
-
-  // localStorageに保存
-  Object.entries(updates).forEach(([k, v]) => Store.setSetting(k, v));
-
-  // GASにも一括同期（updateSettings はバルク保存）
-  const gasUrl = Store.getSetting('gas_url');
-  if (gasUrl) {
-    try {
-      await API.system.updateSettings(updates);
-      UI.toast('交換・アラート設定を保存しました（GASにも反映済み）', 'success');
-    } catch (e) {
-      UI.toast('ローカルに保存しました（GAS反映失敗: ' + e.message + '）', 'info');
-    }
-  } else {
-    UI.toast('ローカルに保存しました', 'success');
-  }
-};
-
-
-// ── Phase6: ステージ目安日齢 保存・リセット ───────────────────────
-Pages._saveStageAgeRules = async function () {
-  const codes = ['L1L2','L3','PREPUPA'];
-
-  // 入力値を収集し minDays の昇順で rules 配列を構築
-  const inputs = codes.map(code => {
-    const el  = document.getElementById('sar-' + code);
-    const val = el ? parseInt(el.value, 10) : NaN;
-    return { code, minDays: isNaN(val) ? null : val };
-  }).filter(r => r.minDays !== null);
-
-  if (inputs.length < 2) {
-    UI.toast('少なくとも2つ以上入力してください', 'error');
-    return;
-  }
-
-  // 入力値を昇順にソートして maxDays を自動計算
-  inputs.sort((a, b) => a.minDays - b.minDays);
-  const rules = inputs.map((r, i) => ({
-    code:     r.code,
-    minDays:  r.minDays,
-    maxDays:  i < inputs.length - 1 ? inputs[i + 1].minDays : 9999,
-  }));
-
-  const json = JSON.stringify(rules);
-  Store.setSetting('stage_age_rules', json);
-
-  const gasUrl = Store.getSetting('gas_url');
-  if (gasUrl) {
-    try {
-      await API.system.updateSettings({ stage_age_rules: json });
-      UI.toast('ステージ目安を保存しました（GASにも反映済み）', 'success');
-    } catch (e) {
-      UI.toast('ローカルに保存しました（GAS反映失敗: ' + e.message + '）', 'info');
-    }
-  } else {
-    UI.toast('ローカルに保存しました', 'success');
-  }
-
-  // 再描画して確認
-  _renderSettings(document.getElementById('main'));
-};
-
-Pages._resetStageAgeRules = function () {
-  if (!UI.confirm('ステージ目安をデフォルト値に戻しますか？')) return;
-  Store.setSetting('stage_age_rules', '');
-  // GASにも空文字を保存
-  const gasUrl = Store.getSetting('gas_url');
-  if (gasUrl) {
-    API.system.updateSettings({ stage_age_rules: '' }).catch(() => {});
-  }
-  UI.toast('デフォルト値に戻しました', 'success');
-  _renderSettings(document.getElementById('main'));
-};
-
 
 window.PAGES = window.PAGES || {};
 window.PAGES['settings'] = () => Pages.settings();
