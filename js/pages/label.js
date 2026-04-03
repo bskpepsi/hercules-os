@@ -113,8 +113,21 @@ async function _buildLabelPNG(htmlStr, dims) {
   host.innerHTML = `<style>${rawStyle}</style>${bodyHtml}`;
   document.body.appendChild(host);
 
-  // 2フレーム待ってスタイルを確定させてから capture
-  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+  // 画像ロード完了を待ってから capture（data: URL の img が未ロードだと空になる）
+  const _hostImgs = Array.from(host.querySelectorAll('img'));
+  if (_hostImgs.length > 0) {
+    await Promise.all(_hostImgs.map(function(img) {
+      if (img.complete && img.naturalWidth > 0) return Promise.resolve();
+      return new Promise(function(resolve) {
+        img.onload = resolve;
+        img.onerror = resolve; // エラーでも続行
+        // 既に読み込み中かもしれないので短いタイムアウトも設定
+        setTimeout(resolve, 2000);
+      });
+    }));
+  }
+  // さらに2フレーム待ってスタイルを確定させてから capture
+  await new Promise(function(r) { requestAnimationFrame(function() { requestAnimationFrame(r); }); });
 
   let canvas;
   try {
@@ -538,6 +551,8 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
 
   // QR を dataURL として確実に取得するヘルパー（Promise ベースでポーリング）
   function _getQrDataUrl(text) {
+    console.log('[LABEL] qr build start');
+    console.log('[LABEL] qr target text:', text);
     return new Promise(function(resolve) {
       var container = document.createElement('div');
       container.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:120px;height:120px';
@@ -595,7 +610,9 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
   // QR dataURL 取得 → ラベル生成 → PNG化
   (async function _lblRender() {
     try {
+      console.log('[LABEL] qr target type:', targetType, '| targetId:', targetId);
       var qrSrc = await _getQrDataUrl(qrText);
+      console.log('[LABEL] qr dataUrl created - length:', qrSrc ? qrSrc.length : 0);
       if (!qrSrc) {
         console.error('[LABEL] qr build failed - using error placeholder');
       }
@@ -625,6 +642,14 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
 
       var _previewNow = document.getElementById('lbl-html-preview');
       if (!_previewNow) { console.error('[LABEL] lbl-html-preview missing'); return; }
+
+      // QRが確実にプレビューDOMに入っていることを先に確認
+      if (qrSrc) {
+        // プレビューに直接QR imgを一時表示して確認
+        console.log('[LABEL] qr injected into preview - dataUrl length:', qrSrc.length);
+      } else {
+        console.warn('[LABEL] qr build failed - qrSrc empty, will show error placeholder');
+      }
 
       // PNG生成
       console.log('[LABEL] png build start - size:', dims.label);
