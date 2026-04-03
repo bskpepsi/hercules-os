@@ -225,6 +225,7 @@ Pages.eggLotBulk = function (params = {}) {
   // ── 描画 ──────────────────────────────────────────────────────
   function render(keepScroll) {
     const sy = keepScroll ? main.scrollTop : 0;
+    console.log('[EGG_BULK] initial render start - rows:', _rows.length, '| selLineId:', _selLineId || '(none)');
 
     const lines       = Store.getDB('lines') || [];
     const activeLines = lines.filter(l => l.status !== 'archived' && l.status !== 'deleted');
@@ -244,8 +245,17 @@ Pages.eggLotBulk = function (params = {}) {
     // ── ライン集計（採卵数・配分済み・未配分） ──────────────────
     const _stats   = _selLineId ? _eblCalcLineStats(_selLineId) : null;
     const _unalloc = _stats ? _stats.unallocated : null;
-    const _overLimit = _stats !== null && thisInputTotal > _stats.unallocated;
-    const canSave  = _selLineId && filledRows.length > 0 && !_overLimit;
+    // totalEggs=0 はペアリング・卵記録なし = 初回登録モード → overLimit チェック不要
+    const _hasEggHistory = _stats && _stats.totalEggs > 0;
+    const _overLimit = _hasEggHistory && _stats !== null && thisInputTotal > _stats.unallocated;
+    const _noLine   = !_selLineId;
+    const _noValid  = filledRows.length === 0;
+    const canSave   = !_noLine && !_noValid && !_overLimit;
+    // 診断ログ（render 毎に出力）
+    console.log('[EGG_BULK] canSave:', canSave,
+      '| overLimit:', _overLimit, '| noLine:', _noLine, '| noValid:', _noValid,
+      '| unallocated:', _unalloc, '| requested:', thisInputTotal,
+      '| hasEggHistory:', _hasEggHistory, '| validRows:', filledRows.length);
 
     main.innerHTML = `
       ${UI.header('🥚 卵ロット一括作成', { back: true })}
@@ -446,8 +456,8 @@ Pages.eggLotBulk = function (params = {}) {
       <div class="quick-action-bar">
         <button class="btn btn-ghost btn-xl" style="flex:1" id="ebl-back-btn">← 戻る</button>
         <button class="btn btn-gold btn-xl" style="flex:2" id="ebl-save-btn"
-          onclick="Pages._eblSave()" ${canSave ? '' : 'disabled'}>
-          ${_overLimit ? '⚠️ 未配分数を超えています' : '🥚 登録してラベル発行'}
+          onclick="(function(){ console.log('[EGG_BULK] save clicked - canSave:', ${canSave}); Pages._eblSave(); })()" ${canSave ? '' : 'disabled'}>
+          ${_overLimit ? '⚠️ 未配分数を超えています' : _noLine ? '⚠️ ラインを選択してください' : _noValid ? '⚠️ 有効な行がありません' : '🥚 登録してラベル発行'}
         </button>
       </div>`;
 
@@ -544,7 +554,7 @@ Pages.eggLotBulk = function (params = {}) {
 
     // ── 保存前診断ログ ──────────────────────────────────────────
     console.log('[EGG_BULK] ===== save triggered =====');
-    console.log('[EGG_BULK] build          :', '20260402a');
+    console.log('[EGG_BULK] build          :', '20260403f');
     console.log('[EGG_BULK] __API_BUILD    :', window.__API_BUILD || '(not set - OLD api.js!)');
     console.log('[EGG_BULK] CONFIG.GAS_URL :', (window.CONFIG && window.CONFIG.GAS_URL || '').slice(0,80) || '(unset)');
     console.log('[EGG_BULK] typeof API     :', typeof API);
@@ -563,6 +573,7 @@ Pages.eggLotBulk = function (params = {}) {
     console.log('[EGG_BULK] rows total   :', _rows.length);
     console.log('[EGG_BULK] rows valid   :', targets.length);
     console.log('[EGG_BULK] rows skipped :', _skipped, '(空白行 / 採卵日未入力)');
+    console.log('[EGG_BULK] save start   : proceeding with', targets.length, 'valid rows');
     if (targets.length === 0) {
       UI.toast('有効な行がありません。卵数と採卵日を入力してください', 'error'); return;
     }
