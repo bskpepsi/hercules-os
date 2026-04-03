@@ -533,36 +533,87 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
   }
 
   // ── QR生成 ──────────────────────────────────────────────────
-  const qrDiv = document.getElementById('lbl-qr-hidden');
-  if (qrDiv) {
-    qrDiv.innerHTML = '';
-    try {
-      new QRCode(qrDiv, {
-        text: ld.qr_text || targetType + ':' + targetId,
-        width: 96, height: 96,
-        colorDark: '#000000', colorLight: '#ffffff',
-        correctLevel: QRCode.CorrectLevel.M,
-      });
-    } catch(e) { console.warn('QR生成失敗:', e); }
+  const qrText = ld.qr_text || (targetType + ':' + targetId);
+  console.log('[LABEL] qr build start - text:', qrText);
+
+  // QR を dataURL として確実に取得するヘルパー（Promise ベースでポーリング）
+  function _getQrDataUrl(text) {
+    return new Promise(function(resolve) {
+      var container = document.createElement('div');
+      container.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:120px;height:120px';
+      document.body.appendChild(container);
+
+      try {
+        new QRCode(container, {
+          text: text,
+          width: 120, height: 120,
+          colorDark: '#000000', colorLight: '#ffffff',
+          correctLevel: QRCode.CorrectLevel.M,
+        });
+        console.log('[LABEL] qr render success (QRCode created)');
+      } catch(e) {
+        console.error('[LABEL] qr build failed (constructor):', e.message);
+        document.body.removeChild(container);
+        resolve(''); return;
+      }
+
+      var attempts = 0;
+      var maxAttempts = 40; // 40 × 50ms = 2s max
+      var poll = setInterval(function() {
+        attempts++;
+        var canvas = container.querySelector('canvas');
+        var img    = container.querySelector('img');
+        var dataUrl = '';
+
+        if (canvas && canvas.width > 0) {
+          try {
+            var d = canvas.toDataURL('image/png');
+            if (d && d.length > 500) { dataUrl = d; }
+          } catch(e) { console.warn('[LABEL] canvas.toDataURL error:', e.message); }
+        }
+        if (!dataUrl && img && img.src && img.src.startsWith('data:') && img.src.length > 500) {
+          dataUrl = img.src;
+        }
+
+        if (dataUrl) {
+          console.log('[LABEL] qr dataUrl length:', dataUrl.length, 'via', canvas ? 'canvas' : 'img', 'attempts:', attempts);
+          clearInterval(poll);
+          document.body.removeChild(container);
+          resolve(dataUrl); return;
+        }
+
+        if (attempts >= maxAttempts) {
+          clearInterval(poll);
+          console.error('[LABEL] qr build failed (timeout). canvas:', !!canvas, 'img:', !!img);
+          document.body.removeChild(container);
+          resolve('');
+        }
+      }, 50);
+    });
   }
 
-  // ── QR描画待ち → HTML構築 → PNG生成 ─────────────────────────
-  setTimeout(async () => {
+  // QR dataURL 取得 → ラベル生成 → PNG化
+  (async function _lblRender() {
     try {
-      // QR data URL 取得
-      let qrSrc = '';
-      const qrCanvas = qrDiv?.querySelector('canvas');
-      const qrImg    = qrDiv?.querySelector('img');
-      if (qrCanvas && qrCanvas.width > 0) {
-        try { qrSrc = qrCanvas.toDataURL('image/png'); } catch(e) {}
+      var qrSrc = await _getQrDataUrl(qrText);
+      if (!qrSrc) {
+        console.error('[LABEL] qr build failed - using error placeholder');
       }
-      if (!qrSrc && qrImg && qrImg.src) qrSrc = qrImg.src;
 
-      console.log('[LABEL] html built - building label HTML');
-      const html = _buildLabelHTML(ld, qrSrc);
-      const dims = _labelDimensions(ld.label_type, targetType);
+      // QR img の load を確認（html2canvas で拾えるようにする）
+      if (qrSrc) {
+        await new Promise(function(res) {
+          var img = new Image();
+          img.onload = function() { console.log('[LABEL] qr image load success'); res(); };
+          img.onerror = function() { console.warn('[LABEL] qr image load error'); res(); };
+          img.src = qrSrc;
+        });
+      }
 
-      // store for print fallback
+      console.log('[LABEL] preview render start - qrSrc length:', qrSrc.length);
+      var html = _buildLabelHTML(ld, qrSrc);
+      var dims = _labelDimensions(ld.label_type, targetType);
+
       window._currentLabel = {
         displayId:  ld.display_id,
         fileName:   (ld.line_code ? ld.line_code.replace(/[^a-zA-Z0-9_-]/g,'_')+'_' : '')
@@ -572,46 +623,39 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         dims:       dims,
       };
 
-      // 再クエリ（detached element 対策）
-      const _previewNow = document.getElementById('lbl-html-preview');
-      if (!_previewNow) { console.error('[LABEL] lbl-html-preview gone before PNG render'); return; }
+      var _previewNow = document.getElementById('lbl-html-preview');
+      if (!_previewNow) { console.error('[LABEL] lbl-html-preview missing'); return; }
 
       // PNG生成
-      console.log('[LABEL] PNG generation start - size:', dims.label);
-      let pngDataUrl = null;
+      console.log('[LABEL] png build start - size:', dims.label);
+      var pngDataUrl = null;
       try {
         pngDataUrl = await _buildLabelPNG(html, dims);
+        if (pngDataUrl) console.log('[LABEL] png build done - length:', pngDataUrl.length);
       } catch(pngErr) {
-        console.warn('[LABEL] PNG generation failed:', pngErr.message, '– falling back to iframe');
+        console.warn('[LABEL] png build failed:', pngErr.message);
       }
 
       if (pngDataUrl) {
-        // PNG プレビュー表示
         window._currentLabel.pngDataUrl = pngDataUrl;
-        _previewNow.innerHTML = `<img src="${pngDataUrl}"
-          style="max-width:100%;height:auto;border-radius:4px;display:block"
-          alt="ラベルプレビュー（${dims.label}）">`;
-        console.log('[LABEL] preview render done ✅ (PNG)', dims.label);
+        _previewNow.innerHTML = '<img src="' + pngDataUrl + '" style="max-width:100%;height:auto;border-radius:4px;display:block" alt="ラベルプレビュー">';
+        console.log('[LABEL] preview render done (PNG)');
       } else {
-        // フォールバック: iframe
-        const ifrW = Math.round(dims.wPx * 1.2);
-        const ifrH = Math.round(dims.hPx * 1.2);
-        _previewNow.innerHTML = `<iframe srcdoc="${html.replace(/"/g,'&quot;')}"
-          style="width:${ifrW}px;height:${ifrH}px;border:none;transform-origin:top left"
-          scrolling="no"></iframe>`;
-        console.log('[LABEL] preview render done (iframe fallback)', dims.label);
+        var ifrW = Math.round(dims.wPx * 1.2);
+        var ifrH = Math.round(dims.hPx * 1.2);
+        _previewNow.innerHTML = '<iframe srcdoc="' + html.replace(/"/g,'&quot;') + '" style="width:' + ifrW + 'px;height:' + ifrH + 'px;border:none" scrolling="no"></iframe>';
+        console.log('[LABEL] preview render done (iframe fallback)');
       }
 
-      const bar = document.getElementById('lbl-action-bar');
+      var bar = document.getElementById('lbl-action-bar');
       if (bar) { bar.style.display = 'block'; bar.scrollIntoView({ behavior:'smooth', block:'nearest' }); }
 
-    } catch(stErr) {
-      console.error('[LABEL] preview render error:', stErr.message, stErr.stack);
-      const _errMount = document.getElementById('lbl-html-preview');
-      if (_errMount) _errMount.innerHTML = `<div style="color:var(--red,#e05050);padding:16px;font-size:.8rem;text-align:center">
-        ⚠️ ラベル描画エラー<br><small>${stErr.message}</small></div>`;
+    } catch(err) {
+      console.error('[LABEL] render error:', err.message);
+      var errMount = document.getElementById('lbl-html-preview');
+      if (errMount) errMount.innerHTML = '<div style="color:var(--red,#e05050);padding:16px;font-size:.8rem;text-align:center">⚠️ ラベル描画エラー<br><small>' + err.message + '</small></div>';
     }
-  }, 500);
+  })();
 };
 
 
