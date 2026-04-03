@@ -225,7 +225,10 @@ Pages.eggLotBulk = function (params = {}) {
   // ── 描画 ──────────────────────────────────────────────────────
   function render(keepScroll) {
     const sy = keepScroll ? main.scrollTop : 0;
+    // ── DOM から最新値を読み込む（スマホで blur 前でも正しい値を拾う）──
+    _readDom();
     console.log('[EGG_BULK] initial render start - rows:', _rows.length, '| selLineId:', _selLineId || '(none)');
+    console.log('[EGG_BULK] _rows after readDom:', _rows.map(function(r){ return 'count:' + r.count + ' date:' + (r.collectDate||'(共通)'); }).join(' | '));
 
     const lines       = Store.getDB('lines') || [];
     const activeLines = lines.filter(l => l.status !== 'archived' && l.status !== 'deleted');
@@ -402,6 +405,7 @@ Pages.eggLotBulk = function (params = {}) {
                 <input type="number" id="ebl-cnt-${row.id}" class="input"
                   style="text-align:center;font-size:1rem;font-weight:700;padding:8px 2px"
                   placeholder="0" min="0" max="99" value="${row.count}"
+                  oninput="Pages._eblOnInput(${row.id},this.value)"
                   onblur="Pages._eblCommitCount(${row.id},this.value)"
                   onkeydown="if(event.key==='Enter'){this.blur();event.preventDefault();}">
                 <div id="ebl-badge-${row.id}" style="text-align:center;margin-top:2px;min-height:16px">
@@ -426,6 +430,7 @@ Pages.eggLotBulk = function (params = {}) {
         </div>
 
         <!-- ④ サマリプレビュー -->
+        <div id="ebl-planned">
         ${filledRows.length > 0 ? `
         <div style="border:1px solid rgba(45,122,82,.3);border-radius:10px;
           background:rgba(45,122,82,.05);padding:12px 14px">
@@ -450,6 +455,7 @@ Pages.eggLotBulk = function (params = {}) {
         <div style="text-align:center;padding:16px;color:var(--text3);font-size:.85rem">
           卵数を入力すると登録予定が表示されます
         </div>`}
+        </div>
 
       </div>
 
@@ -525,11 +531,87 @@ Pages.eggLotBulk = function (params = {}) {
     // サマリ行など軽量更新（全体 render は行わない）
     _updateEblSummary();
   };
-  // サマリのみ軽量更新
+  // oninput: 値を即座に _rows に反映してUIを軽量更新（blur前でも正しい状態に）
+  Pages._eblOnInput = function(id, val) {
+    var row = _rows.find(function(r){ return r.id === id; });
+    if (!row) return;
+    var n = parseInt(val, 10);
+    row.count = (!val || isNaN(n) || n < 0) ? 0 : Math.min(99, n);
+    console.log('[EGG_BULK] oninput count changed - id:', id, 'val:', val, '→', row.count);
+    _syncUiState();
+  };
+
+  // 軽量UI同期: DOM最新値を読み込み、予定一覧・保存ボタンのみ更新（全体再描画なし）
+  function _syncUiState() {
+    _readDom();   // DOM → _rows (採卵日等も含めて最新化)
+
+    var filledRows     = _rows.filter(_isValidEggRow);
+    var totalEggs      = filledRows.reduce(function(s,r){ return s+(parseInt(r.count,10)||0); }, 0);
+    var lotCount       = filledRows.filter(function(r){ return parseInt(r.count,10) >= 2; }).length;
+    var indCount       = filledRows.filter(function(r){ return parseInt(r.count,10) === 1; }).length;
+    var _stats         = _selLineId ? _eblCalcLineStats(_selLineId) : null;
+    var _hasEggHistory = _stats && _stats.totalEggs > 0;
+    var _overLimit     = _hasEggHistory && _stats !== null && totalEggs > _stats.unallocated;
+    var _noLine        = !_selLineId;
+    var _noValid       = filledRows.length === 0;
+    var canSave        = !_noLine && !_noValid && !_overLimit;
+
+    console.log('[EGG_BULK] canSave:', canSave,
+      '| overLimit:', _overLimit, '| noValid:', _noValid, '| noLine:', _noLine,
+      '| validRows:', filledRows.length, '| total:', totalEggs);
+
+    // ── 保存ボタン更新 ──
+    var saveBtn = document.getElementById('ebl-save-btn');
+    if (saveBtn) {
+      saveBtn.disabled = !canSave;
+      var reason = _overLimit  ? '⚠️ 未配分数を超えています'
+                 : _noLine    ? '⚠️ ラインを選択してください'
+                 : _noValid   ? '⚠️ 有効な行がありません'
+                 : '🥚 登録してラベル発行';
+      saveBtn.textContent = reason;
+      console.log('[EGG_BULK] button reason:', reason);
+    }
+
+    // ── 登録予定一覧を更新 ──
+    var plannedEl = document.getElementById('ebl-planned');
+    if (plannedEl) {
+      if (filledRows.length > 0) {
+        var rows = filledRows.map(function(r, i) {
+          var n   = parseInt(r.count, 10);
+          var d   = (r.collectDate || _commonDate || '').replace(/-/g, '/');
+          var isInd = n === 1;
+          return '<div style="font-size:.78rem;padding:3px 0;display:flex;gap:6px;align-items:center">'
+            + '<span style="color:var(--text3);min-width:18px">' + (i+1) + '.</span>'
+            + (isInd
+              ? '<span style="color:var(--female,#f06292);font-weight:700">🐛 個別化</span> 1頭'
+              : '<span style="color:var(--blue);font-weight:700">📦 ロット</span> ' + n + '個')
+            + '<span style="color:var(--text3);font-size:.7rem"> '
+            + (r.container || '1.8L') + ' / ' + (_commonMat||'T0') + ' / 採卵日: ' + (d||'—')
+            + '</span></div>';
+        }).join('');
+        plannedEl.innerHTML = '<div style="border:1px solid rgba(45,122,82,.3);border-radius:10px;'
+          + 'background:rgba(45,122,82,.05);padding:12px 14px">'
+          + '<div style="font-size:.78rem;font-weight:700;color:var(--green);margin-bottom:6px">'
+          + '📋 登録予定 ' + filledRows.length + '件</div>'
+          + '<div style="font-size:.72rem;color:var(--text3);margin-bottom:4px">計 '
+          + '<b style="color:var(--blue)">' + totalEggs + '</b>個'
+          + ' ／ロット <b style="color:var(--green)">' + lotCount + '</b>'
+          + (indCount ? ' ／個別化 <b style="color:var(--female,#f06292)">' + indCount + '</b>' : '')
+          + '</div>' + rows + '</div>';
+      } else {
+        plannedEl.innerHTML = '<div style="text-align:center;padding:16px;color:var(--text3);font-size:.85rem">'
+          + '卵数を入力すると登録予定が表示されます</div>';
+      }
+    }
+  }
+
+  // サマリのみ軽量更新（後方互換：_eblCommitCount から呼ばれる）
   function _updateEblSummary() {
-    _readDom();
-    const summEl = document.getElementById('ebl-summary');
-    if (summEl) summEl.innerHTML = _buildSummaryHtml();
+    _syncUiState();
+  }
+  // _buildSummaryHtml は _updateEblSummary 内で使われていたが _syncUiState に移行済み
+  function _buildSummaryHtml() {
+    return ''; // 後方互換ダミー（_syncUiState が直接DOMを更新する）
   }
 
   Pages._eblAddRow = function() {
@@ -554,7 +636,7 @@ Pages.eggLotBulk = function (params = {}) {
 
     // ── 保存前診断ログ ──────────────────────────────────────────
     console.log('[EGG_BULK] ===== save triggered =====');
-    console.log('[EGG_BULK] build          :', '20260403f');
+    console.log('[EGG_BULK] build          :', '20260403h');
     console.log('[EGG_BULK] __API_BUILD    :', window.__API_BUILD || '(not set - OLD api.js!)');
     console.log('[EGG_BULK] CONFIG.GAS_URL :', (window.CONFIG && window.CONFIG.GAS_URL || '').slice(0,80) || '(unset)');
     console.log('[EGG_BULK] typeof API     :', typeof API);
@@ -568,11 +650,14 @@ Pages.eggLotBulk = function (params = {}) {
     }
     if (!_selLineId) { UI.toast('ラインを選択してください', 'error'); return; }
 
+    // 保存前に再度 DOM から読み込む（スマホでの onblur 漏れ対策）
+    _readDom();
     const targets = _rows.filter(_isValidEggRow);
     const _skipped = _rows.length - targets.length;
     console.log('[EGG_BULK] rows total   :', _rows.length);
     console.log('[EGG_BULK] rows valid   :', targets.length);
     console.log('[EGG_BULK] rows skipped :', _skipped, '(空白行 / 採卵日未入力)');
+    console.log('[EGG_BULK] targets      :', targets.map(function(r){ return r.count + '個(' + (r.collectDate||_commonDate||'?日') + ')'; }).join(', '));
     console.log('[EGG_BULK] save start   : proceeding with', targets.length, 'valid rows');
     if (targets.length === 0) {
       UI.toast('有効な行がありません。卵数と採卵日を入力してください', 'error'); return;
