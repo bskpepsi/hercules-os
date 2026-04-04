@@ -11,7 +11,7 @@
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-window._LABEL_BUILD = '20260330-20260403t';
+window._LABEL_BUILD = '20260330-20260403u';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 // ── ステージコード正規化 ─────────────────────────────────────────
@@ -742,7 +742,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
   // QR dataURL 取得 → ラベル生成 → PNG化
   (async function _lblRender() {
     try {
-      console.log('[LABEL] qr build start - build:20260403t');
+      console.log('[LABEL] qr build start - build:20260403u');
       console.log('[LABEL] qr target type:', targetType, '| targetId:', targetId);
       console.log('[LABEL] qr rect:', JSON.stringify(QR_RECT_MM));
       console.log('[LABEL] qr target text:', qrText);
@@ -885,21 +885,37 @@ function _buildLabelHTML(ld, qrSrc) {
   var sexCats = (ld.size_category||'').split(',').map(function(s){ return s.trim(); });
   var headerLabel = isLot ? (lt === 'egg_lot' ? '卵管理' : '複数頭飼育') : '個別飼育';
 
-  // ── display_id をパース（例: "HM2026-B1-L01-A" → prefix/linePart/suffix）──
-  var rawId   = ld.display_id || '';
-  var parts   = rawId.split('-');
-  // パターン: PREFIX-LINE-SUFFIX... or PREFIX-LINE
-  var prefix  = parts.length >= 2 ? parts.slice(0, -1).join('-') : rawId;
-  var suffix  = parts.length >= 2 ? parts[parts.length - 1] : '';
-  var lineBadge = ld.line_code || '';  // "B1" など
-  // suffixが短い(2文字以下)なら個体連番と見なし prefix を調整
-  // → 主要バッジは lineBadge (line_code) と suffix
-  console.log('[LABEL] header badge render: line=' + lineBadge + ' suffix=' + suffix);
+  // ── display_id パース ─────────────────────────────────────────────
+  // 例: "HM2026-B1-L01-A" → lineBadge="B1"  lotSuffix="L01-A" (最後の2セグメント)
+  var rawId     = ld.display_id || '';
+  var idParts   = rawId.split('-');
+  var lineBadge = ld.line_code || '';   // "B1"
+  // lotSuffix: display_id の ライン部分 より後の全体
+  // 例: "HM2026-B1-L01-A" → idParts=[HM2026,B1,L01,A] → after lineBadge
+  var lotSuffix = '';
+  if (lineBadge && rawId.includes('-' + lineBadge + '-')) {
+    lotSuffix = rawId.slice(rawId.indexOf('-' + lineBadge + '-') + ('-' + lineBadge + '-').length);
+  } else if (idParts.length >= 3) {
+    lotSuffix = idParts.slice(2).join('-');  // "L01-A" など
+  }
+  // prefix: lineBadge より前の部分 (例: "HM2026")
+  var prefix = lineBadge && rawId.includes(lineBadge)
+    ? rawId.slice(0, rawId.indexOf(lineBadge)).replace(/-$/, '')
+    : '';
+
+  console.log('[LABEL] header badge render: line=' + lineBadge + ' suffix=' + lotSuffix + ' prefix=' + prefix);
   console.log('[LABEL] header badge render: count=' + (ld.count||''));
 
+  // ── Mx（モルト）: T2系マットのときだけ表示 ──────────────────────────
+  var matType   = ld.mat_type || '';
+  var showMx    = (matType === 'T2' || matType === 'T3');  // T2系のみ
+  var mxIsOn    = ld.mat_molt === true || ld.mat_molt === 'true';
+  var mxIsOff   = !mxIsOn;
+  if (showMx) console.log('[LABEL] mx checkbox render: mat=' + matType + ' on=' + mxIsOn);
+
   // ── 記録データ ───────────────────────────────────────────────────
-  var records  = ld.records || [];
-  var sortedR  = records.slice().sort(function(a,b){
+  var records   = ld.records || [];
+  var sortedR   = records.slice().sort(function(a,b){
     return String(a.record_date||'').localeCompare(String(b.record_date||''));
   });
   var recentAll = sortedR.slice(-8);
@@ -910,10 +926,8 @@ function _buildLabelHTML(ld, qrSrc) {
 
   var _filledCount = recentAll.filter(function(r){ return !!r; }).length;
   console.log('[LABEL] record row height unified - filled:', _filledCount, '/ total: 8');
-  console.log('[LABEL] record grid rendered');
 
   // ── セルスタイル（全行統一高さ）──────────────────────────────────
-  // tdU = 全行共通（空白・既記入どちらも同じ padding）
   var tdU = 'border:1.5px solid #000;padding:4px 2px;font-size:6.5px;font-weight:700;color:#000;text-align:center';
   var thS = 'border:1.5px solid #000;padding:2px 2px;font-size:6.5px;font-weight:700;background:#000;color:#fff;text-align:center';
 
@@ -946,34 +960,32 @@ function _buildLabelHTML(ld, qrSrc) {
       + '</tr>';
   }
 
-  // ── 上部情報バッジ ────────────────────────────────────────────────
-  var bStyle = 'display:inline-block;border:1.5px solid #000;border-radius:2px;'
-    + 'padding:0 3px;font-size:10px;font-weight:700;color:#000;margin-right:2px;line-height:1.4';
-  var bSmall = 'display:inline-block;border:1px solid #000;border-radius:2px;'
-    + 'padding:0 2px;font-size:7.5px;font-weight:700;color:#000;margin-right:1px;line-height:1.3';
+  // ── 上部情報 HTML ──────────────────────────────────────────────────
+  // バッジスタイル（大）
+  var bLg = 'display:inline-block;border:1.5px solid #000;border-radius:3px;'
+    + 'padding:0 4px;font-size:10px;font-weight:700;color:#000;margin-right:2px;line-height:1.5';
 
-  // lineBadge: ライン識別子 (例: "B1")
-  var lineHtml   = lineBadge
-    ? '<span style="' + bStyle + '">' + lineBadge + '</span>'
+  // "B1" バッジ
+  var lineBadgeHtml = lineBadge
+    ? '<span style="' + bLg + '">' + lineBadge + '</span>'
     : '';
-  // suffix: ロット/個体識別子 (例: "L01-A")
-  var suffixHtml = suffix
-    ? '<span style="' + bStyle + '">' + suffix + '</span>'
+  // "L01-A" バッジ（lotSuffix をそのまま1つにまとめる）
+  var lotSuffixHtml = lotSuffix
+    ? '<span style="' + bLg + '">' + lotSuffix + '</span>'
     : '';
-  // prefix line: 元IDの前半（小さめ）
-  var prefixHtml = prefix && prefix !== rawId
-    ? '<div style="font-size:6px;font-weight:700;color:#000;margin-bottom:1px">' + prefix + '</div>'
+  // prefix 行（控えめ小文字）
+  var prefixLine = prefix
+    ? '<div style="font-size:5.5px;color:#000;font-weight:700;margin-bottom:1px">' + prefix + '</div>'
     : '';
 
-  // 頭数バッジ
-  var countHtml = '';
-  if (isLot && ld.count) {
-    countHtml = '<div style="font-size:11px;font-weight:700;color:#000;line-height:1.2">'
-      + '<span style="display:inline-block;border:2px solid #000;border-radius:3px;padding:0 3px">'
-      + ld.count + '頭</span></div>';
-  }
+  // 頭数バッジ（右上に寄せる）
+  var countBadge = (isLot && ld.count)
+    ? '<span style="display:inline-block;border:2px solid #000;border-radius:3px;'
+      + 'padding:0 3px;font-size:11px;font-weight:700;color:#000;line-height:1.4">'
+      + ld.count + '頭</span>'
+    : '';
 
-  // 性別
+  // 性別（個体ラベル）
   var sexHtml = !isLot && ld.sex
     ? '<span style="font-size:8px;font-weight:700;color:#000">' + ld.sex + '&nbsp;</span>'
     : '';
@@ -981,6 +993,12 @@ function _buildLabelHTML(ld, qrSrc) {
   // 孵化日
   var hatchHtml = ld.hatch_date
     ? '<div style="font-size:6.5px;font-weight:700;color:#000">孵: ' + ld.hatch_date + '</div>'
+    : '';
+
+  // Mx 行（T2系のみ）
+  var mxHtml = showMx
+    ? '<div style="font-size:6px;font-weight:700;color:#000;line-height:1.6">'
+      + 'Mx:' + chk('ON', mxIsOn) + chk('OFF', mxIsOff) + '</div>'
     : '';
 
   return '<!DOCTYPE html>\n<html><head><meta charset="utf-8">\n<style>\n'
@@ -991,37 +1009,48 @@ function _buildLabelHTML(ld, qrSrc) {
     + '</style></head><body>\n'
     + '<div style="width:62mm;height:70mm;display:flex;flex-direction:column">\n'
 
-    // ── ヘッダーバー
+    // ヘッダーバー
     + '  <div style="background:#000;color:#fff;font-size:7.5px;font-weight:700;padding:0.8mm 2mm;height:4.5mm;display:flex;align-items:center;flex-shrink:0">'
     + headerLabel + ' | HerculesOS</div>\n'
 
-    // ── QR + 上部情報
+    // QR + 上部情報
     + '  <div style="display:flex;padding:1mm 1.5mm 0;gap:0;flex-shrink:0">\n'
     + '    <div style="flex-shrink:0;margin-right:1.5mm">' + _qrBox(qrSrc, 44) + '</div>\n'
     + '    <div style="flex:1;min-width:0;padding-left:1.5mm;border-left:2px solid #000">\n'
 
-    // 最重要: ライン識別バッジ + ロット/個体バッジ
-    + '      ' + prefixHtml
-    + '      <div style="margin-bottom:2px">' + lineHtml + suffixHtml + '</div>\n'
+    // prefix（控えめ）
+    + '      ' + prefixLine
 
-    // 頭数（ロット時は大きく）
-    + '      ' + (isLot ? countHtml : sexHtml ? '<div>' + sexHtml + '</div>' : '')  + '\n'
+    // [B1] [L01-A] バッジ行　+　右上に頭数バッジ
+    + '      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">\n'
+    + '        <div>' + lineBadgeHtml + lotSuffixHtml + '</div>\n'
+    + '        <div>' + countBadge + sexHtml + '</div>\n'
+    + '      </div>\n'
 
     // 孵化日
     + '      ' + hatchHtml + '\n'
 
-    // 区分・マット・モルト・ステージ
-    + '      <div style="font-size:6px;font-weight:700;color:#000;margin-top:1px;line-height:1.6">'
+    // 区分（1行目）
+    + '      <div style="font-size:6px;font-weight:700;color:#000;line-height:1.6">'
     + '区分:' + chk('大',sexCats.indexOf('大')>=0) + chk('中',sexCats.indexOf('中')>=0) + chk('小',sexCats.indexOf('小')>=0)
-    + '&nbsp;M:' + ['T0','T1','T2','T3'].map(function(m){ return chk(m,ld.mat_type===m); }).join('')
     + '</div>\n'
+
+    // マット（2行目）
+    + '      <div style="font-size:6px;font-weight:700;color:#000;line-height:1.6">'
+    + 'M:' + ['T0','T1','T2','T3'].map(function(m){ return chk(m,ld.mat_type===m); }).join('')
+    + '</div>\n'
+
+    // ステージ（3行目）
     + '      <div style="font-size:6px;font-weight:700;color:#000;line-height:1.6">'
     + 'St:' + _stageCheckboxRow(ld.stage_code) + '</div>\n'
+
+    // Mx（4行目、T2系のみ）
+    + '      ' + mxHtml + '\n'
 
     + '    </div>\n'
     + '  </div>\n'
 
-    // ── 記録表（2列×4行・全行均一高さ）
+    // 記録表（2列×4行・全行均一高さ）
     + '  <div style="border-top:1.5px solid #000;margin:0.8mm 1.5mm 0"></div>\n'
     + '  <div style="flex:1;padding:0 1.5mm 0.5mm;overflow:hidden">\n'
     + '    <table style="width:100%;border-collapse:collapse;table-layout:fixed">\n'
@@ -1038,7 +1067,7 @@ function _buildLabelHTML(ld, qrSrc) {
     + '    </table>\n'
     + '  </div>\n'
 
-    // ── フッター
+    // フッター
     + (noteShort
       ? '  <div style="height:3.5mm;background:#000;padding:0.3mm 2mm;font-size:6px;font-weight:700;color:#fff;overflow:hidden;white-space:nowrap">📝 ' + noteShort + '</div>\n'
       : '  <div style="height:3.5mm;background:#000"></div>\n')
