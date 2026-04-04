@@ -11,7 +11,7 @@
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-window._LABEL_BUILD = '20260330-20260403m';
+window._LABEL_BUILD = '20260330-20260403o';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 // ── ステージコード正規化 ─────────────────────────────────────────
@@ -86,7 +86,7 @@ function _labelDimensions(labelType, targetType) {
 // htmlStr: _buildLabelHTML が返す完全 HTML 文字列
 // dims:    _labelDimensions の返り値
 // 戻り値:  PNG data URL (string) | null(html2canvas 未ロード時)
-async // QR を既存PNG canvasの左上に手動合成する
+// QR を既存PNG canvasの左上に手動合成する
 // html2canvas が QR img を拾えない場合の保険として使用
 async function _compositeQrOntoPng(pngDataUrl, qrSrc, dims) {
   return new Promise(function(resolve, reject) {
@@ -212,6 +212,7 @@ Pages.labelGen = function (params = {}) {
     window._lblIndDraftCtx = null;
   }
 
+  console.log('[LABEL] page render start');
   console.log('[LABEL] params', { targetType, targetId, labelType, _isUnitMode, _unitDisplayId, hasDraft: !!_unitDraft });
 
   // backRoute / backParam
@@ -688,7 +689,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
   // QR dataURL 取得 → ラベル生成 → PNG化
   (async function _lblRender() {
     try {
-      console.log('[LABEL] qr build start - build:20260403m');
+      console.log('[LABEL] qr build start - build:20260403o');
       console.log('[LABEL] qr target type:', targetType, '| targetId:', targetId);
       console.log('[LABEL] qr target text:', qrText);
       var qrSrc = await _getQrDataUrl(qrText);
@@ -714,7 +715,9 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
 
       var _previewNow = document.getElementById('lbl-html-preview');
       if (!_previewNow) { console.error('[LABEL] lbl-html-preview missing'); return; }
+      console.log('[LABEL] preview mount found');
 
+      console.log('[LABEL] label render start');
       // ── Step1: raw HTML プレビューを先に表示（QR可視確認用）──────────
       var ifrW = Math.round(dims.wPx * 1.5);
       var ifrH = Math.round(dims.hPx * 1.5);
@@ -751,6 +754,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
 
       if (pngDataUrl) {
         window._currentLabel.pngDataUrl = pngDataUrl;
+        console.log('[LABEL] label render success');
         _previewNow.innerHTML = '<img src="' + pngDataUrl
           + '" style="max-width:100%;height:auto;border-radius:4px;display:block" alt="ラベルプレビュー">';
         console.log('[LABEL] preview render done (PNG with QR composite)');
@@ -760,9 +764,14 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
       }
 
     } catch(err) {
-      console.error('[LABEL] render error:', err.message);
+      console.error('[LABEL] label render failed:', err.message, err.stack);
       var errMount = document.getElementById('lbl-html-preview');
-      if (errMount) errMount.innerHTML = '<div style="color:var(--red,#e05050);padding:16px;font-size:.8rem;text-align:center">⚠️ ラベル描画エラー<br><small>' + err.message + '</small></div>';
+      if (errMount) {
+        errMount.innerHTML = '<div style="color:var(--red,#e05050);padding:16px;font-size:.8rem;text-align:center">⚠️ ラベル描画エラー<br><small>' + err.message + '</small></div>';
+      } else {
+        var main2 = document.getElementById('main');
+        if (main2) main2.innerHTML += '<div style="color:red;padding:16px">⚠️ ' + err.message + '</div>';
+      }
     }
   })();;
 };
