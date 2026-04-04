@@ -11,7 +11,7 @@
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-window._LABEL_BUILD = '20260330-20260403o';
+window._LABEL_BUILD = '20260330-20260403q';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 // ── ステージコード正規化 ─────────────────────────────────────────
@@ -25,6 +25,21 @@ function _normStageForLabel(code) {
     ADULT_PRE:'成虫（未後食）', ADULT:'成虫（活動開始）',
   };
   return MAP[code] || code;
+}
+
+// ── ステージ チェックボックス表示用ヘルパー ──────────────────────
+function _stageCheckboxRow(stageCode) {
+  // stageCode を5分類に正規化
+  var norm = _normStageForLabel(stageCode || '');
+  // 成虫は "成虫（活動開始）" / "成虫（未後食）" どちらも "成虫" に丸める
+  if (norm && norm.startsWith('成虫')) norm = '成虫';
+
+  var stages = ['L1L2', 'L3', '前蛹', '蛹', '成虫'];
+  var out = stages.map(function(s) {
+    return (norm === s ? '■' : '□') + s;
+  }).join('&nbsp;');
+  console.log('[LABEL] stage checkbox render:', norm, '|', out.replace(/&nbsp;/g,' '));
+  return out;
 }
 
 // ラベル種別定義
@@ -689,7 +704,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
   // QR dataURL 取得 → ラベル生成 → PNG化
   (async function _lblRender() {
     try {
-      console.log('[LABEL] qr build start - build:20260403o');
+      console.log('[LABEL] qr build start - build:20260403q');
       console.log('[LABEL] qr target type:', targetType, '| targetId:', targetId);
       console.log('[LABEL] qr target text:', qrText);
       var qrSrc = await _getQrDataUrl(qrText);
@@ -834,13 +849,19 @@ function _buildLabelHTML(ld, qrSrc) {
 
   var recRowsHtml = recentR.map(function(r) {
     if (!r) {
-      return '<tr><td style="' + tdS + '">&nbsp;</td><td style="' + tdS + '">&nbsp;</td><td style="' + tdS + '">&nbsp;</td></tr>';
+      var tdE = 'border:1.5px solid #000;padding:4px 3px;font-size:7px;font-weight:700;color:#000';
+      return '<tr><td style="' + tdE + '">&nbsp;</td><td style="' + tdE + '">&nbsp;</td><td style="' + tdE + '">&nbsp;</td></tr>';
     }
     var d = String(r.record_date||'').slice(5);
     var w = r.weight_g ? r.weight_g + 'g' : '';
     return '<tr><td style="' + tdS + '">' + d + '</td><td style="' + tdS + '">' + w
       + '</td><td style="' + tdS + '">' + (isLot ? (r.exchange_type||'') : String(r.note_private||'').slice(0,6)) + '</td></tr>';
   }).join('');
+
+  var _filledCount = recentR.filter(function(r){ return !!r; }).length;
+  var _blankCount  = recentR.filter(function(r){ return !r; }).length;
+  console.log('[LABEL] record row filled count:', _filledCount, '/ blank count:', _blankCount);
+  console.log('[LABEL] expanded blank rows applied');
 
   var sexInfo = !isLot && ld.sex
     ? '<div style="font-size:9px;font-weight:700;color:#000">' + ld.sex + '</div>'
@@ -870,7 +891,8 @@ function _buildLabelHTML(ld, qrSrc) {
     + '    <div style="font-size:7px;font-weight:700;color:#000;line-height:1.9">\n'
     + '      <span>区分: ' + chk('大', sexCats.indexOf('大')>=0) + chk('中', sexCats.indexOf('中')>=0) + chk('小', sexCats.indexOf('小')>=0) + '</span><br>\n'
     + '      <span>マット: ' + ['T0','T1','T2','T3'].map(function(m){ return chk(m, ld.mat_type===m); }).join('') + '</span><br>\n'
-    + '      <span>モルト: ' + chk('ON', ld.mat_molt===true||ld.mat_molt==='true') + chk('OFF', !ld.mat_molt||ld.mat_molt==='false') + '&nbsp;&nbsp;ステージ: ' + (stageLbl||'—') + '</span>\n'
+    + '      <span>モルト: ' + chk('ON', ld.mat_molt===true||ld.mat_molt==='true') + chk('OFF', !ld.mat_molt||ld.mat_molt==='false') + '</span><br>\n'
+    + '      <span>ステージ: ' + _stageCheckboxRow(ld.stage_code) + '</span>\n'
     + '    </div>\n'
     + '  </div>\n'
     + '  <div style="border-top:1.5px solid #000;margin:0.5mm 1.5mm"></div>\n'
@@ -962,7 +984,8 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
   var m1w = (ld.members&&ld.members[0]) ? ld.members[0].weight_g : '';
   var m2w = (ld.members&&ld.members[1]) ? ld.members[1].weight_g : '';
 
-  var emptyRow = '<tr><td style="' + tdS + '">&nbsp;</td><td style="' + tdS + '">&nbsp;</td><td style="' + tdS + '">&nbsp;</td><td style="' + tdS + '">&nbsp;</td></tr>';
+  var tdE2     = 'border:1.5px solid #000;padding:4px 3px;font-size:7px;font-weight:700;color:#000';
+  var emptyRow = '<tr><td style="' + tdE2 + '">&nbsp;</td><td style="' + tdE2 + '">&nbsp;</td><td style="' + tdE2 + '">&nbsp;</td><td style="' + tdE2 + '">&nbsp;</td></tr>';
 
   var recRows = '<tr><th style="' + thS + '">日付</th><th style="' + thS + '">体重①g</th><th style="' + thS + '">体重②g</th><th style="' + thS + '">交換</th></tr>'
     + '<tr><td style="' + tdS + '">T1移行</td>'
@@ -988,7 +1011,7 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
     + (originLS ? '      <div style="font-size:7px;font-weight:700;color:#000">' + originLS + '</div>\n' : '')
     + '      <div style="font-size:7px;font-weight:700;color:#000;margin-top:1px">' + chk('大',size==='大') + chk('中',size==='中') + chk('小',size==='小') + '</div>\n'
     + '      <div style="font-size:7px;font-weight:700;color:#000">' + ['T0','T1','T2','T3'].map(function(m){ return chk(m, mat===m); }).join('') + '</div>\n'
-    + '      <div style="font-size:7px;font-weight:700;color:#000">' + ['L1L2','L3','前蛹'].map(function(s){ return chk(s,false); }).join('') + '</div>\n'
+    + '      <div style="font-size:7px;font-weight:700;color:#000">ステージ: ' + _stageCheckboxRow(mat === 'T1' ? 'L1L2' : mat === 'T2' ? 'L3' : '') + '</div>\n'
     + '    </div>\n'
     + '  </div>\n'
     + '  <div style="border-top:1.5px solid #000;margin:0.5mm 1.5mm"></div>\n'
