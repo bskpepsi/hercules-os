@@ -44,7 +44,7 @@ function _stageCheckboxRow(stageCode) {
 
 // ── QR位置定義（HTML・PNG両方が参照する単一矩形） ────────────────
 // 62mm × 70mm ラベル基準。他サイズは _qrRectForDims() が補正する。
-var QR_RECT_MM = { xMm: 2.56, yMm: 6.56, sizeMm: 11.67 };
+var QR_RECT_MM = { xMm: 3.56, yMm: 7.56, sizeMm: 11.67 }; // +1mm right/down from 20260405a
 //   xMm: 左パディング(1.5mm) + _qrBox内padding(4px/3.77≈1.06mm) = 2.56mm
 //   yMm: ヘッダー(4.5mm) + 上パディング(1mm) + _qrBox内padding(1.06mm) = 6.56mm
 //   sizeMm: _qrBoxのimg 44px → 44/(234/62) ≈ 11.67mm
@@ -766,7 +766,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
   // QR dataURL 取得 → ラベル生成 → PNG化
   (async function _lblRender() {
     try {
-      console.log('[LABEL] qr build start - build:20260405a');
+      console.log('[LABEL] qr build start - build:20260405c');
       console.log('[LABEL] qr target type:', targetType, '| targetId:', targetId);
       console.log('[LABEL] qr rect:', JSON.stringify(QR_RECT_MM));
       console.log('[LABEL] qr target text:', qrText);
@@ -906,7 +906,10 @@ function _buildLabelHTML(ld, qrSrc) {
   var isLot   = lt === 'multi_lot' || lt === 'egg_lot';
   var chk     = _chkThermal;
   var sexCats = (ld.size_category||'').split(',').map(function(s){ return s.trim(); });
-  var headerLabel = isLot ? (lt === 'egg_lot' ? '卵管理' : '複数頭飼育') : '個別飼育';
+  var headerLabel = lt === 'ind_fixed' ? '個別飼育'
+    : (lt === 'multi_lot' || lt === 'egg_lot') ? 'ロット'
+    : lt === 't1_unit' ? 'ユニット'
+    : '個別飼育'; // fallback
 
   // ── display_id パース ─────────────────────────────────────────────
   // 例: "HM2026-B1-L01-A" → lineBadge="B1"  lotSuffix="L01-A" (最後の2セグメント)
@@ -966,20 +969,26 @@ function _buildLabelHTML(ld, qrSrc) {
     var lExch = '', rExch = '';
     if (lRec) {
       var le = isLot ? (lRec.exchange_type||'') : String(lRec.note_private||'').slice(0,4);
-      lExch = ((le==='FULL'||le==='全')?'■':'□')+'全 '+((le==='ADD'||le==='追')?'■':'□')+'追';
+      lExch = ((le==='FULL'||le==='全')?'■':'□')+'全<br>'+((le==='ADD'||le==='追')?'■':'□')+'追';
     }
     if (rRec) {
       var re2 = isLot ? (rRec.exchange_type||'') : String(rRec.note_private||'').slice(0,4);
-      rExch = ((re2==='FULL'||re2==='全')?'■':'□')+'全 '+((re2==='ADD'||re2==='追')?'■':'□')+'追';
+      rExch = ((re2==='FULL'||re2==='全')?'■':'□')+'全<br>'+((re2==='ADD'||re2==='追')?'■':'□')+'追';
     }
     rowsHtml += '<tr>'
       + '<td style="' + tdU + '">' + (lDate || '&nbsp;') + '</td>'
-      + '<td style="' + tdU + '">' + (lWt   || '&nbsp;') + '</td>'
-      + '<td style="' + tdU + '">' + (lExch || '□全&nbsp;□追') + '</td>'
+      + '<td style="' + tdU + ';position:relative">'
+        + (lWt || '&nbsp;')
+        + '<span style="position:absolute;bottom:1px;right:2px;font-size:5px;font-weight:700;color:#000">g</span>'
+        + '</td>'
+      + '<td style="' + tdU + '">' + (lExch || '□全<br>□追') + '</td>'
       + '<td style="width:1.5px;background:#000;padding:0"></td>'
       + '<td style="' + tdU + '">' + (rDate || '&nbsp;') + '</td>'
-      + '<td style="' + tdU + '">' + (rWt   || '&nbsp;') + '</td>'
-      + '<td style="' + tdU + '">' + (rExch || '□全&nbsp;□追') + '</td>'
+      + '<td style="' + tdU + ';position:relative">'
+        + (rWt || '&nbsp;')
+        + '<span style="position:absolute;bottom:1px;right:2px;font-size:5px;font-weight:700;color:#000">g</span>'
+        + '</td>'
+      + '<td style="' + tdU + '">' + (rExch || '□全<br>□追') + '</td>'
       + '</tr>';
   }
 
@@ -1091,8 +1100,8 @@ function _buildLabelHTML(ld, qrSrc) {
 
     // フッター
     + (noteShort
-      ? '  <div style="height:3.5mm;background:#000;padding:0.3mm 2mm;font-size:7px;font-weight:700;color:#fff;overflow:hidden;white-space:nowrap">📝 ' + noteShort + '</div>\n'
-      : '  <div style="height:3.5mm;background:#000"></div>\n')
+      ? '  <div style="padding:0.5mm 2mm 1mm;font-size:7px;font-weight:700;color:#000;overflow:hidden;white-space:nowrap">📝 ' + noteShort + '</div>\n'
+      : '')
     + '</div>\n</body></html>';
 }
 
