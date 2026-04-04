@@ -11,7 +11,7 @@
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-window._LABEL_BUILD = '20260330-20260403u';
+window._LABEL_BUILD = '20260330-20260403v';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 // ── ステージコード正規化 ─────────────────────────────────────────
@@ -742,7 +742,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
   // QR dataURL 取得 → ラベル生成 → PNG化
   (async function _lblRender() {
     try {
-      console.log('[LABEL] qr build start - build:20260403u');
+      console.log('[LABEL] qr build start - build:20260403v');
       console.log('[LABEL] qr target type:', targetType, '| targetId:', targetId);
       console.log('[LABEL] qr rect:', JSON.stringify(QR_RECT_MM));
       console.log('[LABEL] qr target text:', qrText);
@@ -974,9 +974,8 @@ function _buildLabelHTML(ld, qrSrc) {
     ? '<span style="' + bLg + '">' + lotSuffix + '</span>'
     : '';
   // prefix 行（控えめ小文字）
-  var prefixLine = prefix
-    ? '<div style="font-size:5.5px;color:#000;font-weight:700;margin-bottom:1px">' + prefix + '</div>'
-    : '';
+  // prefixLine は廃止（prefix は badge 行の先頭に inline 表示）
+  var prefixLine = '';  // unused
 
   // 頭数バッジ（右上に寄せる）
   var countBadge = (isLot && ld.count)
@@ -1018,12 +1017,12 @@ function _buildLabelHTML(ld, qrSrc) {
     + '    <div style="flex-shrink:0;margin-right:1.5mm">' + _qrBox(qrSrc, 44) + '</div>\n'
     + '    <div style="flex:1;min-width:0;padding-left:1.5mm;border-left:2px solid #000">\n'
 
-    // prefix（控えめ）
-    + '      ' + prefixLine
-
-    // [B1] [L01-A] バッジ行　+　右上に頭数バッジ
+    // HM2026 + [B1] [L01-A] バッジ行　+　右上に頭数バッジ
+    // prefix（年度）は lineBadge の前に同じ行で表示
     + '      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">\n'
-    + '        <div>' + lineBadgeHtml + lotSuffixHtml + '</div>\n'
+    + '        <div>'
+    + (prefix ? '<span style="font-size:7px;font-weight:700;color:#000;margin-right:2px">' + prefix + '-</span>' : '')
+    + lineBadgeHtml + lotSuffixHtml + '</div>\n'
     + '        <div>' + countBadge + sexHtml + '</div>\n'
     + '      </div>\n'
 
