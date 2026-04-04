@@ -98,21 +98,20 @@ function _detailPageKey(targetType, targetId) {
 // 戻り値: { wMm, hMm, wPx, hPx, scale, label }
 // 1mm = 3.7795px @ 96dpi。scale:3 で ~288dpi の印刷品質 PNG を生成
 function _labelDimensions(labelType, targetType) {
-  const isLarge =
+  // LOT系は 62×40mm（コンパクト）、テーブルなし
+  if (labelType === 'multi_lot' || labelType === 'egg_lot') {
+    return { wMm:62, hMm:40, wPx:234, hPx:151, scale:3, label:'62×40mm' };
+  }
+  // IND / UNIT / IND_DRAFT は 62×70mm
+  var isLarge =
     labelType === 'ind_fixed' ||
-    labelType === 'multi_lot' ||
-    labelType === 'egg_lot'   ||
     labelType === 't1_unit'   ||
     targetType === 'IND'      ||
-    targetType === 'LOT'      ||
     targetType === 'UNIT'     ||
     targetType === 'IND_DRAFT';
-
   if (isLarge) {
-    // 62mm × 70mm → 234×265px → scale3: 702×795px
     return { wMm:62, hMm:70, wPx:234, hPx:265, scale:3, label:'62×70mm' };
   }
-  // 62mm × 40mm → 234×151px → scale3: 702×453px (SET / PAR)
   return { wMm:62, hMm:40, wPx:234, hPx:151, scale:3, label:'62×40mm' };
 }
 
@@ -615,7 +614,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
       const line = di.line_id ? (Store.getLine(di.line_id)||{}) : {};
       ld = {
         qr_text:      'IND:DRAFT',
-        display_id:   `${di.lot_display_id||''}#${di.lot_item_no||'?'} (下書き)`,
+        display_id:   `${di.lot_display_id||''}#${di.lot_item_no||'?'} DRAFT`,
         line_code:    di.line_code || line.line_code || line.display_id || '',
         stage_code:   di.stage_phase || 'T1',
         sex:          '',
@@ -766,7 +765,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
   // QR dataURL 取得 → ラベル生成 → PNG化
   (async function _lblRender() {
     try {
-      console.log('[LABEL] qr build start - build:20260407b');
+      console.log('[LABEL] qr build start - build:20260407c');
       console.log('[LABEL] qr target type:', targetType, '| targetId:', targetId);
       console.log('[LABEL] qr rect:', JSON.stringify(QR_RECT_MM));
       console.log('[LABEL] qr target text:', qrText);
@@ -1032,13 +1031,17 @@ function _buildLabelHTML(ld, qrSrc) {
       + 'Mx:' + chk('ON', mxIsOn) + chk('OFF', mxIsOff) + '</div>'
     : '';
 
+  // LOT は 62×40mm、IND/DRAFT は 62×70mm
+  var _bodyH  = isLot ? '40mm' : '70mm';
+  var _pageSz = isLot ? '62mm 40mm' : '62mm 70mm';
+
   return '<!DOCTYPE html>\n<html><head><meta charset="utf-8">\n<style>\n'
-    + '  @page { size: 62mm 70mm; margin: 0; }\n'
+    + '  @page { size: ' + _pageSz + '; margin: 0; }\n'
     + '  * { margin:0; padding:0; box-sizing:border-box; }\n'
-    + '  body { width:62mm; height:70mm; font-family:sans-serif; font-size:7px; background:#fff; color:#000; overflow:hidden; }\n'
+    + '  body { width:62mm; height:' + _bodyH + '; font-family:sans-serif; font-size:7px; background:#fff; color:#000; overflow:hidden; }\n'
     + '  @media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }\n'
     + '</style></head><body>\n'
-    + '<div style="width:62mm;height:70mm;display:flex;flex-direction:column">\n'
+    + '<div style="width:62mm;height:' + _bodyH + ';display:flex;flex-direction:column">\n'
 
     // ヘッダーバー
     + '  <div style="background:#000;color:#fff;font-size:9px;font-weight:700;padding:0.8mm 2mm;height:5mm;display:flex;align-items:center;flex-shrink:0">'
@@ -1081,22 +1084,35 @@ function _buildLabelHTML(ld, qrSrc) {
     + '    </div>\n'
     + '  </div>\n'
 
-    // 記録表（2列×4行・全行均一高さ）
-    + '  <div style="border-top:1.5px solid #000;margin:0.8mm 1.5mm 0"></div>\n'
-    + '  <div style="flex:1;padding:0 1.5mm 0.5mm;overflow:hidden">\n'
-    + '    <table style="width:100%;border-collapse:collapse;table-layout:fixed">\n'
-    + '      <thead><tr>'
-    + '<th style="' + thS + '">日付</th>'
-    + '<th style="' + thS + '">体重</th>'
-    + '<th style="' + thS + '">交換</th>'
-    + '<th style="width:1.5px;background:#000;padding:0"></th>'
-    + '<th style="' + thS + '">日付</th>'
-    + '<th style="' + thS + '">体重</th>'
-    + '<th style="' + thS + '">交換</th>'
-    + '</tr></thead>\n'
-    + '      <tbody>' + rowsHtml + '</tbody>\n'
-    + '    </table>\n'
-    + '  </div>\n'
+    // LOT: 日付欄のみ、テーブルなし | IND: 2列×4行テーブル
+    + (isLot ? (
+      // ロットラベル専用レイアウト（採卵日/孵化日書き込みスペース）
+      '  <div style="border-top:1.5px solid #000;margin:0.8mm 1.5mm 0.5mm"></div>\n'
+      + '  <div style="padding:0 1.5mm;flex:1">\n'
+      + '    <div style="font-size:7.5px;font-weight:700;color:#000;margin-bottom:4px">'
+      +       '採卵日: ' + (ld.collect_date || ld.hatch_date || '____/____/____') + '</div>\n'
+      + '    <div style="font-size:7.5px;font-weight:700;color:#000;margin-bottom:3px">孵化日: ____/__/__</div>\n'
+      + '    <div style="font-size:7px;font-weight:700;color:#000">'
+      +       (ld.note_private ? '📝 ' + ld.note_private.slice(0,28) : '') + '</div>\n'
+      + '  </div>\n'
+    ) : (
+      // 個別飼育ラベル: 記録表（2列×4行）
+      '  <div style="border-top:1.5px solid #000;margin:0.8mm 1.5mm 0"></div>\n'
+      + '  <div style="flex:1;padding:0 1.5mm 0.5mm;overflow:hidden">\n'
+      + '    <table style="width:100%;border-collapse:collapse;table-layout:fixed">\n'
+      + '      <thead><tr>'
+      + '<th style="' + thS + '">日付</th>'
+      + '<th style="' + thS + '">体重</th>'
+      + '<th style="' + thS + '">交換</th>'
+      + '<th style="width:1.5px;background:#000;padding:0"></th>'
+      + '<th style="' + thS + '">日付</th>'
+      + '<th style="' + thS + '">体重</th>'
+      + '<th style="' + thS + '">交換</th>'
+      + '</tr></thead>\n'
+      + '      <tbody>' + rowsHtml + '</tbody>\n'
+      + '    </table>\n'
+      + '  </div>\n'
+    ))
 
     // フッター
     + (noteShort
@@ -1176,10 +1192,23 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
   // 例: "HM2026-B1-U001" → prefix="HM2026", linePart="B1", unitSuffix="U001"
   var rawId     = ld.display_id || '';
   var idParts   = rawId.split('-');
-  var prefix    = lineCode ? rawId.slice(0, rawId.indexOf(lineCode)).replace(/-$/, '') : (idParts[0] || '');
-  var unitSuffix = idParts.length >= 2 ? idParts[idParts.length - 1] : '';
+  // prefix: lineCode の前の部分（末尾ハイフン除去）
+  var prefix    = '';
+  var unitSuffix = '';
+  if (lineCode && rawId.indexOf(lineCode) !== -1) {
+    var _lcIdx = rawId.indexOf(lineCode);
+    prefix = rawId.slice(0, _lcIdx).replace(/-$/, '');
+    // unitSuffix: lineCode の後の全体（"B2-U01" → "U01" or "L01-A"）
+    var _afterLine = rawId.slice(_lcIdx + lineCode.length).replace(/^-/, '');
+    // 最後のセグメントを unitSuffix とする（"U01" or "U001"）
+    var _aParts = _afterLine.split('-').filter(function(p){ return p.length > 0; });
+    unitSuffix = _aParts.length > 0 ? _aParts[_aParts.length - 1] : '';
+  } else {
+    prefix = idParts.length > 1 ? idParts[0] : '';
+    unitSuffix = idParts.length > 1 ? idParts[idParts.length - 1] : rawId;
+  }
 
-  console.log('[LABEL_UNIT] display_id:', rawId, '/ line:', lineCode, '/ suffix:', unitSuffix);
+  console.log('[LABEL_UNIT] display_id:', rawId, '/ line:', lineCode, '/ prefix:', prefix, '/ suffix:', unitSuffix);
 
   // ── メンバー情報（T1移行時の各頭のデータ）──
   var m0 = (ld.members && ld.members[0]) ? ld.members[0] : null;
@@ -1205,22 +1234,17 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
       + '</td>';
   }
 
+  // 4カラム × 4行（日付 / 体重① / 体重② / 交換）
   var rowsHtml = '';
   for (var ri = 0; ri < 4; ri++) {
-    // ri=0: T1移行行（各頭の体重）、ri=1-3: 空白行
     var isT1Row = (ri === 0);
-    var lDate = isT1Row ? (t1Date || '移行') : '';
-    var rDate = isT1Row ? (t1Date || '移行') : '';
-    var lWt   = isT1Row ? m0w : '';
-    var rWt   = isT1Row ? m1w : '';
-
+    var rowDate = isT1Row ? (t1Date || '移行') : '';
+    var rowWt0  = isT1Row ? m0w : '';
+    var rowWt1  = isT1Row ? m1w : '';
     rowsHtml += '<tr>'
-      + '<td style="' + tdU + '">' + (lDate || '&nbsp;') + '</td>'
-      + _wgtCell(lWt)
-      + '<td style="' + tdU + '">□全<br>□追</td>'
-      + '<td style="width:1.5px;background:#000;padding:0"></td>'
-      + '<td style="' + tdU + '">' + (rDate || '&nbsp;') + '</td>'
-      + _wgtCell(rWt)
+      + '<td style="' + tdU + '">' + (rowDate || '&nbsp;') + '</td>'
+      + _wgtCell(rowWt0)
+      + _wgtCell(rowWt1)
       + '<td style="' + tdU + '">□全<br>□追</td>'
       + '</tr>';
   }
@@ -1304,16 +1328,13 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
     + '    </div>\n'
     + '  </div>\n'
 
-    // ── 記録表（2列 × 4行）
+    // ── 記録表（4カラム: 日付 / ①体重 / ②体重 / 交換 × 4行）
     + '  <div style="border-top:1.5px solid #000;margin:0.8mm 1.5mm 0"></div>\n'
     + '  <div style="flex:1;padding:0 1.5mm 0.5mm;overflow:hidden">\n'
     + '    <table style="width:100%;border-collapse:collapse;table-layout:fixed">\n'
     + '      <thead><tr>'
     + '<th style="' + thS + '">日付</th>'
     + '<th style="' + thS + '">①</th>'
-    + '<th style="' + thS + '">交換</th>'
-    + '<th style="width:1.5px;background:#000;padding:0"></th>'
-    + '<th style="' + thS + '">日付</th>'
     + '<th style="' + thS + '">②</th>'
     + '<th style="' + thS + '">交換</th>'
     + '</tr></thead>\n'
