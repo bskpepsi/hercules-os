@@ -11,7 +11,7 @@
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-window._LABEL_BUILD = '20260330-v5-png';
+window._LABEL_BUILD = '20260330-20260403m';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 // ── ステージコード正規化 ─────────────────────────────────────────
@@ -86,6 +86,38 @@ function _labelDimensions(labelType, targetType) {
 // htmlStr: _buildLabelHTML が返す完全 HTML 文字列
 // dims:    _labelDimensions の返り値
 // 戻り値:  PNG data URL (string) | null(html2canvas 未ロード時)
+async // QR を既存PNG canvasの左上に手動合成する
+// html2canvas が QR img を拾えない場合の保険として使用
+async function _compositeQrOntoPng(pngDataUrl, qrSrc, dims) {
+  return new Promise(function(resolve, reject) {
+    var baseImg = new Image();
+    baseImg.onload = function() {
+      var qrImg = new Image();
+      qrImg.onload = function() {
+        var canvas = document.createElement('canvas');
+        canvas.width  = baseImg.width;
+        canvas.height = baseImg.height;
+        var ctx = canvas.getContext('2d');
+        ctx.drawImage(baseImg, 0, 0);
+
+        // QRのピクセル位置を算出（ラベルの左上寄り・余白込み）
+        // dims.scale はhtml2canvasのスケール。QRは元ラベルで ~54px の位置
+        var scale = dims.scale || 3;
+        var qrX   = Math.round(4  * scale);   // 左端 ~4mm 相当
+        var qrY   = Math.round(8  * scale);   // 上端 ~8mm 相当（ヘッダー分下げる）
+        var qrSz  = Math.round(50 * scale);   // QR表示サイズ ~50px
+
+        ctx.drawImage(qrImg, qrX, qrY, qrSz, qrSz);
+        resolve(canvas.toDataURL('image/png'));
+      };
+      qrImg.onerror = function() { reject(new Error('QR img load failed in composite')); };
+      qrImg.src = qrSrc;
+    };
+    baseImg.onerror = function() { reject(new Error('base PNG load failed in composite')); };
+    baseImg.src = pngDataUrl;
+  });
+}
+
 async function _buildLabelPNG(htmlStr, dims) {
   if (typeof html2canvas === 'undefined') {
     console.warn('[LABEL] html2canvas not loaded – falling back to iframe preview');
@@ -582,12 +614,58 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
 
         if (canvas && canvas.width > 0) {
           try {
+            console.log('[LABEL] qr canvas found - size:', canvas.width, 'x', canvas.height);
             var d = canvas.toDataURL('image/png');
-            if (d && d.length > 500) { dataUrl = d; }
+            if (d && d.length > 200) {
+              // 白画像判定: getImageData でピクセルを走査
+              var ctx2 = canvas.getContext('2d');
+              var imgData = ctx2 ? ctx2.getImageData(0, 0, canvas.width, canvas.height) : null;
+              if (imgData) {
+                var blackCount = 0;
+                for (var pi = 0; pi < imgData.data.length; pi += 4) {
+                  // R,G,B すべて 64 以下を黒画素とみなす
+                  // alpha > 16 の不透明ピクセルのみカウント（透明を黒と誤判定しない）
+                  if (imgData.data[pi+3] > 16 && imgData.data[pi] < 64 && imgData.data[pi+1] < 64 && imgData.data[pi+2] < 64) {
+                    blackCount++;
+                  }
+                }
+                console.log('[LABEL] qr black pixel count (alpha-aware):', blackCount);
+                if (blackCount > 50) {
+                  dataUrl = d;
+                  console.log('[LABEL] qr accepted - black pixels:', blackCount);
+                } else {
+                  console.warn('[LABEL] qr rejected as blank - black pixels only:', blackCount);
+                }
+              } else {
+                // getImageData 取れない場合は長さだけで判定（フォールバック）
+                if (d.length > 1000) { dataUrl = d; }
+              }
+            }
           } catch(e) { console.warn('[LABEL] canvas.toDataURL error:', e.message); }
         }
         if (!dataUrl && img && img.src && img.src.startsWith('data:') && img.src.length > 500) {
-          dataUrl = img.src;
+          // img.src の場合は一度 canvas に描いて黒画素チェック
+          var tmpImg = new Image();
+          tmpImg.src = img.src;
+          if (tmpImg.complete) {
+            var tmpC = document.createElement('canvas');
+            tmpC.width = 60; tmpC.height = 60;
+            var tmpCtx = tmpC.getContext('2d');
+            tmpCtx.drawImage(tmpImg, 0, 0, 60, 60);
+            var tmpData = tmpCtx.getImageData(0, 0, 60, 60);
+            var tmpBlack = 0;
+            for (var tpi = 0; tpi < tmpData.data.length; tpi += 4) {
+              // alpha > 16 の不透明ピクセルのみカウント
+              if (tmpData.data[tpi+3] > 16 && tmpData.data[tpi] < 64 && tmpData.data[tpi+1] < 64 && tmpData.data[tpi+2] < 64) tmpBlack++;
+            }
+            console.log('[LABEL] qr img.src black pixel count (alpha-aware):', tmpBlack);
+            if (tmpBlack > 50) {
+              dataUrl = img.src;
+              console.log('[LABEL] qr accepted via img.src - black pixels:', tmpBlack);
+            } else {
+              console.warn('[LABEL] qr img.src rejected as blank - black pixels:', tmpBlack);
+            }
+          }
         }
 
         if (dataUrl) {
@@ -610,24 +688,18 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
   // QR dataURL 取得 → ラベル生成 → PNG化
   (async function _lblRender() {
     try {
+      console.log('[LABEL] qr build start - build:20260403m');
       console.log('[LABEL] qr target type:', targetType, '| targetId:', targetId);
+      console.log('[LABEL] qr target text:', qrText);
       var qrSrc = await _getQrDataUrl(qrText);
       console.log('[LABEL] qr dataUrl created - length:', qrSrc ? qrSrc.length : 0);
-      if (!qrSrc) {
-        console.error('[LABEL] qr build failed - using error placeholder');
-      }
-
-      // QR img の load を確認（html2canvas で拾えるようにする）
       if (qrSrc) {
-        await new Promise(function(res) {
-          var img = new Image();
-          img.onload = function() { console.log('[LABEL] qr image load success'); res(); };
-          img.onerror = function() { console.warn('[LABEL] qr image load error'); res(); };
-          img.src = qrSrc;
-        });
+        console.log('[LABEL] qr final src prefix:', qrSrc.slice(0, 30));
+      } else {
+        console.error('[LABEL] qr build failed - qrSrc empty');
+        console.log('[LABEL] qr src empty => QR ERR will be shown');
       }
 
-      console.log('[LABEL] preview render start - qrSrc length:', qrSrc.length);
       var html = _buildLabelHTML(ld, qrSrc);
       var dims = _labelDimensions(ld.label_type, targetType);
 
@@ -643,15 +715,21 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
       var _previewNow = document.getElementById('lbl-html-preview');
       if (!_previewNow) { console.error('[LABEL] lbl-html-preview missing'); return; }
 
-      // QRが確実にプレビューDOMに入っていることを先に確認
-      if (qrSrc) {
-        // プレビューに直接QR imgを一時表示して確認
-        console.log('[LABEL] qr injected into preview - dataUrl length:', qrSrc.length);
-      } else {
-        console.warn('[LABEL] qr build failed - qrSrc empty, will show error placeholder');
-      }
+      // ── Step1: raw HTML プレビューを先に表示（QR可視確認用）──────────
+      var ifrW = Math.round(dims.wPx * 1.5);
+      var ifrH = Math.round(dims.hPx * 1.5);
+      _previewNow.innerHTML = '<iframe srcdoc="' + html.replace(/"/g,'&quot;')
+        + '" style="width:' + ifrW + 'px;height:' + ifrH + 'px;border:none;display:block" scrolling="no"></iframe>';
+      console.log('[LABEL] raw preview injected - qrSrc length:', qrSrc ? qrSrc.length : 0);
+      console.log('[LABEL] raw preview start - iframe mode');
 
-      // PNG生成
+      var bar = document.getElementById('lbl-action-bar');
+      if (bar) { bar.style.display = 'block'; bar.scrollIntoView({ behavior:'smooth', block:'nearest' }); }
+
+      // ── Step2: 500ms 待機（raw プレビューを一瞬確認できる）──────────
+      await new Promise(function(r){ setTimeout(r, 500); });
+
+      // ── Step3: PNG生成 ─────────────────────────────────────────────
       console.log('[LABEL] png build start - size:', dims.label);
       var pngDataUrl = null;
       try {
@@ -661,26 +739,32 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         console.warn('[LABEL] png build failed:', pngErr.message);
       }
 
-      if (pngDataUrl) {
-        window._currentLabel.pngDataUrl = pngDataUrl;
-        _previewNow.innerHTML = '<img src="' + pngDataUrl + '" style="max-width:100%;height:auto;border-radius:4px;display:block" alt="ラベルプレビュー">';
-        console.log('[LABEL] preview render done (PNG)');
-      } else {
-        var ifrW = Math.round(dims.wPx * 1.2);
-        var ifrH = Math.round(dims.hPx * 1.2);
-        _previewNow.innerHTML = '<iframe srcdoc="' + html.replace(/"/g,'&quot;') + '" style="width:' + ifrW + 'px;height:' + ifrH + 'px;border:none" scrolling="no"></iframe>';
-        console.log('[LABEL] preview render done (iframe fallback)');
+      // ── Step4: QRをPNGに手動合成（html2canvasがQRを拾えない場合の保険）──
+      if (pngDataUrl && qrSrc) {
+        try {
+          pngDataUrl = await _compositeQrOntoPng(pngDataUrl, qrSrc, dims);
+          console.log('[LABEL] qr composited onto PNG - final length:', pngDataUrl.length);
+        } catch(compErr) {
+          console.warn('[LABEL] qr composite failed:', compErr.message, '- using original PNG');
+        }
       }
 
-      var bar = document.getElementById('lbl-action-bar');
-      if (bar) { bar.style.display = 'block'; bar.scrollIntoView({ behavior:'smooth', block:'nearest' }); }
+      if (pngDataUrl) {
+        window._currentLabel.pngDataUrl = pngDataUrl;
+        _previewNow.innerHTML = '<img src="' + pngDataUrl
+          + '" style="max-width:100%;height:auto;border-radius:4px;display:block" alt="ラベルプレビュー">';
+        console.log('[LABEL] preview render done (PNG with QR composite)');
+      } else {
+        // PNG失敗時は iframe のまま
+        console.log('[LABEL] preview render done (iframe - PNG failed)');
+      }
 
     } catch(err) {
       console.error('[LABEL] render error:', err.message);
       var errMount = document.getElementById('lbl-html-preview');
       if (errMount) errMount.innerHTML = '<div style="color:var(--red,#e05050);padding:16px;font-size:.8rem;text-align:center">⚠️ ラベル描画エラー<br><small>' + err.message + '</small></div>';
     }
-  })();
+  })();;
 };
 
 
@@ -705,7 +789,10 @@ function _chkThermal(label, checked) {
 function _qrBox(qrSrc, sizePx) {
   var sz = sizePx || 50;
   if (!qrSrc) {
-    return '<div style="width:' + sz + 'px;height:' + sz + 'px;border:2px solid #000;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;color:#000">QR</div>';
+    return '<div style="width:' + sz + 'px;height:' + sz + 'px;border:2px solid #000;'
+      + 'display:flex;align-items:center;justify-content:center;'
+      + 'font-size:7px;font-weight:700;color:#000;text-align:center;line-height:1.3">'
+      + 'QR<br>ERR</div>';
   }
   return '<div style="background:#fff;padding:4px;display:inline-block;line-height:0;border:2px solid #000">'
     + '<img src="' + qrSrc + '" style="width:' + sz + 'px;height:' + sz + 'px;display:block"></div>';
