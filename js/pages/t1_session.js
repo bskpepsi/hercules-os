@@ -871,6 +871,7 @@ Pages._t1PrintUnit = function (unitIdx) {
       stage_phase:   'T1',
       mat_type:      'T1',
       members:       u.members || [],
+      t1_date:       new Date().toISOString().slice(5, 10),  // MM-DD 形式
     },
   };
   console.log('[T1] label route params', labelParams);

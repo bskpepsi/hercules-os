@@ -8,7 +8,7 @@
 
 'use strict';
 
-window.__API_BUILD = '20260406a';
+window.__API_BUILD = '20260407b';
 console.log('[API] ===== api.js LOADED BUILD=' + window.__API_BUILD + ' =====');
 var API = (() => {
   console.log('[API] IIFE start - BUILD:', window.__API_BUILD);
@@ -79,7 +79,12 @@ var API = (() => {
         throw new Error(json.error || '不明なGASエラー (action=' + action + ')');
       }
 
-      console.log('[API] call success', { action });
+      console.log('[API] call success', { action,
+        hasData: !!json.data,
+        entity_type: json.data && json.data.entity_type,
+        hasEntity: json.data && !!json.data.entity,
+        entityKeys: json.data && json.data.entity ? Object.keys(json.data.entity).slice(0,5) : []
+      });
       return json.data;
 
     } catch (e) {

@@ -202,65 +202,111 @@ Pages._qrPreviewInput = function (val) {
 
 // モード別遷移（ローカル/API両方から呼ばれる共通ルーター）
 function _qrNavigate(mode, res, qrText) {
+  // ── QRテキストから entity ID をフォールバック取得 ──────────────
+  // APIレスポンスが不完全な場合もQRテキスト自体からIDを抽出
+  function _extractIdFromQr(prefix) {
+    var raw = (qrText || '').trim();
+    if (raw.toUpperCase().startsWith(prefix.toUpperCase() + ':')) {
+      return raw.slice(prefix.length + 1).trim();
+    }
+    return '';
+  }
+
+  console.log('[QR] navigate mode:', mode, '/ entity_type:', res.entity_type,
+    '/ entity:', !!(res.entity), '/ qrText:', qrText);
+
   if (mode === 'transition') {
-    const ent = res.entity || {};
-    const sub = window._qrTransMode || 't1';
-    // 追加読取りモード（既存セッションへロットを追加）
+    var ent = res.entity || {};
+    var sub = window._qrTransMode || 't1';
+
+    // 追加読取りモード
     if (window._qrAddingToSession) {
-      const ok = Pages._t1TryAddLot && Pages._t1TryAddLot(ent.lot_id);
+      var _addLotId = ent.lot_id || _extractIdFromQr('LOT');
+      var ok = Pages._t1TryAddLot && Pages._t1TryAddLot(_addLotId);
       if (!ok) routeTo('qr-scan', { mode: 't1_add' });
       return;
     }
+
     if (sub === 't1') {
-      if (res.entity_type === 'LOT' && ent.lot_id) {
-        Pages.t1SessionStart(ent.lot_id);
+      if (res.entity_type === 'LOT') {
+        var _lotId = ent.lot_id || _extractIdFromQr('LOT');
+        if (_lotId) {
+          Pages.t1SessionStart(_lotId);
+        } else {
+          UI.toast('ロットIDが取得できませんでした', 'error');
+        }
       } else if (res.entity_type === 'BU') {
-        UI.toast('移行編成モードではT0ロットのQRを読んでください', 'info', 2500);
+        // T1移行モードでBUをスキャン → ガイドメッセージ
+        UI.toast('T1移行編成モードでは、T0ロットのQRコードを読み取ってください', 'info', 3000);
       } else {
-        UI.toast('T1移行: ロットのQRを読んでください', 'info', 2500);
+        UI.toast('T1移行: ロット（LOT:）のQRコードを読んでください', 'info', 2500);
       }
     } else if (sub === 't2') {
-      if (res.entity_type === 'BU' && (ent.display_id || ent.unit_id)) {
-        Pages.t2SessionStart && Pages.t2SessionStart(ent.display_id || ent.unit_id);
+      if (res.entity_type === 'BU') {
+        // BU ID をフォールバックで取得（APIレスポンスが不完全でも対応）
+        var _buIdT2 = ent.display_id || ent.unit_id || _extractIdFromQr('BU');
+        console.log('[QR] T2 BU navigate - id:', _buIdT2, '/ entity:', ent);
+        if (_buIdT2 && Pages.t2SessionStart) {
+          Pages.t2SessionStart(_buIdT2);
+        } else if (!_buIdT2) {
+          UI.toast('BUのIDが取得できませんでした。QRコードを確認してください', 'error', 3000);
+        } else {
+          UI.toast('T2移行セッションが利用できません', 'error');
+        }
       } else if (res.entity_type === 'LOT') {
         UI.toast('T2移行は BU（飼育ユニット）のQRを読んでください', 'error', 3000);
       } else {
-        UI.toast('T2移行: BU ラベル（BU:...）を読み取ってください', 'error', 3000);
+        UI.toast('T2移行: BUラベル（BU:...）を読み取ってください', 'error', 3000);
       }
     } else {
       UI.toast(sub.toUpperCase() + '移行は準備中です', 'info', 2000);
     }
+
   } else if (mode === 'record') {
-    // 継続・追加読取り: 成長記録へ（既存の weight モードと同等）
-    const _ent = res.entity || {};
-    const _eid = _ent.ind_id || _ent.lot_id || _ent.unit_id || '';
-    const _ety = res.entity_type || 'IND';
+    var _ent = res.entity || {};
+    var _eid = _ent.ind_id || _ent.lot_id || _ent.unit_id || '';
+    var _ety = res.entity_type || 'IND';
     if (_eid) {
       routeTo('growth-rec', { targetType: _ety, targetId: _eid, displayId: _ent.display_id || _eid, _fromQR: true });
     } else {
-      UI.toast('対象が特定できませんでした', 'error');
+      UI.toast('対象が特定できませんでした（成長記録モード）', 'error');
     }
+
   } else {
-    // 確認モード: 既存詳細画面へ直接遷移
-    const eid = (res.entity || {}).ind_id || (res.entity || {}).lot_id ||
-                (res.entity || {}).set_id || (res.entity || {}).par_id;
-    if      (res.entity_type === 'IND' && eid) routeTo('ind-detail',     { indId: eid });
-    else if (res.entity_type === 'LOT' && eid) routeTo('lot-detail',     { lotId: eid });
-    else if (res.entity_type === 'SET' && eid) routeTo('pairing-detail', { pairingId: eid });
-    else if (res.entity_type === 'PAR' && eid) routeTo('parent-detail',  { parId: eid });
-    else if (res.entity_type === 'BU')  {
-      // BU: unit-detail へ遷移
-      const _buEnt = res.entity || {};
-      const _buDid = _buEnt.display_id || _buEnt.unit_id || '';
-      console.log('[QR] BU confirm - displayId:', _buDid, '/ entity:', _buEnt);
+    // ── 確認モード: 詳細画面へ遷移 ──────────────────────────────
+    var _ent2 = res.entity || {};
+    var eid = _ent2.ind_id || _ent2.lot_id || _ent2.set_id || _ent2.par_id || '';
+
+    if      (res.entity_type === 'IND' && eid) {
+      routeTo('ind-detail', { indId: eid });
+    }
+    else if (res.entity_type === 'LOT' && eid) {
+      routeTo('lot-detail', { lotId: eid });
+    }
+    else if (res.entity_type === 'SET' && eid) {
+      routeTo('pairing-detail', { pairingId: eid });
+    }
+    else if (res.entity_type === 'PAR' && eid) {
+      routeTo('parent-detail', { parId: eid });
+    }
+    else if (res.entity_type === 'BU') {
+      // BU: display_id → unit-detail
+      // フォールバック: entity が空でも QRテキストから ID を抽出
+      var _buDid = _ent2.display_id || _ent2.unit_id || _extractIdFromQr('BU');
+      console.log('[QR] BU confirm - display_id:', _buDid, '/ from_entity:', !!_ent2.display_id,
+        '/ from_qr:', !_ent2.display_id && !!_extractIdFromQr('BU'));
       if (_buDid) {
-        console.log('[QR] routeTo unit-detail with unitDisplayId:', _buDid);
+        console.log('[QR] routeTo unit-detail - unitDisplayId:', _buDid);
         routeTo('unit-detail', { unitDisplayId: _buDid });
       } else {
-        UI.toast('BU情報が取得できませんでした', 'error');
+        UI.toast('BU情報が取得できませんでした（QRテキスト: ' + (qrText || '') + '）', 'error', 4000);
       }
     }
-    else UI.toast('対象が特定できませんでした', 'error');
+    else {
+      // entity type 不明またはIDが取得できない
+      console.warn('[QR] navigate fallback - entity_type:', res.entity_type, '/ eid:', eid);
+      UI.toast('対象が特定できませんでした（タイプ: ' + (res.entity_type || '不明') + '）', 'error');
+    }
   }
 }
 
@@ -304,11 +350,17 @@ function _qrLocalResolve(v) {
     return { entity_type: 'SET', entity: set, line: null, last_growth: null, missing: [], label_type: 'set' };
   }
   if (prefix === 'BU') {
-    // BU: display_id ベースで解決（unit_id はフォールバック）
-    const units = Store.getDB('breeding_units') || [];
-    const unit  = units.find(u => u.display_id === id) || units.find(u => u.unit_id === id);
-    if (!unit) return null;
-    return { entity_type: 'BU', entity: unit, resolved_id: unit.display_id };
+    // BU: display_id / unit_id どちらでも解決
+    var _buUnits = Store.getDB('breeding_units') || [];
+    var _buUnit  = _buUnits.find(function(u){ return u.display_id === id; })
+                || _buUnits.find(function(u){ return u.unit_id   === id; });
+    if (_buUnit) {
+      return { entity_type: 'BU', entity: _buUnit, resolved_id: _buUnit.display_id || _buUnit.unit_id };
+    }
+    // ユニットがStoreにない場合でも、QRテキストからIDを保持して遷移を試みる
+    // → unit-detail 側でdisplay_idをもとに再取得できる
+    console.log('[QR] BU not in Store, creating stub from QR text:', id);
+    return { entity_type: 'BU', entity: { display_id: id, unit_id: id }, resolved_id: id };
   }
 
   return null;
@@ -366,8 +418,9 @@ Pages._qrResolve = async function () {
     _qrNavigate(mode, res, qrText);
     console.log('[QR] navigate triggered', (performance.now()-_t4).toFixed(1), 'ms');
   } catch (e) {
-    console.error('[QR] API error', e.message);
-    if (errEl) errEl.textContent = '❌ ' + (e.message || '解析に失敗しました');
+    var _errMsg = (e && e.message) ? e.message : (String(e) !== 'undefined' ? String(e) : 'QR解析に失敗しました');
+    console.error('[QR] API error:', _errMsg, '/ qrText:', qrText);
+    if (errEl) errEl.textContent = '❌ ' + _errMsg;
   } finally {
     clearTimeout(_loadingTimer);
     clearTimeout(_longLoadTimer);

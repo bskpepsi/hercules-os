@@ -766,7 +766,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
   // QR dataURL 取得 → ラベル生成 → PNG化
   (async function _lblRender() {
     try {
-      console.log('[LABEL] qr build start - build:20260406a');
+      console.log('[LABEL] qr build start - build:20260407b');
       console.log('[LABEL] qr target type:', targetType, '| targetId:', targetId);
       console.log('[LABEL] qr rect:', JSON.stringify(QR_RECT_MM));
       console.log('[LABEL] qr target text:', qrText);
@@ -1162,35 +1162,93 @@ function _buildSetLabelHTML(ld, _unused, qrSrc) {
 
 // ── T1飼育ユニットラベル（62mm × 70mm）──────────────────────────
 function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
-  var qr = (typeof _unused === 'string' && _unused.startsWith('data:')) ? _unused : qrSrc;
-  var chk = _chkThermal;
-  var forSale = !!ld.for_sale;
-  var hc = ld.head_count || 2;
-  var size = ld.size_category || '';
-  var hdate = (ld.hatch_date||'').slice(5);
-  var mat = ld.mat_type || 'T1';
+  var qr       = (typeof _unused === 'string' && _unused.startsWith('data:')) ? _unused : qrSrc;
+  var chk      = _chkThermal;
+  var forSale  = !!ld.for_sale;
+  var hc       = ld.head_count || 2;
+  var sizeCats = (ld.size_category||'').split(',').map(function(s){ return s.trim(); });
+  var mat      = ld.mat_type || 'T1';
   var lineCode = ld.line_code || '';
   var originLS = ld.origin_lots_str || '';
+  var t1Date   = ld.t1_date || '';  // T1移行日（t1_session.jsから渡される）
+
+  // ── display_id を分解してバッジ用に整理 ──
+  // 例: "HM2026-B1-U001" → prefix="HM2026", linePart="B1", unitSuffix="U001"
+  var rawId     = ld.display_id || '';
+  var idParts   = rawId.split('-');
+  var prefix    = lineCode ? rawId.slice(0, rawId.indexOf(lineCode)).replace(/-$/, '') : (idParts[0] || '');
+  var unitSuffix = idParts.length >= 2 ? idParts[idParts.length - 1] : '';
+
+  console.log('[LABEL_UNIT] display_id:', rawId, '/ line:', lineCode, '/ suffix:', unitSuffix);
+
+  // ── メンバー情報（T1移行時の各頭のデータ）──
+  var m0 = (ld.members && ld.members[0]) ? ld.members[0] : null;
+  var m1 = (ld.members && ld.members[1]) ? ld.members[1] : null;
+  var m0w = m0 && m0.weight_g ? String(m0.weight_g) : '';
+  var m1w = m1 && m1.weight_g ? String(m1.weight_g) : '';
+
+  // Mx（モルト）: T2系のみ表示
+  var showMx = (mat === 'T2' || mat === 'T3');
+  var mxIsOn = ld.mat_molt === true || ld.mat_molt === 'true';
+
+  // ── セルスタイル（個別ラベルと統一）──
+  var tdU = 'border:1.5px solid #000;padding:4px 2px;font-size:8px;font-weight:700;color:#000;text-align:center';
+  var thS = 'border:1.5px solid #000;padding:2px 2px;font-size:7.5px;font-weight:700;background:#000;color:#fff;text-align:center';
+
+  // ── 記録表（2列 × 4行）──────────────────────────────────────
+  // 左列: ①頭目の記録（T1移行行 + 空白3行）
+  // 右列: ②頭目の記録（T1移行行 + 空白3行）
+  function _wgtCell(wgt) {
+    return '<td style="' + tdU + ';position:relative">'
+      + (wgt ? wgt : '&nbsp;')
+      + '<span style="position:absolute;bottom:1px;right:2px;font-size:5px;font-weight:700;color:#000">g</span>'
+      + '</td>';
+  }
+
+  var rowsHtml = '';
+  for (var ri = 0; ri < 4; ri++) {
+    // ri=0: T1移行行（各頭の体重）、ri=1-3: 空白行
+    var isT1Row = (ri === 0);
+    var lDate = isT1Row ? (t1Date || '移行') : '';
+    var rDate = isT1Row ? (t1Date || '移行') : '';
+    var lWt   = isT1Row ? m0w : '';
+    var rWt   = isT1Row ? m1w : '';
+
+    rowsHtml += '<tr>'
+      + '<td style="' + tdU + '">' + (lDate || '&nbsp;') + '</td>'
+      + _wgtCell(lWt)
+      + '<td style="' + tdU + '">□全<br>□追</td>'
+      + '<td style="width:1.5px;background:#000;padding:0"></td>'
+      + '<td style="' + tdU + '">' + (rDate || '&nbsp;') + '</td>'
+      + _wgtCell(rWt)
+      + '<td style="' + tdU + '">□全<br>□追</td>'
+      + '</tr>';
+  }
+
+  // ── バッジスタイル（個別ラベルと同一）──
+  var bLg = 'display:inline-block;border:1.5px solid #000;border-radius:3px;'
+    + 'padding:0 4px;font-size:12px;font-weight:700;color:#000;margin-right:2px;line-height:1.5';
+  var countBadge = '<span style="display:inline-block;border:2px solid #000;border-radius:3px;'
+    + 'padding:0 3px;font-size:13px;font-weight:700;color:#000;line-height:1.4">'
+    + hc + '頭</span>';
+
+  var lineBadgeHtml   = lineCode  ? '<span style="' + bLg + '">' + lineCode  + '</span>' : '';
+  var unitSuffixHtml  = unitSuffix ? '<span style="' + bLg + '">' + unitSuffix + '</span>' : '';
+  var prefixLine = prefix ? '<div style="font-size:7px;font-weight:700;color:#000;margin-bottom:1px">' + prefix + '-</div>' : '';
 
   var saleBadge = forSale
-    ? ' <span style="background:#fff;color:#000;font-size:6px;font-weight:700;padding:1px 4px;border:1px solid #fff">販売候補</span>'
+    ? '<span style="border:1.5px solid #000;padding:0 3px;font-size:7px;font-weight:700;color:#000;margin-left:3px">販売</span>'
     : '';
 
-  var tdS = 'border:1.5px solid #000;padding:2px 3px;font-size:7px;font-weight:700;color:#000';
-  var thS = 'border:1.5px solid #000;padding:2px 3px;font-size:7px;font-weight:700;background:#000;color:#fff';
+  // 孵化日
+  var hatchHtml = ld.hatch_date
+    ? '<div style="font-size:6.5px;font-weight:700;color:#000">孵: ' + ld.hatch_date + '</div>'
+    : '';
 
-  var m1w = (ld.members&&ld.members[0]) ? ld.members[0].weight_g : '';
-  var m2w = (ld.members&&ld.members[1]) ? ld.members[1].weight_g : '';
-
-  var tdE2     = 'border:1.5px solid #000;padding:4px 3px;font-size:7px;font-weight:700;color:#000';
-  var emptyRow = '<tr><td style="' + tdE2 + '">&nbsp;</td><td style="' + tdE2 + '">&nbsp;</td><td style="' + tdE2 + '">&nbsp;</td><td style="' + tdE2 + '">&nbsp;</td></tr>';
-
-  var recRows = '<tr><th style="' + thS + '">日付</th><th style="' + thS + '">体重①g</th><th style="' + thS + '">体重②g</th><th style="' + thS + '">交換</th></tr>'
-    + '<tr><td style="' + tdS + '">T1移行</td>'
-    + '<td style="' + tdS + ';text-align:right">' + (m1w ? m1w+'g' : '&nbsp;') + '</td>'
-    + '<td style="' + tdS + ';text-align:right">' + (m2w ? m2w+'g' : '&nbsp;') + '</td>'
-    + '<td style="' + tdS + '">全交換</td></tr>'
-    + emptyRow + emptyRow + emptyRow + emptyRow;
+  // 由来ロット
+  var originHtml = originLS
+    ? '<div style="font-size:6px;font-weight:700;color:#000;line-height:1.5">' + originLS + '</div>'
+    : '';
 
   return '<!DOCTYPE html>\n<html><head><meta charset="utf-8">\n<style>\n'
     + '  @page { size: 62mm 70mm; margin: 0; }\n'
@@ -1199,28 +1257,72 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
     + '  @media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }\n'
     + '</style></head><body>\n'
     + '<div style="width:62mm;height:70mm;display:flex;flex-direction:column">\n'
-    + '  <div style="background:#000;color:#fff;font-size:8px;font-weight:700;padding:1.5mm 2mm;height:5.5mm;display:flex;align-items:center;flex-shrink:0">'
-    + 'T1ユニット (' + hc + '頭)' + saleBadge + '</div>\n'
-    + '  <div style="display:flex;padding:1.5mm 1.5mm 0;gap:0;flex-shrink:0">\n'
-    + '    <div style="flex-shrink:0;margin-right:2mm">' + _qrBox(qr, 48) + '</div>\n'
-    + '    <div style="flex:1;min-width:0;padding-left:2mm;border-left:2px solid #000">\n'
-    + '      <div style="font-family:monospace;font-size:9px;font-weight:700;color:#000;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (ld.display_id||'') + '</div>\n'
-    + '      <div style="font-size:7px;font-weight:700;color:#000">' + lineCode + '&nbsp;&nbsp;孵化: ' + hdate + '</div>\n'
-    + (originLS ? '      <div style="font-size:7px;font-weight:700;color:#000">' + originLS + '</div>\n' : '')
-    + '      <div style="font-size:7px;font-weight:700;color:#000;margin-top:1px">' + chk('大',size==='大') + chk('中',size==='中') + chk('小',size==='小') + '</div>\n'
-    + '      <div style="font-size:7px;font-weight:700;color:#000">' + ['T0','T1','T2','T3'].map(function(m){ return chk(m, mat===m); }).join('') + '</div>\n'
-    + '      <div style="font-size:7px;font-weight:700;color:#000">ステージ: ' + _stageCheckboxRow(mat === 'T1' ? 'L1L2' : mat === 'T2' ? 'L3' : '') + '</div>\n'
+
+    // ── ヘッダー（斜線パターン、個別ラベルと差別化）
+    + '  <div style="background:repeating-linear-gradient(45deg,#000 0,#000 3px,#333 3px,#333 10px);'
+    + 'color:#fff;font-size:9px;font-weight:700;padding:0.8mm 2mm;height:5mm;'
+    + 'display:flex;align-items:center;flex-shrink:0">'
+    + 'ユニット | HerculesOS' + saleBadge + '</div>\n'
+
+    // ── QR + 上部情報
+    + '  <div style="display:flex;padding:1mm 1.5mm 0;gap:0;flex-shrink:0">\n'
+    + '    <div style="flex-shrink:0;margin-right:1.5mm">' + _qrBox(qr, 44) + '</div>\n'
+    + '    <div style="flex:1;min-width:0;padding-left:1.5mm;border-left:2px solid #000">\n'
+
+    // prefix行（控えめ）
+    + '      ' + prefixLine
+
+    // [B1] [U001] バッジ行 + 右上に頭数バッジ
+    + '      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">\n'
+    + '        <div>' + lineBadgeHtml + unitSuffixHtml + '</div>\n'
+    + '        <div>' + countBadge + '</div>\n'
+    + '      </div>\n'
+
+    // 孵化日・由来ロット
+    + '      ' + hatchHtml + '\n'
+    + '      ' + originHtml + '\n'
+
+    // 区分（1行）
+    + '      <div style="font-size:7px;font-weight:700;color:#000;line-height:1.6">'
+    + '区分:' + chk('大', sizeCats.indexOf('大')>=0) + chk('中', sizeCats.indexOf('中')>=0) + chk('小', sizeCats.indexOf('小')>=0)
+    + '</div>\n'
+
+    // マット（2行）
+    + '      <div style="font-size:7px;font-weight:700;color:#000;line-height:1.6">'
+    + 'M:' + ['T0','T1','T2','T3'].map(function(m){ return chk(m, mat===m); }).join('')
+    + '</div>\n'
+
+    // ステージ（3行）
+    + '      <div style="font-size:7px;font-weight:700;color:#000;line-height:1.6">'
+    + 'St:' + _stageCheckboxRow(ld.stage_code || 'T1')
+    + '</div>\n'
+
+    // Mx（T2系のみ）
+    + (showMx ? '      <div style="font-size:7px;font-weight:700;color:#000;line-height:1.6">Mx:'
+      + chk('ON', mxIsOn) + chk('OFF', !mxIsOn) + '</div>\n' : '')
+
     + '    </div>\n'
     + '  </div>\n'
-    + '  <div style="border-top:1.5px solid #000;margin:0.5mm 1.5mm"></div>\n'
-    + '  <div style="flex:1;padding:0 1.5mm 1mm;overflow:hidden">\n'
-    + '    <table style="width:100%;border-collapse:collapse">\n'
-    + '      <tbody>' + recRows + '</tbody>\n'
+
+    // ── 記録表（2列 × 4行）
+    + '  <div style="border-top:1.5px solid #000;margin:0.8mm 1.5mm 0"></div>\n'
+    + '  <div style="flex:1;padding:0 1.5mm 0.5mm;overflow:hidden">\n'
+    + '    <table style="width:100%;border-collapse:collapse;table-layout:fixed">\n'
+    + '      <thead><tr>'
+    + '<th style="' + thS + '">日付</th>'
+    + '<th style="' + thS + '">①</th>'
+    + '<th style="' + thS + '">交換</th>'
+    + '<th style="width:1.5px;background:#000;padding:0"></th>'
+    + '<th style="' + thS + '">日付</th>'
+    + '<th style="' + thS + '">②</th>'
+    + '<th style="' + thS + '">交換</th>'
+    + '</tr></thead>\n'
+    + '      <tbody>' + rowsHtml + '</tbody>\n'
     + '    </table>\n'
     + '  </div>\n'
-    + '  <div style="height:3mm;background:#000"></div>\n'
     + '</div>\n</body></html>';
 }
+
 
 
 Pages._lblDownloadPNG = function () {
