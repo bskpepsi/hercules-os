@@ -11,7 +11,7 @@
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-window._LABEL_BUILD = '20260330-20260403q';
+window._LABEL_BUILD = '20260330-20260403s';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 // ── ステージコード正規化 ─────────────────────────────────────────
@@ -40,6 +40,24 @@ function _stageCheckboxRow(stageCode) {
   }).join('&nbsp;');
   console.log('[LABEL] stage checkbox render:', norm, '|', out.replace(/&nbsp;/g,' '));
   return out;
+}
+
+// ── QR位置定義（HTML・PNG両方が参照する単一矩形） ────────────────
+// 62mm × 70mm ラベル基準。他サイズは _qrRectForDims() が補正する。
+var QR_RECT_MM = { xMm: 1.5, yMm: 6.0, sizeMm: 11.7 };
+//   xMm: 左パディング(1.5mm)
+//   yMm: ヘッダー(5mm) + 上パディング(1mm) = 6mm
+//   sizeMm: _qrBox に渡す 44px → 44/(234/62) ≈ 11.7mm
+
+function _qrPxForDims(dims) {
+  // dims.wPx / dims.wMm から mm→px変換比率を求める
+  var pxPerMm = (dims && dims.wPx && dims.wMm) ? dims.wPx / dims.wMm : (234 / 62);
+  var scale   = (dims && dims.scale) || 1;
+  return {
+    x:    Math.round(QR_RECT_MM.xMm    * pxPerMm * scale),
+    y:    Math.round(QR_RECT_MM.yMm    * pxPerMm * scale),
+    size: Math.round(QR_RECT_MM.sizeMm * pxPerMm * scale),
+  };
 }
 
 // ラベル種別定義
@@ -103,6 +121,30 @@ function _labelDimensions(labelType, targetType) {
 // 戻り値:  PNG data URL (string) | null(html2canvas 未ロード時)
 // QR を既存PNG canvasの左上に手動合成する
 // html2canvas が QR img を拾えない場合の保険として使用
+// PNG内のQR領域に黒画素があるか確認（html2canvasが描画成功か判定）
+async function _checkPngHasQr(pngDataUrl, dims) {
+  return new Promise(function(resolve) {
+    var img = new Image();
+    img.onload = function() {
+      var qrPx = _qrPxForDims(dims);
+      var tmpC = document.createElement('canvas');
+      tmpC.width  = qrPx.size;
+      tmpC.height = qrPx.size;
+      var ctx = tmpC.getContext('2d');
+      ctx.drawImage(img, qrPx.x, qrPx.y, qrPx.size, qrPx.size, 0, 0, qrPx.size, qrPx.size);
+      var data = ctx.getImageData(0, 0, qrPx.size, qrPx.size).data;
+      var blacks = 0;
+      for (var i = 0; i < data.length; i += 4) {
+        if (data[i+3] > 16 && data[i] < 64 && data[i+1] < 64 && data[i+2] < 64) blacks++;
+      }
+      console.log('[LABEL] png qr area black pixels:', blacks);
+      resolve(blacks > 30);
+    };
+    img.onerror = function() { resolve(false); };
+    img.src = pngDataUrl;
+  });
+}
+
 async function _compositeQrOntoPng(pngDataUrl, qrSrc, dims) {
   return new Promise(function(resolve, reject) {
     var baseImg = new Image();
@@ -115,14 +157,10 @@ async function _compositeQrOntoPng(pngDataUrl, qrSrc, dims) {
         var ctx = canvas.getContext('2d');
         ctx.drawImage(baseImg, 0, 0);
 
-        // QRのピクセル位置を算出（ラベルの左上寄り・余白込み）
-        // dims.scale はhtml2canvasのスケール。QRは元ラベルで ~54px の位置
-        var scale = dims.scale || 3;
-        var qrX   = Math.round(4  * scale);   // 左端 ~4mm 相当
-        var qrY   = Math.round(8  * scale);   // 上端 ~8mm 相当（ヘッダー分下げる）
-        var qrSz  = Math.round(50 * scale);   // QR表示サイズ ~50px
-
-        ctx.drawImage(qrImg, qrX, qrY, qrSz, qrSz);
+        // QR位置は QR_RECT_MM → _qrPxForDims で算出（HTML側と同一定義）
+        var qrPx = _qrPxForDims(dims);
+        console.log('[LABEL] qr composite rect:', qrPx);
+        ctx.drawImage(qrImg, qrPx.x, qrPx.y, qrPx.size, qrPx.size);
         resolve(canvas.toDataURL('image/png'));
       };
       qrImg.onerror = function() { reject(new Error('QR img load failed in composite')); };
@@ -704,8 +742,9 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
   // QR dataURL 取得 → ラベル生成 → PNG化
   (async function _lblRender() {
     try {
-      console.log('[LABEL] qr build start - build:20260403q');
+      console.log('[LABEL] qr build start - build:20260403s');
       console.log('[LABEL] qr target type:', targetType, '| targetId:', targetId);
+      console.log('[LABEL] qr rect:', JSON.stringify(QR_RECT_MM));
       console.log('[LABEL] qr target text:', qrText);
       var qrSrc = await _getQrDataUrl(qrText);
       console.log('[LABEL] qr dataUrl created - length:', qrSrc ? qrSrc.length : 0);
@@ -716,6 +755,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         console.log('[LABEL] qr src empty => QR ERR will be shown');
       }
 
+      console.log('[LABEL] html qr rendered - qrSrc length:', qrSrc ? qrSrc.length : 0);
       var html = _buildLabelHTML(ld, qrSrc);
       var dims = _labelDimensions(ld.label_type, targetType);
 
@@ -749,6 +789,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
 
       // ── Step3: PNG生成 ─────────────────────────────────────────────
       console.log('[LABEL] png build start - size:', dims.label);
+      console.log('[LABEL] png base built start');
       var pngDataUrl = null;
       try {
         pngDataUrl = await _buildLabelPNG(html, dims);
@@ -757,15 +798,23 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         console.warn('[LABEL] png build failed:', pngErr.message);
       }
 
-      // ── Step4: QRをPNGに手動合成（html2canvasがQRを拾えない場合の保険）──
+      // ── Step4: QRがPNGに入っているか確認し、なければ手動合成 ────────
       if (pngDataUrl && qrSrc) {
-        try {
-          pngDataUrl = await _compositeQrOntoPng(pngDataUrl, qrSrc, dims);
-          console.log('[LABEL] qr composited onto PNG - final length:', pngDataUrl.length);
-        } catch(compErr) {
-          console.warn('[LABEL] qr composite failed:', compErr.message, '- using original PNG');
+        // html2canvas が QR を描画できたか確認（黒画素チェック）
+        var pngHasQr = await _checkPngHasQr(pngDataUrl, dims);
+        console.log('[LABEL] qr composite mode:', pngHasQr ? 'off (html2canvas ok)' : 'on (needs composite)');
+        if (!pngHasQr) {
+          try {
+            pngDataUrl = await _compositeQrOntoPng(pngDataUrl, qrSrc, dims);
+            var qrPxLog = _qrPxForDims(dims);
+            console.log('[LABEL] qr composite rect:', qrPxLog);
+            console.log('[LABEL] qr composited onto PNG - final length:', pngDataUrl.length);
+          } catch(compErr) {
+            console.warn('[LABEL] qr composite failed:', compErr.message);
+          }
         }
       }
+      console.log('[LABEL] final png done');
 
       if (pngDataUrl) {
         window._currentLabel.pngDataUrl = pngDataUrl;
@@ -825,8 +874,6 @@ function _qrBox(qrSrc, sizePx) {
 // ── ロット/個体 共通ラベル（62mm × 70mm） ───────────────────────
 function _buildLabelHTML(ld, qrSrc) {
   var lt = ld.label_type || 'ind_fixed';
-  var _rawStage = typeof _normStageForLabel === 'function' ? _normStageForLabel(ld.stage_code) : (ld.stage_code||'');
-  var stageLbl  = typeof stageLabel === 'function' ? (stageLabel(_rawStage)||_rawStage||'') : _rawStage;
   var noteShort = (ld.note_private||'').slice(0, 28);
 
   if (lt === 'set')     return _buildSetLabelHTML(ld, null, qrSrc);
@@ -838,33 +885,90 @@ function _buildLabelHTML(ld, qrSrc) {
   var sexCats = (ld.size_category||'').split(',').map(function(s){ return s.trim(); });
   var headerLabel = isLot ? (lt === 'egg_lot' ? '卵管理' : '複数頭飼育') : '個別飼育';
 
+  console.log('[LABEL] layout mode: 2col-4row');
+  console.log('[LABEL] stage block moved under header');
+  console.log('[LABEL] exchange checkbox mode enabled');
+
+  // ── 記録データ: 最新4件を取得（2列×4行 = 最大8件） ──
   var records = ld.records || [];
-  var maxRows = isLot ? 6 : 7;
-  var sortedR = records.slice().sort(function(a,b){ return String(a.record_date||'').localeCompare(String(b.record_date||'')); });
-  var recentR = sortedR.slice(-maxRows);
-  while (recentR.length < maxRows) recentR.push(null);
+  var sortedR = records.slice().sort(function(a,b){
+    return String(a.record_date||'').localeCompare(String(b.record_date||''));
+  });
+  // 最大8件（左列4 + 右列4）
+  var recentAll = sortedR.slice(-8);
 
-  var tdS = 'border:1.5px solid #000;padding:2px 3px;font-size:7px;font-weight:700;color:#000';
-  var thS = 'border:1.5px solid #000;padding:2px 3px;font-size:7px;font-weight:700;background:#000;color:#fff';
+  // 左列: 1〜4件目、右列: 5〜8件目（古い順）
+  var leftCol  = recentAll.slice(0, 4);
+  var rightCol = recentAll.slice(4, 8);
+  while (leftCol.length  < 4) leftCol.push(null);
+  while (rightCol.length < 4) rightCol.push(null);
 
-  var recRowsHtml = recentR.map(function(r) {
-    if (!r) {
-      var tdE = 'border:1.5px solid #000;padding:4px 3px;font-size:7px;font-weight:700;color:#000';
-      return '<tr><td style="' + tdE + '">&nbsp;</td><td style="' + tdE + '">&nbsp;</td><td style="' + tdE + '">&nbsp;</td></tr>';
-    }
-    var d = String(r.record_date||'').slice(5);
-    var w = r.weight_g ? r.weight_g + 'g' : '';
-    return '<tr><td style="' + tdS + '">' + d + '</td><td style="' + tdS + '">' + w
-      + '</td><td style="' + tdS + '">' + (isLot ? (r.exchange_type||'') : String(r.note_private||'').slice(0,6)) + '</td></tr>';
-  }).join('');
-
-  var _filledCount = recentR.filter(function(r){ return !!r; }).length;
-  var _blankCount  = recentR.filter(function(r){ return !r; }).length;
+  var _filledCount = recentAll.filter(function(r){ return !!r; }).length;
+  var _blankCount  = 8 - _filledCount;
   console.log('[LABEL] record row filled count:', _filledCount, '/ blank count:', _blankCount);
-  console.log('[LABEL] expanded blank rows applied');
+  console.log('[LABEL] record grid rendered');
+
+  // ── セル スタイル ──
+  var tdS  = 'border:1.5px solid #000;padding:2px 2px;font-size:6.5px;font-weight:700;color:#000;text-align:center';
+  var tdE  = 'border:1.5px solid #000;padding:5px 2px;font-size:6.5px;font-weight:700;color:#000;text-align:center';
+  var thS  = 'border:1.5px solid #000;padding:2px 2px;font-size:6.5px;font-weight:700;background:#000;color:#fff;text-align:center';
+  var sepS = 'border-left:2px solid #000';  // 左右区切り
+
+  // ── 記録行HTML生成 ──
+  function makeCell(r, isExch) {
+    if (!r) return '<td style="' + tdE + '">&nbsp;</td>';
+    if (isExch) {
+      var exType = isLot ? (r.exchange_type||'') : String(r.note_private||'').slice(0,4);
+      var isAll  = (exType === 'FULL' || exType === '全');
+      var isAdd  = (exType === 'ADD'  || exType === '追');
+      return '<td style="' + tdS + '">'
+        + (isAll ? '■' : '□') + '全 ' + (isAdd ? '■' : '□') + '追'
+        + '</td>';
+    }
+    return '<td style="' + tdS + '">&nbsp;</td>';
+  }
+
+  var rowsHtml = '';
+  for (var i = 0; i < 4; i++) {
+    var lRec = leftCol[i];
+    var rRec = rightCol[i];
+    var lDate = lRec ? String(lRec.record_date||'').slice(5) : '';
+    var lWt   = lRec ? (lRec.weight_g ? lRec.weight_g+'g' : '') : '';
+    var rDate = rRec ? String(rRec.record_date||'').slice(5) : '';
+    var rWt   = rRec ? (rRec.weight_g ? rRec.weight_g+'g' : '') : '';
+
+    var lExch = '';
+    var rExch = '';
+    if (lRec) {
+      var le = isLot ? (lRec.exchange_type||'') : String(lRec.note_private||'').slice(0,4);
+      lExch = ((le === 'FULL' || le === '全') ? '■' : '□') + '全 ' + ((le === 'ADD' || le === '追') ? '■' : '□') + '追';
+    }
+    if (rRec) {
+      var re2 = isLot ? (rRec.exchange_type||'') : String(rRec.note_private||'').slice(0,4);
+      rExch = ((re2 === 'FULL' || re2 === '全') ? '■' : '□') + '全 ' + ((re2 === 'ADD' || re2 === '追') ? '■' : '□') + '追';
+    }
+
+    var rowStyle = lRec || rRec ? tdS : tdE;
+    rowsHtml += '<tr>'
+      // 左: 日付
+      + '<td style="' + rowStyle + '">' + (lDate || '&nbsp;') + '</td>'
+      // 左: 体重
+      + '<td style="' + rowStyle + '">' + (lWt || '&nbsp;') + '</td>'
+      // 左: 交換
+      + '<td style="' + rowStyle + '">' + (lExch || '□全 □追') + '</td>'
+      // 区切り
+      + '<td style="width:1.5px;background:#000;padding:0"></td>'
+      // 右: 日付
+      + '<td style="' + rowStyle + '">' + (rDate || '&nbsp;') + '</td>'
+      // 右: 体重
+      + '<td style="' + rowStyle + '">' + (rWt || '&nbsp;') + '</td>'
+      // 右: 交換
+      + '<td style="' + rowStyle + '">' + (rExch || '□全 □追') + '</td>'
+      + '</tr>';
+  }
 
   var sexInfo = !isLot && ld.sex
-    ? '<div style="font-size:9px;font-weight:700;color:#000">' + ld.sex + '</div>'
+    ? '<span style="font-size:9px;font-weight:700;color:#000">' + ld.sex + '&nbsp;</span>'
     : '';
 
   return '<!DOCTYPE html>\n<html><head><meta charset="utf-8">\n<style>\n'
@@ -874,39 +978,53 @@ function _buildLabelHTML(ld, qrSrc) {
     + '  @media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }\n'
     + '</style></head><body>\n'
     + '<div style="width:62mm;height:70mm;display:flex;flex-direction:column">\n'
-    + '  <div style="background:#000;color:#fff;font-size:8px;font-weight:700;padding:1.5mm 2mm;height:5.5mm;display:flex;align-items:center;flex-shrink:0">'
+
+    // ヘッダー
+    + '  <div style="background:#000;color:#fff;font-size:8px;font-weight:700;padding:1mm 2mm;height:5mm;display:flex;align-items:center;flex-shrink:0">'
     + headerLabel + ' | HerculesOS</div>\n'
-    + '  <div style="display:flex;padding:1.5mm 1.5mm 0;gap:0;flex-shrink:0">\n'
-    + '    <div style="flex-shrink:0;margin-right:2mm">' + _qrBox(qrSrc, 48) + '</div>\n'
-    + '    <div style="flex:1;min-width:0;padding-left:2mm;border-left:2px solid #000">\n'
-    + '      <div style="font-family:monospace;font-size:9px;font-weight:700;color:#000;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:2px">' + (ld.display_id||'') + '</div>\n'
-    + '      <div style="font-size:7.5px;font-weight:700;color:#000">L: ' + (ld.line_code||'—') + '</div>\n'
-    + (ld.hatch_date ? '      <div style="font-size:7px;font-weight:700;color:#000">孵化: ' + ld.hatch_date + '</div>\n' : '')
-    + (isLot && ld.count ? '      <div style="font-size:7px;font-weight:700;color:#000">' + ld.count + '頭</div>\n' : '')
-    + '      ' + sexInfo + '\n'
+
+    // QR + ID/ライン/孵化
+    + '  <div style="display:flex;padding:1mm 1.5mm 0;gap:0;flex-shrink:0">\n'
+    + '    <div style="flex-shrink:0;margin-right:1.5mm">' + _qrBox(qrSrc, 44) + '</div>\n'
+    + '    <div style="flex:1;min-width:0;padding-left:1.5mm;border-left:2px solid #000">\n'
+    + '      <div style="font-family:monospace;font-size:8.5px;font-weight:700;color:#000;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (ld.display_id||'') + '</div>\n'
+    + '      <div style="font-size:7px;font-weight:700;color:#000">' + sexInfo + 'L: ' + (ld.line_code||'—') + '</div>\n'
+    + (ld.hatch_date ? '      <div style="font-size:6.5px;font-weight:700;color:#000">孵化: ' + ld.hatch_date + (isLot && ld.count ? '&nbsp;' + ld.count + '頭' : '') + '</div>\n' : (isLot && ld.count ? '      <div style="font-size:6.5px;font-weight:700;color:#000">' + ld.count + '頭</div>\n' : ''))
+
+    // 区分・マット・モルト・ステージ（上部情報エリア直下）
+    + '      <div style="font-size:6.5px;font-weight:700;color:#000;margin-top:1px;line-height:1.7">'
+    + '区分: ' + chk('大', sexCats.indexOf('大')>=0) + chk('中', sexCats.indexOf('中')>=0) + chk('小', sexCats.indexOf('小')>=0) + '</div>\n'
+    + '      <div style="font-size:6.5px;font-weight:700;color:#000;line-height:1.7">'
+    + 'M: ' + ['T0','T1','T2','T3'].map(function(m){ return chk(m, ld.mat_type===m); }).join('') + '</div>\n'
+    + '      <div style="font-size:6.5px;font-weight:700;color:#000;line-height:1.7">'
+    + 'St: ' + _stageCheckboxRow(ld.stage_code) + '</div>\n'
     + '    </div>\n'
     + '  </div>\n'
-    + '  <div style="border-top:1.5px solid #000;margin:1mm 1.5mm"></div>\n'
-    + '  <div style="padding:0 1.5mm;flex-shrink:0">\n'
-    + '    <div style="font-size:7px;font-weight:700;color:#000;line-height:1.9">\n'
-    + '      <span>区分: ' + chk('大', sexCats.indexOf('大')>=0) + chk('中', sexCats.indexOf('中')>=0) + chk('小', sexCats.indexOf('小')>=0) + '</span><br>\n'
-    + '      <span>マット: ' + ['T0','T1','T2','T3'].map(function(m){ return chk(m, ld.mat_type===m); }).join('') + '</span><br>\n'
-    + '      <span>モルト: ' + chk('ON', ld.mat_molt===true||ld.mat_molt==='true') + chk('OFF', !ld.mat_molt||ld.mat_molt==='false') + '</span><br>\n'
-    + '      <span>ステージ: ' + _stageCheckboxRow(ld.stage_code) + '</span>\n'
-    + '    </div>\n'
-    + '  </div>\n'
-    + '  <div style="border-top:1.5px solid #000;margin:0.5mm 1.5mm"></div>\n'
-    + '  <div style="flex:1;padding:0 1.5mm 1mm;overflow:hidden">\n'
-    + '    <table style="width:100%;border-collapse:collapse">\n'
-    + '      <thead><tr><th style="' + thS + '">日付</th><th style="' + thS + '">体重</th><th style="' + thS + '">' + (isLot ? '交換' : 'メモ') + '</th></tr></thead>\n'
-    + '      <tbody>' + recRowsHtml + '</tbody>\n'
+
+    // 記録表（2列×4行）
+    + '  <div style="border-top:1.5px solid #000;margin:0.8mm 1.5mm 0"></div>\n'
+    + '  <div style="flex:1;padding:0 1.5mm 0.5mm;overflow:hidden">\n'
+    + '    <table style="width:100%;border-collapse:collapse;table-layout:fixed">\n'
+    + '      <thead><tr>'
+    + '<th style="' + thS + '">日付</th>'
+    + '<th style="' + thS + '">体重</th>'
+    + '<th style="' + thS + '">交換</th>'
+    + '<th style="width:1.5px;background:#000;padding:0"></th>'
+    + '<th style="' + thS + '">日付</th>'
+    + '<th style="' + thS + '">体重</th>'
+    + '<th style="' + thS + '">交換</th>'
+    + '</tr></thead>\n'
+    + '      <tbody>' + rowsHtml + '</tbody>\n'
     + '    </table>\n'
     + '  </div>\n'
+
+    // フッター
     + (noteShort
-      ? '  <div style="height:4mm;background:#000;padding:0.5mm 2mm;font-size:6.5px;font-weight:700;color:#fff;overflow:hidden;white-space:nowrap">📝 ' + noteShort + '</div>\n'
-      : '  <div style="height:4mm;background:#000"></div>\n')
+      ? '  <div style="height:3.5mm;background:#000;padding:0.3mm 2mm;font-size:6px;font-weight:700;color:#fff;overflow:hidden;white-space:nowrap">📝 ' + noteShort + '</div>\n'
+      : '  <div style="height:3.5mm;background:#000"></div>\n')
     + '</div>\n</body></html>';
 }
+
 
 // ── 種親ラベル（62mm × 40mm）─────────────────────────────────────
 function _buildParentLabelHTML(ld, _unused, qrSrc) {
