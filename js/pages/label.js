@@ -11,7 +11,7 @@
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-window._LABEL_BUILD = '20260330-20260403s';
+window._LABEL_BUILD = '20260330-20260403t';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 // ── ステージコード正規化 ─────────────────────────────────────────
@@ -742,7 +742,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
   // QR dataURL 取得 → ラベル生成 → PNG化
   (async function _lblRender() {
     try {
-      console.log('[LABEL] qr build start - build:20260403s');
+      console.log('[LABEL] qr build start - build:20260403t');
       console.log('[LABEL] qr target type:', targetType, '| targetId:', targetId);
       console.log('[LABEL] qr rect:', JSON.stringify(QR_RECT_MM));
       console.log('[LABEL] qr target text:', qrText);
@@ -880,95 +880,107 @@ function _buildLabelHTML(ld, qrSrc) {
   if (lt === 'parent')  return _buildParentLabelHTML(ld, null, qrSrc);
   if (lt === 't1_unit') return _buildT1UnitLabelHTML(ld, null, qrSrc);
 
-  var isLot = lt === 'multi_lot' || lt === 'egg_lot';
-  var chk   = _chkThermal;
+  var isLot   = lt === 'multi_lot' || lt === 'egg_lot';
+  var chk     = _chkThermal;
   var sexCats = (ld.size_category||'').split(',').map(function(s){ return s.trim(); });
   var headerLabel = isLot ? (lt === 'egg_lot' ? '卵管理' : '複数頭飼育') : '個別飼育';
 
-  console.log('[LABEL] layout mode: 2col-4row');
-  console.log('[LABEL] stage block moved under header');
-  console.log('[LABEL] exchange checkbox mode enabled');
+  // ── display_id をパース（例: "HM2026-B1-L01-A" → prefix/linePart/suffix）──
+  var rawId   = ld.display_id || '';
+  var parts   = rawId.split('-');
+  // パターン: PREFIX-LINE-SUFFIX... or PREFIX-LINE
+  var prefix  = parts.length >= 2 ? parts.slice(0, -1).join('-') : rawId;
+  var suffix  = parts.length >= 2 ? parts[parts.length - 1] : '';
+  var lineBadge = ld.line_code || '';  // "B1" など
+  // suffixが短い(2文字以下)なら個体連番と見なし prefix を調整
+  // → 主要バッジは lineBadge (line_code) と suffix
+  console.log('[LABEL] header badge render: line=' + lineBadge + ' suffix=' + suffix);
+  console.log('[LABEL] header badge render: count=' + (ld.count||''));
 
-  // ── 記録データ: 最新4件を取得（2列×4行 = 最大8件） ──
-  var records = ld.records || [];
-  var sortedR = records.slice().sort(function(a,b){
+  // ── 記録データ ───────────────────────────────────────────────────
+  var records  = ld.records || [];
+  var sortedR  = records.slice().sort(function(a,b){
     return String(a.record_date||'').localeCompare(String(b.record_date||''));
   });
-  // 最大8件（左列4 + 右列4）
   var recentAll = sortedR.slice(-8);
-
-  // 左列: 1〜4件目、右列: 5〜8件目（古い順）
-  var leftCol  = recentAll.slice(0, 4);
-  var rightCol = recentAll.slice(4, 8);
+  var leftCol   = recentAll.slice(0, 4);
+  var rightCol  = recentAll.slice(4, 8);
   while (leftCol.length  < 4) leftCol.push(null);
   while (rightCol.length < 4) rightCol.push(null);
 
   var _filledCount = recentAll.filter(function(r){ return !!r; }).length;
-  var _blankCount  = 8 - _filledCount;
-  console.log('[LABEL] record row filled count:', _filledCount, '/ blank count:', _blankCount);
+  console.log('[LABEL] record row height unified - filled:', _filledCount, '/ total: 8');
   console.log('[LABEL] record grid rendered');
 
-  // ── セル スタイル ──
-  var tdS  = 'border:1.5px solid #000;padding:2px 2px;font-size:6.5px;font-weight:700;color:#000;text-align:center';
-  var tdE  = 'border:1.5px solid #000;padding:5px 2px;font-size:6.5px;font-weight:700;color:#000;text-align:center';
-  var thS  = 'border:1.5px solid #000;padding:2px 2px;font-size:6.5px;font-weight:700;background:#000;color:#fff;text-align:center';
-  var sepS = 'border-left:2px solid #000';  // 左右区切り
+  // ── セルスタイル（全行統一高さ）──────────────────────────────────
+  // tdU = 全行共通（空白・既記入どちらも同じ padding）
+  var tdU = 'border:1.5px solid #000;padding:4px 2px;font-size:6.5px;font-weight:700;color:#000;text-align:center';
+  var thS = 'border:1.5px solid #000;padding:2px 2px;font-size:6.5px;font-weight:700;background:#000;color:#fff;text-align:center';
 
-  // ── 記録行HTML生成 ──
-  function makeCell(r, isExch) {
-    if (!r) return '<td style="' + tdE + '">&nbsp;</td>';
-    if (isExch) {
-      var exType = isLot ? (r.exchange_type||'') : String(r.note_private||'').slice(0,4);
-      var isAll  = (exType === 'FULL' || exType === '全');
-      var isAdd  = (exType === 'ADD'  || exType === '追');
-      return '<td style="' + tdS + '">'
-        + (isAll ? '■' : '□') + '全 ' + (isAdd ? '■' : '□') + '追'
-        + '</td>';
-    }
-    return '<td style="' + tdS + '">&nbsp;</td>';
-  }
-
+  // ── 記録行HTML ────────────────────────────────────────────────────
   var rowsHtml = '';
   for (var i = 0; i < 4; i++) {
-    var lRec = leftCol[i];
-    var rRec = rightCol[i];
+    var lRec  = leftCol[i];
+    var rRec  = rightCol[i];
     var lDate = lRec ? String(lRec.record_date||'').slice(5) : '';
-    var lWt   = lRec ? (lRec.weight_g ? lRec.weight_g+'g' : '') : '';
+    var lWt   = lRec ? (lRec.weight_g ? lRec.weight_g + 'g' : '') : '';
     var rDate = rRec ? String(rRec.record_date||'').slice(5) : '';
-    var rWt   = rRec ? (rRec.weight_g ? rRec.weight_g+'g' : '') : '';
-
-    var lExch = '';
-    var rExch = '';
+    var rWt   = rRec ? (rRec.weight_g ? rRec.weight_g + 'g' : '') : '';
+    var lExch = '', rExch = '';
     if (lRec) {
       var le = isLot ? (lRec.exchange_type||'') : String(lRec.note_private||'').slice(0,4);
-      lExch = ((le === 'FULL' || le === '全') ? '■' : '□') + '全 ' + ((le === 'ADD' || le === '追') ? '■' : '□') + '追';
+      lExch = ((le==='FULL'||le==='全')?'■':'□')+'全 '+((le==='ADD'||le==='追')?'■':'□')+'追';
     }
     if (rRec) {
       var re2 = isLot ? (rRec.exchange_type||'') : String(rRec.note_private||'').slice(0,4);
-      rExch = ((re2 === 'FULL' || re2 === '全') ? '■' : '□') + '全 ' + ((re2 === 'ADD' || re2 === '追') ? '■' : '□') + '追';
+      rExch = ((re2==='FULL'||re2==='全')?'■':'□')+'全 '+((re2==='ADD'||re2==='追')?'■':'□')+'追';
     }
-
-    var rowStyle = lRec || rRec ? tdS : tdE;
     rowsHtml += '<tr>'
-      // 左: 日付
-      + '<td style="' + rowStyle + '">' + (lDate || '&nbsp;') + '</td>'
-      // 左: 体重
-      + '<td style="' + rowStyle + '">' + (lWt || '&nbsp;') + '</td>'
-      // 左: 交換
-      + '<td style="' + rowStyle + '">' + (lExch || '□全 □追') + '</td>'
-      // 区切り
+      + '<td style="' + tdU + '">' + (lDate || '&nbsp;') + '</td>'
+      + '<td style="' + tdU + '">' + (lWt   || '&nbsp;') + '</td>'
+      + '<td style="' + tdU + '">' + (lExch || '□全&nbsp;□追') + '</td>'
       + '<td style="width:1.5px;background:#000;padding:0"></td>'
-      // 右: 日付
-      + '<td style="' + rowStyle + '">' + (rDate || '&nbsp;') + '</td>'
-      // 右: 体重
-      + '<td style="' + rowStyle + '">' + (rWt || '&nbsp;') + '</td>'
-      // 右: 交換
-      + '<td style="' + rowStyle + '">' + (rExch || '□全 □追') + '</td>'
+      + '<td style="' + tdU + '">' + (rDate || '&nbsp;') + '</td>'
+      + '<td style="' + tdU + '">' + (rWt   || '&nbsp;') + '</td>'
+      + '<td style="' + tdU + '">' + (rExch || '□全&nbsp;□追') + '</td>'
       + '</tr>';
   }
 
-  var sexInfo = !isLot && ld.sex
-    ? '<span style="font-size:9px;font-weight:700;color:#000">' + ld.sex + '&nbsp;</span>'
+  // ── 上部情報バッジ ────────────────────────────────────────────────
+  var bStyle = 'display:inline-block;border:1.5px solid #000;border-radius:2px;'
+    + 'padding:0 3px;font-size:10px;font-weight:700;color:#000;margin-right:2px;line-height:1.4';
+  var bSmall = 'display:inline-block;border:1px solid #000;border-radius:2px;'
+    + 'padding:0 2px;font-size:7.5px;font-weight:700;color:#000;margin-right:1px;line-height:1.3';
+
+  // lineBadge: ライン識別子 (例: "B1")
+  var lineHtml   = lineBadge
+    ? '<span style="' + bStyle + '">' + lineBadge + '</span>'
+    : '';
+  // suffix: ロット/個体識別子 (例: "L01-A")
+  var suffixHtml = suffix
+    ? '<span style="' + bStyle + '">' + suffix + '</span>'
+    : '';
+  // prefix line: 元IDの前半（小さめ）
+  var prefixHtml = prefix && prefix !== rawId
+    ? '<div style="font-size:6px;font-weight:700;color:#000;margin-bottom:1px">' + prefix + '</div>'
+    : '';
+
+  // 頭数バッジ
+  var countHtml = '';
+  if (isLot && ld.count) {
+    countHtml = '<div style="font-size:11px;font-weight:700;color:#000;line-height:1.2">'
+      + '<span style="display:inline-block;border:2px solid #000;border-radius:3px;padding:0 3px">'
+      + ld.count + '頭</span></div>';
+  }
+
+  // 性別
+  var sexHtml = !isLot && ld.sex
+    ? '<span style="font-size:8px;font-weight:700;color:#000">' + ld.sex + '&nbsp;</span>'
+    : '';
+
+  // 孵化日
+  var hatchHtml = ld.hatch_date
+    ? '<div style="font-size:6.5px;font-weight:700;color:#000">孵: ' + ld.hatch_date + '</div>'
     : '';
 
   return '<!DOCTYPE html>\n<html><head><meta charset="utf-8">\n<style>\n'
@@ -979,29 +991,37 @@ function _buildLabelHTML(ld, qrSrc) {
     + '</style></head><body>\n'
     + '<div style="width:62mm;height:70mm;display:flex;flex-direction:column">\n'
 
-    // ヘッダー
-    + '  <div style="background:#000;color:#fff;font-size:8px;font-weight:700;padding:1mm 2mm;height:5mm;display:flex;align-items:center;flex-shrink:0">'
+    // ── ヘッダーバー
+    + '  <div style="background:#000;color:#fff;font-size:7.5px;font-weight:700;padding:0.8mm 2mm;height:4.5mm;display:flex;align-items:center;flex-shrink:0">'
     + headerLabel + ' | HerculesOS</div>\n'
 
-    // QR + ID/ライン/孵化
+    // ── QR + 上部情報
     + '  <div style="display:flex;padding:1mm 1.5mm 0;gap:0;flex-shrink:0">\n'
     + '    <div style="flex-shrink:0;margin-right:1.5mm">' + _qrBox(qrSrc, 44) + '</div>\n'
     + '    <div style="flex:1;min-width:0;padding-left:1.5mm;border-left:2px solid #000">\n'
-    + '      <div style="font-family:monospace;font-size:8.5px;font-weight:700;color:#000;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (ld.display_id||'') + '</div>\n'
-    + '      <div style="font-size:7px;font-weight:700;color:#000">' + sexInfo + 'L: ' + (ld.line_code||'—') + '</div>\n'
-    + (ld.hatch_date ? '      <div style="font-size:6.5px;font-weight:700;color:#000">孵化: ' + ld.hatch_date + (isLot && ld.count ? '&nbsp;' + ld.count + '頭' : '') + '</div>\n' : (isLot && ld.count ? '      <div style="font-size:6.5px;font-weight:700;color:#000">' + ld.count + '頭</div>\n' : ''))
 
-    // 区分・マット・モルト・ステージ（上部情報エリア直下）
-    + '      <div style="font-size:6.5px;font-weight:700;color:#000;margin-top:1px;line-height:1.7">'
-    + '区分: ' + chk('大', sexCats.indexOf('大')>=0) + chk('中', sexCats.indexOf('中')>=0) + chk('小', sexCats.indexOf('小')>=0) + '</div>\n'
-    + '      <div style="font-size:6.5px;font-weight:700;color:#000;line-height:1.7">'
-    + 'M: ' + ['T0','T1','T2','T3'].map(function(m){ return chk(m, ld.mat_type===m); }).join('') + '</div>\n'
-    + '      <div style="font-size:6.5px;font-weight:700;color:#000;line-height:1.7">'
-    + 'St: ' + _stageCheckboxRow(ld.stage_code) + '</div>\n'
+    // 最重要: ライン識別バッジ + ロット/個体バッジ
+    + '      ' + prefixHtml
+    + '      <div style="margin-bottom:2px">' + lineHtml + suffixHtml + '</div>\n'
+
+    // 頭数（ロット時は大きく）
+    + '      ' + (isLot ? countHtml : sexHtml ? '<div>' + sexHtml + '</div>' : '')  + '\n'
+
+    // 孵化日
+    + '      ' + hatchHtml + '\n'
+
+    // 区分・マット・モルト・ステージ
+    + '      <div style="font-size:6px;font-weight:700;color:#000;margin-top:1px;line-height:1.6">'
+    + '区分:' + chk('大',sexCats.indexOf('大')>=0) + chk('中',sexCats.indexOf('中')>=0) + chk('小',sexCats.indexOf('小')>=0)
+    + '&nbsp;M:' + ['T0','T1','T2','T3'].map(function(m){ return chk(m,ld.mat_type===m); }).join('')
+    + '</div>\n'
+    + '      <div style="font-size:6px;font-weight:700;color:#000;line-height:1.6">'
+    + 'St:' + _stageCheckboxRow(ld.stage_code) + '</div>\n'
+
     + '    </div>\n'
     + '  </div>\n'
 
-    // 記録表（2列×4行）
+    // ── 記録表（2列×4行・全行均一高さ）
     + '  <div style="border-top:1.5px solid #000;margin:0.8mm 1.5mm 0"></div>\n'
     + '  <div style="flex:1;padding:0 1.5mm 0.5mm;overflow:hidden">\n'
     + '    <table style="width:100%;border-collapse:collapse;table-layout:fixed">\n'
@@ -1018,7 +1038,7 @@ function _buildLabelHTML(ld, qrSrc) {
     + '    </table>\n'
     + '  </div>\n'
 
-    // フッター
+    // ── フッター
     + (noteShort
       ? '  <div style="height:3.5mm;background:#000;padding:0.3mm 2mm;font-size:6px;font-weight:700;color:#fff;overflow:hidden;white-space:nowrap">📝 ' + noteShort + '</div>\n'
       : '  <div style="height:3.5mm;background:#000"></div>\n')
