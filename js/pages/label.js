@@ -44,7 +44,7 @@ function _stageCheckboxRow(stageCode) {
 
 // ── QR位置定義（HTML・PNG両方が参照する単一矩形） ────────────────
 // 62mm × 70mm ラベル基準。他サイズは _qrRectForDims() が補正する。
-var QR_RECT_MM = { xMm: 3.56, yMm: 7.56, sizeMm: 11.67 }; // +1mm right/down from 20260405a
+var QR_RECT_MM = { xMm: 3.06, yMm: 7.56, sizeMm: 11.67 }; // -0.5mm left from 20260405b
 //   xMm: 左パディング(1.5mm) + _qrBox内padding(4px/3.77≈1.06mm) = 2.56mm
 //   yMm: ヘッダー(4.5mm) + 上パディング(1mm) + _qrBox内padding(1.06mm) = 6.56mm
 //   sizeMm: _qrBoxのimg 44px → 44/(234/62) ≈ 11.67mm
@@ -766,7 +766,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
   // QR dataURL 取得 → ラベル生成 → PNG化
   (async function _lblRender() {
     try {
-      console.log('[LABEL] qr build start - build:20260405c');
+      console.log('[LABEL] qr build start - build:20260406a');
       console.log('[LABEL] qr target type:', targetType, '| targetId:', targetId);
       console.log('[LABEL] qr rect:', JSON.stringify(QR_RECT_MM));
       console.log('[LABEL] qr target text:', qrText);

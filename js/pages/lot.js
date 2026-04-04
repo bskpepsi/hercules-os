@@ -426,7 +426,67 @@ function _renderLotDetail(lot, main) {
 
       ${_renderLotSaleActions(lot)}
 
+      ${_renderLotUnitsList(lot)}
+
     </div>`;
+}
+
+
+// ════════════════════════════════════════════════════════════════
+// ロット由来ユニット一覧
+// ════════════════════════════════════════════════════════════════
+function _renderLotUnitsList(lot) {
+  console.log('[LOT_UNITS] render start - lot:', lot.lot_id);
+
+  var units = [];
+  try {
+    units = Store.getUnitsByOriginLotId
+      ? Store.getUnitsByOriginLotId(lot.lot_id)
+      : [];
+  } catch(_e) {}
+
+  console.log('[LOT_UNITS] units found:', units.length);
+  if (units.length === 0) return '';
+
+  function _stgLbl(s) {
+    var M = {
+      L1:'L1L2', L2_EARLY:'L1L2', L2_LATE:'L1L2', T1:'L1L2', L1L2:'L1L2',
+      L3_EARLY:'L3', L3_MID:'L3', L3_LATE:'L3', T2:'L3', T2A:'L3', T2B:'L3', L3:'L3',
+      PREPUPA:'前蛹', PUPA:'蛹', ADULT_PRE:'成虫', ADULT:'成虫',
+    };
+    return M[s] || s || '—';
+  }
+  function _stCol(s) {
+    return s === 'active' ? 'var(--green)' : s === 'individualized' ? 'var(--blue)' : 'var(--text3)';
+  }
+  function _stLbl(s) {
+    return s === 'active' ? '飼育中' : s === 'individualized' ? '個別化済' : (s || '不明');
+  }
+
+  var rows = units.map(function(u) {
+    var did     = u.display_id || u.unit_id || '—';
+    var heads   = u.head_count || u.member_count || 2;
+    var stage   = _stgLbl(u.stage_phase || u.current_stage || '');
+    var updated = (u.last_updated || u.updated_at || '').slice(0, 10) || '—';
+    var sc      = _stCol(u.status);
+    var sl      = _stLbl(u.status);
+    return '<div style="display:flex;align-items:center;gap:8px;padding:8px 0;'
+      + 'border-bottom:1px solid var(--border2);cursor:pointer" '
+      + 'onclick="routeTo(' + "'unit-detail'" + ',{unitDisplayId:' + "'" + did + "'" + '})">'
+      + '<div style="flex:1;min-width:0">'
+      + '<div style="font-family:var(--font-mono);font-size:.82rem;font-weight:700;color:var(--gold)">' + did + '</div>'
+      + '<div style="font-size:.72rem;color:var(--text2);margin-top:2px">' + stage + '&nbsp;/&nbsp;' + heads + '頭</div>'
+      + '<div style="font-size:.68rem;color:var(--text3);margin-top:1px">最終更新: ' + updated + '</div>'
+      + '</div>'
+      + '<span style="font-size:.7rem;padding:2px 7px;border-radius:4px;border:1px solid ' + sc + ';color:' + sc + '">' + sl + '</span>'
+      + '<span style="color:var(--text3);font-size:.85rem">›</span>'
+      + '</div>';
+  }).join('');
+
+  return '<div class="card" style="margin-top:8px">'
+    + '<div class="card-title">このロット由来のユニット（' + units.length + '件）</div>'
+    + rows
+    + '</div>';
 }
 
 
