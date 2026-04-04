@@ -20,7 +20,7 @@ function _normStageForLabel(code) {
   const MAP = {
     L1:'L1L2', L2_EARLY:'L1L2', L2_LATE:'L1L2',
     EGG:'L1L2', T0:'L1L2', T1:'L1L2',
-    L3_EARLY:'L3', L3_MID:'L3', L3_LATE:'L3', T2:'L3', T2A:'L3', T2B:'L3', T3:'L3',
+    L3_EARLY:'L3', L3_MID:'L3', L3_LATE:'L3', T2:'L3', T2A:'L3', T2B:'L3', T3:'L3', // T3=3齢後期
     L1L2:'L1L2', L3:'L3', PREPUPA:'前蛹', PUPA:'蛹',
     ADULT_PRE:'成虫（未後食）', ADULT:'成虫（活動開始）',
   };
@@ -155,12 +155,28 @@ async function _compositeQrOntoPng(pngDataUrl, qrSrc, dims) {
         canvas.width  = baseImg.width;
         canvas.height = baseImg.height;
         var ctx = canvas.getContext('2d');
+        // 白背景で初期化してからベースPNGを描画
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(baseImg, 0, 0);
 
         // QR位置は QR_RECT_MM → _qrPxForDims で算出（HTML側と同一定義）
         var qrPx = _qrPxForDims(dims);
         console.log('[LABEL] qr composite rect:', qrPx);
+
+        // QR画像をクリアしてから描画（確実に上書き）
+        ctx.clearRect(qrPx.x, qrPx.y, qrPx.size, qrPx.size);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(qrPx.x, qrPx.y, qrPx.size, qrPx.size);
         ctx.drawImage(qrImg, qrPx.x, qrPx.y, qrPx.size, qrPx.size);
+
+        // 合成後の黒画素確認
+        var verData = ctx.getImageData(qrPx.x, qrPx.y, qrPx.size, qrPx.size).data;
+        var verBlack = 0;
+        for (var vi = 0; vi < verData.length; vi += 4) {
+          if (verData[vi+3] > 16 && verData[vi] < 64 && verData[vi+1] < 64 && verData[vi+2] < 64) verBlack++;
+        }
+        console.log('[LABEL] qr composition forced: ' + (verBlack > 30 ? 'success' : 'failed') + ' black_px=' + verBlack);
         resolve(canvas.toDataURL('image/png'));
       };
       qrImg.onerror = function() { reject(new Error('QR img load failed in composite')); };
@@ -221,10 +237,12 @@ async function _buildLabelPNG(htmlStr, dims) {
       width:           dims.wPx,
       height:          dims.hPx,
       useCORS:         true,
+      allowTaint:      true,     // data: URL img も許可
       logging:         false,
       backgroundColor: '#ffffff',
       windowWidth:     dims.wPx,
       windowHeight:    dims.hPx,
+      imageTimeout:    5000,     // img読み込みタイムアウト延長
     });
   } finally {
     try { document.body.removeChild(host); } catch(_) {}
@@ -698,28 +716,33 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
           } catch(e) { console.warn('[LABEL] canvas.toDataURL error:', e.message); }
         }
         if (!dataUrl && img && img.src && img.src.startsWith('data:') && img.src.length > 500) {
-          // img.src の場合は一度 canvas に描いて黒画素チェック
-          var tmpImg = new Image();
-          tmpImg.src = img.src;
-          if (tmpImg.complete) {
-            var tmpC = document.createElement('canvas');
-            tmpC.width = 60; tmpC.height = 60;
-            var tmpCtx = tmpC.getContext('2d');
-            tmpCtx.drawImage(tmpImg, 0, 0, 60, 60);
-            var tmpData = tmpCtx.getImageData(0, 0, 60, 60);
-            var tmpBlack = 0;
-            for (var tpi = 0; tpi < tmpData.data.length; tpi += 4) {
-              // alpha > 16 の不透明ピクセルのみカウント
-              if (tmpData.data[tpi+3] > 16 && tmpData.data[tpi] < 64 && tmpData.data[tpi+1] < 64 && tmpData.data[tpi+2] < 64) tmpBlack++;
+          // img.src を canvas に描いて黒画素チェック（complete 待たずに即試みる）
+          try {
+            var tmpC2 = document.createElement('canvas');
+            tmpC2.width = 60; tmpC2.height = 60;
+            var tmpCtx2 = tmpC2.getContext('2d');
+            var tmpImg2 = new Image();
+            tmpImg2.src = img.src;
+            tmpCtx2.drawImage(tmpImg2, 0, 0, 60, 60);
+            var tmpData2 = tmpCtx2.getImageData(0, 0, 60, 60);
+            var tmpBlack2 = 0;
+            for (var tpi = 0; tpi < tmpData2.data.length; tpi += 4) {
+              var a2 = tmpData2.data[tpi+3];
+              var r2 = tmpData2.data[tpi];
+              var g2 = tmpData2.data[tpi+1];
+              var b2 = tmpData2.data[tpi+2];
+              // alpha-aware: 透明(a=0)は黒扱いしない
+              // 白背景(r=g=b=255)も黒扱いしない
+              if (a2 > 16 && r2 < 64 && g2 < 64 && b2 < 64) tmpBlack2++;
             }
-            console.log('[LABEL] qr img.src black pixel count (alpha-aware):', tmpBlack);
-            if (tmpBlack > 50) {
+            console.log('[LABEL] qr img.src black pixel count (alpha-aware):', tmpBlack2);
+            if (tmpBlack2 > 50) {
               dataUrl = img.src;
-              console.log('[LABEL] qr accepted via img.src - black pixels:', tmpBlack);
+              console.log('[LABEL] qr accepted via img.src - black pixels:', tmpBlack2);
             } else {
-              console.warn('[LABEL] qr img.src rejected as blank - black pixels:', tmpBlack);
+              console.warn('[LABEL] qr img.src rejected as blank - black pixels:', tmpBlack2);
             }
-          }
+          } catch(_imgErr) { console.warn('[LABEL] img.src canvas check failed:', _imgErr.message); }
         }
 
         if (dataUrl) {
@@ -742,7 +765,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
   // QR dataURL 取得 → ラベル生成 → PNG化
   (async function _lblRender() {
     try {
-      console.log('[LABEL] qr build start - build:20260403v');
+      console.log('[LABEL] qr build start - build:20260404b');
       console.log('[LABEL] qr target type:', targetType, '| targetId:', targetId);
       console.log('[LABEL] qr rect:', JSON.stringify(QR_RECT_MM));
       console.log('[LABEL] qr target text:', qrText);
@@ -798,21 +821,20 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         console.warn('[LABEL] png build failed:', pngErr.message);
       }
 
-      // ── Step4: QRがPNGに入っているか確認し、なければ手動合成 ────────
+      // ── Step4: QR手動合成（html2canvasはdata:URL imgを確実に描かないため常に合成）──
       if (pngDataUrl && qrSrc) {
-        // html2canvas が QR を描画できたか確認（黒画素チェック）
         var pngHasQr = await _checkPngHasQr(pngDataUrl, dims);
-        console.log('[LABEL] qr composite mode:', pngHasQr ? 'off (html2canvas ok)' : 'on (needs composite)');
-        if (!pngHasQr) {
-          try {
-            pngDataUrl = await _compositeQrOntoPng(pngDataUrl, qrSrc, dims);
-            var qrPxLog = _qrPxForDims(dims);
-            console.log('[LABEL] qr composite rect:', qrPxLog);
-            console.log('[LABEL] qr composited onto PNG - final length:', pngDataUrl.length);
-          } catch(compErr) {
-            console.warn('[LABEL] qr composite failed:', compErr.message);
-          }
+        console.log('[LABEL] qr composite mode:', pngHasQr ? 'on (verify+composite)' : 'on (needs composite)');
+        // qrSrcがある場合は常に手動合成を実行（html2canvasの描画成否に関わらず）
+        try {
+          pngDataUrl = await _compositeQrOntoPng(pngDataUrl, qrSrc, dims);
+          console.log('[LABEL] qr composited onto PNG - final length:', pngDataUrl.length);
+        } catch(compErr) {
+          console.warn('[LABEL] qr composite failed:', compErr.message);
+          // 合成失敗でもpngDataUrlは保持（QRなしラベルとして出力）
         }
+      } else if (pngDataUrl && !qrSrc) {
+        console.log('[LABEL] qr composite mode: skipped (no qrSrc)');
       }
       console.log('[LABEL] final png done');
 

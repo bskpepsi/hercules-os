@@ -8,7 +8,7 @@
 
 'use strict';
 
-window.__API_BUILD = '20260403v';
+window.__API_BUILD = '20260404b';
 console.log('[API] ===== api.js LOADED BUILD=' + window.__API_BUILD + ' =====');
 var API = (() => {
   console.log('[API] IIFE start - BUILD:', window.__API_BUILD);
