@@ -44,10 +44,11 @@ function _stageCheckboxRow(stageCode) {
 
 // ── QR位置定義（HTML・PNG両方が参照する単一矩形） ────────────────
 // 62mm × 70mm ラベル基準。他サイズは _qrRectForDims() が補正する。
-var QR_RECT_MM = { xMm: 1.5, yMm: 6.0, sizeMm: 11.7 };
-//   xMm: 左パディング(1.5mm)
-//   yMm: ヘッダー(5mm) + 上パディング(1mm) = 6mm
-//   sizeMm: _qrBox に渡す 44px → 44/(234/62) ≈ 11.7mm
+var QR_RECT_MM = { xMm: 2.56, yMm: 6.56, sizeMm: 11.67 };
+//   xMm: 左パディング(1.5mm) + _qrBox内padding(4px/3.77≈1.06mm) = 2.56mm
+//   yMm: ヘッダー(4.5mm) + 上パディング(1mm) + _qrBox内padding(1.06mm) = 6.56mm
+//   sizeMm: _qrBoxのimg 44px → 44/(234/62) ≈ 11.67mm
+//   ← QRImg の正確な内側位置（border/paddingを除いたQR実体の位置）
 
 function _qrPxForDims(dims) {
   // dims.wPx / dims.wMm から mm→px変換比率を求める
@@ -765,7 +766,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
   // QR dataURL 取得 → ラベル生成 → PNG化
   (async function _lblRender() {
     try {
-      console.log('[LABEL] qr build start - build:20260404b');
+      console.log('[LABEL] qr build start - build:20260405a');
       console.log('[LABEL] qr target type:', targetType, '| targetId:', targetId);
       console.log('[LABEL] qr rect:', JSON.stringify(QR_RECT_MM));
       console.log('[LABEL] qr target text:', qrText);
@@ -950,8 +951,8 @@ function _buildLabelHTML(ld, qrSrc) {
   console.log('[LABEL] record row height unified - filled:', _filledCount, '/ total: 8');
 
   // ── セルスタイル（全行統一高さ）──────────────────────────────────
-  var tdU = 'border:1.5px solid #000;padding:4px 2px;font-size:6.5px;font-weight:700;color:#000;text-align:center';
-  var thS = 'border:1.5px solid #000;padding:2px 2px;font-size:6.5px;font-weight:700;background:#000;color:#fff;text-align:center';
+  var tdU = 'border:1.5px solid #000;padding:6px 2px;font-size:8px;font-weight:700;color:#000;text-align:center'; // 行高1.3倍, フォント1.2倍
+  var thS = 'border:1.5px solid #000;padding:2px 2px;font-size:7.5px;font-weight:700;background:#000;color:#fff;text-align:center'; // 1.2倍
 
   // ── 記録行HTML ────────────────────────────────────────────────────
   var rowsHtml = '';
@@ -985,7 +986,7 @@ function _buildLabelHTML(ld, qrSrc) {
   // ── 上部情報 HTML ──────────────────────────────────────────────────
   // バッジスタイル（大）
   var bLg = 'display:inline-block;border:1.5px solid #000;border-radius:3px;'
-    + 'padding:0 4px;font-size:10px;font-weight:700;color:#000;margin-right:2px;line-height:1.5';
+    + 'padding:0 4px;font-size:12px;font-weight:700;color:#000;margin-right:2px;line-height:1.5';
 
   // "B1" バッジ
   var lineBadgeHtml = lineBadge
@@ -1002,13 +1003,13 @@ function _buildLabelHTML(ld, qrSrc) {
   // 頭数バッジ（右上に寄せる）
   var countBadge = (isLot && ld.count)
     ? '<span style="display:inline-block;border:2px solid #000;border-radius:3px;'
-      + 'padding:0 3px;font-size:11px;font-weight:700;color:#000;line-height:1.4">'
+      + 'padding:0 3px;font-size:13px;font-weight:700;color:#000;line-height:1.4">'
       + ld.count + '頭</span>'
     : '';
 
   // 性別（個体ラベル）
   var sexHtml = !isLot && ld.sex
-    ? '<span style="font-size:8px;font-weight:700;color:#000">' + ld.sex + '&nbsp;</span>'
+    ? '<span style="font-size:9px;font-weight:700;color:#000">' + ld.sex + '&nbsp;</span>'
     : '';
 
   // 孵化日
@@ -1018,7 +1019,7 @@ function _buildLabelHTML(ld, qrSrc) {
 
   // Mx 行（T2系のみ）
   var mxHtml = showMx
-    ? '<div style="font-size:6px;font-weight:700;color:#000;line-height:1.6">'
+    ? '<div style="font-size:7px;font-weight:700;color:#000;line-height:1.7">'
       + 'Mx:' + chk('ON', mxIsOn) + chk('OFF', mxIsOff) + '</div>'
     : '';
 
@@ -1031,7 +1032,7 @@ function _buildLabelHTML(ld, qrSrc) {
     + '<div style="width:62mm;height:70mm;display:flex;flex-direction:column">\n'
 
     // ヘッダーバー
-    + '  <div style="background:#000;color:#fff;font-size:7.5px;font-weight:700;padding:0.8mm 2mm;height:4.5mm;display:flex;align-items:center;flex-shrink:0">'
+    + '  <div style="background:#000;color:#fff;font-size:9px;font-weight:700;padding:0.8mm 2mm;height:5mm;display:flex;align-items:center;flex-shrink:0">'
     + headerLabel + ' | HerculesOS</div>\n'
 
     // QR + 上部情報
@@ -1052,17 +1053,17 @@ function _buildLabelHTML(ld, qrSrc) {
     + '      ' + hatchHtml + '\n'
 
     // 区分（1行目）
-    + '      <div style="font-size:6px;font-weight:700;color:#000;line-height:1.6">'
+    + '      <div style="font-size:7px;font-weight:700;color:#000;line-height:1.7">'
     + '区分:' + chk('大',sexCats.indexOf('大')>=0) + chk('中',sexCats.indexOf('中')>=0) + chk('小',sexCats.indexOf('小')>=0)
     + '</div>\n'
 
     // マット（2行目）
-    + '      <div style="font-size:6px;font-weight:700;color:#000;line-height:1.6">'
+    + '      <div style="font-size:7px;font-weight:700;color:#000;line-height:1.7">'
     + 'M:' + ['T0','T1','T2','T3'].map(function(m){ return chk(m,ld.mat_type===m); }).join('')
     + '</div>\n'
 
     // ステージ（3行目）
-    + '      <div style="font-size:6px;font-weight:700;color:#000;line-height:1.6">'
+    + '      <div style="font-size:7px;font-weight:700;color:#000;line-height:1.7">'
     + 'St:' + _stageCheckboxRow(ld.stage_code) + '</div>\n'
 
     // Mx（4行目、T2系のみ）
@@ -1090,7 +1091,7 @@ function _buildLabelHTML(ld, qrSrc) {
 
     // フッター
     + (noteShort
-      ? '  <div style="height:3.5mm;background:#000;padding:0.3mm 2mm;font-size:6px;font-weight:700;color:#fff;overflow:hidden;white-space:nowrap">📝 ' + noteShort + '</div>\n'
+      ? '  <div style="height:3.5mm;background:#000;padding:0.3mm 2mm;font-size:7px;font-weight:700;color:#fff;overflow:hidden;white-space:nowrap">📝 ' + noteShort + '</div>\n'
       : '  <div style="height:3.5mm;background:#000"></div>\n')
     + '</div>\n</body></html>';
 }
