@@ -291,15 +291,18 @@ function _qrNavigate(mode, res, qrText) {
     }
     else if (res.entity_type === 'BU') {
       // BU: display_id → unit-detail
-      // フォールバック: entity が空でも QRテキストから ID を抽出
-      var _buDid = _ent2.display_id || _ent2.unit_id || _extractIdFromQr('BU');
-      console.log('[QR] BU confirm - display_id:', _buDid, '/ from_entity:', !!_ent2.display_id,
-        '/ from_qr:', !_ent2.display_id && !!_extractIdFromQr('BU'));
+      // フォールバック優先順位: entity.display_id > entity.unit_id > QRテキスト抽出
+      var _buDid = (_ent2.display_id && _ent2.display_id !== '' ? _ent2.display_id : null)
+                || (_ent2.unit_id && _ent2.unit_id !== '' ? _ent2.unit_id : null)
+                || _extractIdFromQr('BU')
+                || '';
+      console.log('[QR] BU confirm → unitDisplayId:', _buDid,
+        '| src:', _ent2.display_id ? 'entity.display_id' : (_ent2.unit_id ? 'entity.unit_id' : 'qrText fallback'));
       if (_buDid) {
-        console.log('[QR] routeTo unit-detail - unitDisplayId:', _buDid);
+        console.log('[QR] routeTo unit-detail:', _buDid);
         routeTo('unit-detail', { unitDisplayId: _buDid });
       } else {
-        UI.toast('BU情報が取得できませんでした（QRテキスト: ' + (qrText || '') + '）', 'error', 4000);
+        UI.toast('BUのIDを特定できませんでした。QR: ' + (qrText || ''), 'error', 4000);
       }
     }
     else {
@@ -357,9 +360,9 @@ function _qrLocalResolve(v) {
     if (_buUnit) {
       return { entity_type: 'BU', entity: _buUnit, resolved_id: _buUnit.display_id || _buUnit.unit_id };
     }
-    // ユニットがStoreにない場合でも、QRテキストからIDを保持して遷移を試みる
-    // → unit-detail 側でdisplay_idをもとに再取得できる
-    console.log('[QR] BU not in Store, creating stub from QR text:', id);
+    // StoreにBUがない場合もQRテキストからIDを保持してstub生成
+    // unit-detail がparams.unitDisplayIdで再取得できる
+    console.log('[QR] BU not in Store → stub from QR text id:', id);
     return { entity_type: 'BU', entity: { display_id: id, unit_id: id }, resolved_id: id };
   }
 
@@ -374,7 +377,7 @@ Pages._qrResolve = async function () {
   if (!qrText) { if (errEl) errEl.textContent = 'QRコードを入力してください'; return; }
   if (errEl) errEl.textContent = '';
 
-  console.log('[QR] recognized', qrText, 'at', _t0.toFixed(1), 'ms');
+  console.log('[QR] build:20260408b recognized', qrText, 'at', _t0.toFixed(1), 'ms');
 
   // ── 現在のスキャンモードを取得 ──
   const mode = window._qrScanMode || 'confirm';
@@ -391,11 +394,21 @@ Pages._qrResolve = async function () {
     if (btn) { btn.textContent = '📂 画面を開いています...'; }
     Pages._qrSaveHistory(qrText, localRes);
     const _t2 = performance.now();
-    console.log('[QR] navigate start (local path)');
-    _qrNavigate(mode, localRes, qrText);
-    console.log('[QR] navigate triggered', (performance.now()-_t2).toFixed(1), 'ms');
+    console.log('[QR] navigate start (local path) / entity_type:', localRes.entity_type);
+    try {
+      _qrNavigate(mode, localRes, qrText);
+      console.log('[QR] navigate triggered', (performance.now()-_t2).toFixed(1), 'ms');
+    } catch (_navErr) {
+      console.error('[QR] navigate error (local):', _navErr.message);
+      if (errEl) errEl.textContent = '❌ 遷移エラー: ' + (_navErr.message || '不明');
+    } finally {
+      // 遷移後にボタンを元に戻す（ページが変わらない場合でも操作できるように）
+      setTimeout(function() {
+        if (btn) { btn.disabled = false; btn.textContent = '🔍 読み取り・確認'; }
+      }, 600);
+    }
     console.log('[QR] total (local path)', (performance.now()-_t0).toFixed(1), 'ms');
-    return;  // API呼び出しなし・即遷移
+    return;  // API呼び出しなし
   }
 
   // ── ② ローカルで見つからない場合だけ API へ ──────────────────

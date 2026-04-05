@@ -63,11 +63,11 @@ function _qrPxForDims(dims) {
 
 // ラベル種別定義
 const LABEL_TYPE_DEFS = [
-  { code: 'egg_lot',   label: '① 卵管理',        target: 'LOT',  desc: '採卵後・孵化日/頭数は後で補完 62×70mm' },
-  { code: 'multi_lot', label: '② 複数頭飼育',    target: 'LOT',  desc: 'ロット管理用（記録表付き）62×70mm' },
-  { code: 'ind_fixed', label: '③ 個別飼育',      target: 'IND',  desc: '個体管理用（履歴引継ぎ）62×70mm' },
-  { code: 't1_unit',   label: '⑥ T1ユニット',   target: 'UNIT', desc: 'T1移行後の2頭飼育 62×70mm' },
-  { code: 'set',       label: '④ 産卵セット',    target: 'SET',  desc: '親情報・開始日 62×40mm' },
+  { code: 'egg_lot',   label: '① 卵管理',        target: 'LOT',  desc: '採卵後・採卵日印字・孵化日手書き欄付き 62×40mm' },
+  { code: 'multi_lot', label: '② 複数頭飼育',    target: 'LOT',  desc: 'ロット管理用・採卵日/孵化日欄付き 62×40mm' },
+  { code: 'ind_fixed', label: '③ 個別飼育',      target: 'IND',  desc: '個体管理用（記録表付き）62×70mm' },
+  { code: 't1_unit',   label: '⑥ T1ユニット',   target: 'UNIT', desc: 'T1移行後の2頭飼育（記録表付き）62×70mm' },
+  { code: 'set',       label: '④ 産卵セット',    target: 'SET',  desc: '産卵セット情報 62×40mm' },
   { code: 'parent',    label: '⑤ 種親',          target: 'PAR',  desc: '種親QR・血統タグ 62×40mm' },
 ];
 
@@ -328,6 +328,8 @@ Pages.labelGen = function (params = {}) {
           <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
             <button class="pill ${targetType==='IND'?'active':''}" onclick="Pages._lblSetType('IND')">個体</button>
             <button class="pill ${targetType==='LOT'?'active':''}" onclick="Pages._lblSetType('LOT')">ロット</button>
+            <button class="pill ${targetType==='UNIT'?'active':''}" onclick="Pages._lblSetType('UNIT')">ユニット</button>
+            <button class="pill ${targetType==='SET'?'active':''}" onclick="Pages._lblSetType('SET')">産卵セット</button>
             <button class="pill ${targetType==='PAR'?'active':''}" onclick="Pages._lblSetType('PAR')">種親</button>
           </div>
           ${targetType === 'IND' ? `
@@ -341,6 +343,18 @@ Pages.labelGen = function (params = {}) {
               <option value="">種親を選択...</option>
               ${pars.filter(p=>p.status==='active'||!p.status).map(p => `<option value="${p.par_id}" ${p.par_id===targetId?'selected':''}>
                 ${p.parent_display_id||p.display_name||p.par_id} ${p.sex||''} ${p.size_mm?p.size_mm+'mm':''}</option>`).join('')}
+            </select>`
+          : targetType === 'UNIT' ? `
+            <select id="lbl-target" class="input" onchange="Pages._lblSetTarget(this.value)">
+              <option value="">ユニットを選択...</option>
+              ${(Store.getDB('breeding_units')||[]).filter(u=>u.status==='active').map(u => `<option value="${u.display_id||u.unit_id}" ${(u.display_id||u.unit_id)===targetId?'selected':''}>
+                ${u.display_id||u.unit_id} ${u.stage_phase||''} (${u.head_count||2}頭)</option>`).join('')}
+            </select>`
+          : targetType === 'SET' ? `
+            <select id="lbl-target" class="input" onchange="Pages._lblSetTarget(this.value)">
+              <option value="">産卵セットを選択...</option>
+              ${(Store.getDB('pairings')||[]).map(s => `<option value="${s.set_id}" ${s.set_id===targetId?'selected':''}>
+                ${s.display_id||s.set_id} ${s.set_start||''}</option>`).join('')}
             </select>` : `
             <select id="lbl-target" class="input" onchange="Pages._lblSetTarget(this.value)">
               <option value="">ロットを選択...</option>
@@ -765,7 +779,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
   // QR dataURL 取得 → ラベル生成 → PNG化
   (async function _lblRender() {
     try {
-      console.log('[LABEL] qr build start - build:20260407c');
+      console.log('[LABEL] qr build start - build:20260408b');
       console.log('[LABEL] qr target type:', targetType, '| targetId:', targetId);
       console.log('[LABEL] qr rect:', JSON.stringify(QR_RECT_MM));
       console.log('[LABEL] qr target text:', qrText);
@@ -1043,9 +1057,13 @@ function _buildLabelHTML(ld, qrSrc) {
     + '</style></head><body>\n'
     + '<div style="width:62mm;height:' + _bodyH + ';display:flex;flex-direction:column">\n'
 
-    // ヘッダーバー
-    + '  <div style="background:#000;color:#fff;font-size:9px;font-weight:700;padding:0.8mm 2mm;height:5mm;display:flex;align-items:center;flex-shrink:0">'
-    + headerLabel + ' | HerculesOS</div>\n'
+    // ヘッダーバー（LOTは斜線、INDは黒ベタ）
+    + (isLot
+      ? '  <div style="background:repeating-linear-gradient(45deg,#000 0,#000 3px,#333 3px,#333 10px);color:#fff;font-size:9px;font-weight:700;padding:0.8mm 2mm;height:5mm;display:flex;align-items:center;flex-shrink:0">'
+        + headerLabel + ' | HerculesOS</div>\n'
+      : '  <div style="background:#000;color:#fff;font-size:9px;font-weight:700;padding:0.8mm 2mm;height:5mm;display:flex;align-items:center;flex-shrink:0">'
+        + headerLabel + ' | HerculesOS</div>\n'
+    )
 
     // QR + 上部情報
     + '  <div style="display:flex;padding:1mm 1.5mm 0;gap:0;flex-shrink:0">\n'
@@ -1086,14 +1104,15 @@ function _buildLabelHTML(ld, qrSrc) {
 
     // LOT: 日付欄のみ、テーブルなし | IND: 2列×4行テーブル
     + (isLot ? (
-      // ロットラベル専用レイアウト（採卵日/孵化日書き込みスペース）
-      '  <div style="border-top:1.5px solid #000;margin:0.8mm 1.5mm 0.5mm"></div>\n'
-      + '  <div style="padding:0 1.5mm;flex:1">\n'
-      + '    <div style="font-size:7.5px;font-weight:700;color:#000;margin-bottom:4px">'
-      +       '採卵日: ' + (ld.collect_date || ld.hatch_date || '____/____/____') + '</div>\n'
-      + '    <div style="font-size:7.5px;font-weight:700;color:#000;margin-bottom:3px">孵化日: ____/__/__</div>\n'
-      + '    <div style="font-size:7px;font-weight:700;color:#000">'
-      +       (ld.note_private ? '📝 ' + ld.note_private.slice(0,28) : '') + '</div>\n'
+      // ロットラベル専用レイアウト（採卵日印字 / 孵化日手書き欄）
+      '  <div style="border-top:2px solid #000;margin:1mm 1.5mm 0"></div>\n'
+      + '  <div style="padding:1mm 2mm;flex:1;display:flex;flex-direction:column;justify-content:space-evenly">\n'
+      // 採卵日: 印字済みデータ表示（collect_date優先、なければhatch_date）
+      + '    <div style="font-size:22.5px;font-weight:700;color:#000;letter-spacing:1px;line-height:1.2">'
+      +       '採卵: ' + (ld.collect_date || (ld.hatch_date ? '' : '____/____/____')) + '</div>\n'
+      // 孵化日: 手書き用（大きめ・書きやすいフォント）
+      + '    <div style="font-size:22.5px;font-weight:700;color:#000;letter-spacing:1px;line-height:1.2">'
+      +       '孵化: <span style="letter-spacing:4px">____/____/____</span></div>\n'
       + '  </div>\n'
     ) : (
       // 個別飼育ラベル: 記録表（2列×4行）
