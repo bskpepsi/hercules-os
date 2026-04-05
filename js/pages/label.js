@@ -44,7 +44,7 @@ function _stageCheckboxRow(stageCode) {
 
 // ── QR位置定義（HTML・PNG両方が参照する単一矩形） ────────────────
 // 62mm × 70mm ラベル基準。他サイズは _qrRectForDims() が補正する。
-var QR_RECT_MM = { xMm: 3.06, yMm: 9.06, sizeMm: 11.67 }; // yMm+0.5mm 20260410a (final center)
+var QR_RECT_MM = { xMm: 3.5,  yMm: 8.2,  sizeMm: 11.67 }; // user-calibrated 20260410b
 //   xMm: 左パディング(1.5mm) + _qrBox内padding(4px/3.77≈1.06mm) = 2.56mm
 //   yMm: ヘッダー(4.5mm) + 上パディング(1mm) + _qrBox内padding(1.06mm) = 6.56mm
 //   sizeMm: _qrBoxのimg 44px → 44/(234/62) ≈ 11.67mm
@@ -651,14 +651,17 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
       console.log('[LABEL] branch SET - targetId:', targetId);
       const set = (Store.getDB('pairings')||[]).find(p => p.set_id===targetId) || {};
       const _setLine = set.line_id ? (Store.getLine(set.line_id) || {}) : {};
+      const _pars   = Store.getDB('parents') || [];
+      const _setFather = set.father_par_id ? (_pars.find(p=>p.par_id===set.father_par_id)||{}) : {};
+      const _setMother = set.mother_par_id ? (_pars.find(p=>p.par_id===set.mother_par_id)||{}) : {};
       ld = {
         qr_text:       `SET:${set.set_id || targetId}`,
         display_id:    set.display_id   || set.set_name || targetId,
-        line_code:     set.line_code || _setLine.line_code || _setLine.display_id || '',
-        father_info:   set.father_display_name || '',
-        mother_info:   set.mother_display_name || '',
-        father_size:   set.father_size_mm ? set.father_size_mm + 'mm' : '',
-        mother_size:   set.mother_size_mm ? set.mother_size_mm + 'mm' : '',
+        line_code:     set.line_code || _setLine.line_code || '',
+        father_info:   _setFather.parent_display_id || set.father_display_name || '---',
+        mother_info:   _setMother.parent_display_id || set.mother_display_name || '---',
+        father_size:   _setFather.size_mm ? (_setFather.size_mm + 'mm') : (set.father_size_mm ? set.father_size_mm + 'mm' : ''),
+        mother_size:   _setMother.size_mm ? (_setMother.size_mm + 'mm') : (set.mother_size_mm ? set.mother_size_mm + 'mm' : ''),
         pairing_start: set.pairing_start || '',
         label_type:    'set',
       };
@@ -788,7 +791,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
   // QR dataURL 取得 → ラベル生成 → PNG化
   (async function _lblRender() {
     try {
-      console.log('[LABEL] qr build start - build:20260410a');
+      console.log('[LABEL] qr build start - build:20260410b');
       console.log('[LABEL] qr target type:', targetType, '| targetId:', targetId);
       console.log('[LABEL] qr rect:', JSON.stringify(QR_RECT_MM));
       console.log('[LABEL] qr target text:', qrText);
@@ -1165,8 +1168,8 @@ function _buildParentLabelHTML(ld, _unused, qrSrc) {
   var wtStr   = ld.weight_g || '';   // "22g" そのまま
   var ecStr   = ld.eclosion_date ? '羽化: ' + ld.eclosion_date : '';
   var locStr  = [ld.locality, ld.generation].filter(Boolean).join(' / ');
-  var patStr  = ld.paternal_raw ? '♂: ' + ld.paternal_raw.slice(0,26) : '';
-  var matStr  = ld.maternal_raw ? '♀: ' + ld.maternal_raw.slice(0,26) : '';
+  var patStr  = ld.paternal_raw ? '親♂: ' + ld.paternal_raw.slice(0,24) : '';
+  var matStr  = ld.maternal_raw ? '親♀: ' + ld.maternal_raw.slice(0,24) : '';
 
   // バッジサイズ: 1文字→34px、2文字→28px、3文字以上→20px
   var badgeFz = idCode.length <= 1 ? '34px' : idCode.length <= 2 ? '28px' : '20px';
@@ -1222,12 +1225,18 @@ function _buildParentLabelHTML(ld, _unused, qrSrc) {
 function _buildSetLabelHTML(ld, _unused, qrSrc) {
   var qr = (typeof _unused === 'string' && _unused.startsWith('data:')) ? _unused : qrSrc;
 
-  // ラインバッジ: line_code または display_id から抽出
+  // ラインバッジ: line_code を優先、なければ display_id からパース
   var lineCode  = ld.line_code || '';
   var rawId     = ld.display_id || '';
-  // display_idが "HM2026-B1-S01" 形式なら line_code は "B1"
-  if (!lineCode && rawId.split('-').length >= 3) {
-    lineCode = rawId.split('-')[1] || '';
+  if (!lineCode) {
+    var _sp = rawId.split('-');
+    if (_sp.length >= 3) {
+      lineCode = _sp[1] || '';  // "HM2026-B1-S01" → "B1"
+    } else if (_sp.length === 2) {
+      // "HM2026A1-S01" → extract non-digit suffix after year: "A1"
+      var _m0 = _sp[0].match(/[0-9]{4}([A-Za-z0-9]+)$/);
+      lineCode = _m0 ? _m0[1] : '';
+    }
   }
   // バッジサイズ: 1文字→32px、2文字→26px、3文字以上→18px
   var badgeFz = lineCode.length <= 1 ? '32px' : lineCode.length <= 2 ? '26px' : '18px';
