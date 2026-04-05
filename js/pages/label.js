@@ -112,6 +112,10 @@ function _labelDimensions(labelType, targetType) {
   if (isLarge) {
     return { wMm:62, hMm:70, wPx:234, hPx:265, scale:3, label:'62×70mm' };
   }
+  // PAR (種親): 62×35mm  ← 35mm
+  if (labelType === 'parent' || targetType === 'PAR') {
+    return { wMm:62, hMm:35, wPx:234, hPx:132, scale:3, label:'62×35mm' };
+  }
   return { wMm:62, hMm:40, wPx:234, hPx:151, scale:3, label:'62×40mm' };
 }
 
@@ -779,7 +783,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
   // QR dataURL 取得 → ラベル生成 → PNG化
   (async function _lblRender() {
     try {
-      console.log('[LABEL] qr build start - build:20260408b');
+      console.log('[LABEL] qr build start - build:20260408c');
       console.log('[LABEL] qr target type:', targetType, '| targetId:', targetId);
       console.log('[LABEL] qr rect:', JSON.stringify(QR_RECT_MM));
       console.log('[LABEL] qr target text:', qrText);
@@ -1059,8 +1063,10 @@ function _buildLabelHTML(ld, qrSrc) {
 
     // ヘッダーバー（LOTは斜線、INDは黒ベタ）
     + (isLot
-      ? '  <div style="background:repeating-linear-gradient(45deg,#000 0,#000 3px,#333 3px,#333 10px);color:#fff;font-size:9px;font-weight:700;padding:0.8mm 2mm;height:5mm;display:flex;align-items:center;flex-shrink:0">'
-        + headerLabel + ' | HerculesOS</div>\n'
+      ? '  <div style="position:relative;background:#000;color:#fff;font-size:9px;font-weight:700;padding:0.8mm 2mm;height:5mm;display:flex;align-items:center;flex-shrink:0;overflow:hidden">'
+        + '<span style="position:absolute;top:0;left:0;right:0;bottom:0;background:repeating-linear-gradient(45deg,transparent 0,transparent 4px,rgba(255,255,255,0.12) 4px,rgba(255,255,255,0.12) 6px);pointer-events:none"></span>'
+        + '<span style="position:relative;z-index:1">' + headerLabel + ' | HerculesOS</span>'
+        + '</div>\n'
       : '  <div style="background:#000;color:#fff;font-size:9px;font-weight:700;padding:0.8mm 2mm;height:5mm;display:flex;align-items:center;flex-shrink:0">'
         + headerLabel + ' | HerculesOS</div>\n'
     )
@@ -1107,12 +1113,12 @@ function _buildLabelHTML(ld, qrSrc) {
       // ロットラベル専用レイアウト（採卵日印字 / 孵化日手書き欄）
       '  <div style="border-top:2px solid #000;margin:1mm 1.5mm 0"></div>\n'
       + '  <div style="padding:1mm 2mm;flex:1;display:flex;flex-direction:column;justify-content:space-evenly">\n'
-      // 採卵日: 印字済みデータ表示（collect_date優先、なければhatch_date）
+      // 採卵日: 印字済みデータ表示
       + '    <div style="font-size:22.5px;font-weight:700;color:#000;letter-spacing:1px;line-height:1.2">'
-      +       '採卵: ' + (ld.collect_date || (ld.hatch_date ? '' : '____/____/____')) + '</div>\n'
-      // 孵化日: 手書き用（大きめ・書きやすいフォント）
-      + '    <div style="font-size:22.5px;font-weight:700;color:#000;letter-spacing:1px;line-height:1.2">'
-      +       '孵化: <span style="letter-spacing:4px">____/____/____</span></div>\n'
+      +       '採卵: ' + (ld.collect_date || (ld.hatch_date ? '' : '&nbsp;&nbsp;&nbsp;&nbsp;/&nbsp;&nbsp;/&nbsp;&nbsp;')) + '</div>\n'
+      // 孵化日: 手書き用スペース区切り （YYYY / MM / DD）
+      + '    <div style="font-size:22.5px;font-weight:700;color:#000;line-height:1.2">'
+      +       '孵化:&nbsp;&nbsp;&nbsp;&nbsp;/&nbsp;&nbsp;&nbsp;&nbsp;/&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</div>\n'
       + '  </div>\n'
     ) : (
       // 個別飼育ラベル: 記録表（2列×4行）
@@ -1144,31 +1150,59 @@ function _buildLabelHTML(ld, qrSrc) {
 // ── 種親ラベル（62mm × 40mm）─────────────────────────────────────
 function _buildParentLabelHTML(ld, _unused, qrSrc) {
   var qr = (typeof _unused === 'string' && _unused.startsWith('data:')) ? _unused : qrSrc;
+
+  // display_id からハイフン以降の識別コードを抽出（例: "M26-A" → "A"、"F25-02" → "02"）
+  var rawId    = ld.display_id || '';
+  var idParts  = rawId.split('-');
+  var idCode   = idParts.length >= 2 ? idParts[idParts.length - 1] : rawId;
+
+  var sizeStr  = ld.size_mm   ? ld.size_mm + 'mm' : '';
+  var wtStr    = ld.weight_g  ? ld.weight_g + 'g' : '';
+  var ecStr    = ld.eclosion_date ? '羽化: ' + ld.eclosion_date : '';
+  var locStr   = [ld.locality, ld.generation].filter(Boolean).join(' / ');
+  var parStr   = (ld.paternal_raw ? '♂: ' + ld.paternal_raw.slice(0,22) : '')
+    + (ld.maternal_raw ? (ld.paternal_raw ? '<br>' : '') + '♀: ' + ld.maternal_raw.slice(0,22) : '');
+
   return '<!DOCTYPE html>\n<html><head><meta charset="utf-8">\n<style>\n'
-    + '  @page { size: 62mm 40mm; margin: 0; }\n'
+    + '  @page { size: 62mm 35mm; margin: 0; }\n'
     + '  * { margin:0; padding:0; box-sizing:border-box; }\n'
-    + '  body { width:62mm; height:40mm; font-family:sans-serif; font-size:7px; background:#fff; color:#000; overflow:hidden; }\n'
+    + '  body { width:62mm; height:35mm; font-family:sans-serif; font-size:7px; background:#fff; color:#000; overflow:hidden; }\n'
     + '  @media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }\n'
     + '</style></head><body>\n'
-    + '<div style="width:62mm;height:40mm;display:flex;flex-direction:column">\n'
-    + '  <div style="background:#000;color:#fff;font-size:8px;font-weight:700;padding:1mm 2mm;height:5mm;display:flex;align-items:center;flex-shrink:0">種親 | HerculesOS</div>\n'
-    + '  <div style="display:flex;flex:1;padding:1.5mm 1.5mm;gap:2mm;overflow:hidden">\n'
-    + '    <div style="flex-shrink:0">' + _qrBox(qr, 42) + '</div>\n'
-    + '    <div style="flex:1;min-width:0;overflow:hidden">\n'
-    + '      <div style="font-family:monospace;font-size:9px;font-weight:700;color:#000;margin-bottom:1.5mm;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (ld.display_id||'') + '</div>\n'
-    + '      <div style="font-size:8px;font-weight:700;color:#000;margin-bottom:1mm">'
-    + (ld.sex ? ld.sex + '&nbsp;&nbsp;' : '')
-    + (ld.size_mm ? ld.size_mm + '&nbsp;&nbsp;' : '')
-    + (ld.weight_g ? ld.weight_g : '')
+    + '<div style="width:62mm;height:35mm;display:flex;flex-direction:column">\n'
+
+    // ヘッダー（黒ベタ）
+    + '  <div style="background:#000;color:#fff;font-size:8px;font-weight:700;padding:0.8mm 2mm;height:4.5mm;display:flex;align-items:center;flex-shrink:0">種親 | HerculesOS</div>\n'
+
+    // QR + 情報 + 大きな識別コード
+    + '  <div style="display:flex;flex:1;padding:1mm 1.5mm;gap:0;overflow:hidden">\n'
+
+    // QR
+    + '    <div style="flex-shrink:0;margin-right:1.5mm">' + _qrBox(qr, 38) + '</div>\n'
+
+    // 中央情報
+    + '    <div style="flex:1;min-width:0;padding-left:1.5mm;border-left:2px solid #000;padding-right:1.5mm">\n'
+    + '      <div style="font-family:monospace;font-size:9px;font-weight:700;color:#000;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + rawId + '</div>\n'
+    + '      <div style="font-size:8px;font-weight:700;color:#000;margin-top:1px">'
+    + (ld.sex ? ld.sex + '&nbsp;' : '')
+    + (sizeStr ? sizeStr + '&nbsp;' : '')
+    + (wtStr || '')
     + '</div>\n'
-    + (ld.locality||ld.generation ? '      <div style="font-size:7px;font-weight:700;color:#000">' + [ld.locality,ld.generation].filter(Boolean).join(' / ') + '</div>\n' : '')
-    + (ld.eclosion_date ? '      <div style="font-size:7px;font-weight:700;color:#000">羽化: ' + ld.eclosion_date + '</div>\n' : '')
-    + (ld.paternal_raw ? '      <div style="font-size:6.5px;font-weight:700;color:#000">♂: ' + ld.paternal_raw.slice(0,28) + '</div>\n' : '')
-    + (ld.maternal_raw ? '      <div style="font-size:6.5px;font-weight:700;color:#000">♀: ' + ld.maternal_raw.slice(0,28) + '</div>\n' : '')
+    + (ecStr ? '      <div style="font-size:7px;font-weight:700;color:#000">' + ecStr + '</div>\n' : '')
+    + (locStr ? '      <div style="font-size:6.5px;font-weight:700;color:#000">' + locStr + '</div>\n' : '')
+    + (parStr ? '      <div style="font-size:6px;font-weight:700;color:#000">' + parStr + '</div>\n' : '')
+    + '    </div>\n'
+
+    // 右側: 識別コード巨大バッジ
+    + '    <div style="flex-shrink:0;display:flex;align-items:center;justify-content:center;padding-left:1.5mm;border-left:2px solid #000;min-width:12mm">\n'
+    + '      <div style="border:2.5px solid #000;border-radius:4px;padding:1px 4px;'
+    +             'font-size:' + (idCode.length <= 2 ? '26px' : '18px') + ';font-weight:700;color:#000;line-height:1.1;text-align:center">'
+    + idCode + '</div>\n'
     + '    </div>\n'
     + '  </div>\n'
     + '</div>\n</body></html>';
 }
+
 
 // ── 産卵セットラベル（62mm × 40mm）──────────────────────────────
 function _buildSetLabelHTML(ld, _unused, qrSrc) {
@@ -1302,10 +1336,10 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
     + '<div style="width:62mm;height:70mm;display:flex;flex-direction:column">\n'
 
     // ── ヘッダー（斜線パターン、個別ラベルと差別化）
-    + '  <div style="background:repeating-linear-gradient(45deg,#000 0,#000 3px,#333 3px,#333 10px);'
-    + 'color:#fff;font-size:9px;font-weight:700;padding:0.8mm 2mm;height:5mm;'
-    + 'display:flex;align-items:center;flex-shrink:0">'
-    + 'ユニット | HerculesOS' + saleBadge + '</div>\n'
+    + '  <div style="position:relative;background:#000;color:#fff;font-size:9px;font-weight:700;padding:0.8mm 2mm;height:5mm;display:flex;align-items:center;flex-shrink:0;overflow:hidden">'
+    + '<span style="position:absolute;top:0;left:0;right:0;bottom:0;background:repeating-linear-gradient(45deg,transparent 0,transparent 4px,rgba(255,255,255,0.12) 4px,rgba(255,255,255,0.12) 6px);pointer-events:none"></span>'
+    + '<span style="position:relative;z-index:1">ユニット | HerculesOS' + saleBadge + '</span>'
+    + '</div>\n'
 
     // ── QR + 上部情報
     + '  <div style="display:flex;padding:1mm 1.5mm 0;gap:0;flex-shrink:0">\n'
