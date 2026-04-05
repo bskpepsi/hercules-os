@@ -114,7 +114,7 @@ function _labelDimensions(labelType, targetType) {
   }
   // PAR (種親): 62×35mm  ← 35mm
   if (labelType === 'parent' || targetType === 'PAR') {
-    return { wMm:62, hMm:35, wPx:234, hPx:132, scale:3, label:'62×35mm' };
+    return { wMm:62, hMm:32, wPx:234, hPx:121, scale:3, label:'62×32mm' };
   }
   return { wMm:62, hMm:40, wPx:234, hPx:151, scale:3, label:'62×40mm' };
 }
@@ -783,7 +783,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
   // QR dataURL 取得 → ラベル生成 → PNG化
   (async function _lblRender() {
     try {
-      console.log('[LABEL] qr build start - build:20260408c');
+      console.log('[LABEL] qr build start - build:20260409a');
       console.log('[LABEL] qr target type:', targetType, '| targetId:', targetId);
       console.log('[LABEL] qr rect:', JSON.stringify(QR_RECT_MM));
       console.log('[LABEL] qr target text:', qrText);
@@ -1064,7 +1064,7 @@ function _buildLabelHTML(ld, qrSrc) {
     // ヘッダーバー（LOTは斜線、INDは黒ベタ）
     + (isLot
       ? '  <div style="position:relative;background:#000;color:#fff;font-size:9px;font-weight:700;padding:0.8mm 2mm;height:5mm;display:flex;align-items:center;flex-shrink:0;overflow:hidden">'
-        + '<span style="position:absolute;top:0;left:0;right:0;bottom:0;background:repeating-linear-gradient(45deg,transparent 0,transparent 4px,rgba(255,255,255,0.12) 4px,rgba(255,255,255,0.12) 6px);pointer-events:none"></span>'
+        + '<span style="position:absolute;top:0;left:0;right:0;bottom:0;background:repeating-linear-gradient(45deg,transparent 0,transparent 4px,rgba(255,255,255,0.28) 4px,rgba(255,255,255,0.28) 6px);pointer-events:none"></span>'
         + '<span style="position:relative;z-index:1">' + headerLabel + ' | HerculesOS</span>'
         + '</div>\n'
       : '  <div style="background:#000;color:#fff;font-size:9px;font-weight:700;padding:0.8mm 2mm;height:5mm;display:flex;align-items:center;flex-shrink:0">'
@@ -1110,17 +1110,18 @@ function _buildLabelHTML(ld, qrSrc) {
 
     // LOT: 日付欄のみ、テーブルなし | IND: 2列×4行テーブル
     + (isLot ? (
-      // ロットラベル専用レイアウト（採卵日印字 / 孵化日手書き欄）
+      // ロットラベル専用レイアウト（採卵日印字 / 孵化日手書き欄 垂直揃え）
       '  <div style="border-top:2px solid #000;margin:1mm 1.5mm 0"></div>\n'
-      + '  <div style="padding:1mm 2mm;flex:1;display:flex;flex-direction:column;justify-content:space-evenly">\n'
-      // 採卵日: 印字済みデータ表示
-      + '    <div style="font-size:22.5px;font-weight:700;color:#000;letter-spacing:1px;line-height:1.2">'
-      +       '採卵: ' + (ld.collect_date || (ld.hatch_date ? '' : '&nbsp;&nbsp;&nbsp;&nbsp;/&nbsp;&nbsp;/&nbsp;&nbsp;')) + '</div>\n'
-      // 孵化日: 手書き用スペース区切り （YYYY / MM / DD）
-      + '    <div style="font-size:22.5px;font-weight:700;color:#000;line-height:1.2">'
-      +       '孵化:&nbsp;&nbsp;&nbsp;&nbsp;/&nbsp;&nbsp;&nbsp;&nbsp;/&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</div>\n'
+      + '  <div style="padding:1.5mm 2mm;flex:1;display:flex;flex-direction:column;justify-content:space-evenly">\n'
+      // 採卵日と孵化日を同じフォント・同じ幅でtable配置 → スラッシュ位置が揃う
+      + '    <table style="width:100%;border-collapse:collapse">\n'
+      + '      <tr><td style="font-family:monospace;font-size:21px;font-weight:700;color:#000;white-space:nowrap;letter-spacing:0px">'
+      +           '採卵&nbsp;' + (ld.collect_date ? ld.collect_date.replace(/-/g,'/') : '____/__/__') + '</td></tr>\n'
+      + '      <tr><td style="font-family:monospace;font-size:21px;font-weight:700;color:#000;white-space:nowrap;letter-spacing:0px">'
+      +           '孵化&nbsp;____/__/__</td></tr>\n'
+      + '    </table>\n'
       + '  </div>\n'
-    ) : (
+          ) : (
       // 個別飼育ラベル: 記録表（2列×4行）
       '  <div style="border-top:1.5px solid #000;margin:0.8mm 1.5mm 0"></div>\n'
       + '  <div style="flex:1;padding:0 1.5mm 0.5mm;overflow:hidden">\n'
@@ -1151,54 +1152,64 @@ function _buildLabelHTML(ld, qrSrc) {
 function _buildParentLabelHTML(ld, _unused, qrSrc) {
   var qr = (typeof _unused === 'string' && _unused.startsWith('data:')) ? _unused : qrSrc;
 
-  // display_id からハイフン以降の識別コードを抽出（例: "M26-A" → "A"、"F25-02" → "02"）
-  var rawId    = ld.display_id || '';
-  var idParts  = rawId.split('-');
-  var idCode   = idParts.length >= 2 ? idParts[idParts.length - 1] : rawId;
+  // display_id 末尾コード抽出: "M26-A" → "A", "F26-01" → "01"
+  var rawId   = ld.display_id || '';
+  var idParts = rawId.split('-');
+  var idCode  = idParts.length >= 2 ? idParts[idParts.length - 1] : rawId;
 
-  var sizeStr  = ld.size_mm   ? ld.size_mm + 'mm' : '';
-  var wtStr    = ld.weight_g  ? ld.weight_g + 'g' : '';
-  var ecStr    = ld.eclosion_date ? '羽化: ' + ld.eclosion_date : '';
-  var locStr   = [ld.locality, ld.generation].filter(Boolean).join(' / ');
-  var parStr   = (ld.paternal_raw ? '♂: ' + ld.paternal_raw.slice(0,22) : '')
-    + (ld.maternal_raw ? (ld.paternal_raw ? '<br>' : '') + '♀: ' + ld.maternal_raw.slice(0,22) : '');
+  // ld.size_mm はすでに "68mm" 形式（_lblGenerate で + 'mm' 付与済み）
+  var sizeStr = ld.size_mm  || '';   // "68mm" そのまま（追加mm不要）
+  var wtStr   = ld.weight_g || '';   // "22g" そのまま
+  var ecStr   = ld.eclosion_date ? '羽化: ' + ld.eclosion_date : '';
+  var locStr  = [ld.locality, ld.generation].filter(Boolean).join(' / ');
+  var patStr  = ld.paternal_raw ? '♂: ' + ld.paternal_raw.slice(0,26) : '';
+  var matStr  = ld.maternal_raw ? '♀: ' + ld.maternal_raw.slice(0,26) : '';
+
+  // バッジサイズ: 1文字→34px、2文字→28px、3文字以上→20px
+  var badgeFz = idCode.length <= 1 ? '34px' : idCode.length <= 2 ? '28px' : '20px';
 
   return '<!DOCTYPE html>\n<html><head><meta charset="utf-8">\n<style>\n'
-    + '  @page { size: 62mm 35mm; margin: 0; }\n'
+    + '  @page { size: 62mm 32mm; margin: 0; }\n'
     + '  * { margin:0; padding:0; box-sizing:border-box; }\n'
-    + '  body { width:62mm; height:35mm; font-family:sans-serif; font-size:7px; background:#fff; color:#000; overflow:hidden; }\n'
+    + '  body { width:62mm; height:32mm; font-family:sans-serif; font-size:7px; background:#fff; color:#000; overflow:hidden; }\n'
     + '  @media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }\n'
     + '</style></head><body>\n'
-    + '<div style="width:62mm;height:35mm;display:flex;flex-direction:column">\n'
+    + '<div style="width:62mm;height:32mm;display:flex;flex-direction:column">\n'
 
-    // ヘッダー（黒ベタ）
-    + '  <div style="background:#000;color:#fff;font-size:8px;font-weight:700;padding:0.8mm 2mm;height:4.5mm;display:flex;align-items:center;flex-shrink:0">種親 | HerculesOS</div>\n'
+    // ── ヘッダー（黒ベタ）
+    + '  <div style="background:#000;color:#fff;font-size:8px;font-weight:700;'
+    + 'padding:0.5mm 2mm;height:4mm;display:flex;align-items:center;flex-shrink:0">'
+    + '種親 | HerculesOS</div>\n'
 
-    // QR + 情報 + 大きな識別コード
-    + '  <div style="display:flex;flex:1;padding:1mm 1.5mm;gap:0;overflow:hidden">\n'
+    // ── QR + 情報 + 右バッジ
+    + '  <div style="display:flex;flex:1;padding:0.8mm 1.5mm;gap:0;overflow:hidden">\n'
 
     // QR
-    + '    <div style="flex-shrink:0;margin-right:1.5mm">' + _qrBox(qr, 38) + '</div>\n'
+    + '    <div style="flex-shrink:0;margin-right:1.5mm">' + _qrBox(qr, 34) + '</div>\n'
 
-    // 中央情報
-    + '    <div style="flex:1;min-width:0;padding-left:1.5mm;border-left:2px solid #000;padding-right:1.5mm">\n'
-    + '      <div style="font-family:monospace;font-size:9px;font-weight:700;color:#000;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + rawId + '</div>\n'
+    // 中央情報列
+    + '    <div style="flex:1;min-width:0;padding-left:1.5mm;border-left:1.5px solid #000;overflow:hidden">\n'
+    + '      <div style="font-family:monospace;font-size:9px;font-weight:700;color:#000;'
+    + 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + rawId + '</div>\n'
     + '      <div style="font-size:8px;font-weight:700;color:#000;margin-top:1px">'
-    + (ld.sex ? ld.sex + '&nbsp;' : '')
-    + (sizeStr ? sizeStr + '&nbsp;' : '')
-    + (wtStr || '')
+    + (ld.sex   ? ld.sex   + '&nbsp;' : '')
+    + (sizeStr  ? sizeStr  + '&nbsp;' : '')
+    + (wtStr    ? wtStr    : '')
     + '</div>\n'
-    + (ecStr ? '      <div style="font-size:7px;font-weight:700;color:#000">' + ecStr + '</div>\n' : '')
-    + (locStr ? '      <div style="font-size:6.5px;font-weight:700;color:#000">' + locStr + '</div>\n' : '')
-    + (parStr ? '      <div style="font-size:6px;font-weight:700;color:#000">' + parStr + '</div>\n' : '')
+    + (ecStr   ? '      <div style="font-size:7px;font-weight:700;color:#000">' + ecStr + '</div>\n' : '')
+    + (locStr  ? '      <div style="font-size:6.5px;font-weight:700;color:#000">' + locStr + '</div>\n' : '')
+    + (patStr  ? '      <div style="font-size:6px;font-weight:700;color:#000">' + patStr + '</div>\n' : '')
+    + (matStr  ? '      <div style="font-size:6px;font-weight:700;color:#000">' + matStr + '</div>\n' : '')
     + '    </div>\n'
 
-    // 右側: 識別コード巨大バッジ
-    + '    <div style="flex-shrink:0;display:flex;align-items:center;justify-content:center;padding-left:1.5mm;border-left:2px solid #000;min-width:12mm">\n'
-    + '      <div style="border:2.5px solid #000;border-radius:4px;padding:1px 4px;'
-    +             'font-size:' + (idCode.length <= 2 ? '26px' : '18px') + ';font-weight:700;color:#000;line-height:1.1;text-align:center">'
+    // 右側: 識別コード巨大バッジ（縦線なし、直接配置）
+    + '    <div style="flex-shrink:0;width:13mm;display:flex;align-items:center;justify-content:center;padding-left:1mm">\n'
+    + '      <div style="border:2.5px solid #000;border-radius:4px;padding:2px 3px;'
+    + 'font-size:' + badgeFz + ';font-weight:700;color:#000;line-height:1;text-align:center;'
+    + 'min-width:9mm;display:flex;align-items:center;justify-content:center">'
     + idCode + '</div>\n'
     + '    </div>\n'
+
     + '  </div>\n'
     + '</div>\n</body></html>';
 }
@@ -1337,7 +1348,7 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
 
     // ── ヘッダー（斜線パターン、個別ラベルと差別化）
     + '  <div style="position:relative;background:#000;color:#fff;font-size:9px;font-weight:700;padding:0.8mm 2mm;height:5mm;display:flex;align-items:center;flex-shrink:0;overflow:hidden">'
-    + '<span style="position:absolute;top:0;left:0;right:0;bottom:0;background:repeating-linear-gradient(45deg,transparent 0,transparent 4px,rgba(255,255,255,0.12) 4px,rgba(255,255,255,0.12) 6px);pointer-events:none"></span>'
+    + '<span style="position:absolute;top:0;left:0;right:0;bottom:0;background:repeating-linear-gradient(45deg,transparent 0,transparent 4px,rgba(255,255,255,0.28) 4px,rgba(255,255,255,0.28) 6px);pointer-events:none"></span>'
     + '<span style="position:relative;z-index:1">ユニット | HerculesOS' + saleBadge + '</span>'
     + '</div>\n'
 
