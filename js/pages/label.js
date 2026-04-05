@@ -44,7 +44,7 @@ function _stageCheckboxRow(stageCode) {
 
 // ── QR位置定義（HTML・PNG両方が参照する単一矩形） ────────────────
 // 62mm × 70mm ラベル基準。他サイズは _qrRectForDims() が補正する。
-var QR_RECT_MM = { xMm: 3.06, yMm: 7.56, sizeMm: 11.67 }; // -0.5mm left from 20260405b
+var QR_RECT_MM = { xMm: 3.06, yMm: 9.06, sizeMm: 11.67 }; // yMm+0.5mm 20260410a (final center)
 //   xMm: 左パディング(1.5mm) + _qrBox内padding(4px/3.77≈1.06mm) = 2.56mm
 //   yMm: ヘッダー(4.5mm) + 上パディング(1mm) + _qrBox内padding(1.06mm) = 6.56mm
 //   sizeMm: _qrBoxのimg 44px → 44/(234/62) ≈ 11.67mm
@@ -366,9 +366,10 @@ Pages.labelGen = function (params = {}) {
                 ${l.display_id} ${typeof stageLabel==='function'?stageLabel(l.stage):l.stage||''} (${l.count}頭)</option>`).join('')}
             </select>`}
         </div>
-        <!-- 種別選択 -->
+        <!-- 種別選択（複数選択肢がある場合のみ表示） -->
+        ${LABEL_TYPE_DEFS.filter(t => t.target === targetType).length > 1 ? `
         <div class="card">
-          <div class="card-title">ラベル種別</div>
+          <div class="card-title" style="font-size:.8rem">ラベル種別</div>
           <div class="filter-bar">
             ${LABEL_TYPE_DEFS.filter(t => t.target === targetType).map(t =>
               `<button class="pill ${labelType===t.code?'active':''}"
@@ -379,6 +380,7 @@ Pages.labelGen = function (params = {}) {
             ${LABEL_TYPE_DEFS.find(t => t.code === labelType)?.desc || ''}
           </div>
         </div>` : ''}
+        ` : ''}
 
         <!-- プレビューエリア -->
         <div class="card" id="lbl-preview-card">
@@ -648,13 +650,16 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
     } else {
       console.log('[LABEL] branch SET - targetId:', targetId);
       const set = (Store.getDB('pairings')||[]).find(p => p.set_id===targetId) || {};
+      const _setLine = set.line_id ? (Store.getLine(set.line_id) || {}) : {};
       ld = {
         qr_text:       `SET:${set.set_id || targetId}`,
         display_id:    set.display_id   || set.set_name || targetId,
+        line_code:     set.line_code || _setLine.line_code || _setLine.display_id || '',
         father_info:   set.father_display_name || '',
         mother_info:   set.mother_display_name || '',
+        father_size:   set.father_size_mm ? set.father_size_mm + 'mm' : '',
+        mother_size:   set.mother_size_mm ? set.mother_size_mm + 'mm' : '',
         pairing_start: set.pairing_start || '',
-        set_start:     set.set_start     || '',
         label_type:    'set',
       };
     }
@@ -783,7 +788,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
   // QR dataURL 取得 → ラベル生成 → PNG化
   (async function _lblRender() {
     try {
-      console.log('[LABEL] qr build start - build:20260409a');
+      console.log('[LABEL] qr build start - build:20260410a');
       console.log('[LABEL] qr target type:', targetType, '| targetId:', targetId);
       console.log('[LABEL] qr rect:', JSON.stringify(QR_RECT_MM));
       console.log('[LABEL] qr target text:', qrText);
@@ -1110,16 +1115,14 @@ function _buildLabelHTML(ld, qrSrc) {
 
     // LOT: 日付欄のみ、テーブルなし | IND: 2列×4行テーブル
     + (isLot ? (
-      // ロットラベル専用レイアウト（採卵日印字 / 孵化日手書き欄 垂直揃え）
+      // ロットラベル専用レイアウト（採卵日/孵化日 モノスペース完全整列）
       '  <div style="border-top:2px solid #000;margin:1mm 1.5mm 0"></div>\n'
       + '  <div style="padding:1.5mm 2mm;flex:1;display:flex;flex-direction:column;justify-content:space-evenly">\n'
-      // 採卵日と孵化日を同じフォント・同じ幅でtable配置 → スラッシュ位置が揃う
-      + '    <table style="width:100%;border-collapse:collapse">\n'
-      + '      <tr><td style="font-family:monospace;font-size:21px;font-weight:700;color:#000;white-space:nowrap;letter-spacing:0px">'
-      +           '採卵&nbsp;' + (ld.collect_date ? ld.collect_date.replace(/-/g,'/') : '____/__/__') + '</td></tr>\n'
-      + '      <tr><td style="font-family:monospace;font-size:21px;font-weight:700;color:#000;white-space:nowrap;letter-spacing:0px">'
-      +           '孵化&nbsp;____/__/__</td></tr>\n'
-      + '    </table>\n'
+      // pre タグで等幅フォント確実に適用 → / の位置が完全一致
+      + '    <pre style="font-family:monospace;font-size:20px;font-weight:700;color:#000;margin:0 0 4px;line-height:1.4;white-space:pre">'
+      +           '採 ' + (ld.collect_date ? ld.collect_date.replace(/-/g,'/') : '____/__/__') + '</pre>\n'
+      + '    <pre style="font-family:monospace;font-size:20px;font-weight:700;color:#000;margin:0;line-height:1.4;white-space:pre">'
+      +           '孵 ____/__/__</pre>\n'
       + '  </div>\n'
           ) : (
       // 個別飼育ラベル: 記録表（2列×4行）
@@ -1188,7 +1191,7 @@ function _buildParentLabelHTML(ld, _unused, qrSrc) {
     + '    <div style="flex-shrink:0;margin-right:1.5mm">' + _qrBox(qr, 34) + '</div>\n'
 
     // 中央情報列
-    + '    <div style="flex:1;min-width:0;padding-left:1.5mm;border-left:1.5px solid #000;overflow:hidden">\n'
+    + '    <div style="flex:1;min-width:0;padding-left:1.5mm;border-left:1.5px solid #000;padding-right:0.5mm;overflow:hidden">\n'
     + '      <div style="font-family:monospace;font-size:9px;font-weight:700;color:#000;'
     + 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + rawId + '</div>\n'
     + '      <div style="font-size:8px;font-weight:700;color:#000;margin-top:1px">'
@@ -1203,7 +1206,7 @@ function _buildParentLabelHTML(ld, _unused, qrSrc) {
     + '    </div>\n'
 
     // 右側: 識別コード巨大バッジ（縦線なし、直接配置）
-    + '    <div style="flex-shrink:0;width:13mm;display:flex;align-items:center;justify-content:center;padding-left:1mm">\n'
+    + '    <div style="flex-shrink:0;width:13mm;display:flex;align-items:center;justify-content:center">\n'
     + '      <div style="border:2.5px solid #000;border-radius:4px;padding:2px 3px;'
     + 'font-size:' + badgeFz + ';font-weight:700;color:#000;line-height:1;text-align:center;'
     + 'min-width:9mm;display:flex;align-items:center;justify-content:center">'
@@ -1218,6 +1221,23 @@ function _buildParentLabelHTML(ld, _unused, qrSrc) {
 // ── 産卵セットラベル（62mm × 40mm）──────────────────────────────
 function _buildSetLabelHTML(ld, _unused, qrSrc) {
   var qr = (typeof _unused === 'string' && _unused.startsWith('data:')) ? _unused : qrSrc;
+
+  // ラインバッジ: line_code または display_id から抽出
+  var lineCode  = ld.line_code || '';
+  var rawId     = ld.display_id || '';
+  // display_idが "HM2026-B1-S01" 形式なら line_code は "B1"
+  if (!lineCode && rawId.split('-').length >= 3) {
+    lineCode = rawId.split('-')[1] || '';
+  }
+  // バッジサイズ: 1文字→32px、2文字→26px、3文字以上→18px
+  var badgeFz = lineCode.length <= 1 ? '32px' : lineCode.length <= 2 ? '26px' : '18px';
+
+  var fInfo = ld.father_info || '';
+  var mInfo = ld.mother_info || '';
+  // father_info / mother_info にサイズが含まれていない場合は別フィールドから補完
+  var fSize = ld.father_size || '';
+  var mSize = ld.mother_size || '';
+
   return '<!DOCTYPE html>\n<html><head><meta charset="utf-8">\n<style>\n'
     + '  @page { size: 62mm 40mm; margin: 0; }\n'
     + '  * { margin:0; padding:0; box-sizing:border-box; }\n'
@@ -1225,20 +1245,55 @@ function _buildSetLabelHTML(ld, _unused, qrSrc) {
     + '  @media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }\n'
     + '</style></head><body>\n'
     + '<div style="width:62mm;height:40mm;display:flex;flex-direction:column">\n'
-    + '  <div style="background:#000;color:#fff;font-size:8px;font-weight:700;padding:1mm 2mm;height:5mm;display:flex;align-items:center;flex-shrink:0">産卵セット | HerculesOS</div>\n'
-    + '  <div style="display:flex;flex:1;padding:1.5mm 1.5mm;gap:2mm;overflow:hidden">\n'
-    + '    <div style="flex:1;min-width:0">\n'
-    + '      <div style="font-family:monospace;font-size:9px;font-weight:700;color:#000;margin-bottom:1.5mm;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (ld.display_id||'') + '</div>\n'
-    + (ld.father_info ? '      <div style="font-size:7.5px;font-weight:700;color:#000">♂ ' + ld.father_info + '</div>\n' : '')
-    + (ld.mother_info ? '      <div style="font-size:7.5px;font-weight:700;color:#000">♀ ' + ld.mother_info + '</div>\n' : '')
-    + (ld.pairing_start ? '      <div style="font-size:7px;font-weight:700;color:#000;margin-top:1mm">交尾開始: ' + ld.pairing_start + '</div>\n' : '')
-    + (ld.set_start ? '      <div style="font-size:7px;font-weight:700;color:#000">産卵開始: ' + ld.set_start + '</div>\n' : '')
-    + '      <div style="font-size:7px;font-weight:700;color:#000;margin-top:1.5mm;border-top:1.5px solid #000;padding-top:1mm">採卵数: _______ / 孵化: _______</div>\n'
+
+    // ── ヘッダー（黒ベタ）
+    + '  <div style="background:#000;color:#fff;font-size:8px;font-weight:700;'
+    + 'padding:0.8mm 2mm;height:4.5mm;display:flex;align-items:center;flex-shrink:0">'
+    + '産卵セット | HerculesOS</div>\n'
+
+    // ── QR + 情報 + ラインバッジ
+    + '  <div style="display:flex;flex:1;padding:1mm 1.5mm;gap:0;overflow:hidden">\n'
+
+    // QR
+    + '    <div style="flex-shrink:0;margin-right:1.5mm">' + _qrBox(qr, 40) + '</div>\n'
+
+    // 中央情報
+    + '    <div style="flex:1;min-width:0;padding-left:1.5mm;border-left:1.5px solid #000;overflow:hidden">\n'
+    + '      <div style="font-family:monospace;font-size:9px;font-weight:700;color:#000;'
+    + 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + rawId + '</div>\n'
+
+    // ペアリング日
+    + (ld.pairing_start
+      ? '      <div style="font-size:7.5px;font-weight:700;color:#000;margin-top:1px">ペアリング: ' + ld.pairing_start + '</div>\n'
+      : '')
+
+    // 親情報: ♂
+    + (fInfo
+      ? '      <div style="font-size:7px;font-weight:700;color:#000;margin-top:2px">'
+        + '♂ ' + fInfo + (fSize ? '&nbsp;' + fSize : '') + '</div>\n'
+      : '')
+    // 親情報: ♀
+    + (mInfo
+      ? '      <div style="font-size:7px;font-weight:700;color:#000;">'
+        + '♀ ' + mInfo + (mSize ? '&nbsp;' + mSize : '') + '</div>\n'
+      : '')
+
     + '    </div>\n'
-    + '    <div style="flex-shrink:0">' + _qrBox(qr, 42) + '</div>\n'
+
+    // 右側: ラインバッジ（縦線なし）
+    + '    <div style="flex-shrink:0;width:12mm;display:flex;align-items:center;justify-content:center">\n'
+    + (lineCode
+      ? '      <div style="border:2.5px solid #000;border-radius:4px;padding:2px 3px;'
+        + 'font-size:' + badgeFz + ';font-weight:700;color:#000;line-height:1;'
+        + 'text-align:center;min-width:9mm;display:flex;align-items:center;justify-content:center">'
+        + lineCode + '</div>\n'
+      : '')
+    + '    </div>\n'
+
     + '  </div>\n'
     + '</div>\n</body></html>';
 }
+
 
 // ── T1飼育ユニットラベル（62mm × 70mm）──────────────────────────
 function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
