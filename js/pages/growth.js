@@ -122,9 +122,10 @@ Pages.growthRecord = function (params = {}) {
   _loadEntityDefaults();
 
   function render() {
-    // ── 再描画前に入力中の値を保存（区分/容器等の選択でリセットされるのを防ぐ） ──
+    // ── 再描画前に入力中の値・スクロール位置を保存 ────────────────
     const _savedWeight = (document.getElementById('gr-weight')?.value || '').trim();
     const _savedDate   = (document.getElementById('gr-date')?.value   || '').trim();
+    const _savedScroll = window.scrollY || document.documentElement.scrollTop || 0;
 
     const isLot = (targetType === 'LOT');  // シンプルに直接評価
 
@@ -218,7 +219,7 @@ Pages.growthRecord = function (params = {}) {
               style="flex:1;min-width:0;font-size:2.1rem;font-weight:700;text-align:center;
                 border:2px solid var(--gold);border-radius:10px;padding:8px 0;
                 background:var(--bg2);color:var(--green);box-sizing:border-box"
-              oninput="Pages._grLiveUpdate(this.value,${prevWeight})">
+              oninput="Pages._grLiveUpdate(this.value,${prevWeight},'${prevDate}')">
             <button class="btn btn-ghost" style="width:36px;min-width:36px;max-width:36px;min-height:52px;font-size:.78rem;font-weight:700;border-radius:8px;padding:0;flex-shrink:0"
               id="gr-adj-p1" data-delta="1">+1</button>
             <button class="btn btn-ghost" style="width:42px;min-width:42px;max-width:42px;min-height:52px;font-size:.78rem;font-weight:700;border-radius:8px;padding:0;flex-shrink:0"
@@ -376,18 +377,24 @@ Pages.growthRecord = function (params = {}) {
         </button>
       </div>`;
 
-    // ── 保存した値を復元（区分/容器ボタン選択後の再描画後）─────────
+    // ── 保存した値・スクロール位置を復元 ─────────────────────────
     (function() {
       if (_savedWeight) {
         var _wEl = document.getElementById('gr-weight');
         if (_wEl) {
           _wEl.value = _savedWeight;
-          Pages._grLiveUpdate(_savedWeight, prevWeight);
+          Pages._grLiveUpdate(_savedWeight, prevWeight, prevDate);
         }
       }
       if (_savedDate) {
         var _dEl = document.getElementById('gr-date');
         if (_dEl) _dEl.value = _savedDate;
+      }
+      // スクロール位置を復元（区分/容器ボタン押下時の先頭戻り防止）
+      if (_savedScroll > 10) {
+        requestAnimationFrame(function() {
+          window.scrollTo(0, _savedScroll);
+        });
       }
     })();
 
@@ -474,7 +481,7 @@ Pages.growthRecord = function (params = {}) {
     var cur  = parseFloat(el.value) || 0;
     var next = Math.max(0, Math.round((cur + delta) * 10) / 10);
     el.value = next;
-    Pages._grLiveUpdate(String(next), _grPrevWeightCache);
+    Pages._grLiveUpdate(String(next), _grPrevWeightCache, _grPrevDateCache || '');
   };
   Pages._grAdjStart = function(delta) {
     // 既存タイマーをクリア（二重起動防止）
@@ -490,10 +497,11 @@ Pages.growthRecord = function (params = {}) {
 
   // ── リアルタイム前回比 ────────────────────────────────────────
   var _grPrevWeightCache = null;
+  var _grPrevDateCache   = null;
   var _initPrev = _getPrevRecord();
   _grPrevWeightCache = _initPrev ? +_initPrev.weight_g : null;
 
-  Pages._grLiveUpdate = function(val, prev) {
+  Pages._grLiveUpdate = function(val, prev, prevDateStr) {
     var el = document.getElementById('gr-delta');
     if (!el) return;
     var cur = parseFloat(val);
@@ -503,7 +511,26 @@ Pages.growthRecord = function (params = {}) {
         : '<span style="color:var(--text3)">（初回記録）</span>';
       return;
     }
-    el.innerHTML = _deltaHtml(cur, prev);
+    var html = _deltaHtml(cur, prev);
+    // ── 1日あたり増加量を計算 ──
+    if (prev !== null && prevDateStr) {
+      try {
+        var _grDateEl = document.getElementById('gr-date');
+        var _curDateStr = _grDateEl ? _grDateEl.value : '';
+        if (!_curDateStr) _curDateStr = new Date().toISOString().split('T')[0];
+        var _pd = new Date(prevDateStr.replace(/\//g, '-'));
+        var _cd = new Date(_curDateStr.replace(/\//g, '-'));
+        var _days = Math.round((_cd - _pd) / 86400000);
+        if (_days > 0) {
+          var _diff = Math.round((cur - prev) * 10) / 10;
+          var _perDay = Math.round(_diff / _days * 10) / 10;
+          var _pdColor = _perDay >= 0.5 ? 'var(--green)' : _perDay < 0 ? 'var(--red,#e05050)' : 'var(--text3)';
+          html += '<div style="font-size:.75rem;color:' + _pdColor + ';margin-top:4px">'
+            + _days + '日間 → <b>' + (_perDay >= 0 ? '+' : '') + _perDay + 'g/日</b></div>';
+        }
+      } catch(_e) {}
+    }
+    el.innerHTML = html;
   };
 
   // ── 写真選択 ─────────────────────────────────────────────────

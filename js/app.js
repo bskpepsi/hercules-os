@@ -438,7 +438,18 @@ const UI = {
       const dStr  = delta !== null
         ? `<span class="delta ${delta>=0?'pos':'neg'}">${delta>=0?'+':''}${delta.toFixed(1)}</span>`
         : '—';
-      const recAge  = r.age_days ? Store.formatRecordAge(r.age_days) : '';
+      // age_days: GASからなければ前回記録との日数差を計算
+      let _recAgeDays = r.age_days || null;
+      if (!_recAgeDays && i > 0) {
+        const _prevRec = wts[i-1];
+        if (_prevRec && _prevRec.record_date && r.record_date) {
+          const _d1 = new Date(String(_prevRec.record_date).replace(/\//g,'-'));
+          const _d2 = new Date(String(r.record_date).replace(/\//g,'-'));
+          const _dayDiff = Math.round((_d2 - _d1) / 86400000);
+          if (_dayDiff > 0) _recAgeDays = '前回+' + _dayDiff + '日';
+        }
+      }
+      const recAge = _recAgeDays ? (typeof _recAgeDays === 'number' ? Store.formatRecordAge(_recAgeDays) : String(_recAgeDays)) : '';
       const contStr = r.container  || '';
       const exchStr = r.exchange_type === 'FULL'    ? '全交換'
                     : r.exchange_type === 'PARTIAL'  ? '追加'
