@@ -122,6 +122,10 @@ Pages.growthRecord = function (params = {}) {
   _loadEntityDefaults();
 
   function render() {
+    // ── 再描画前に入力中の値を保存（区分/容器等の選択でリセットされるのを防ぐ） ──
+    const _savedWeight = (document.getElementById('gr-weight')?.value || '').trim();
+    const _savedDate   = (document.getElementById('gr-date')?.value   || '').trim();
+
     const isLot = (targetType === 'LOT');  // シンプルに直接評価
 
     const { age, stage, sex, count, lineDisp } = _getEntityInfo();
@@ -371,6 +375,21 @@ Pages.growthRecord = function (params = {}) {
           💾 保存して次へ
         </button>
       </div>`;
+
+    // ── 保存した値を復元（区分/容器ボタン選択後の再描画後）─────────
+    (function() {
+      if (_savedWeight) {
+        var _wEl = document.getElementById('gr-weight');
+        if (_wEl) {
+          _wEl.value = _savedWeight;
+          Pages._grLiveUpdate(_savedWeight, prevWeight);
+        }
+      }
+      if (_savedDate) {
+        var _dEl = document.getElementById('gr-date');
+        if (_dEl) _dEl.value = _savedDate;
+      }
+    })();
 
     // ── ±ボタン: pointerdown/pointerup のみ（click廃止で二重発火防止） ──
     ['gr-adj-m10','gr-adj-m1','gr-adj-p1','gr-adj-p10'].forEach(function(btnId) {

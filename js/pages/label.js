@@ -1135,10 +1135,10 @@ function _buildLabelHTML(ld, qrSrc) {
       '  <div style="border-top:2px solid #000;margin:1mm 1.5mm 0"></div>\n'
       + '  <div style="padding:1.5mm 2mm;flex:1;display:flex;flex-direction:column;justify-content:space-evenly">\n'
       // pre タグで等幅フォント確実に適用 → / の位置が完全一致
-      + '    <pre style="font-family:monospace;font-size:20px;font-weight:700;color:#000;margin:0 0 4px;line-height:1.4;white-space:pre">'
-      +           '採 ' + (ld.collect_date ? ld.collect_date.replace(/-/g,'/') : '____/__/__') + '</pre>\n'
-      + '    <pre style="font-family:monospace;font-size:20px;font-weight:700;color:#000;margin:0;line-height:1.4;white-space:pre">'
-      +           '孵 ____/__/__</pre>\n'
+      + '    <pre style="font-family:monospace;font-size:17px;font-weight:700;color:#000;margin:0 0 4px;line-height:1.5;white-space:pre">'
+      +           '採卵日  ' + (ld.collect_date ? ld.collect_date.replace(/-/g,'/') : '____/__/__') + '</pre>\n'
+      + '    <pre style="font-family:monospace;font-size:17px;font-weight:700;color:#000;margin:0;line-height:1.5;white-space:pre">'
+      +           '孵化日  ____/__/__</pre>\n'
       + '  </div>\n'
           ) : (
       // 個別飼育ラベル: 記録表（2列×4行）
