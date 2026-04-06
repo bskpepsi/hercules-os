@@ -243,9 +243,8 @@ function _qrNavigate(mode, res, qrText) {
       }
     } else if (sub === 't2') {
       if (res.entity_type === 'BU') {
-        // BU ID をフォールバックで取得（APIレスポンスが不完全でも対応）
         var _buIdT2 = ent.display_id || ent.unit_id || _extractIdFromQr('BU');
-        console.log('[QR] T2 BU navigate - id:', _buIdT2, '/ entity:', ent);
+        console.log('[QR] T2 BU navigate - id:', _buIdT2);
         if (_buIdT2 && Pages.t2SessionStart) {
           Pages.t2SessionStart(_buIdT2);
         } else if (!_buIdT2) {
@@ -253,10 +252,19 @@ function _qrNavigate(mode, res, qrText) {
         } else {
           UI.toast('T2移行セッションが利用できません', 'error');
         }
+      } else if (res.entity_type === 'IND') {
+        // 個体QRスキャン → 個体1頭を対象にT2セッション開始
+        var _indIdT2 = ent.ind_id || ent.display_id || _extractIdFromQr('IND');
+        console.log('[QR] T2 IND navigate - id:', _indIdT2);
+        if (_indIdT2 && Pages.t2SessionStartFromInd) {
+          Pages.t2SessionStartFromInd(_indIdT2);
+        } else {
+          UI.toast('T2移行: 個体または BUラベルを読み取ってください', 'error', 3000);
+        }
       } else if (res.entity_type === 'LOT') {
-        UI.toast('T2移行は BU（飼育ユニット）のQRを読んでください', 'error', 3000);
+        UI.toast('T2移行は BU（飼育ユニット）または個体(IND)のQRを読んでください', 'error', 3000);
       } else {
-        UI.toast('T2移行: BUラベル（BU:...）を読み取ってください', 'error', 3000);
+        UI.toast('T2移行: BU/INDラベルを読み取ってください', 'error', 3000);
       }
     } else if (sub === 't3') {
       if (res.entity_type === 'BU') {
@@ -269,10 +277,18 @@ function _qrNavigate(mode, res, qrText) {
         } else {
           UI.toast('T3移行セッションが利用できません', 'error');
         }
+      } else if (res.entity_type === 'IND') {
+        var _indIdT3 = ent.ind_id || ent.display_id || _extractIdFromQr('IND');
+        console.log('[QR] T3 IND navigate - id:', _indIdT3);
+        if (_indIdT3 && Pages.t3SessionStartFromInd) {
+          Pages.t3SessionStartFromInd(_indIdT3);
+        } else {
+          UI.toast('T3移行: 個体または BUラベルを読み取ってください', 'error', 3000);
+        }
       } else if (res.entity_type === 'LOT') {
-        UI.toast('T3移行は BU（飼育ユニット）のQRを読んでください', 'error', 3000);
+        UI.toast('T3移行は BU（飼育ユニット）または個体(IND)のQRを読んでください', 'error', 3000);
       } else {
-        UI.toast('T3移行: BUラベル（BU:...）を読み取ってください', 'error', 3000);
+        UI.toast('T3移行: BU/INDラベルを読み取ってください', 'error', 3000);
       }
     } else {
       UI.toast(sub.toUpperCase() + '移行は準備中です', 'info', 2000);

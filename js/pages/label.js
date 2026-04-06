@@ -671,10 +671,10 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         qr_text:       `SET:${set.set_id || targetId}`,
         display_id:    set.display_id   || set.set_name || targetId,
         line_code:     set.line_code || _setLine.line_code || _setLine.display_id || '',
-        father_info:   _setFather.parent_display_id || set.father_display_name || '---',
-        mother_info:   _setMother.parent_display_id || set.mother_display_name || '---',
-        father_size:   _setFather.size_mm ? (_setFather.size_mm + 'mm') : (set.father_size_mm ? set.father_size_mm + 'mm' : ''),
-        mother_size:   _setMother.size_mm ? (_setMother.size_mm + 'mm') : (set.mother_size_mm ? set.mother_size_mm + 'mm' : ''),
+        father_info:   _setFather.parent_display_id || _setFather.display_name || set.father_display_name || (set.father_par_id ? '（ID:'+set.father_par_id+'）' : '---'),
+        mother_info:   _setMother.parent_display_id || _setMother.display_name || set.mother_display_name || (set.mother_par_id ? '（ID:'+set.mother_par_id+'）' : '---'),
+        father_size:   _setFather.size_mm ? String(_setFather.size_mm).replace(/mm$/,'') + 'mm' : (set.father_size_mm ? set.father_size_mm + 'mm' : ''),
+        mother_size:   _setMother.size_mm ? String(_setMother.size_mm).replace(/mm$/,'') + 'mm' : (set.mother_size_mm ? set.mother_size_mm + 'mm' : ''),
         pairing_start: set.pairing_start || '',
         label_type:    'set',
       };
@@ -804,7 +804,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
   // QR dataURL 取得 → ラベル生成 → PNG化
   (async function _lblRender() {
     try {
-      console.log('[LABEL] qr build start - build:20260412b');
+      console.log('[LABEL] qr build start - build:20260413b');
       console.log('[LABEL] qr target type:', targetType, '| targetId:', targetId);
       console.log('[LABEL] qr rect:', JSON.stringify(QR_RECT_MM));
       console.log('[LABEL] qr target text:', qrText);
@@ -1244,25 +1244,26 @@ function _buildSetLabelHTML(ld, _unused, qrSrc) {
 
   // ラインバッジ: line_code を優先、なければ display_id からパース
     // ── ラインバッジ ─────────────────────────────────────────────
-  // SET display_id は "SET-YYYYMM-NN" 形式のため、ライン識別子は
-  // line_code フィールド（Storeから取得済み）を使う
-  // line_code が長い ("HM2026A1" etc) 場合は先頭 prefix を除去する
-  var rawId    = ld.display_id || '';
-  var _rawLC   = ld.line_code  || '';
+  // 優先順位: 1) ld.line_code, 2) display_idから抽出
+  // SET display_id = "SET-YYYYMM-NN" は抽出に使わない
+  var rawId = ld.display_id || '';
+  var _rawLC = ld.line_code || '';
+
+  // ライン短コード抽出: "HM2026A1" → "A1", "HM2026-B1-S01" → "B1"
   function _shortCode(s) {
     if (!s) return '';
-    // "SET-YYYYMM-NN" → skip entirely (not a line code)
-    if (s.match(/^SET-/i)) return '';
-    // "HM2026-B1-S01" → split → p[1] = "B1"
-    var p = s.split('-').filter(function(x){ return x && x.length > 0; });
-    if (p.length >= 3) return p[1];
-    // "HM2026A1" → strip prefix letters+4digits → "A1"
-    if (p.length <= 1) return s.replace(/^[A-Za-z]{1,3}[0-9]{4}/, '');
-    // "HM2026A1-S01" → p[0]="HM2026A1" → strip
-    return p[0].replace(/^[A-Za-z]{1,3}[0-9]{4}/, '');
+    if (/^SET-/i.test(s)) return '';      // SET形式は無視
+    var p = s.split('-').filter(Boolean);
+    if (p.length >= 3) return p[1];       // "HM2026-B1-S01" → "B1"
+    if (p.length === 2) {
+      var stripped = p[0].replace(/^[A-Za-z]{1,3}[0-9]{4}/, '');
+      return stripped || '';              // "HM2026A1" → "A1"
+    }
+    return s.replace(/^[A-Za-z]{1,3}[0-9]{4}/, '');
   }
-  // line_code を優先使用（display_idはSET形式なので不適）
-  var lineCode = _shortCode(_rawLC) || _shortCode(rawId) || '';
+
+  // line_code が有効ならそれを優先使用（display_idは使わない）
+  var lineCode = _shortCode(_rawLC) || '';
   // バッジサイズ: 1文字→32px、2文字→26px、3文字以上→18px
   var badgeFz = lineCode.length <= 1 ? '32px' : lineCode.length <= 2 ? '26px' : '18px';
 

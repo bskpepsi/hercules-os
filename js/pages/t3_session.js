@@ -55,14 +55,75 @@ Pages.t3SessionStart = async function (unitDisplayId) {
     hatch_date:  unit.hatch_date  || '',
     head_count:  unit.head_count  || members.length,
     origin_lots: originLotDisplayIds,
-    mx_done:     false,  // マット交換実施フラグ
+    mx_done:     false,
     members:     members,
     saving:      false,
+    _fromInd:    false,
   };
 
   _saveT3SessionToStorage();
   routeTo('t3-session');
 };
+
+
+// ────────────────────────────────────────────────────────────────
+// 個体QRスキャンからのT3セッション開始
+// ────────────────────────────────────────────────────────────────
+Pages.t3SessionStartFromInd = async function (indIdOrDisplayId) {
+  console.log('[T3] t3SessionStartFromInd - id:', indIdOrDisplayId);
+
+  const inds = Store.getDB('individuals') || [];
+  const ind = inds.find(i => i.ind_id === indIdOrDisplayId || i.display_id === indIdOrDisplayId)
+    || (typeof Store.getIndividual === 'function' ? Store.getIndividual(indIdOrDisplayId) : null);
+
+  if (!ind) {
+    UI.toast('個体が見つかりません: ' + indIdOrDisplayId, 'error'); return;
+  }
+
+  // 成長記録から最新体重を取得
+  const records = (typeof Store.getGrowthRecords === 'function')
+    ? Store.getGrowthRecords(ind.ind_id) : [];
+  var t2Weight = null;
+  if (records && records.length > 0) {
+    const latest = records.filter(r => r.weight_g > 0)
+      .sort((a, b) => String(b.record_date).localeCompare(String(a.record_date)))[0];
+    if (latest) t2Weight = latest.weight_g;
+  }
+
+  const members = [{
+    unit_slot_no:  1,
+    lot_id:        ind.lot_id        || '',
+    lot_item_no:   ind.lot_item_no   || '',
+    lot_display_id:ind.lot_display_id || ind.lot_id || '',
+    size_category: ind.size_category  || '',
+    t2_weight_g:   t2Weight,
+    weight_g:      null,
+    sex:           ind.sex || '不明',
+    mx_done:       false,
+    status:        'normal',
+    decision:      null,
+    memo:          '',
+  }];
+
+  window._t3Session = {
+    unit_id:     ind.ind_id,
+    display_id:  ind.display_id || indIdOrDisplayId,
+    line_id:     ind.line_id    || '',
+    stage_phase: ind.current_stage || 'T2',
+    hatch_date:  ind.hatch_date   || '',
+    head_count:  1,
+    origin_lots: ind.lot_id ? [ind.lot_id] : [],
+    mx_done:     false,
+    members,
+    saving:      false,
+    _fromInd:    true,
+    ind_id:      ind.ind_id,
+  };
+
+  _saveT3SessionToStorage();
+  routeTo('t3-session');
+};
+
 
 // ────────────────────────────────────────────────────────────────
 // メンバー構築
@@ -615,7 +676,8 @@ Pages._t3SessionSave = async function () {
       session_date:           today,
       source_unit_id:         s.unit_id,
       source_unit_display_id: s.display_id,
-      mx_done:                s.mx_done,
+      mx_done:                s.mx_done || false,
+      from_individual:        s._fromInd || false,
       decisions: s.members.map(m => ({
         unit_slot_no:  m.unit_slot_no,
         decision:      m.decision,

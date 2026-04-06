@@ -50,13 +50,75 @@ Pages.t2SessionStart = async function (unitDisplayId) {
     hatch_date: unit.hatch_date  || '',
     head_count: unit.head_count  || members.length,
     origin_lots:originLotDisplayIds,
+    mx_done:    false,
     members:    members,
     saving:     false,
+    _fromInd:   false,
   };
 
   _saveT2SessionToStorage();
   routeTo('t2-session');
 };
+
+
+// ────────────────────────────────────────────────────────────────
+// 個体QRスキャンからのT2セッション開始
+// ────────────────────────────────────────────────────────────────
+Pages.t2SessionStartFromInd = async function (indIdOrDisplayId) {
+  console.log('[T2] t2SessionStartFromInd - id:', indIdOrDisplayId);
+
+  // Store から個体を取得
+  const inds = Store.getDB('individuals') || [];
+  const ind = inds.find(i => i.ind_id === indIdOrDisplayId || i.display_id === indIdOrDisplayId)
+    || Store.getIndividual(indIdOrDisplayId);
+
+  if (!ind) {
+    UI.toast('個体が見つかりません: ' + indIdOrDisplayId, 'error'); return;
+  }
+
+  // 個体1頭を「1頭ユニット」として擬似セッション構築
+  const members = [{
+    unit_slot_no:  1,
+    lot_id:        ind.lot_id        || '',
+    lot_item_no:   ind.lot_item_no   || '',
+    lot_display_id:ind.lot_display_id || ind.lot_id || '',
+    size_category: ind.size_category  || '',
+    t1_weight_g:   null,
+    weight_g:      null,
+    sex:           ind.sex || '不明',
+    status:        'normal',
+    decision:      null,
+    memo:          '',
+  }];
+
+  // 成長記録から最新体重を取得
+  const records = (typeof Store.getGrowthRecords === 'function')
+    ? Store.getGrowthRecords(ind.ind_id) : [];
+  if (records && records.length > 0) {
+    const latest = records.filter(r => r.weight_g > 0)
+      .sort((a, b) => String(b.record_date).localeCompare(String(a.record_date)))[0];
+    if (latest) members[0].t1_weight_g = latest.weight_g;
+  }
+
+  window._t2Session = {
+    unit_id:     ind.ind_id,
+    display_id:  ind.display_id || indIdOrDisplayId,
+    line_id:     ind.line_id    || '',
+    stage_phase: ind.current_stage || 'T1',
+    hatch_date:  ind.hatch_date   || '',
+    head_count:  1,
+    origin_lots: ind.lot_id ? [ind.lot_id] : [],
+    mx_done:     false,
+    members,
+    saving:      false,
+    _fromInd:    true,  // 個体スキャン起動フラグ
+    ind_id:      ind.ind_id,
+  };
+
+  _saveT2SessionToStorage();
+  routeTo('t2-session');
+};
+
 
 // ────────────────────────────────────────────────────────────────
 // メンバー構築
@@ -234,6 +296,28 @@ function _renderT2Session(s) {
         <b>T1→T2移行</b>を確定します。<br>
         継続する場合も、個別化・販売候補・死亡の場合もすべてここで選んで保存してください。<br>
         <span style="color:var(--text3)">※ T2移行後の通常交換は「継続読取りモード」を使います。</span>
+      </div>
+
+      <!-- ③ マット交換（Mx）セクション -->
+      <div style="margin-top:8px;border-radius:10px;border:1.5px solid var(--border);
+        background:var(--surface1,var(--surface));padding:12px 14px">
+        <div style="font-size:.8rem;font-weight:700;color:var(--text2);margin-bottom:8px">
+          🔄 マット交換 (Mx) — ユニット共通
+        </div>
+        <div style="display:flex;gap:10px">
+          <button type="button"
+            onclick="Pages._t2SetMx(true)"
+            style="flex:1;padding:8px 0;border-radius:8px;font-size:.85rem;font-weight:700;cursor:pointer;
+              border:2px solid ${s.mx_done ? 'var(--green)' : 'var(--border)'};
+              background:${s.mx_done ? 'rgba(76,175,120,.15)' : 'var(--bg2)'};
+              color:${s.mx_done ? 'var(--green)' : 'var(--text2)'}">✅ Mx実施</button>
+          <button type="button"
+            onclick="Pages._t2SetMx(false)"
+            style="flex:1;padding:8px 0;border-radius:8px;font-size:.85rem;font-weight:700;cursor:pointer;
+              border:2px solid ${!s.mx_done ? 'var(--amber)' : 'var(--border)'};
+              background:${!s.mx_done ? 'rgba(224,144,64,.12)' : 'var(--bg2)'};
+              color:${!s.mx_done ? 'var(--amber)' : 'var(--text2)'}">⏭ Mx未実施</button>
+        </div>
       </div>
 
       <!-- ③ 個体ブロック（縦カード） -->
@@ -562,6 +646,14 @@ Pages._t2SessionCancel = function () {
   }
 };
 
+// ── Mx フラグ ─────────────────────────────────────────────────────
+Pages._t2SetMx = function (done) {
+  const s = window._t2Session;
+  if (!s) return;
+  s.mx_done = done;
+  _renderT2Session(s);
+};
+
 // ── 保存 ────────────────────────────────────────────────────────
 Pages._t2SessionSave = async function () {
   const s = window._t2Session;
@@ -609,6 +701,8 @@ Pages._t2SessionSave = async function () {
       session_date:           today,
       source_unit_id:         s.unit_id,
       source_unit_display_id: s.display_id,
+      mx_done:                s.mx_done || false,
+      from_individual:        s._fromInd || false,
       decisions: s.members.map(m => ({
         unit_slot_no:  m.unit_slot_no,
         decision:      m.decision,
