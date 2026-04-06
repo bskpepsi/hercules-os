@@ -317,10 +317,9 @@ Pages.labelGen = function (params = {}) {
           ? { back: true, backFn: `routeTo('${origin.page}',${JSON.stringify(origin.params)})` }
           : { back: true });
 
-  // ── サイズ表示ラベル（プレビューカードタイトルに使用） ──
-  const dims = _labelDimensions(labelType, targetType);
-
   function render() {
+  // ── サイズ表示ラベル（labelType変化のたびに再計算） ──
+  const dims = _labelDimensions(labelType, targetType);
     main.innerHTML = `
       ${UI.header('ラベル発行', headerOpts)}
       <div class="page-body">
@@ -576,8 +575,16 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         locality:     par.locality  || '',
         generation:   par.generation|| '',
         eclosion_date:par.eclosion_date || '',
-        paternal_raw:  par.paternal_raw   || '',
-        maternal_raw:  par.maternal_raw   || '',
+        paternal_raw: (function() {
+          var r = par.paternal_raw || '';
+          try { var a = JSON.parse(r); if (Array.isArray(a)) return a.filter(Boolean).join(' '); } catch(_){}
+          return r;
+        })(),
+        maternal_raw: (function() {
+          var r = par.maternal_raw || '';
+          try { var a = JSON.parse(r); if (Array.isArray(a)) return a.filter(Boolean).join(' '); } catch(_){}
+          return r;
+        })(),
         paternal_size: par.paternal_size_mm ? par.paternal_size_mm + 'mm' : '',
         maternal_size: par.maternal_size_mm ? par.maternal_size_mm + 'mm' : '',
         paternal_tags: pTags,
@@ -654,12 +661,16 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
       const set = (Store.getDB('pairings')||[]).find(p => p.set_id===targetId) || {};
       const _setLine = set.line_id ? (Store.getLine(set.line_id) || {}) : {};
       const _pars   = Store.getDB('parents') || [];
-      const _setFather = set.father_par_id ? (_pars.find(p=>p.par_id===set.father_par_id)||{}) : {};
-      const _setMother = set.mother_par_id ? (_pars.find(p=>p.par_id===set.mother_par_id)||{}) : {};
+      const _setFather = set.father_par_id
+        ? (_pars.find(function(p){ return p.par_id===set.father_par_id || p.parent_display_id===set.father_par_id; })||{})
+        : {};
+      const _setMother = set.mother_par_id
+        ? (_pars.find(function(p){ return p.par_id===set.mother_par_id || p.parent_display_id===set.mother_par_id; })||{})
+        : {};
       ld = {
         qr_text:       `SET:${set.set_id || targetId}`,
         display_id:    set.display_id   || set.set_name || targetId,
-        line_code:     set.line_code || _setLine.line_code || '',
+        line_code:     set.line_code || _setLine.line_code || _setLine.display_id || '',
         father_info:   _setFather.parent_display_id || set.father_display_name || '---',
         mother_info:   _setMother.parent_display_id || set.mother_display_name || '---',
         father_size:   _setFather.size_mm ? (_setFather.size_mm + 'mm') : (set.father_size_mm ? set.father_size_mm + 'mm' : ''),
@@ -793,7 +804,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
   // QR dataURL 取得 → ラベル生成 → PNG化
   (async function _lblRender() {
     try {
-      console.log('[LABEL] qr build start - build:20260412a');
+      console.log('[LABEL] qr build start - build:20260412b');
       console.log('[LABEL] qr target type:', targetType, '| targetId:', targetId);
       console.log('[LABEL] qr rect:', JSON.stringify(QR_RECT_MM));
       console.log('[LABEL] qr target text:', qrText);
@@ -1232,22 +1243,26 @@ function _buildSetLabelHTML(ld, _unused, qrSrc) {
   var qr = (typeof _unused === 'string' && _unused.startsWith('data:')) ? _unused : qrSrc;
 
   // ラインバッジ: line_code を優先、なければ display_id からパース
-  // ━━ ラインバッジ抽出 ━━
-  // display_id "HM2026A1-S01" → "A1", "HM2026-B1-S01" → "B1"
-  // ld.line_code が "HM2026A1" のように長い場合も短コードに変換する
-  var rawId = ld.display_id || '';
-  var _rawLC = ld.line_code || '';
+    // ── ラインバッジ ─────────────────────────────────────────────
+  // SET display_id は "SET-YYYYMM-NN" 形式のため、ライン識別子は
+  // line_code フィールド（Storeから取得済み）を使う
+  // line_code が長い ("HM2026A1" etc) 場合は先頭 prefix を除去する
+  var rawId    = ld.display_id || '';
+  var _rawLC   = ld.line_code  || '';
   function _shortCode(s) {
     if (!s) return '';
-    var p = s.split('-').filter(function(x){ return x; });
-    // 3+分割: [1] が短コード ("B1", "A1" など)
+    // "SET-YYYYMM-NN" → skip entirely (not a line code)
+    if (s.match(/^SET-/i)) return '';
+    // "HM2026-B1-S01" → split → p[1] = "B1"
+    var p = s.split('-').filter(function(x){ return x && x.length > 0; });
     if (p.length >= 3) return p[1];
-    // 2分割: 先頭パーツから英字+4桁年 prefix を除去
-    if (p.length === 2) return p[0].replace(/^[A-Za-z]{1,3}[0-9]{4}/, '');
-    // 分割なし: prefix除去
-    return s.replace(/^[A-Za-z]{1,3}[0-9]{4}/, '');
+    // "HM2026A1" → strip prefix letters+4digits → "A1"
+    if (p.length <= 1) return s.replace(/^[A-Za-z]{1,3}[0-9]{4}/, '');
+    // "HM2026A1-S01" → p[0]="HM2026A1" → strip
+    return p[0].replace(/^[A-Za-z]{1,3}[0-9]{4}/, '');
   }
-  var lineCode = _shortCode(rawId) || _shortCode(_rawLC) || _rawLC;
+  // line_code を優先使用（display_idはSET形式なので不適）
+  var lineCode = _shortCode(_rawLC) || _shortCode(rawId) || '';
   // バッジサイズ: 1文字→32px、2文字→26px、3文字以上→18px
   var badgeFz = lineCode.length <= 1 ? '32px' : lineCode.length <= 2 ? '26px' : '18px';
 
