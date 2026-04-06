@@ -1,12 +1,10 @@
 // ════════════════════════════════════════════════════════════════
 // growth.js v5 — 成長記録入力画面（体重測定UIベース・全導線統一）
+// build: 20260413j
 //
-// v5 修正:
-//   - ±ボタン二重発火修正: onclick廃止 → onpointerdown/onpointerup のみ
-//   - 区分ボタン: LOT時は必ず表示（isLot判定を単純化）
-//   - 🍄 モルト入り: メインカード内に常時表示
-//   - ステージ: L1L2 / L3 / 前蛹 のみ（蛹・成虫系は除外）
-//   - ボタンサイズ: min-height 48px に拡大
+// 20260413j 修正:
+//   - render()内の main.innerHTMLerHTML → main.innerHTML タイポ修正
+//     （成長記録画面が真っ暗になるバグの修正）
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
@@ -143,7 +141,7 @@ Pages.growthRecord = function (params = {}) {
                 : `routeTo('ind-detail',{indId:'${targetId}'})`)
       : `Store.back()`;
 
-    // ── 区分ボタン HTML（LOT専用） ─────────────────────────────
+    // ── 区分ボタン HTML ─────────────────────────────────────────
     function sizeCatButtonsHtml() {
       // IND=シングルセレクト、LOT=複数選択
       const _multiSel = isLot;
@@ -160,7 +158,10 @@ Pages.growthRecord = function (params = {}) {
         + '<input type="hidden" id="gr-size-cat" value="' + (_selSizeCat || '') + '"></div>';
     }
 
-    main.innerHTMLerHTML = `
+    // ════════════════════════════════════════════════════════════
+    // ✅ 修正: main.innerHTMLerHTML → main.innerHTML
+    // ════════════════════════════════════════════════════════════
+    main.innerHTML = `
       ${UI.header('成長記録', { back: true, backFn: backFn })}
       <div class="page-body has-quick-bar">
 
