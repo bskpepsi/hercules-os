@@ -576,10 +576,12 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         locality:     par.locality  || '',
         generation:   par.generation|| '',
         eclosion_date:par.eclosion_date || '',
-        paternal_raw: par.paternal_raw  || '',
-        maternal_raw: par.maternal_raw  || '',
-        paternal_tags:pTags,
-        maternal_tags:mTags,
+        paternal_raw:  par.paternal_raw   || '',
+        maternal_raw:  par.maternal_raw   || '',
+        paternal_size: par.paternal_size_mm ? par.paternal_size_mm + 'mm' : '',
+        maternal_size: par.maternal_size_mm ? par.maternal_size_mm + 'mm' : '',
+        paternal_tags: pTags,
+        maternal_tags: mTags,
         note_private: par.note     || '',
         hatch_date:   '',
         records:      [],
@@ -791,7 +793,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
   // QR dataURL 取得 → ラベル生成 → PNG化
   (async function _lblRender() {
     try {
-      console.log('[LABEL] qr build start - build:20260410b');
+      console.log('[LABEL] qr build start - build:20260412a');
       console.log('[LABEL] qr target type:', targetType, '| targetId:', targetId);
       console.log('[LABEL] qr rect:', JSON.stringify(QR_RECT_MM));
       console.log('[LABEL] qr target text:', qrText);
@@ -1168,8 +1170,12 @@ function _buildParentLabelHTML(ld, _unused, qrSrc) {
   var wtStr   = ld.weight_g || '';   // "22g" そのまま
   var ecStr   = ld.eclosion_date ? '羽化: ' + ld.eclosion_date : '';
   var locStr  = [ld.locality, ld.generation].filter(Boolean).join(' / ');
-  var patStr  = ld.paternal_raw ? '親♂: ' + ld.paternal_raw.slice(0,24) : '';
-  var matStr  = ld.maternal_raw ? '親♀: ' + ld.maternal_raw.slice(0,24) : '';
+  var patStr = ld.paternal_raw
+    ? '親♂: ' + ld.paternal_raw.slice(0,20) + (ld.paternal_size ? ' (' + ld.paternal_size + ')' : '')
+    : '';
+  var matStr = ld.maternal_raw
+    ? '親♀: ' + ld.maternal_raw.slice(0,20) + (ld.maternal_size ? ' (' + ld.maternal_size + ')' : '')
+    : '';
 
   // バッジサイズ: 1文字→34px、2文字→28px、3文字以上→20px
   var badgeFz = idCode.length <= 1 ? '34px' : idCode.length <= 2 ? '28px' : '20px';
@@ -1226,26 +1232,32 @@ function _buildSetLabelHTML(ld, _unused, qrSrc) {
   var qr = (typeof _unused === 'string' && _unused.startsWith('data:')) ? _unused : qrSrc;
 
   // ラインバッジ: line_code を優先、なければ display_id からパース
-  var lineCode  = ld.line_code || '';
-  var rawId     = ld.display_id || '';
-  if (!lineCode) {
-    var _sp = rawId.split('-');
-    if (_sp.length >= 3) {
-      lineCode = _sp[1] || '';  // "HM2026-B1-S01" → "B1"
-    } else if (_sp.length === 2) {
-      // "HM2026A1-S01" → extract non-digit suffix after year: "A1"
-      var _m0 = _sp[0].match(/[0-9]{4}([A-Za-z0-9]+)$/);
-      lineCode = _m0 ? _m0[1] : '';
-    }
+  // ━━ ラインバッジ抽出 ━━
+  // display_id "HM2026A1-S01" → "A1", "HM2026-B1-S01" → "B1"
+  // ld.line_code が "HM2026A1" のように長い場合も短コードに変換する
+  var rawId = ld.display_id || '';
+  var _rawLC = ld.line_code || '';
+  function _shortCode(s) {
+    if (!s) return '';
+    var p = s.split('-').filter(function(x){ return x; });
+    // 3+分割: [1] が短コード ("B1", "A1" など)
+    if (p.length >= 3) return p[1];
+    // 2分割: 先頭パーツから英字+4桁年 prefix を除去
+    if (p.length === 2) return p[0].replace(/^[A-Za-z]{1,3}[0-9]{4}/, '');
+    // 分割なし: prefix除去
+    return s.replace(/^[A-Za-z]{1,3}[0-9]{4}/, '');
   }
+  var lineCode = _shortCode(rawId) || _shortCode(_rawLC) || _rawLC;
   // バッジサイズ: 1文字→32px、2文字→26px、3文字以上→18px
   var badgeFz = lineCode.length <= 1 ? '32px' : lineCode.length <= 2 ? '26px' : '18px';
 
   var fInfo = ld.father_info || '';
   var mInfo = ld.mother_info || '';
-  // father_info / mother_info にサイズが含まれていない場合は別フィールドから補完
   var fSize = ld.father_size || '';
   var mSize = ld.mother_size || '';
+  // "血統名 (68mm)" 形式に整形（サイズがある場合）
+  var fDisplay = fInfo ? (fInfo + (fSize ? ' (' + fSize + ')' : '')) : '---';
+  var mDisplay = mInfo ? (mInfo + (mSize ? ' (' + mSize + ')' : '')) : '---';
 
   return '<!DOCTYPE html>\n<html><head><meta charset="utf-8">\n<style>\n'
     + '  @page { size: 62mm 40mm; margin: 0; }\n'
@@ -1276,16 +1288,10 @@ function _buildSetLabelHTML(ld, _unused, qrSrc) {
       ? '      <div style="font-size:7.5px;font-weight:700;color:#000;margin-top:1px">ペアリング: ' + ld.pairing_start + '</div>\n'
       : '')
 
-    // 親情報: ♂
-    + (fInfo
-      ? '      <div style="font-size:7px;font-weight:700;color:#000;margin-top:2px">'
-        + '♂ ' + fInfo + (fSize ? '&nbsp;' + fSize : '') + '</div>\n'
-      : '')
+    // 親情報: ♂ 血統名 (サイズ)
+    + '      <div style="font-size:7px;font-weight:700;color:#000;margin-top:2px">♂ ' + fDisplay + '</div>\n'
     // 親情報: ♀
-    + (mInfo
-      ? '      <div style="font-size:7px;font-weight:700;color:#000;">'
-        + '♀ ' + mInfo + (mSize ? '&nbsp;' + mSize : '') + '</div>\n'
-      : '')
+    + '      <div style="font-size:7px;font-weight:700;color:#000">♀ ' + mDisplay + '</div>\n'
 
     + '    </div>\n'
 
