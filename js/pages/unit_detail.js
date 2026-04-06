@@ -1,18 +1,15 @@
 // ════════════════════════════════════════════════════════════════
-// unit_detail.js — 飼育ユニット（BU）詳細画面
+// unit_detail.js — 飼育ユニット（BU）詳細画面  build: 20260413e
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-// ── 由来ロット文字列 ─────────────────────────────────────────────
 function _udFormatOriginLots(unit) {
   let srcLots = [];
   if (unit.source_lots) {
     try { srcLots = typeof unit.source_lots === 'string' ? JSON.parse(unit.source_lots) : (unit.source_lots || []); } catch(_) {}
   }
   if (srcLots.length === 0 && unit.origin_lot_id) srcLots = [unit.origin_lot_id];
-
   if (srcLots.length === 0) return '—';
-
   const displayIds = srcLots.map(lid => {
     const lot = Store.getLot && Store.getLot(lid);
     const did = lot ? (lot.display_id || lid) : lid;
@@ -22,7 +19,6 @@ function _udFormatOriginLots(unit) {
   return displayIds.join(' / ');
 }
 
-// ── メンバー配列をパース ─────────────────────────────────────────
 function _udParseMembers(unit) {
   const raw = unit.members;
   if (Array.isArray(raw)) return raw;
@@ -32,8 +28,32 @@ function _udParseMembers(unit) {
   return [];
 }
 
-// ════════════════════════════════════════════════════════════════
-// メインページ
+// 個体一覧からこのユニット由来の個体を検索
+function _udFindMemberInds(unit) {
+  const allInds = Store.getDB('individuals') || [];
+  // origin_unit_id または source_unit_id でマッチ
+  const byUnit = allInds.filter(i =>
+    i.origin_unit_id === unit.unit_id ||
+    i.source_unit_id === unit.unit_id ||
+    i.source_unit_display_id === unit.display_id
+  );
+  if (byUnit.length > 0) return byUnit;
+
+  // メンバー配列の lot_id + lot_item_no でマッチ（フォールバック）
+  const members = _udParseMembers(unit);
+  if (members.length === 0) return [];
+  const matched = [];
+  members.forEach(m => {
+    if (!m.lot_id) return;
+    const found = allInds.find(i =>
+      i.lot_id === m.lot_id &&
+      String(i.lot_item_no || '') === String(m.lot_item_no || '')
+    );
+    if (found) matched.push(found);
+  });
+  return matched;
+}
+
 // ════════════════════════════════════════════════════════════════
 Pages.unitDetail = function (params = {}) {
   const main = document.getElementById('main');
@@ -42,9 +62,6 @@ Pages.unitDetail = function (params = {}) {
   const unitDisplayId = params.unitDisplayId || params.displayId || params.display_id || '';
   const unitId        = params.unitId        || params.unit_id   || '';
 
-  console.log('[UNIT_DETAIL] params:', { unitDisplayId, unitId });
-
-  // Store から BU を解決
   let unit = unitDisplayId
     ? (Store.getUnitByDisplayId && Store.getUnitByDisplayId(unitDisplayId))
     : null;
@@ -55,19 +72,14 @@ Pages.unitDetail = function (params = {}) {
     unit = (Store.getDB('breeding_units') || []).find(u => u.display_id === unitDisplayId);
   }
 
-  console.log('[UNIT_DETAIL] resolved unit:', unit ? unit.display_id : 'NOT FOUND',
-    '/ members:', _udParseMembers(unit || {}).length);
-
   if (!unit) {
     main.innerHTML = `
       ${UI.header('ユニット詳細', { back: true })}
       <div class="page-body">
-        <div class="card">
-          <div style="text-align:center;padding:20px;color:var(--text3)">
-            <div style="font-size:1.5rem;margin-bottom:8px">🔍</div>
-            <div>ユニットが見つかりません</div>
-            <div style="font-size:.75rem;margin-top:4px;color:var(--text3)">${unitDisplayId || unitId || '(ID未指定)'}</div>
-          </div>
+        <div class="card" style="text-align:center;padding:20px">
+          <div style="font-size:1.5rem;margin-bottom:8px">🔍</div>
+          <div>ユニットが見つかりません</div>
+          <div style="font-size:.75rem;margin-top:4px;color:var(--text3)">${unitDisplayId || unitId || '(ID未指定)'}</div>
         </div>
       </div>`;
     return;
@@ -77,26 +89,25 @@ Pages.unitDetail = function (params = {}) {
 };
 
 // ────────────────────────────────────────────────────────────────
-// 描画
-// ────────────────────────────────────────────────────────────────
 function _udRenderGrowthRecords(records) {
+  if (!records || records.length === 0) return '';
   return [...records]
     .sort((a,b) => String(b.record_date).localeCompare(String(a.record_date)))
-    .slice(0, 8)
+    .slice(0, 10)
     .map(r => {
       const dateShort = String(r.record_date||'').slice(5);
       const wStr = r.weight_g ? r.weight_g + 'g' : '—';
+      const slotBadge = r.unit_slot_no
+        ? `<span style="font-size:.65rem;padding:1px 5px;background:rgba(91,168,232,.15);color:var(--blue);border-radius:4px">${r.unit_slot_no}頭目</span>`
+        : '';
       const evBadge = r.event_type
-        ? '<span style="font-size:.65rem;padding:1px 5px;background:rgba(91,168,232,.15);color:var(--blue);border-radius:4px">' + r.event_type + '</span>'
+        ? `<span style="font-size:.65rem;padding:1px 5px;background:rgba(224,144,64,.15);color:var(--amber);border-radius:4px">${r.event_type}</span>`
         : '';
-      const notePart = r.note_private
-        ? '<span style="color:var(--text3);font-size:.7rem;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + String(r.note_private).slice(0,30) + '</span>'
-        : '';
-      return '<div style="display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border2);font-size:.78rem">'
-        + '<span style="color:var(--text3);min-width:70px">' + dateShort + '</span>'
-        + '<span style="font-weight:700">' + wStr + '</span>'
-        + '<span style="color:var(--text3)">' + (r.mat_type||'') + '</span>'
-        + evBadge + notePart
+      return '<div style="display:flex;gap:6px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border2);font-size:.78rem">'
+        + `<span style="color:var(--text3);min-width:60px">${dateShort}</span>`
+        + `<span style="font-weight:700">${wStr}</span>`
+        + slotBadge + evBadge
+        + `<span style="color:var(--text3);font-size:.7rem">${r.mat_type||''}</span>`
         + '</div>';
     }).join('');
 }
@@ -106,23 +117,81 @@ function _renderUnitDetail(unit, main) {
   const lineCode  = line ? (line.line_code || line.display_id) : (unit.line_id || '—');
   const originStr = _udFormatOriginLots(unit);
   const members   = _udParseMembers(unit);
+  const memberInds = _udFindMemberInds(unit);
   const records   = (Store.getGrowthRecords && Store.getGrowthRecords(unit.unit_id)) || [];
   const latestRec = records.length > 0
     ? [...records].sort((a,b) => String(b.record_date).localeCompare(String(a.record_date)))[0]
     : null;
 
-  // ステータスバッジ
+  const isIndividualized = unit.status === 'individualized';
   const statusColor = unit.status === 'active' ? 'var(--green)'
-    : unit.status === 'individualized' ? 'var(--blue)'
+    : isIndividualized ? 'var(--blue)'
     : unit.status === 'reserved' ? 'var(--amber)' : 'var(--text3)';
   const statusLabel = unit.status === 'active' ? '飼育中'
-    : unit.status === 'individualized' ? '個別化済'
+    : isIndividualized ? '個別化済'
     : unit.status === 'reserved' ? '予約中' : (unit.status || '—');
 
-  // 販売候補バッジ
   const saleBadge = unit.for_sale
     ? `<span style="background:#e05050;color:#fff;font-size:.65rem;font-weight:700;padding:2px 7px;border-radius:4px;margin-left:6px">販売候補</span>`
     : '';
+
+  // 個別化済の場合: メンバー個体へのリンク一覧を表示
+  const memberSection = isIndividualized && memberInds.length > 0
+    ? `<div class="card" style="margin-bottom:10px">
+        <div class="card-title">個体化済メンバー（${memberInds.length}頭）</div>
+        <div style="font-size:.75rem;color:var(--text3);margin-bottom:8px">
+          個別化されました。各個体の詳細は下記から確認できます。
+        </div>
+        ${memberInds.map((mi, i) => {
+          const sex = mi.sex || '不明';
+          const sexColor = sex === '♂' ? '#3366cc' : sex === '♀' ? '#cc3366' : 'var(--text3)';
+          const stage = mi.current_stage || mi.stage || '—';
+          const wt = mi.latest_weight_g || mi.weight_g || '';
+          return `<div style="padding:10px 0;border-bottom:1px solid var(--border2);cursor:pointer"
+            onclick="routeTo('ind-detail',{indId:'${mi.ind_id}'})">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font-weight:700;color:var(--gold);font-family:var(--font-mono)">${mi.display_id||mi.ind_id}</span>
+              <span style="color:${sexColor};font-weight:700">${sex}</span>
+              <span style="font-size:.75rem;padding:1px 6px;background:rgba(91,168,232,.1);color:var(--blue);border-radius:4px">${stage}</span>
+              ${wt ? `<span style="margin-left:auto;font-weight:700">${wt}g</span>` : ''}
+              <span style="color:var(--text3);font-size:1rem">›</span>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>`
+    : members.length > 0
+      ? `<div class="card" style="margin-bottom:10px">
+          <div class="card-title">メンバー構成（${members.length}頭）</div>
+          ${members.map((m, i) => _renderUdMemberRow(m, i, records)).join('')}
+        </div>`
+      : `<div class="card" style="margin-bottom:10px">
+          <div class="card-title">メンバー構成</div>
+          <div style="color:var(--text3);font-size:.8rem;padding:8px 0">
+            ${isIndividualized
+              ? 'このユニットは個別化済みです。個体台帳から各個体を確認できます。'
+              : 'メンバー情報がありません（T2/T3移行後に反映されます）'}
+          </div>
+        </div>`;
+
+  // ラベル発行: JSON.stringifyを使わず安全に渡す
+  window._udLabelParams = {
+    targetType: 'UNIT',
+    displayId:  unit.display_id,
+    labelType:  't1_unit',
+    forSale:    !!unit.for_sale,
+    backRoute:  'unit-detail',
+    backParam:  { unitDisplayId: unit.display_id },
+    unitDraft: {
+      display_id:  unit.display_id,
+      line_id:     unit.line_id,
+      line_code:   line ? (line.line_code || line.display_id || '') : '',
+      head_count:  unit.head_count || 2,
+      for_sale:    !!unit.for_sale,
+      stage_phase: unit.stage_phase || 'T1',
+      mat_type:    unit.mat_type || 'T1',
+      members:     members,
+    },
+  };
 
   main.innerHTML = `
     ${UI.header('ユニット詳細', { back: true })}
@@ -145,38 +214,39 @@ function _renderUnitDetail(unit, main) {
 
       <!-- 基本情報 -->
       <div class="card" style="margin-bottom:10px">
-        <div class="card-title">基本情報</div>
+        <div class="card-title" style="display:flex;align-items:center;justify-content:space-between">
+          基本情報
+          <button class="btn btn-ghost btn-sm" style="font-size:.72rem"
+            onclick="Pages._udEditBasic('${unit.display_id}')">✏️ 編集</button>
+        </div>
         <table style="width:100%;font-size:.8rem;border-collapse:collapse">
           ${[
-            ['孵化日',       unit.hatch_date   || '—'],
-            ['マット種別',   unit.mat_type     || '—'],
-            ['容器サイズ',   unit.container_size|| '—'],
-            ['最終記録日',   latestRec ? latestRec.record_date : '—'],
-            ['作成日',       unit.created_at ? String(unit.created_at).split(' ')[0] : '—'],
-            ['更新日',       unit.updated_at ? String(unit.updated_at).split(' ')[0] : '—'],
-            ['unit_id',      unit.unit_id      || '—'],
+            ['孵化日',     unit.hatch_date    || '—'],
+            ['マット種別', unit.mat_type      || '—'],
+            ['容器サイズ', unit.container_size || '—'],
+            ['最終記録日', latestRec ? latestRec.record_date : '—'],
+            ['作成日',     unit.created_at ? String(unit.created_at).split(' ')[0] : '—'],
           ].map(([k,v]) => `
             <tr style="border-bottom:1px solid var(--border2)">
               <td style="padding:6px 4px;color:var(--text3);width:90px">${k}</td>
-              <td style="padding:6px 4px;color:var(--text1);font-family:${k==='unit_id'?'var(--font-mono)':'inherit'};font-size:${k==='unit_id'?'.72rem':'inherit'}">${v}</td>
+              <td style="padding:6px 4px;color:var(--text1)">${v}</td>
             </tr>`).join('')}
         </table>
         ${unit.note ? `<div style="margin-top:8px;font-size:.78rem;color:var(--text2);background:var(--surface2);border-radius:8px;padding:8px">📝 ${unit.note}</div>` : ''}
       </div>
 
-      <!-- メンバー -->
-      <div class="card" style="margin-bottom:10px">
-        <div class="card-title">メンバー構成（${members.length}頭）</div>
-        ${members.length > 0
-          ? members.map((m, i) => _renderUdMemberRow(m, i, records)).join('')
-          : `<div style="color:var(--text3);font-size:.8rem;padding:8px 0">メンバー情報がありません</div>`}
-      </div>
+      <!-- メンバー構成 -->
+      ${memberSection}
 
       <!-- 成長記録 -->
       ${records.length > 0 ? `
       <div class="card" style="margin-bottom:10px">
         <div class="card-title">成長記録（${records.length}件）</div>
         ${_udRenderGrowthRecords(records)}
+        <button class="btn btn-ghost btn-sm" style="margin-top:8px;width:100%"
+          onclick="routeTo('growth-rec',{targetType:'BU',targetId:'${unit.unit_id}',displayId:'${unit.display_id}'})">
+          📷 成長記録を追加
+        </button>
       </div>` : ''}
 
       <!-- アクション -->
@@ -198,25 +268,13 @@ function _renderUnitDetail(unit, main) {
             onclick="Pages._udStartT3('${unit.display_id}')">
             🔄 T3 Mx/体重更新
           </button>` : ''}
-          <button class="btn btn-ghost" onclick="routeTo('label-gen', {
-            targetType: 'UNIT',
-            displayId: '${unit.display_id}',
-            labelType: 't1_unit',
-            forSale: ${!!unit.for_sale},
-            backRoute: 'unit-detail',
-            backParam: { unitDisplayId: '${unit.display_id}' },
-            unitDraft: ${JSON.stringify({
-              display_id: unit.display_id,
-              line_id: unit.line_id,
-              line_code: line ? (line.line_code || line.display_id || '') : '',
-              head_count: unit.head_count || 2,
-              for_sale: !!unit.for_sale,
-              stage_phase: unit.stage_phase || 'T1',
-              mat_type: unit.mat_type || 'T1',
-              members: members,
-            })}
-          })">
+          <button class="btn btn-ghost"
+            onclick="Pages._udLabelGen()">
             🏷️ ラベル発行
+          </button>
+          <button class="btn btn-ghost" style="font-size:.8rem"
+            onclick="routeTo('growth-rec',{targetType:'BU',targetId:'${unit.unit_id}',displayId:'${unit.display_id}'})">
+            📷 成長記録
           </button>
         </div>
       </div>
@@ -224,35 +282,87 @@ function _renderUnitDetail(unit, main) {
     </div>`;
 }
 
+// ── ラベル発行（window経由で安全にパラム渡し） ────────────────────
+Pages._udLabelGen = function () {
+  if (window._udLabelParams) {
+    Store.setParams(window._udLabelParams);
+    routeTo('label-gen', window._udLabelParams);
+  }
+};
+
+// ── 基本情報編集 ─────────────────────────────────────────────────
+Pages._udEditBasic = function (displayId) {
+  const unit = Store.getUnitByDisplayId && Store.getUnitByDisplayId(displayId);
+  if (!unit) { UI.toast('ユニットが見つかりません', 'error'); return; }
+
+  UI.modal(`
+    <div class="modal-title">基本情報を編集</div>
+    <div class="form-section" style="margin-top:8px">
+      ${UI.field('孵化日',   '<input type="date" id="ud-hatch" class="input" value="' + (unit.hatch_date||'').replace(/\//g,'-') + '">')}
+      ${UI.field('マット種別', UI.select('ud-mat', [
+        { code:'T1', label:'T1マット' },
+        { code:'T2', label:'T2マット' },
+        { code:'T3', label:'T3マット' },
+        { code:'MD', label:'MDマット' },
+      ], unit.mat_type || ''))}
+      ${UI.field('容器サイズ', UI.select('ud-cont', [
+        { code:'2.7L', label:'2.7L' },
+        { code:'4.8L', label:'4.8L（パンケ）' },
+        { code:'3.5L', label:'3.5L' },
+      ], unit.container_size || ''))}
+      ${UI.field('メモ', '<input type="text" id="ud-note" class="input" value="' + (unit.note||'') + '">')}
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" style="flex:1" onclick="UI.closeModal()">キャンセル</button>
+      <button class="btn btn-primary" style="flex:2" onclick="Pages._udSaveBasic('${unit.unit_id}','${displayId}')">保存</button>
+    </div>
+  `);
+};
+
+Pages._udSaveBasic = async function (unitId, displayId) {
+  const hatch = (document.getElementById('ud-hatch')?.value || '').replace(/-/g, '/');
+  const mat   = document.getElementById('ud-mat')?.value   || '';
+  const cont  = document.getElementById('ud-cont')?.value  || '';
+  const note  = document.getElementById('ud-note')?.value  || '';
+  UI.closeModal();
+  const updates = { unit_id: unitId, hatch_date: hatch, mat_type: mat, container_size: cont, note };
+  try {
+    if (typeof Store.patchDBItem === 'function') {
+      Store.patchDBItem('breeding_units', 'unit_id', unitId, updates);
+    }
+    // GAS更新は成長記録API経由 or 直接updateなどがあれば利用
+    UI.toast('基本情報を更新しました', 'success');
+    Pages.unitDetail({ unitDisplayId: displayId });
+  } catch(e) {
+    UI.toast('更新失敗: ' + (e.message || ''), 'error');
+  }
+};
+
 // ── メンバー行 ───────────────────────────────────────────────────
 function _renderUdMemberRow(m, idx, records) {
   const slotLabel = idx === 0 ? '1頭目' : idx === 1 ? '2頭目' : `${idx+1}頭目`;
-
-  // 最新体重をgrowth_recordsから取得（unit_slot_no 一致）
-  const slotRecs = records.filter(r => parseInt(r.unit_slot_no, 10) === m.unit_slot_no);
-  const latestW  = slotRecs.length > 0
+  const slotRecs  = records.filter(r => parseInt(r.unit_slot_no, 10) === m.unit_slot_no);
+  const latestW   = slotRecs.length > 0
     ? slotRecs.sort((a,b) => String(b.record_date).localeCompare(String(a.record_date)))[0].weight_g
     : (m.weight_g || null);
-
-  // 元ロット情報
-  const lotDisplayId = m.lot_display_id || m.lot_id || '—';
+  const sexColor = m.sex === '♂' ? '#3366cc' : m.sex === '♀' ? '#cc3366' : 'var(--text3)';
 
   return `
   <div style="padding:10px 0;border-bottom:1px solid var(--border2)">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
       <span style="font-weight:800;font-size:.9rem;color:var(--text1)">${slotLabel}</span>
-      ${m.sex && m.sex !== '不明' ? `<span style="font-size:.8rem;font-weight:700;color:${m.sex==='♂'?'#3366cc':'#cc3366'}">${m.sex}</span>` : ''}
+      ${m.sex && m.sex !== '不明' ? `<span style="font-size:.8rem;font-weight:700;color:${sexColor}">${m.sex}</span>` : ''}
       ${m.size_category ? `<span style="font-size:.75rem;padding:1px 6px;border-radius:4px;background:rgba(76,175,120,.12);color:var(--green)">${m.size_category}</span>` : ''}
       ${latestW ? `<span style="font-size:.8rem;font-weight:700;margin-left:auto">${latestW}g</span>` : ''}
     </div>
     <div style="font-size:.7rem;color:var(--text3)">
-      元ロット: ${lotDisplayId}${m.lot_item_no ? ' #' + m.lot_item_no : ''}
+      元ロット: ${m.lot_display_id || m.lot_id || '—'}${m.lot_item_no ? ' #' + m.lot_item_no : ''}
       ${m.memo ? ' | ' + m.memo : ''}
     </div>
   </div>`;
 }
 
-// ── T2/T3移行ショートカット ─────────────────────────────────────────
+// ── T2/T3移行ショートカット ─────────────────────────────────────
 Pages._udStartT2 = function (displayId) {
   Pages.t2SessionStart && Pages.t2SessionStart(displayId);
 };

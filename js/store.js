@@ -275,6 +275,10 @@ const Store = (() => {
     let list = [..._db.individuals];
     if (filters.line_id)      list = list.filter(i => i.line_id      === filters.line_id);
     if (filters.lot_id)       list = list.filter(i => i.lot_id       === filters.lot_id || i.origin_lot_id === filters.lot_id);
+    if (filters.unit_id)      list = list.filter(i =>
+      i.origin_unit_id === filters.unit_id ||
+      i.source_unit_id === filters.unit_id
+    );
     if (filters.bloodline_id) list = list.filter(i => i.bloodline_id === filters.bloodline_id);
 
     if (filters.stage) {
