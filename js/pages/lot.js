@@ -399,6 +399,10 @@ function _renderLotDetail(lot, main) {
       </div>
 
       ${!lot.hatch_date ? `
+      ${!lot.t1_done ? `<button class="btn btn-full" style="background:var(--green);color:#fff;font-weight:700;margin-bottom:4px"
+        onclick="Pages.t1SessionStart('${lot.lot_id}')">
+        🐛 T1移行（割り出し）を開始
+      </button>` : `<div style="background:rgba(76,175,120,.1);border:1px solid rgba(76,175,120,.3);border-radius:8px;padding:10px;text-align:center;font-size:.82rem;color:var(--green);margin-bottom:8px;font-weight:700">✅ T1移行済み</div>`}
       <button class="btn btn-full" style="background:var(--amber);color:#1a1a1a;font-weight:700"
         onclick="Pages._lotSetHatchDate('${lot.lot_id}')">
         📅 孵化日を設定
@@ -814,14 +818,27 @@ Pages._lotSave = async function () {
 
 // ── クイックアクション ────────────────────────────────────────────
 function _lotQuickActions(lotId) {
-  UI.actionSheet([
+  const _ql = Store.getLot(lotId);
+  const _t1done = _ql && _ql.t1_done;
+  const _canT1  = _ql && !_t1done;
+  const items = [
     { label: '✏️ ロット情報を修正', fn: () => Pages._lotEdit(lotId) },
     { label: '📷 成長記録', fn: () => {
         const _l = Store.getLot(lotId);
         routeTo('growth-rec', { targetType: 'LOT', targetId: lotId, displayId: _l?.display_id || lotId });
       } },
     { label: '🏷️ ラベル発行', fn: () => routeTo('label-gen', { targetType: 'LOT', targetId: lotId }) },
-  ]);
+  ];
+  if (_canT1) {
+    items.unshift({ label: '🐛 T1移行（割り出し）', fn: () => {
+      if (typeof Pages.t1SessionStart === 'function') {
+        Pages.t1SessionStart(lotId);
+      } else {
+        UI.toast('T1移行セッションが利用できません', 'error');
+      }
+    }});
+  }
+  UI.actionSheet(items);
 }
 
 // ── ロット情報編集 ────────────────────────────────────────────────

@@ -183,9 +183,20 @@ function _renderUnitDetail(unit, main) {
       <div class="card">
         <div class="card-title">アクション</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          ${unit.status === 'active' && (unit.stage_phase === 'T1' || unit.stage_phase === 'T2') ? `
-          <button class="btn btn-primary" onclick="Pages._udStartT2('${unit.display_id}')">
+          ${unit.status === 'active' && unit.stage_phase === 'T1' ? `
+          <button class="btn btn-primary" style="background:var(--blue)"
+            onclick="Pages._udStartT2('${unit.display_id}')">
             🔄 T2移行
+          </button>` : ''}
+          ${unit.status === 'active' && unit.stage_phase === 'T2' ? `
+          <button class="btn btn-primary" style="background:var(--amber);color:#1a1a1a"
+            onclick="Pages._udStartT3('${unit.display_id}')">
+            ⭐ T3移行
+          </button>` : ''}
+          ${unit.status === 'active' && unit.stage_phase === 'T3' ? `
+          <button class="btn btn-primary" style="background:rgba(224,144,64,.15);border:2px solid var(--amber);color:var(--amber)"
+            onclick="Pages._udStartT3('${unit.display_id}')">
+            🔄 T3 Mx/体重更新
           </button>` : ''}
           <button class="btn btn-ghost" onclick="routeTo('label-gen', {
             targetType: 'UNIT',
@@ -241,9 +252,12 @@ function _renderUdMemberRow(m, idx, records) {
   </div>`;
 }
 
-// ── T2移行ショートカット ─────────────────────────────────────────
+// ── T2/T3移行ショートカット ─────────────────────────────────────────
 Pages._udStartT2 = function (displayId) {
   Pages.t2SessionStart && Pages.t2SessionStart(displayId);
+};
+Pages._udStartT3 = function (displayId) {
+  Pages.t3SessionStart && Pages.t3SessionStart(displayId);
 };
 
 // ページ登録

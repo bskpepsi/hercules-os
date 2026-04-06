@@ -39,6 +39,10 @@ Pages.t3SessionStart = async function (unitDisplayId) {
   if (unit.status !== 'active') {
     UI.toast('このユニットは処理済みです（status: ' + unit.status + '）', 'error'); return;
   }
+  // T3以降のステージは再移行を防止
+  if (unit.stage_phase === 'T3') {
+    if (!confirm('このユニットはすでにT3ステージです。\n再度T3移行を実行しますか？（Mx/体重更新として記録されます）')) return;
+  }
 
   const members = _buildT3Members(unit);
   if (!members || members.length === 0) {
@@ -694,13 +698,45 @@ Pages._t3SessionSave = async function () {
     const res = await API.t3.createSession(payload);
     console.log('[T3] save response', res);
 
-    // Store 更新
+    // ── Store を更新（T3移行）──────────────────────────────────────
+    const _t3SessionMembers = s.members
+      .filter(m => m.decision !== 'dead')
+      .map(m => ({
+        unit_slot_no:  m.unit_slot_no,
+        lot_id:        m.lot_id        || '',
+        lot_item_no:   m.lot_item_no   || '',
+        lot_display_id:m.lot_display_id|| '',
+        size_category: m.size_category || '',
+        weight_g:      m.weight_g      || null,
+        sex:           m.sex           || '不明',
+        memo:          m.memo          || '',
+      }));
+
+    const _t3UnitPatch = {
+      stage_phase: 'T3',
+      status:      'active',
+      members:     JSON.stringify(_t3SessionMembers),
+    };
+
     if (res && res.updated_unit) {
+      const _merged3 = Object.assign({}, _t3UnitPatch, res.updated_unit);
+      if (!_merged3.members || _merged3.members === '[]' || _merged3.members === '') {
+        _merged3.members = JSON.stringify(_t3SessionMembers);
+      }
       if (typeof Store.patchDBItem === 'function') {
-        Store.patchDBItem('breeding_units', 'unit_id', s.unit_id, res.updated_unit);
+        Store.patchDBItem('breeding_units', 'unit_id', s.unit_id, _merged3);
       } else {
         const units = (Store.getDB('breeding_units') || []).map(u =>
-          u.unit_id === s.unit_id ? Object.assign({}, u, res.updated_unit) : u
+          u.unit_id === s.unit_id ? Object.assign({}, u, _merged3) : u
+        );
+        Store.setDB('breeding_units', units);
+      }
+    } else {
+      if (typeof Store.patchDBItem === 'function') {
+        Store.patchDBItem('breeding_units', 'unit_id', s.unit_id, _t3UnitPatch);
+      } else {
+        const units = (Store.getDB('breeding_units') || []).map(u =>
+          u.unit_id === s.unit_id ? Object.assign({}, u, _t3UnitPatch) : u
         );
         Store.setDB('breeding_units', units);
       }

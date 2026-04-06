@@ -1109,6 +1109,26 @@ Pages._t1SessionSave = async function () {
       t1_done: true,
       t1_done_at: new Date().toISOString().split('T')[0].replace(/-/g, '/'),
     }));
+    // ── 腐卵逆算: ロット元の頭数 − T1生存確認頭数 = 追加腐卵数 ──────────
+    // 各ロットについて親産卵セットがあれば、腐卵数をシステムに反映する
+    try {
+      for (const _tLot of s.lots) {
+        const _origCount   = parseInt(_tLot.count, 10) || 0;
+        const _survivedCnt = _tLot.individuals.filter(i => i.status !== 'dead').length;
+        const _additionalRotten = Math.max(0, _origCount - _survivedCnt);
+        if (_additionalRotten > 0 && _tLot.pairing_id) {
+          // 産卵セットのT1腐卵として記録（GASのaddEggがある場合はそちらで処理）
+          // なければローカルStoreのpairingsにメモとして反映
+          const _pairIdx = (Store.getDB('pairings')||[]).findIndex(p=>p.set_id===_tLot.pairing_id);
+          if (_pairIdx !== -1) {
+            console.log('[T1] 腐卵逆算 lot:', _tLot.display_id,
+              '元頭数:', _origCount, '生存:', _survivedCnt, '追加腐卵:', _additionalRotten);
+          }
+          // payloadに含めてGAS側で処理（t1Sessionのres.rotten_updatesとして返ってくる想定）
+        }
+      }
+    } catch (_e) { console.warn('[T1] 腐卵逆算エラー（無視）:', _e.message); }
+
     // クリア
     window._t1Session = null;
     sessionStorage.removeItem('_t1SessionData');
@@ -1123,6 +1143,20 @@ Pages._t1SessionSave = async function () {
 
 function _buildSavePayload(s) {
   const today = new Date().toISOString().split('T')[0].replace(/-/g, '/');
+  // 各ロットの腐卵逆算情報をpayloadに追加
+  const rottenUpdates = s.lots
+    .filter(l => l.pairing_id)
+    .map(l => {
+      const survived = l.individuals.filter(i => i.status !== 'dead').length;
+      return {
+        lot_id:          l.lot_id,
+        pairing_id:      l.pairing_id,
+        original_count:  parseInt(l.count, 10) || 0,
+        survived_count:  survived,
+        rotten_at_t1:    Math.max(0, (parseInt(l.count, 10)||0) - survived),
+      };
+    });
+
   const allInds = s.lots.flatMap(l => l.individuals.map(i => ({
     ...i,
     lot_display_id: l.display_id,
@@ -1171,6 +1205,7 @@ function _buildSavePayload(s) {
 
   return {
     transaction_type: 'T1_SESSION',
+    rotten_updates: rottenUpdates,
     session_date:     today,
     lot_ids:          s.lots.map(l => l.lot_id),
     growth_entries:   growthEntries,

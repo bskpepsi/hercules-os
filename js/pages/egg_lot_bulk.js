@@ -155,10 +155,29 @@ Pages.eggLotBulk = function (params = {}) {
 
   // ── 状態 ──────────────────────────────────────────────────────
   const initLineId = params.lineId || params.line_id || '';
+  const initSetId  = params.setId  || params.set_id  || '';
   let _selLineId   = initLineId;
   let _commonDate  = new Date().toISOString().split('T')[0];
   let _nextRowId   = 4;
   let _savedResults = null;
+
+  // 産卵セットIDが渡された場合、採卵日をegg recordsから自動設定
+  if (initSetId) {
+    const _initPair = (Store.getDB('pairings')||[]).find(p=>p.set_id===initSetId);
+    if (_initPair) {
+      // lineIdが未指定なら産卵セットのラインを使う
+      if (!_selLineId && _initPair.line_id) _selLineId = _initPair.line_id;
+      // 採卵記録から直近の採卵日を取得
+      const _eggRecs = Store.getDB('egg_records')
+        ? (Store.getDB('egg_records')||[]).filter(r=>r.set_id===initSetId)
+        : [];
+      if (_eggRecs.length > 0) {
+        const _latestEgg = _eggRecs.sort((a,b)=>String(b.collect_date||b.date||'').localeCompare(String(a.collect_date||a.date||'')))[0];
+        const _eDate = _latestEgg.collect_date || _latestEgg.date;
+        if (_eDate) _commonDate = _eDate.replace(/\//g, '-');
+      }
+    }
+  }
 
   // 共通初期値（変更可能）
   let _commonContainer = '1.8L';

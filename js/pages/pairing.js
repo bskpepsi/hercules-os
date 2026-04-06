@@ -298,6 +298,14 @@ function _renderPairDetail(pair, eggRecords, main) {
   const totalHatch = pair.total_hatch || 0;
   const hatchRate  = totalEggs > 0 ? (Math.round(totalHatch/totalEggs*1000)/10)+'%' : '—';
 
+  // セット回数: 同一♀が産卵セットを組んだ通算回数
+  const _allPairsMother = (Store.getDB('pairings')||[])
+    .filter(p => pair.mother_par_id && p.mother_par_id === pair.mother_par_id)
+    .sort((a,b)=>String(a.set_start||'').localeCompare(String(b.set_start||'')));
+  const _setCount   = _allPairsMother.length;
+  const _setNo      = _allPairsMother.findIndex(p=>p.set_id===pair.set_id) + 1;
+  const setCountStr = _setCount > 0 ? `${_setNo}/${_setCount}回目` : '—';
+
   // 交換リマインドバナー
   const due = _calcExchangeDue(pair);
   const reminderBanner = _reminderBannerHtml(due);
@@ -314,18 +322,22 @@ function _renderPairDetail(pair, eggRecords, main) {
       <!-- KPI -->
       <div class="card card-gold">
         <div style="font-size:.95rem;font-weight:700;margin-bottom:10px">${pair.set_name || pair.display_id}</div>
-        <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr)">
+        <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr)">
           <div class="kpi-card">
-            <div class="kpi-value" style="font-size:1.4rem">${totalEggs}</div>
+            <div class="kpi-value" style="font-size:1.2rem">${totalEggs}</div>
             <div class="kpi-label">採卵数</div>
           </div>
           <div class="kpi-card">
-            <div class="kpi-value" style="font-size:1.4rem">${totalHatch}</div>
+            <div class="kpi-value" style="font-size:1.2rem">${totalHatch}</div>
             <div class="kpi-label">孵化数</div>
           </div>
           <div class="kpi-card">
-            <div class="kpi-value" style="font-size:1.4rem;color:var(--green)">${hatchRate}</div>
+            <div class="kpi-value" style="font-size:1.2rem;color:var(--green)">${hatchRate}</div>
             <div class="kpi-label">孵化率</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-value" style="font-size:1.1rem;color:var(--gold)">${setCountStr}</div>
+            <div class="kpi-label">セット回数</div>
           </div>
         </div>
       </div>
@@ -335,7 +347,7 @@ function _renderPairDetail(pair, eggRecords, main) {
         <button class="btn btn-primary" style="flex:1"
           onclick="Pages._pairAddEggModal('${pair.set_id}')">🥚 採卵記録</button>
         <button class="btn btn-gold" style="flex:1"
-          onclick="Pages._pairGoLotNew('${pair.line_id||''}','${pair.mother_par_id||''}','${pair.father_par_id||''}')">🐛 ロット作成</button>
+          onclick="Pages._pairGoLotNew('${pair.line_id||''}','${pair.mother_par_id||''}','${pair.father_par_id||''}','${pair.set_id||''}')">🐛 ロット作成</button>
       </div>
 
       <!-- セット情報 -->
@@ -842,13 +854,45 @@ Pages._pairEditEggModal = async function (setId) {
 
 // _pairComplete / _pairFail はセット詳細下部のボタン（採卵記録なしで完了させる場合）
 Pages._pairComplete = async function (id) {
-  if (!UI.confirm('完了にしますか？\n採卵記録は採卵記録ボタンから追加できます。')) return;
+  const pair = (Store.getDB('pairings')||[]).find(p=>p.set_id===id)||{};
+  const motherDead = await new Promise(resolve => {
+    UI.modal(`
+      <div class="modal-title">産卵セット完了</div>
+      <div style="font-size:.85rem;color:var(--text2);padding:8px 0 12px">
+        ♀（${pair.mother_display_name||'母虫'}）の状態を選択してください
+      </div>
+      <div class="modal-footer" style="flex-direction:column;gap:8px">
+        <button class="btn btn-primary" style="width:100%" onclick="UI.closeModal();window._pairCompleteResolve(false)">
+          ♀は生存中（通常完了）
+        </button>
+        <button class="btn" style="width:100%;background:rgba(224,80,80,.15);border:2px solid var(--red,#e05050);color:var(--red,#e05050);font-weight:700"
+          onclick="UI.closeModal();window._pairCompleteResolve(true)">
+          💀 ♀は死亡した（死亡として記録）
+        </button>
+        <button class="btn btn-ghost" style="width:100%" onclick="UI.closeModal();window._pairCompleteResolve(null)">
+          キャンセル
+        </button>
+      </div>
+    `);
+    window._pairCompleteResolve = resolve;
+  });
+  if (motherDead === null) return;
   try {
     await apiCall(() => API.pairing.update({
       set_id: id, status: 'completed',
-      closing_reason: 'completed', next_action: 'completed',
+      closing_reason: motherDead ? 'mother_dead' : 'completed',
+      next_action: 'completed',
       next_collect_date: '', rest_until_date: '',
-    }), '完了にしました');
+    }), motherDead ? '完了（♀死亡）として記録しました' : '完了にしました');
+    // ♀死亡の場合は種親ステータスを自動更新
+    if (motherDead && pair.mother_par_id) {
+      try {
+        await API.parent.update({ par_id: pair.mother_par_id, status: 'dead' });
+        UI.toast('♀の種親ステータスを「死亡」に更新しました', 'info', 2500);
+      } catch(_e) {
+        UI.toast('種親ステータスの更新に失敗しました（手動で更新してください）', 'error', 4000);
+      }
+    }
     Pages.pairingDetail(id);
   } catch(e){}
 };
@@ -993,7 +1037,7 @@ Pages._pairSave = async function (editId) {
   } catch(e) {}
 };
 
-Pages._pairGoLotNew = function (directLineId, motherParId, fatherParId) {
+Pages._pairGoLotNew = function (directLineId, motherParId, fatherParId, setId) {
   let lineId = directLineId || '';
   const lines = Store.getDB('lines') || [];
 
@@ -1029,13 +1073,13 @@ Pages._pairGoLotNew = function (directLineId, motherParId, fatherParId) {
         <button class="btn btn-primary" style="flex:2" onclick="
           const v=document.getElementById('plgn-line')?.value;
           if(!v){UI.toast('ラインを選択してください','error');return;}
-          UI.closeModal();routeTo('lot-new',{lineId:v})
-        ">ロット登録へ</button>
+          UI.closeModal();routeTo('egg-lot-bulk',{lineId:v,setId:''})
+        ">卵ロット作成へ</button>
       </div>
     `);
     return;
   }
-  routeTo('lot-new', { lineId });
+  routeTo('egg-lot-bulk', { lineId, setId: setId || '' });
 };
 
 window.PAGES = window.PAGES || {};

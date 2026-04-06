@@ -34,6 +34,10 @@ Pages.t2SessionStart = async function (unitDisplayId) {
   if (unit.t2_done) {
     UI.toast('このユニットはT2移行済みです', 'error'); return;
   }
+  // ステージが既にT2以降の場合もブロック（二重実行防止）
+  if (unit.stage_phase === 'T2' || unit.stage_phase === 'T3') {
+    UI.toast('このユニットはすでに' + unit.stage_phase + 'ステージです。T3移行ボタンを使ってください。', 'error'); return;
+  }
 
   const members = _buildT2Members(unit);
   if (!members || members.length === 0) {
@@ -719,13 +723,50 @@ Pages._t2SessionSave = async function () {
     const res = await API.t2.createSession(payload);
     console.log('[T2] save response', res);
 
-    // Store を更新（patchDBItem があれば差分更新、なければ全置換）
+    // ── Store を更新 ──────────────────────────────────────────────
+    // セッションのmembersをStoreに反映（GASレスポンス待たずに即反映）
+    const _sessionMembers = s.members
+      .filter(m => m.decision !== 'dead')
+      .map(m => ({
+        unit_slot_no:  m.unit_slot_no,
+        lot_id:        m.lot_id        || '',
+        lot_item_no:   m.lot_item_no   || '',
+        lot_display_id:m.lot_display_id|| '',
+        size_category: m.size_category || '',
+        weight_g:      m.weight_g      || null,
+        sex:           m.sex           || '不明',
+        memo:          m.memo          || '',
+      }));
+
+    const _unitPatch = {
+      t2_done:     true,
+      stage_phase: 'T2',
+      status:      'active',
+      members:     JSON.stringify(_sessionMembers),
+    };
+
     if (res && res.updated_unit) {
+      // GASレスポンスがあればそちらを優先（membersがあれば使う）
+      const _merged = Object.assign({}, _unitPatch, res.updated_unit);
+      // membersが空文字/'[]'の場合はセッションデータを使う
+      if (!_merged.members || _merged.members === '[]' || _merged.members === '') {
+        _merged.members = JSON.stringify(_sessionMembers);
+      }
       if (typeof Store.patchDBItem === 'function') {
-        Store.patchDBItem('breeding_units', 'unit_id', s.unit_id, res.updated_unit);
+        Store.patchDBItem('breeding_units', 'unit_id', s.unit_id, _merged);
       } else {
         const units = (Store.getDB('breeding_units') || []).map(u =>
-          u.unit_id === s.unit_id ? Object.assign({}, u, res.updated_unit) : u
+          u.unit_id === s.unit_id ? Object.assign({}, u, _merged) : u
+        );
+        Store.setDB('breeding_units', units);
+      }
+    } else {
+      // GASレスポンスなし: セッションデータだけで更新
+      if (typeof Store.patchDBItem === 'function') {
+        Store.patchDBItem('breeding_units', 'unit_id', s.unit_id, _unitPatch);
+      } else {
+        const units = (Store.getDB('breeding_units') || []).map(u =>
+          u.unit_id === s.unit_id ? Object.assign({}, u, _unitPatch) : u
         );
         Store.setDB('breeding_units', units);
       }

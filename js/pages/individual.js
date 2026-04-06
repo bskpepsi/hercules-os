@@ -70,14 +70,16 @@ Pages.individualList = function () {
   const fixedLine     = fixedLineId ? Store.getLine(fixedLineId) : null;
   const isLineLimited = !!fixedLineId;
 
-  const initStatus = params.status !== undefined ? params.status : 'alive';
+  const initStatus     = params.status !== undefined ? params.status : 'alive';
+  const initParentFlag = params.parent_flag === true || params.parent_flag === 'true';
   let filters = {
     status:      initStatus,
     q:           params.q     || '',
     stage:       params.stage || '',
     sex:         params.sex   || '',
     line_id:     fixedLineId,
-    line_filter: fixedLineId,  // ライン絞り込み（ライン限定モード外でも使う）
+    line_filter: fixedLineId,
+    parent_flag: initParentFlag,
   };
 
   function _applyFilters() {
@@ -102,9 +104,11 @@ Pages.individualList = function () {
     const total = list.length;
     const lines = Store.getDB('lines') || [];
 
-    const title = isLineLimited
-      ? (fixedLine ? fixedLine.display_id + ' の個体' : '個体一覧')
-      : '個体一覧';
+    const title = filters.parent_flag
+      ? '👑 種親候補一覧'
+      : (isLineLimited
+        ? (fixedLine ? fixedLine.display_id + ' の個体' : '個体一覧')
+        : '個体一覧');
     const headerOpts = isLineLimited
       ? { back: true, action: { fn: "routeTo('ind-new',{lineId:'" + fixedLineId + "'})", icon: '＋' } }
       : { action: { fn: "routeTo('ind-new')", icon: '＋' } };
@@ -128,6 +132,11 @@ Pages.individualList = function () {
           <button class="btn btn-sm btn-ghost" onclick="Pages._indQrScan()">📷QR</button>
         </div>
         ${lineFilterBar}
+        ${!filters.parent_flag ? '' :
+          '<div style="background:rgba(224,144,64,.1);border:1px solid rgba(224,144,64,.3);border-radius:8px;padding:8px 12px;margin-bottom:8px;font-size:.8rem;color:var(--amber);display:flex;align-items:center;justify-content:space-between">'
+          + '<span>👑 種親候補フィルター適用中</span>'
+          + '<button class="btn btn-ghost btn-sm" onclick="Store.setParams({});Pages.individualList()">解除</button>'
+          + '</div>'}
         <div class="filter-bar" id="stage-filter">
           ${_stageFilters(filters.stage)}
         </div>

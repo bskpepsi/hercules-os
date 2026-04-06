@@ -40,6 +40,12 @@ Pages.manage = function () {
       color: 'var(--blue)',
     },
     {
+      icon: '👑', label: '種親候補', count: ((Store.getDB('individuals')||[]).filter(i=>String(i.parent_flag||'').toLowerCase()==='true'||i.parent_flag===true).length), unit: '頭',
+      page: 'parent-candidate', newPage: null,
+      sub: '昇格候補個体',
+      color: 'var(--gold)',
+    },
+    {
       icon: '🧬', label: '血統管理', count: blds.filter(b=>b.bloodline_id!=='BLD-UNKNOWN').length, unit: '血統',
       page: 'bloodline-list', newPage: 'bloodline-new',
       sub: `確定 ${blds.filter(b=>b.bloodline_status==='confirmed').length}件${blds.some(b=>b.bloodline_id==='BLD-UNKNOWN') ? ' / うち不明1件' : ''}`,
@@ -236,27 +242,70 @@ Pages._lineShowClosed = function () {
 // ── ライン詳細 ───────────────────────────────────────────────────
 Pages.lineDetail = async function (lineId) {
   if (lineId && typeof lineId === 'object') lineId = lineId.id || lineId.lineId || '';
-  const main = document.getElementById('main');
-  // キャッシュがあれば即時表示
-  let line = Store.getLine(lineId);
-  if (line) _renderLineDetail(line, main);
-  else main.innerHTML = UI.header('ライン詳細', {}) + UI.spinner();
+  var main = document.getElementById('main');
+
+  console.log('[LINE_DETAIL] ===== lineDetail start =====');
+  console.log('[LINE_DETAIL] lineId       :', lineId);
+  console.log('[LINE_DETAIL] __API_BUILD  :', window.__API_BUILD  || '(not set)');
+  console.log('[LINE_DETAIL] __INDEX_BUILD:', window.__INDEX_BUILD || '(not set)');
+  console.log('[LINE_DETAIL] GAS_URL      :', (window.CONFIG && window.CONFIG.GAS_URL || '').slice(0, 60) || '(unset)');
+
+  // ① キャッシュで即時描画
+  var line = Store.getLine(lineId);
+  var hasCached = !!line;
+  if (hasCached) {
+    console.log('[LINE_DETAIL] cached line exists:', line.display_id);
+    _renderLineDetail(line, main);
+  } else {
+    console.log('[LINE_DETAIL] no cache - showing spinner');
+    main.innerHTML = UI.header('ライン詳細', { back: true }) + UI.spinner();
+  }
+
+  // ② バックグラウンドで最新データ取得
   try {
-    console.log('[LINE_DETAIL] typeof API=', typeof API, '/ window.API=', !!window.API);
-    const res = await API.line.get(lineId);
+    console.log('[LINE_DETAIL] fetch detail start - action: getLine');
+    var res = await API.line.get(lineId);
+    if (Store.getPage() !== 'line-detail') return;
     line = res.line;
-    Store.patchDBItem('lines', 'line_id', lineId, line);
-    if (Store.getPage() === 'line-detail') {
-      _renderLineDetail(line, main);
-    } else {
-    }
+    if (Store.patchDBItem) Store.patchDBItem('lines', 'line_id', lineId, line);
+    console.log('[LINE_DETAIL] fetch detail success:', line && line.display_id);
+    _renderLineDetail(line, main);
   } catch (e) {
-    if (Store.getPage() === 'line-detail') {
-      main.innerHTML = UI.header('エラー', {back:true}) +
-        `<div class="page-body">${UI.empty('取得失敗: ' + e.message)}</div>`;
+    console.error('[LINE_DETAIL] fetch detail failed:', e.message);
+    if (Store.getPage() !== 'line-detail') return;
+
+    if (hasCached) {
+      // キャッシュ表示を維持 → warning バナーだけ差し込む
+      var pb = main.querySelector('.page-body');
+      if (pb && !document.getElementById('line-warn-banner')) {
+        var b = document.createElement('div');
+        b.id = 'line-warn-banner';
+        b.style.cssText = 'background:rgba(224,144,64,.1);border:1px solid rgba(224,144,64,.4);'
+          + 'border-radius:10px;padding:10px 12px;margin-bottom:10px;font-size:.78rem';
+        b.innerHTML = '<b style="color:var(--amber)">⚠️ 最新情報の取得に失敗しました</b>'
+          + '<div style="color:var(--text2);margin-top:3px">表示中はキャッシュです。再読み込みをお試しください。</div>'
+          + '<div style="font-size:.68rem;color:var(--text3);margin-top:2px">' + e.message.slice(0, 80) + '</div>'
+          + '<button class="btn btn-ghost btn-sm" style="margin-top:6px" id="line-retry-btn">🔄 再試行</button>';
+        pb.insertBefore(b, pb.firstChild);
+        var retryBtn = document.getElementById('line-retry-btn');
+        if (retryBtn) retryBtn.addEventListener('click', function() { Pages.lineDetail(lineId); });
+      }
+    } else {
+      // キャッシュなし → エラー画面
+      main.innerHTML = UI.header('ライン詳細', { back: true })
+        + '<div class="page-body">'
+        + '<div style="background:rgba(224,80,80,.08);border:1px solid rgba(224,80,80,.3);'
+        + 'border-radius:10px;padding:14px;font-size:.82rem" id="line-err-box">'
+        + '<div style="font-weight:700;color:var(--red,#e05050);margin-bottom:6px">⚠️ ライン情報の取得に失敗しました</div>'
+        + '<div>' + e.message + '</div>'
+        + '<div style="font-size:.72rem;color:var(--text3);margin-top:6px">設定画面のGAS URLとデプロイ状態を確認してください。</div>'
+        + '<button class="btn btn-ghost btn-sm" style="margin-top:10px" id="line-err-retry">🔄 再試行</button>'
+        + '</div></div>';
+      var errRetry = document.getElementById('line-err-retry');
+      if (errRetry) errRetry.addEventListener('click', function() { Pages.lineDetail(lineId); });
     }
   }
-};
+}
 
 // ── 親情報ヘルパー（_renderLineDetail から使用）────────────────
 function _parentInfo(p, pBld, sexColor) {

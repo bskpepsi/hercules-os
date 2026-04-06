@@ -303,6 +303,12 @@ const Store = (() => {
     // 注: filters.status === '' は上の _all 分岐で処理済みのためここには到達しない
 
     if (filters.guinness) list = list.filter(i => String(i.guinness_flag) === 'true');
+    if (filters.parent_flag) {
+      list = list.filter(i =>
+        String(i.parent_flag||'').toLowerCase() === 'true' ||
+        i.parent_flag === true || i.parent_flag === 1
+      );
+    }
     if (filters.q) {
       const q = filters.q.toLowerCase();
       list = list.filter(i =>

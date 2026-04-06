@@ -146,6 +146,7 @@ function _renderParDetail(par, main) {
           ${_parInfoRow('産地',    par.locality    || '—')}
           ${_parInfoRow('累代',    par.generation  || '—')}
           ${_parInfoRow('羽化日',  par.eclosion_date || '—')}
+          ${par.after_eat_date ? _parInfoRow('後食開始', par.after_eat_date) : ''}
           ${_parInfoRow('入手元',  par.source      || '—')}
           ${_parInfoRow('入手日',  par.purchase_date || '—')}
           ${par.father_id ? _parInfoRow('父', par.father_id) : ''}
@@ -161,6 +162,20 @@ function _renderParDetail(par, main) {
         </div>
       </div>
 
+      <!-- ペアリング情報サマリ -->
+      ${(() => {
+        const _allPairs = Store.getDB('pairings') || [];
+        const _myPairs  = _allPairs.filter(p => p.father_par_id===par.par_id || p.mother_par_id===par.par_id);
+        if (_myPairs.length === 0) return '';
+        const _active   = _myPairs.filter(p=>p.status==='active'||p.status==='resting').length;
+        const _dates    = _myPairs.map(p=>p.pairing_start||'').filter(Boolean).sort().reverse();
+        const _lastDate = _dates[0] || '—';
+        return '<div class="card"><div class="card-title">ペアリング履歴</div><div class="info-list">'
+          + _parInfoRow('ペアリング回数', _myPairs.length + '回')
+          + _parInfoRow('最終ペアリング', _lastDate)
+          + (_active > 0 ? _parInfoRow('現在進行中', '<span style="color:var(--green);font-weight:600">'+_active+'セット</span>') : '')
+          + '</div></div>';
+      })()}
       ${par.achievements ? `<div class="card">
         <div class="card-title">実績</div>
         <div style="font-size:.85rem;color:var(--text2)">${par.achievements}</div>
@@ -247,6 +262,7 @@ Pages.parentNew = function (params = {}) {
           ${UI.field('羽化日', UI.input('eclosion_date', 'date', v('eclosion_date')))}
           ${UI.field('入手日', UI.input('purchase_date', 'date', v('purchase_date')))}
         </div>
+        ${UI.field('後食開始日', UI.input('after_eat_date', 'date', v('after_eat_date')))}
         ${UI.field('入手元',
           UI.input('source', 'text', v('source'), '例: 〇〇ブリーダー / 自家産'))}
 

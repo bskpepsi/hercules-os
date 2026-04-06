@@ -25,6 +25,10 @@ function _pid() {
 window.PAGES = {
   'dashboard':   () => Pages.dashboard(),
   'ind-list':    () => Pages.individualList(),
+  'parent-candidate': () => {
+    Store.setParams({ parent_flag: true, status: 'alive' });
+    if (Pages.individualList) Pages.individualList();
+  },
   'ind-detail':  () => Pages.individualDetail(Store.getParams().indId || _pid()),
   'ind-new':     () => Pages.individualNew(Store.getParams()),
   'growth-rec':  () => Pages.growthRecord(Store.getParams()),
