@@ -258,6 +258,22 @@ function _qrNavigate(mode, res, qrText) {
       } else {
         UI.toast('T2移行: BUラベル（BU:...）を読み取ってください', 'error', 3000);
       }
+    } else if (sub === 't3') {
+      if (res.entity_type === 'BU') {
+        var _buIdT3 = ent.display_id || ent.unit_id || _extractIdFromQr('BU');
+        console.log('[QR] T3 BU navigate - id:', _buIdT3);
+        if (_buIdT3 && Pages.t3SessionStart) {
+          Pages.t3SessionStart(_buIdT3);
+        } else if (!_buIdT3) {
+          UI.toast('BUのIDが取得できませんでした。QRコードを確認してください', 'error', 3000);
+        } else {
+          UI.toast('T3移行セッションが利用できません', 'error');
+        }
+      } else if (res.entity_type === 'LOT') {
+        UI.toast('T3移行は BU（飼育ユニット）のQRを読んでください', 'error', 3000);
+      } else {
+        UI.toast('T3移行: BUラベル（BU:...）を読み取ってください', 'error', 3000);
+      }
     } else {
       UI.toast(sub.toUpperCase() + '移行は準備中です', 'info', 2000);
     }

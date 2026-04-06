@@ -8,7 +8,7 @@
 
 'use strict';
 
-window.__API_BUILD = '20260412b';
+window.__API_BUILD = '20260413a';
 console.log('[API] ===== api.js LOADED BUILD=' + window.__API_BUILD + ' =====');
 var API = (() => {
   console.log('[API] IIFE start - BUILD:', window.__API_BUILD);
@@ -325,10 +325,13 @@ var API = (() => {
   const t2 = {
     createSession: (d) => call('createT2Session', d),
   };
-  console.log('[API] t1 ready');
+  const t3 = {
+    createSession: (d) => call('createT3Session', d),
+  };
+  console.log('[API] t1/t2/t3 ready');
 
 console.log('[API] return object ready');
-return { system, line, lot, individual, growth, parent, bloodline, pairing, label, drive, gemini, backup, scan, phase2, integrity, t1, t2, sale };
+return { system, line, lot, individual, growth, parent, bloodline, pairing, label, drive, gemini, backup, scan, phase2, integrity, t1, t2, t3, sale };
 })();
 window.API = API; // グローバル確保（const はwindowに乗らない環境対策）
 console.log('[API] window.API assigned', !!window.API);

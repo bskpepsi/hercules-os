@@ -52,6 +52,7 @@ window.PAGES = {
   'qr-scan':     () => Pages.qrScan(Store.getParams()),
   't1-session':  () => Pages.t1Session ? Pages.t1Session(Store.getParams()) : null,
   't2-session':  () => Pages.t2Session ? Pages.t2Session(Store.getParams()) : null,
+  't3-session':  () => Pages.t3Session ? Pages.t3Session(Store.getParams()) : null,
   'unit-detail': () => Pages.unitDetail ? Pages.unitDetail(Store.getParams()) : null,
   'qr-diff':     () => Pages.qrDiff(Store.getParams()),
   'weight-mode': () => Pages.weightMode(Store.getParams()),
