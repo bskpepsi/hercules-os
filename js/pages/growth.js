@@ -145,6 +145,8 @@ Pages.growthRecord = function (params = {}) {
 
     // ── 区分ボタン HTML（LOT専用） ─────────────────────────────
     function sizeCatButtonsHtml() {
+      // IND=シングルセレクト、LOT=複数選択
+      const _multiSel = isLot;
       return '<div style="display:flex;gap:6px">'
         + ['大','中','小','—'].map(function(val) {
             const on = val === '—' ? !_selSizeCat : (_selSizeCat || '').split(',').map(s => s.trim()).includes(val);
@@ -153,12 +155,12 @@ Pages.growthRecord = function (params = {}) {
               + 'border:1px solid ' + (on ? 'var(--green)' : 'var(--border)') + ';'
               + 'background:' + (on ? 'var(--green)' : 'var(--surface2)') + ';'
               + 'color:' + (on ? '#fff' : 'var(--text2)') + '"'
-              + ' onclick="Pages._grSelSizeCat(\'' + val + '\')">' + val + '</button>';
+              + ' onclick="Pages._grSelSizeCat(\'' + val + '\',' + _multiSel + ')">' + val + '</button>';
           }).join('')
         + '<input type="hidden" id="gr-size-cat" value="' + (_selSizeCat || '') + '"></div>';
     }
 
-    main.innerHTML = `
+    main.innerHTMLerHTML = `
       ${UI.header('成長記録', { back: true, backFn: backFn })}
       <div class="page-body has-quick-bar">
 
@@ -424,7 +426,11 @@ Pages.growthRecord = function (params = {}) {
     }
 
     if (targetId) {
-      setTimeout(function() { var w = document.getElementById('gr-weight'); if (w) w.focus(); }, 150);
+      // 初回のみweight欄にfocus（再描画時はスクロール位置を保持するためskip）
+      if (_isFirstRender) {
+        _isFirstRender = false;
+        setTimeout(function() { var w = document.getElementById('gr-weight'); if (w) w.focus(); }, 150);
+      }
       Pages._grLoadHistory(targetType, targetId);
     }
   }
@@ -434,6 +440,7 @@ Pages.growthRecord = function (params = {}) {
     var w = document.getElementById('gr-weight')?.value;
     var d = document.getElementById('gr-date')?.value;
     _mode = mode;
+    _isFirstRender = false;  // モード切替は再描画なのでfocusしない
     _applyModePreset(mode);
     render();
     if (w) setTimeout(function() { var e = document.getElementById('gr-weight'); if (e) e.value = w; }, 0);
@@ -462,19 +469,25 @@ Pages.growthRecord = function (params = {}) {
   Pages._grSelMat       = function(v) { _selMat       = v; render(); };
   Pages._grSelStage     = function(v) { _selStage     = v; render(); };
   Pages._grToggleMalt   = function(checked) { _hasMalt = checked; };
-  Pages._grSelSizeCat   = function(v) {
-    if (v === '—') { _selSizeCat = ''; }
-    else {
+  Pages._grSelSizeCat   = function(v, multiSelect) {
+    if (v === '—') {
+      _selSizeCat = '';
+    } else if (multiSelect) {
+      // LOT: 複数選択トグル
       var cats = (_selSizeCat || '').split(',').map(function(s){ return s.trim(); }).filter(Boolean);
       var idx = cats.indexOf(v);
       if (idx >= 0) cats.splice(idx, 1); else cats.push(v);
       _selSizeCat = cats.join(',');
+    } else {
+      // IND: シングルセレクト（同じ値なら解除）
+      _selSizeCat = (_selSizeCat === v) ? '' : v;
     }
     render();
   };
 
   // ── ±ボタン実装（pointerdown から呼ばれる） ──────────────────
   var _adjTimer = null;
+  var _isFirstRender = true;   // 初回レンダリング判定（focus制御用）
   Pages._grAdjWeight = function(delta) {
     var el = document.getElementById('gr-weight');
     if (!el) return;
