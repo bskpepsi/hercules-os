@@ -446,7 +446,12 @@ const UI = {
           const _d1 = new Date(String(_prevRec.record_date).replace(/\//g,'-'));
           const _d2 = new Date(String(r.record_date).replace(/\//g,'-'));
           const _dayDiff = Math.round((_d2 - _d1) / 86400000);
-          if (_dayDiff > 0) _recAgeDays = '前回+' + _dayDiff + '日';
+          if (_dayDiff > 0) {
+            const _wks = Math.floor(_dayDiff / 7);
+            _recAgeDays = _wks > 0
+              ? '前回+' + _dayDiff + '日（' + _wks + '週）'
+              : '前回+' + _dayDiff + '日';
+          }
         }
       }
       const recAge = _recAgeDays ? (typeof _recAgeDays === 'number' ? Store.formatRecordAge(_recAgeDays) : String(_recAgeDays)) : '';

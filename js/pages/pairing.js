@@ -294,17 +294,17 @@ function _renderPairDetail(pair, eggRecords, main) {
   const m   = Store.getParent(pair.mother_par_id);
 
   // KPI
-  const totalEggs  = pair.total_eggs  || 0;
-  const totalHatch = pair.total_hatch || 0;
-  const hatchRate  = totalEggs > 0 ? (Math.round(totalHatch/totalEggs*1000)/10)+'%' : '—';
+  const totalEggs   = pair.total_eggs   || 0;
+  const totalHatch  = pair.total_hatch  || 0;
+  // 腐卵数: egg_recordsのfailed_countを合計（pair.total_failed優先）
+  const totalRotten = pair.total_failed !== undefined && pair.total_failed !== null
+    ? parseInt(pair.total_failed, 10) || 0
+    : eggRecords ? eggRecords.reduce((s,r)=>s+(parseInt(r.failed_count,10)||0),0) : 0;
+  const hatchRate   = totalEggs > 0 ? (Math.round(totalHatch/totalEggs*1000)/10)+'%' : '—';
 
-  // セット回数: 同一♀が産卵セットを組んだ通算回数
-  const _allPairsMother = (Store.getDB('pairings')||[])
-    .filter(p => pair.mother_par_id && p.mother_par_id === pair.mother_par_id)
-    .sort((a,b)=>String(a.set_start||'').localeCompare(String(b.set_start||'')));
-  const _setCount   = _allPairsMother.length;
-  const _setNo      = _allPairsMother.findIndex(p=>p.set_id===pair.set_id) + 1;
-  const setCountStr = _setCount > 0 ? `${_setNo}/${_setCount}回目` : '—';
+  // セット回数: 採卵記録の件数（採卵した回数 = 何回目まで採卵したか）
+  const _eggCount = eggRecords ? eggRecords.length : 0;
+  const setCountStr = _eggCount > 0 ? `${_eggCount}回目` : '—';
 
   // 交換リマインドバナー
   const due = _calcExchangeDue(pair);
@@ -322,10 +322,14 @@ function _renderPairDetail(pair, eggRecords, main) {
       <!-- KPI -->
       <div class="card card-gold">
         <div style="font-size:.95rem;font-weight:700;margin-bottom:10px">${pair.set_name || pair.display_id}</div>
-        <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr)">
+        <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);gap:6px">
           <div class="kpi-card">
             <div class="kpi-value" style="font-size:1.2rem">${totalEggs}</div>
             <div class="kpi-label">採卵数</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-value" style="font-size:1.2rem;color:${totalRotten>0?'var(--red,#e05050)':'var(--text2)'}">${totalRotten}</div>
+            <div class="kpi-label">腐卵数</div>
           </div>
           <div class="kpi-card">
             <div class="kpi-value" style="font-size:1.2rem">${totalHatch}</div>
@@ -337,7 +341,7 @@ function _renderPairDetail(pair, eggRecords, main) {
           </div>
           <div class="kpi-card">
             <div class="kpi-value" style="font-size:1.1rem;color:var(--gold)">${setCountStr}</div>
-            <div class="kpi-label">セット回数</div>
+            <div class="kpi-label">採卵回数</div>
           </div>
         </div>
       </div>
