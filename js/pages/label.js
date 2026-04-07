@@ -1,7 +1,13 @@
+// FILE: js/pages/label.js
+// ────────────────────────────────────────────────────────────────
 // ════════════════════════════════════════════════════════════════
 // label.js v5 — PNG画像出力ベース（Brother QL-820NWB 62mm連続ロール対応）
 //
 // サイズ:
+// build: 20260413m
+// 20260413m 修正:
+//   - IND_DRAFTラベルの display_id から「DRAFT」サフィックス除去
+//
 //   個体 / ロット / T1ユニット (IND, LOT, UNIT, IND_DRAFT): 62mm × 70mm
 //   産卵セット / 種親                 (SET, PAR)          : 62mm × 40mm
 //
@@ -611,12 +617,16 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
           srcLots = typeof unit.source_lots === 'string' ? JSON.parse(unit.source_lots) : (unit.source_lots || []);
         }
         if (srcLots.length === 0 && unit.origin_lot_id) srcLots = [unit.origin_lot_id];
-        const lotDisplayIds = srcLots.map(lid => {
+        // Draft時: メンバーから lot_id を取得してStoreで解決
+        if (srcLots.length === 0 && unit.members && unit.members.length > 0) {
+          srcLots = [...new Set(unit.members.map(function(m){ return m.lot_id; }).filter(Boolean))];
+        }
+        const lotDisplayIds = srcLots.map(function(lid) {
           const lot = Store.getLot && Store.getLot(lid);
           return lot ? (lot.display_id || lid) : lid;
         });
         if (lotDisplayIds.length > 0) {
-          const short = lotDisplayIds.map(d => { const m = d.match(/[A-Z0-9]+-L\d+/); return m ? m[0] : d; });
+          const short = lotDisplayIds.map(function(d){ const m = d.match(/[A-Z0-9]+-L\d+/); return m ? m[0] : d; });
           _originLotsStr = '由来: ' + short.join(' / ');
         }
       } catch(_e) {}
@@ -643,7 +653,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
       const line = di.line_id ? (Store.getLine(di.line_id)||{}) : {};
       ld = {
         qr_text:      'IND:DRAFT',
-        display_id:   `${di.lot_display_id||''}#${di.lot_item_no||'?'} DRAFT`,
+        display_id:   `${di.lot_display_id||''}#${di.lot_item_no||'?'}`,  // DRAFTサフィックス除去
         line_code:    di.line_code || line.line_code || line.display_id || '',
         stage_code:   di.stage_phase || 'T1',
         sex:          '',
@@ -1365,6 +1375,13 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
   var m1 = (ld.members && ld.members[1]) ? ld.members[1] : null;
   var m0w = m0 && m0.weight_g ? String(m0.weight_g) : '';
   var m1w = m1 && m1.weight_g ? String(m1.weight_g) : '';
+  // ロット短縮名（複数ロット時に①②がどのロット出身か識別）
+  var m0lot = m0 ? (m0.lot_short || (m0.lot_display_id ? (m0.lot_display_id.match(/L\d+$/) || [m0.lot_display_id.slice(-4)])[0] : '')) : '';
+  var m1lot = m1 ? (m1.lot_short || (m1.lot_display_id ? (m1.lot_display_id.match(/L\d+$/) || [m1.lot_display_id.slice(-4)])[0] : '')) : '';
+  // 同一ロットなら表示不要
+  var showLotInHeader = m0lot && m1lot && m0lot !== m1lot;
+  var h0label = showLotInHeader ? '①' + m0lot : '①';
+  var h1label = showLotInHeader ? '②' + m1lot : '②';
 
   // Mx（モルト）: T2系のみ表示
   var showMx = (mat === 'T2' || mat === 'T3');
@@ -1484,8 +1501,8 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
     + '    <table style="width:100%;border-collapse:collapse;table-layout:fixed">\n'
     + '      <thead><tr>'
     + '<th style="' + thS + '">日付</th>'
-    + '<th style="' + thS + '">①</th>'
-    + '<th style="' + thS + '">②</th>'
+    + '<th style="' + thS + '">' + h0label + '</th>'
+    + '<th style="' + thS + '">' + h1label + '</th>'
     + '<th style="' + thS + '">交換</th>'
     + '</tr></thead>\n'
     + '      <tbody>' + rowsHtml + '</tbody>\n'
@@ -1550,3 +1567,6 @@ window._lastLabelType = window._lastLabelType  || {};
 
 // ページ登録
 window.PAGES['label-gen'] = () => Pages.labelGen(Store.getParams());
+
+
+// ────────────────────────────────────────────────────────────────

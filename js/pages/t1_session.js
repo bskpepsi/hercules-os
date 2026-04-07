@@ -1,3 +1,9 @@
+// FILE: js/pages/t1_session.js
+// build: 20260413m
+// 20260413m 修正:
+//   - sessionStorage → localStorage に変更（Androidブラウザでセッションが消えるバグ修正）
+//   - ラベル発行後に戻ると最初からになる問題を修正
+// ────────────────────────────────────────────────────────────────
 // ════════════════════════════════════════════════════════════════
 // t1_session.js — T1移行編成セッション画面
 // ════════════════════════════════════════════════════════════════
@@ -124,16 +130,16 @@ function _nextDisplayId(session) {
 }
 
 // ────────────────────────────────────────────────────────────────
-// sessionStorage 永続化（label-gen 往復時に保持）
+// localStorage 永続化（label-gen 往復・Androidブラウザ遷移時も保持）
 // ────────────────────────────────────────────────────────────────
 function _saveSessionToStorage() {
   try {
-    sessionStorage.setItem('_t1SessionData', JSON.stringify(window._t1Session));
+    localStorage.setItem('_t1SessionData', JSON.stringify(window._t1Session));
   } catch (e) {}
 }
 function _restoreSessionFromStorage() {
   try {
-    const raw = sessionStorage.getItem('_t1SessionData');
+    const raw = localStorage.getItem('_t1SessionData');
     if (raw) window._t1Session = JSON.parse(raw);
   } catch (e) {}
 }
@@ -852,8 +858,22 @@ Pages._t1PrintUnit = function (unitIdx) {
   const u = s.units[unitIdx];
   if (!u) return;
   _saveSessionToStorage();
-  // unitDraft: Store未保存でもラベル描画できるよう最小データを渡す
   const line = Store.getLine(s.lineId);
+
+  // 由来ロットIDリスト（重複除去）
+  const sourceLotIds = [...new Set((u.members || []).map(m => m.lot_id).filter(Boolean))];
+
+  // メンバーに由来ロット短縮名を付加
+  // 例: lot_display_id="HM2026-B2-L06" → lot_short="L06"
+  const membersWithLot = (u.members || []).map(function(m) {
+    var short = '';
+    if (m.lot_display_id) {
+      var _mm = m.lot_display_id.match(/L\d+$/);
+      short = _mm ? _mm[0] : m.lot_display_id;
+    }
+    return Object.assign({}, m, { lot_short: short });
+  });
+
   const labelParams = {
     targetType:       'UNIT',
     displayId:        u.display_id,
@@ -870,8 +890,9 @@ Pages._t1PrintUnit = function (unitIdx) {
       for_sale:      u.for_sale,
       stage_phase:   'T1',
       mat_type:      'T1',
-      members:       u.members || [],
-      t1_date:       new Date().toISOString().slice(5, 10),  // MM-DD 形式
+      members:       membersWithLot,
+      source_lots:   sourceLotIds,   // 由来ロットIDリスト（origin_lots_str生成に使用）
+      t1_date:       new Date().toISOString().slice(5, 10),
     },
   };
   console.log('[T1] label route params', labelParams);
@@ -1062,7 +1083,7 @@ Pages._t1SessionBack = function () {
 Pages._t1SessionCancel = function () {
   if (confirm('セッションを破棄しますか？（入力内容は全て失われます）')) {
     window._t1Session = null;
-    sessionStorage.removeItem('_t1SessionData');
+    localStorage.removeItem('_t1SessionData');
     routeTo('qr-scan', { mode: 't1' });
   }
 };
@@ -1131,7 +1152,7 @@ Pages._t1SessionSave = async function () {
 
     // クリア
     window._t1Session = null;
-    sessionStorage.removeItem('_t1SessionData');
+    localStorage.removeItem('_t1SessionData');
     UI.toast('T1移行を完了しました ✅', 'success');
     routeTo('lot-detail', { lotId: s.lots[0].lot_id });
   } catch (e) {
@@ -1239,3 +1260,6 @@ window.PAGES = window.PAGES || {};
 window.PAGES['t1-session'] = function () {
   Pages.t1Session(Store.getParams());
 };
+
+
+// ────────────────────────────────────────────────────────────────
