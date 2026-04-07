@@ -2,6 +2,10 @@
 // individual.js
 // 役割: 個体の一覧・詳細・新規登録・編集・ステータス変更を担う。
 //       個体台帳の中心画面。ロット・成長記録・ラベルへの導線も持つ。
+// build: 20260413k
+//
+// 20260413k 修正:
+//   - 基本情報セクションに「区分」（size_category）表示を追加
 //
 // 修正履歴:
 //   - ステージ新6区分に統一（L1L2/L3/前蛹/蛹/成虫（未後食）/成虫（活動開始））
@@ -17,7 +21,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] individual.js v20260402a loaded');
+console.log('[HerculesOS] individual.js v20260413j loaded');
 
 const Pages = window.Pages || {};
 
@@ -621,6 +625,7 @@ function _renderDetail(ind, main) {
             ${_infoRow('容器',     ind.current_container || '—')}
             ${_infoRow('マット',   ind.current_mat       || '—')}
             ${_infoRow('保管場所', ind.storage_location  || '—')}
+            ${ind.size_category ? _infoRow('区分', ind.size_category) : ''}
           </div>
         </div>
       </div>
@@ -1494,3 +1499,6 @@ function _closeModal() {
 }
 
 window._closeModal = _closeModal;
+
+
+// ────────────────────────────────────────────────────────────────

@@ -1,7 +1,10 @@
 // ════════════════════════════════════════════════════════════════
 // growth.js v5 — 成長記録入力画面（体重測定UIベース・全導線統一）
-// build: 20260413j
+// build: 20260413k
 //
+// 20260413k 修正:
+//   - 区分ボタン「—」廃止、同ボタン2度タップで解除
+//   - 成長記録保存時にsize_categoryをStoreに反映（個体詳細表示・次回初期値保持）
 // 20260413j 修正:
 //   - render()内の main.innerHTMLerHTML → main.innerHTML タイポ修正
 //     （成長記録画面が真っ暗になるバグの修正）
@@ -142,12 +145,13 @@ Pages.growthRecord = function (params = {}) {
       : `Store.back()`;
 
     // ── 区分ボタン HTML ─────────────────────────────────────────
+    // 「—」ボタン廃止。同じボタンを2度タップで選択解除。
     function sizeCatButtonsHtml() {
-      // IND=シングルセレクト、LOT=複数選択
+      // IND=シングルセレクト（同ボタン2回で解除）、LOT=複数選択トグル
       const _multiSel = isLot;
       return '<div style="display:flex;gap:6px">'
-        + ['大','中','小','—'].map(function(val) {
-            const on = val === '—' ? !_selSizeCat : (_selSizeCat || '').split(',').map(s => s.trim()).includes(val);
+        + ['大','中','小'].map(function(val) {
+            const on = (_selSizeCat || '').split(',').map(function(s){ return s.trim(); }).includes(val);
             return '<button type="button"'
               + ' style="flex:1;min-height:52px;min-width:60px;border-radius:10px;font-size:.95rem;font-weight:700;cursor:pointer;'
               + 'border:1px solid ' + (on ? 'var(--green)' : 'var(--border)') + ';'
@@ -471,9 +475,7 @@ Pages.growthRecord = function (params = {}) {
   Pages._grSelStage     = function(v) { _selStage     = v; render(); };
   Pages._grToggleMalt   = function(checked) { _hasMalt = checked; };
   Pages._grSelSizeCat   = function(v, multiSelect) {
-    if (v === '—') {
-      _selSizeCat = '';
-    } else if (multiSelect) {
+    if (multiSelect) {
       // LOT: 複数選択トグル
       var cats = (_selSizeCat || '').split(',').map(function(s){ return s.trim(); }).filter(Boolean);
       var idx = cats.indexOf(v);
@@ -661,7 +663,11 @@ Pages.growthRecord = function (params = {}) {
     try {
       var res = await apiCall(function() { return API.growth.create(payload); }, '記録しました ✅');
       Store.addGrowthRecord(id, Object.assign({}, payload, { record_id: res.record_id, age_days: res.age_days }));
-      if (type === 'IND') Store.patchDBItem('individuals', 'ind_id', id, { latest_weight_g: weight, current_stage: stage });
+      if (type === 'IND') {
+        var indPatch = { latest_weight_g: weight, current_stage: stage };
+        if (sizeCat) indPatch.size_category = sizeCat;  // 区分をStoreに反映（個体詳細表示・次回初期値用）
+        Store.patchDBItem('individuals', 'ind_id', id, indPatch);
+      }
       if (type === 'LOT') {
         var lu = {};
         if (stage) lu.stage = stage;
