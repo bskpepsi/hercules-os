@@ -4,7 +4,9 @@
 // label.js v5 — PNG画像出力ベース（Brother QL-820NWB 62mm連続ロール対応）
 //
 // サイズ:
-// build: 20260413o
+// build: 20260413q
+// 20260413q 修正:
+//   - IND_DRAFT/IND_FORMAL自動生成で targetId=null 渡しに修正
 // 20260413o 修正:
 //   - ユニットラベル: prefix(HM2026-)を改行せず同一行に表示
 //   - ユニットラベル: 日付をM/D形式に、空白行に「／」表示
@@ -473,7 +475,10 @@ Pages.labelGen = function (params = {}) {
 
     // 自動生成
     if (targetId || (_isUnitMode && _unitDisplayId) || _isIndDraftMode || _isIndFormalMode) {
-      const _autoTargetId = (_isUnitMode && !targetId) ? _unitDisplayId : targetId;
+      // IND_DRAFT/IND_FORMAL は targetId が空なので targetType 自体を識別子として渡す
+      const _autoTargetId = (_isUnitMode && !targetId) ? _unitDisplayId
+        : (_isIndDraftMode || _isIndFormalMode) ? null
+        : targetId;
       console.log('[LABEL] auto-generate', { targetType, _autoTargetId, labelType });
       setTimeout(() => Pages._lblGenerate(targetType, _autoTargetId, labelType), 100);
       // 安全フォールバック: 6秒後もスピナーなら強制エラー表示
