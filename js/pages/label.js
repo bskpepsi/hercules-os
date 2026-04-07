@@ -4,7 +4,9 @@
 // label.js v5 — PNG画像出力ベース（Brother QL-820NWB 62mm連続ロール対応）
 //
 // サイズ:
-// build: 20260413q
+// build: 20260413r
+// 20260413r 修正:
+//   - プレビューエリア表示条件に IND_FORMAL を追加（根本原因修正）
 // 20260413q 修正:
 //   - IND_DRAFT/IND_FORMAL自動生成で targetId=null 渡しに修正
 // 20260413o 修正:
@@ -406,7 +408,7 @@ Pages.labelGen = function (params = {}) {
 
         <!-- プレビューエリア -->
         <div class="card" id="lbl-preview-card">
-          ${(targetId || (_isUnitMode && _unitDisplayId) || _isIndDraftMode)
+          ${(targetId || (_isUnitMode && _unitDisplayId) || _isIndDraftMode || _isIndFormalMode)
             ? `<div class="card-title">プレビュー <span style="font-size:.72rem;color:var(--text3);font-weight:400">${dims.label}</span></div>
                <div id="lbl-html-preview" style="margin-bottom:12px;min-height:120px;
                  display:flex;align-items:center;justify-content:center;
