@@ -1,3 +1,5 @@
+// FILE: js/pages/manage.js
+// ────────────────────────────────────────────────────────────────
 // ════════════════════════════════════════════════════════════════
 // manage.js
 // 役割: 管理メニュー（5タブの「管理」画面）。
@@ -56,6 +58,21 @@ Pages.manage = function () {
       page: 'pairing-list', newPage: 'pairing-new',
       sub: `完了 ${pairs.filter(p=>p.status==='completed').length}件`,
       color: '#a0c878',
+    },
+    {
+      icon: '📦', label: 'ユニット管理', count: (() => {
+        const units = Store.getDB('breeding_units') || [];
+        return units.filter(u => u.status === 'active').length;
+      })(), unit: '件',
+      page: 'unit-list', newPage: null,
+      sub: (() => {
+        const units = Store.getDB('breeding_units') || [];
+        const t1 = units.filter(u => u.stage_phase === 'T1' && u.status === 'active').length;
+        const t2 = units.filter(u => u.stage_phase === 'T2' && u.status === 'active').length;
+        const t3 = units.filter(u => u.stage_phase === 'T3' && u.status === 'active').length;
+        return `T1:${t1} / T2:${t2} / T3:${t3}`;
+      })(),
+      color: 'var(--blue)',
     },
     {
       icon: '💰', label: '販売管理', count: (() => {
@@ -742,3 +759,117 @@ window.PAGES['manage']      = () => Pages.manage();
 window.PAGES['line-list']   = () => Pages.lineList();
 window.PAGES['line-detail'] = () => Pages.lineDetail(Store.getParams().lineId || Store.getParams().id);
 window.PAGES['line-new']    = () => Pages.lineNew(Store.getParams());
+
+
+
+
+
+// ────────────────────────────────────────────────────────────────
+// FILE: js/pages/settings.js
+
+// ════════════════════════════════════════════════════════════════
+// ユニット一覧（unit-list）
+// ════════════════════════════════════════════════════════════════
+Pages._goUnitDetail = function(uid) { routeTo('unit-detail', { unitDisplayId: uid }); };
+
+Pages.unitList = function (params) {
+  params = params || {};
+  const main  = document.getElementById('main');
+  const units = Store.getDB('breeding_units') || [];
+  const lines = Store.getDB('lines') || [];
+
+  let filterPhase  = params._phase  || '';
+  let filterStatus = params._status || 'active';
+
+  function _lineCode(lineId) {
+    const l = lines.find(x => x.line_id === lineId);
+    return l ? (l.line_code || l.display_id || lineId) : lineId;
+  }
+
+  function _renderList() {
+    let list = units.slice();
+    if (filterPhase)  list = list.filter(u => u.stage_phase === filterPhase);
+    if (filterStatus) list = list.filter(u => (u.status || 'active') === filterStatus);
+
+    const el = document.getElementById('unit-list-body');
+    if (!el) return;
+    if (list.length === 0) {
+      el.innerHTML = UI.empty('該当するユニットがありません');
+      return;
+    }
+    el.innerHTML = list.map(u => {
+      const lc    = _lineCode(u.line_id);
+      const phase = u.stage_phase || '—';
+      const sc    = u.size_category || '—';
+      const hc    = u.head_count || 2;
+      const st    = u.status || 'active';
+      const stBadge = st === 'individualized'
+        ? `<span style="font-size:.62rem;color:var(--amber);background:rgba(224,144,64,.15);padding:1px 5px;border-radius:4px;margin-left:4px">個別化済</span>`
+        : st === 'sold'
+        ? `<span style="font-size:.62rem;color:var(--green);background:rgba(76,175,120,.15);padding:1px 5px;border-radius:4px;margin-left:4px">販売済</span>` : '';
+      const phaseColor = phase === 'T2' ? 'var(--blue)' : phase === 'T3' ? 'var(--amber)' : 'var(--text3)';
+      let srcLots = '';
+      try {
+        const sl = u.source_lots ? JSON.parse(u.source_lots) : [];
+        if (sl.length > 0) {
+          const names = sl.map(lid => { const lot = Store.getLot && Store.getLot(lid); return lot ? (lot.display_id || lid) : lid; });
+          srcLots = `<div style="font-size:.68rem;color:var(--text3)">由来: ${names.join(' / ')}</div>`;
+        }
+      } catch(_e) {}
+      const uid = (u.display_id || u.unit_id || '').replace(/['"]/g, '');
+      return `<div class="card" style="cursor:pointer;padding:12px 14px" onclick="Pages._goUnitDetail('${uid}')">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:.88rem;font-weight:700;color:var(--gold)">${u.display_id||u.unit_id}${stBadge}</div>
+            <div style="font-size:.72rem;color:var(--text3);margin-top:2px">L:${lc} / ${hc}頭 / 区分:${sc}</div>
+            ${srcLots}
+          </div>
+          <div style="text-align:right;flex-shrink:0">
+            <div style="font-size:.85rem;font-weight:700;color:${phaseColor}">${phase}</div>
+            <div style="font-size:.62rem;color:var(--text3)">ステージ</div>
+          </div>
+          <div style="color:var(--text3);font-size:1.1rem">›</div>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  const phases = ['', 'T1', 'T2', 'T3'];
+  const phaseLabels = { '': '全て', T1: 'T1', T2: 'T2', T3: 'T3' };
+  const statuses = [{ v: 'active', label: '飼育中' }, { v: '', label: '全状態' }, { v: 'individualized', label: '個別化済' }];
+  const activeCount = units.filter(u => (u.status || 'active') === 'active').length;
+
+  main.innerHTML =
+    UI.header('ユニット一覧', { back: true }) +
+    `<div class="page-body">
+      <div style="font-size:.78rem;color:var(--text3);margin-bottom:6px">計 ${units.length}件 / 飼育中 ${activeCount}件</div>
+      <div class="filter-bar" style="margin-bottom:8px" id="phase-filter">
+        ${phases.map(p => `<button class="pill ${filterPhase===p?'active':''}" onclick="Pages._unitPhaseFilter('${p}')">${phaseLabels[p]}</button>`).join('')}
+      </div>
+      <div class="filter-bar" style="margin-bottom:8px" id="status-filter">
+        ${statuses.map(s => `<button class="pill ${filterStatus===s.v?'active':''}" onclick="Pages._unitStatusFilter('${s.v}')">${s.label}</button>`).join('')}
+      </div>
+      <div id="unit-list-body"></div>
+    </div>`;
+
+  Pages._unitPhaseFilter = function(p) {
+    filterPhase = p;
+    document.querySelectorAll('#phase-filter .pill').forEach(btn => {
+      btn.classList.toggle('active', phaseLabels[btn.textContent.trim()] !== undefined && btn.textContent.trim() === phaseLabels[p]);
+    });
+    _renderList();
+  };
+  Pages._unitStatusFilter = function(v) {
+    filterStatus = v;
+    document.querySelectorAll('#status-filter .pill').forEach(btn => {
+      const s = statuses.find(x => x.label === btn.textContent.trim());
+      btn.classList.toggle('active', s && s.v === v);
+    });
+    _renderList();
+  };
+
+  _renderList();
+};
+
+window.PAGES = window.PAGES || {};
+window.PAGES['unit-list'] = function() { Pages.unitList(Store.getParams()); };

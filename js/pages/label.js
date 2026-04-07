@@ -4,7 +4,9 @@
 // label.js v5 — PNG画像出力ベース（Brother QL-820NWB 62mm連続ロール対応）
 //
 // サイズ:
-// build: 20260413u
+// build: 20260413v
+// 20260413v 修正:
+//   - INDラベル: 成長記録がStoreにない場合GASから取得して表示
 // 20260413u 修正:
 //   - T1セッション戻るボタンをゴーストボタン形式に統一・onclick修正
 // 20260413t 修正:
@@ -567,9 +569,21 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
     console.log('[LABEL] generate start', targetType, targetId);
     if (targetType === 'IND') {
       console.log('[LABEL] branch IND');
-      const ind     = Store.getIndividual(targetId) || {};
-      const line    = Store.getLine(ind.line_id)    || {};
-      const records = Store.getGrowthRecords(targetId) || [];
+      const ind  = Store.getIndividual(targetId) || {};
+      const line = Store.getLine(ind.line_id)    || {};
+      // ★ Storeに成長記録がなければGASから取得（T2個別化直後など）
+      let records = Store.getGrowthRecords(targetId) || [];
+      if (records.length === 0 && targetId) {
+        try {
+          const _res = await API.growth.list('IND', targetId);
+          if (_res && _res.records && _res.records.length > 0) {
+            records = _res.records;
+            Store.setGrowthRecords(targetId, records);
+          }
+        } catch(_e) {
+          console.warn('[LABEL] growth fetch failed (non-fatal):', _e.message);
+        }
+      }
       ld = {
         qr_text:      `IND:${ind.ind_id || targetId}`,
         display_id:   ind.display_id    || targetId,
