@@ -4,7 +4,11 @@
 // label.js v5 — PNG画像出力ベース（Brother QL-820NWB 62mm連続ロール対応）
 //
 // サイズ:
-// build: 20260413n
+// build: 20260413o
+// 20260413o 修正:
+//   - ユニットラベル: prefix(HM2026-)を改行せず同一行に表示
+//   - ユニットラベル: 日付をM/D形式に、空白行に「／」表示
+//   - IND_FORMALのearly return バグ修正（空白ページ問題）
 // 20260413n 修正:
 //   - IND_FORMAL 対応（T1個別飼育の正式IDラベル）
 //   - ユニットラベルの t1_date を ld に追加（日付が「移行」になるバグ修正）
@@ -523,7 +527,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
   if (targetType === 'UNIT'      && !_genDisplayId) { console.warn('[LABEL] early return: UNIT no displayId'); return; }
   if (targetType === 'IND_DRAFT' && !_genIndDraft)  { console.warn('[LABEL] early return: IND_DRAFT no draftInd'); return; }
   if (targetType === 'IND_FORMAL' && !_genIndFormal) { console.warn('[LABEL] early return: IND_FORMAL no formalInd'); return; }
-  if (targetType !== 'UNIT' && targetType !== 'IND_DRAFT' && !targetId) {
+  if (targetType !== 'UNIT' && targetType !== 'IND_DRAFT' && targetType !== 'IND_FORMAL' && !targetId) {
     console.warn('[LABEL] early return: no targetId for', targetType); return;
   }
 
@@ -1436,15 +1440,26 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
       + '</td>';
   }
 
+  // t1_date を M/D 形式に変換（例: "04-07" → "4/7"）
+  var t1DateDisp = '';
+  if (t1Date) {
+    var _dateParts = t1Date.split('-');
+    if (_dateParts.length === 2) {
+      t1DateDisp = parseInt(_dateParts[0], 10) + '/' + parseInt(_dateParts[1], 10);
+    } else {
+      t1DateDisp = t1Date;
+    }
+  }
+
   // 4カラム × 4行（日付 / 体重① / 体重② / 交換）
   var rowsHtml = '';
   for (var ri = 0; ri < 4; ri++) {
     var isT1Row = (ri === 0);
-    var rowDate = isT1Row ? (t1Date || '移行') : '';
+    var rowDate = isT1Row ? (t1DateDisp || '移行') : '／';  // 空白行は「／」
     var rowWt0  = isT1Row ? m0w : '';
     var rowWt1  = isT1Row ? m1w : '';
     rowsHtml += '<tr>'
-      + '<td style="' + tdU + '">' + (rowDate || '&nbsp;') + '</td>'
+      + '<td style="' + tdU + '">' + rowDate + '</td>'
       + _wgtCell(rowWt0)
       + _wgtCell(rowWt1)
       + '<td style="' + tdU + '">□全<br>□追</td>'
@@ -1458,9 +1473,13 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
     + 'padding:0 3px;font-size:13px;font-weight:700;color:#000;line-height:1.4">'
     + hc + '頭</span>';
 
-  var lineBadgeHtml   = lineCode  ? '<span style="' + bLg + '">' + lineCode  + '</span>' : '';
-  var unitSuffixHtml  = unitSuffix ? '<span style="' + bLg + '">' + unitSuffix + '</span>' : '';
-  var prefixLine = prefix ? '<div style="font-size:7px;font-weight:700;color:#000;margin-bottom:1px">' + prefix + '-</div>' : '';
+  var lineBadgeHtml  = lineCode   ? '<span style="' + bLg + '">' + lineCode   + '</span>' : '';
+  var unitSuffixHtml = unitSuffix ? '<span style="' + bLg + '">' + unitSuffix + '</span>' : '';
+  // prefix（年度）はバッジ行の前に同一行でinline表示（改行しない）
+  var prefixInline = prefix
+    ? '<span style="font-size:7.5px;font-weight:700;color:#000;margin-right:1px">' + prefix + '-</span>'
+    : '';
+  var prefixLine = '';  // 廃止（prefixInline に統合）
 
   var saleBadge = forSale
     ? '<span style="border:1.5px solid #000;padding:0 3px;font-size:7px;font-weight:700;color:#000;margin-left:3px">販売</span>'
@@ -1495,12 +1514,9 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
     + '    <div style="flex-shrink:0;margin-right:1.5mm">' + _qrBox(qr, 44) + '</div>\n'
     + '    <div style="flex:1;min-width:0;padding-left:1.5mm;border-left:2px solid #000">\n'
 
-    // prefix行（控えめ）
-    + '      ' + prefixLine
-
-    // [B1] [U001] バッジ行 + 右上に頭数バッジ
+    // [HM2026-][B1][U001] バッジ行（prefix も同一行に）+ 右上に頭数バッジ
     + '      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">\n'
-    + '        <div>' + lineBadgeHtml + unitSuffixHtml + '</div>\n'
+    + '        <div style="display:flex;align-items:center">' + prefixInline + lineBadgeHtml + unitSuffixHtml + '</div>\n'
     + '        <div>' + countBadge + '</div>\n'
     + '      </div>\n'
 

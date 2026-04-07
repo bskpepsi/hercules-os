@@ -1298,8 +1298,10 @@ function _buildSavePayload(s) {
 // ────────────────────────────────────────────────────────────────
 let _partialRefreshTimer = null;
 function _partialRefresh() {
+  // ★ 体重入力中は全再描画しない（キーボードが閉じるバグ防止）
+  // 入力完了後の save/assign 操作時は各関数が _renderT1Session を呼ぶ
   clearTimeout(_partialRefreshTimer);
-  _partialRefreshTimer = setTimeout(() => _renderT1Session(window._t1Session), 300);
+  // なにもしない（サマリ更新は _updateSummaryOnly が直接行う）
 }
 
 // ────────────────────────────────────────────────────────────────
