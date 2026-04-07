@@ -57,8 +57,6 @@ Pages.t2SessionStart = async function (unitDisplayId) {
     head_count: unit.head_count  || members.length,
     origin_lots:originLotDisplayIds,
     mx_done:      false,
-    container:    '2.7L',  // ユニット共通容器サイズ（デフォルト2.7L）
-    mat_type:     '',      // マット種別（空=自動: T1→T2, T2→T3）
     exchange_type:'FULL',  // 交換種別（デフォルト全交換）
     members:      members,
     saving:     false,
@@ -97,6 +95,8 @@ Pages.t2SessionStartFromInd = async function (indIdOrDisplayId) {
     sex:           ind.sex || '不明',
     status:        'normal',
     mat_molt:      true,   // モルトパウダー入り（デフォルトON）
+    container:     '2.7L',
+    mat_type:      '',
     decision:      null,
     memo:          '',
   }];
@@ -185,6 +185,8 @@ function _buildT2Members(unit) {
       sex:           '不明',     // 不明 / ♂ / ♀（将来T3で引き継ぎ）
       status:        'normal',   // normal / dead
       mat_molt:      true,       // モルトパウダー入り（デフォルトON）
+      container:     '2.7L',    // 個体別容器サイズ
+      mat_type:      '',         // 個体別マット種別（空=自動）
       decision:      null,       // continue / individualize / sale / dead
       memo:          '',
     });
@@ -309,85 +311,22 @@ function _renderT2Session(s) {
         <span style="color:var(--text3)">※ T2移行後の通常交換は「継続読取りモード」を使います。</span>
       </div>
 
-      <!-- ③ ユニット共通設定カード -->
+      <!-- ③ ユニット共通設定カード（交換種別のみ） -->
       <div style="margin-top:8px;border-radius:10px;border:1.5px solid var(--border);
         background:var(--surface1,var(--surface));padding:12px 14px">
-
-        <div style="font-size:.78rem;font-weight:700;color:var(--text3);margin-bottom:10px;letter-spacing:.04em">
-          ── ユニット共通設定 ──
+        <div style="font-size:.8rem;font-weight:700;color:var(--text2);margin-bottom:8px">
+          🔄 交換種別 — ユニット共通
         </div>
-
-        <!-- Mx（モルトパウダー）一括 -->
-        <div style="font-size:.8rem;font-weight:700;color:var(--text2);margin-bottom:6px">
-          🧪 モルトパウダー (Mx)
-          <span style="font-size:.62rem;font-weight:400;color:var(--text3);margin-left:4px">個体カードで個別変更可</span>
-        </div>
-        <div style="display:flex;gap:8px;margin-bottom:14px">
-          <button type="button" onclick="Pages._t2SetMxAll(true)"
-            style="flex:1;padding:9px 0;border-radius:8px;font-size:.85rem;font-weight:700;cursor:pointer;
-              border:2px solid ${s.members.every(m=>m.mat_molt||m.status==='dead') ? 'var(--green)' : 'var(--border)'};
-              background:${s.members.every(m=>m.mat_molt||m.status==='dead') ? 'rgba(76,175,120,.15)' : 'var(--bg2)'};
-              color:${s.members.every(m=>m.mat_molt||m.status==='dead') ? 'var(--green)' : 'var(--text2)'}">
-            🧪 全員 ON
-          </button>
-          <button type="button" onclick="Pages._t2SetMxAll(false)"
-            style="flex:1;padding:9px 0;border-radius:8px;font-size:.85rem;font-weight:700;cursor:pointer;
-              border:2px solid ${s.members.every(m=>!m.mat_molt||m.status==='dead') ? 'var(--amber)' : 'var(--border)'};
-              background:${s.members.every(m=>!m.mat_molt||m.status==='dead') ? 'rgba(224,144,64,.12)' : 'var(--bg2)'};
-              color:${s.members.every(m=>!m.mat_molt||m.status==='dead') ? 'var(--amber)' : 'var(--text2)'}">
-            全員 OFF
-          </button>
-        </div>
-
-        <!-- 容器サイズ 一括 -->
-        <div style="font-size:.8rem;font-weight:700;color:var(--text2);margin-bottom:6px">📦 容器サイズ</div>
-        <div style="display:flex;gap:8px;margin-bottom:14px">
-          ${['1.8L','2.7L','4.8L'].map(v => `
-            <button type="button" onclick="Pages._t2SetContainer('${v}')"
-              style="flex:1;padding:10px 0;border-radius:8px;font-size:.9rem;font-weight:700;cursor:pointer;
-                border:2px solid ${s.container===v ? 'var(--green)' : 'var(--border)'};
-                background:${s.container===v ? 'rgba(76,175,120,.15)' : 'var(--bg2)'};
-                color:${s.container===v ? 'var(--green)' : 'var(--text2)'}">${v}</button>
-          `).join('')}
-        </div>
-
-        <!-- 交換種別 一括 -->
-        <div style="font-size:.8rem;font-weight:700;color:var(--text2);margin-bottom:6px">🔄 交換種別</div>
-        <div style="display:flex;gap:8px;margin-bottom:4px">
+        <div style="display:flex;gap:8px">
           ${[{v:'FULL',l:'全交換'},{v:'PARTIAL',l:'追加のみ'},{v:'NONE',l:'なし'}].map(x => `
             <button type="button" onclick="Pages._t2SetExchange('${x.v}')"
-              style="flex:1;padding:9px 0;border-radius:8px;font-size:.82rem;font-weight:700;cursor:pointer;
+              style="flex:1;padding:10px 0;border-radius:8px;font-size:.85rem;font-weight:700;cursor:pointer;
                 border:2px solid ${s.exchange_type===x.v ? 'var(--green)' : 'var(--border)'};
                 background:${s.exchange_type===x.v ? 'rgba(76,175,120,.15)' : 'var(--bg2)'};
                 color:${s.exchange_type===x.v ? 'var(--green)' : 'var(--text2)'}">
               ${x.l}
             </button>
           `).join('')}
-        </div>
-
-        <!-- 詳細設定（折りたたみ）: マット種別のみ -->
-        <div style="border-top:1px solid var(--border);padding-top:8px;margin-top:10px">
-          <div onclick="Pages._t2ToggleDetail()" style="cursor:pointer;display:flex;align-items:center;gap:6px;font-size:.75rem;color:var(--text3);font-weight:600">
-            <span>⚙️ マット種別を変更する</span>
-            <span style="font-size:.62rem;color:var(--text3);margin-left:4px">
-              現在: ${s.mat_type || '自動（' + (s.stage_phase==='T1'?'T2':s.stage_phase==='T2'?'T3':'T3') + '）'}
-            </span>
-            <span style="margin-left:auto;font-size:.7rem;transform:${s._showDetail?'rotate(180deg)':'rotate(0deg)'};display:inline-block">▼</span>
-          </div>
-          ${s._showDetail ? `
-          <div style="margin-top:10px">
-            <div style="display:flex;gap:6px">
-              ${['T1','T2','T3',''].map(v => `
-                <button type="button" onclick="Pages._t2SetMatType('${v}')"
-                  style="flex:1;padding:9px 0;border-radius:8px;font-size:.85rem;font-weight:700;cursor:pointer;
-                    border:2px solid ${s.mat_type===v ? 'var(--green)' : 'var(--border)'};
-                    background:${s.mat_type===v ? 'rgba(76,175,120,.15)' : 'var(--bg2)'};
-                    color:${s.mat_type===v ? 'var(--green)' : 'var(--text2)'}">
-                  ${v || '自動'}
-                </button>
-              `).join('')}
-            </div>
-          </div>` : ''}
         </div>
       </div>
 
@@ -572,23 +511,49 @@ function _renderT2MemberCard(m, idx, s) {
       ${selectedDecision ? `<div style="font-size:.7rem;color:var(--text3);margin-top:6px">${selectedDecision.desc}</div>` : ''}
     </div>` : ''}
 
-    <!-- 3.5段目: Mx（通常時のみ） -->
+    <!-- 3.5段目: 容器・マット・Mx（通常時のみ） -->
     ${!isDead ? `
     <div style="padding:8px 14px 10px;border-bottom:1px solid var(--border2)">
-      <div style="font-size:.72rem;font-weight:700;color:var(--text3);margin-bottom:7px">
-        🧪 モルトパウダー (Mx)
+      <!-- 容器サイズ -->
+      <div style="font-size:.72rem;font-weight:700;color:var(--text3);margin-bottom:5px">📦 容器</div>
+      <div style="display:flex;gap:6px;margin-bottom:10px">
+        ${['1.8L','2.7L','4.8L'].map(v => `
+          <button type="button" onclick="Pages._t2SetMemberContainer(${idx},'${v}')"
+            style="flex:1;padding:7px 0;border-radius:7px;font-size:.82rem;font-weight:700;cursor:pointer;
+              border:2px solid ${m.container===v ? 'var(--green)' : 'var(--border)'};
+              background:${m.container===v ? 'rgba(76,175,120,.15)' : 'var(--bg2)'};
+              color:${m.container===v ? 'var(--green)' : 'var(--text2)'}">${v}</button>
+        `).join('')}
       </div>
+      <!-- マット種別 -->
+      <div style="font-size:.72rem;font-weight:700;color:var(--text3);margin-bottom:5px">
+        🌿 マット
+        <span style="font-weight:400;margin-left:4px">（空=自動）</span>
+      </div>
+      <div style="display:flex;gap:6px;margin-bottom:10px">
+        ${['T1','T2','T3',''].map(v => `
+          <button type="button" onclick="Pages._t2SetMemberMat(${idx},'${v}')"
+            style="flex:1;padding:7px 0;border-radius:7px;font-size:.82rem;font-weight:700;cursor:pointer;
+              border:2px solid ${m.mat_type===v ? 'var(--green)' : 'var(--border)'};
+              background:${m.mat_type===v ? 'rgba(76,175,120,.15)' : 'var(--bg2)'};
+              color:${m.mat_type===v ? 'var(--green)' : 'var(--text2)'}">
+            ${v || '自動'}
+          </button>
+        `).join('')}
+      </div>
+      <!-- Mx（モルトパウダー） -->
+      <div style="font-size:.72rem;font-weight:700;color:var(--text3);margin-bottom:5px">🧪 Mx（モルト）</div>
       <div style="display:flex;gap:8px">
         <button type="button" onclick="Pages._t2SetMolt(${idx},true)"
           style="flex:1;padding:8px 0;border-radius:8px;font-size:.85rem;font-weight:700;cursor:pointer;
             border:2px solid ${m.mat_molt ? 'var(--green)' : 'var(--border)'};
             background:${m.mat_molt ? 'rgba(76,175,120,.15)' : 'var(--bg2)'};
-            color:${m.mat_molt ? 'var(--green)' : 'var(--text2)'}">🧪 Mx ON</button>
+            color:${m.mat_molt ? 'var(--green)' : 'var(--text2)'}">🧪 ON</button>
         <button type="button" onclick="Pages._t2SetMolt(${idx},false)"
           style="flex:1;padding:8px 0;border-radius:8px;font-size:.85rem;font-weight:700;cursor:pointer;
             border:2px solid ${!m.mat_molt ? 'var(--amber)' : 'var(--border)'};
             background:${!m.mat_molt ? 'rgba(224,144,64,.12)' : 'var(--bg2)'};
-            color:${!m.mat_molt ? 'var(--amber)' : 'var(--text2)'}">Mx OFF</button>
+            color:${!m.mat_molt ? 'var(--amber)' : 'var(--text2)'}">OFF</button>
       </div>
     </div>` : ''}
 
@@ -747,6 +712,44 @@ Pages._t2SetContainer = function(v) {
   _renderT2Session(s);
 };
 // ── モルトパウダー一括設定 ─────────────────────────────────────────
+// ── T2 ラベル発行 / QR遷移 ──────────────────────────────────────
+Pages._t2GoQR = function() {
+  window._t2PendingLabels = null;
+  routeTo('qr-scan', { mode: 't2' });
+};
+
+Pages._t2LaunchAllLabels = function() {
+  const pending = window._t2PendingLabels;
+  if (!pending || !pending.indIds || pending.indIds.length === 0) {
+    Pages._t2GoQR(); return;
+  }
+  window._t2PendingLabels = null;
+  const indIds = pending.indIds;
+  let idx = 0;
+
+  function _next() {
+    if (idx >= indIds.length) {
+      UI.toast('全' + indIds.length + '枚のラベル発行が完了しました ✅', 'success');
+      routeTo('qr-scan', { mode: 't2' });
+      return;
+    }
+    const indId = indIds[idx++];
+    const ind = typeof Store.getIndividual === 'function' ? Store.getIndividual(indId) : null;
+    if (!ind) { _next(); return; }
+    window._t2LabelNextFn = _next;
+    window._t2LabelTotalCount = indIds.length;
+    window._t2LabelCurrentIdx = idx - 1;
+    routeTo('label-gen', {
+      targetType:   'IND',
+      targetId:     ind.ind_id,
+      _t2LabelMode: true,
+      _t2LabelIdx:  idx - 1,
+      _t2LabelTotal:indIds.length,
+    });
+  }
+  _next();
+};
+
 Pages._t2SetMxAll = function(val) {
   const s = window._t2Session;
   if (!s) return;
@@ -754,6 +757,18 @@ Pages._t2SetMxAll = function(val) {
   _renderT2Session(s);
 };
 // ── 個体別モルト設定 ────────────────────────────────────────────────
+Pages._t2SetMemberContainer = function(idx, v) {
+  const s = window._t2Session;
+  if (!s) return;
+  const m = s.members[idx];
+  if (m) { m.container = (m.container === v) ? '' : v; _renderT2Session(s); }
+};
+Pages._t2SetMemberMat = function(idx, v) {
+  const s = window._t2Session;
+  if (!s) return;
+  const m = s.members[idx];
+  if (m) { m.mat_type = v; _renderT2Session(s); }
+};
 Pages._t2SetMolt = function(idx, val) {
   const s = window._t2Session;
   if (!s) return;
@@ -836,8 +851,6 @@ Pages._t2SessionSave = async function () {
       source_unit_id:         s.unit_id,
       source_unit_display_id: s.display_id,
       mx_done:                s.mx_done || false,
-      container:              s.container     || '2.7L',
-      mat_type_override:      s.mat_type      || '',     // 空=自動（GAS側で _nextMatTypeT2 を使用）
       exchange_type:          s.exchange_type || 'FULL',
       from_individual:        s._fromInd || false,
       decisions: s.members.map(m => ({
@@ -849,7 +862,9 @@ Pages._t2SessionSave = async function () {
         lot_id:        m.lot_id      || '',
         lot_item_no:   m.lot_item_no || '',
         memo:          m.memo        || '',
-        mat_molt:      m.mat_molt !== undefined ? m.mat_molt : true,
+        mat_molt:      m.mat_molt   !== undefined ? m.mat_molt  : true,
+        container:     m.container  || '2.7L',
+        mat_type:      m.mat_type   || '',
       })),
     };
 
@@ -915,26 +930,14 @@ Pages._t2SessionSave = async function () {
     sessionStorage.removeItem('_t2SessionData');
     UI.toast('T2移行を完了しました ✅', 'success', 3000);
 
-    // ★ 個別化個体がある場合: ラベル発行を案内
+    // ★ 個別化個体がある場合: 確認なしで即ラベル発行へ
     const _indMembers = s.members.filter(function(m){ return m.decision === 'individualize'; });
-    if (_indMembers.length > 0 && res && Array.isArray(res.created_individuals) && res.created_individuals.length > 0) {
-      const _createdInds = res.created_individuals;
-      UI.modal(
-        '<div class="modal-title">個別化完了 — ラベルを発行しますか？</div>' +
-        '<div style="margin:8px 0;font-size:.85rem;color:var(--text3)">' + _createdInds.length + '頭が個体台帳に登録されました</div>' +
-        '<div style="margin-bottom:12px">' +
-        _createdInds.map(function(ind, i) {
-          return '<div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:.82rem">' +
-            '<span style="color:var(--gold);font-weight:700">' + (ind.display_id||'—') + '</span>' +
-            '<span style="color:var(--text3);margin-left:8px">' + (_indMembers[i] ? (_indMembers[i].size_category||'') + ' ' + (_indMembers[i].weight_g||'') + 'g' : '') + '</span>' +
-            '</div>';
-        }).join('') +
-        '</div>' +
-        '<div class="modal-footer">' +
-        '<button class="btn btn-ghost" style="flex:1" onclick="UI.closeModal();Pages._t2GoQR()">スキップ</button>' +
-        '<button class="btn btn-primary" style="flex:2" onclick="UI.closeModal();Pages._t2LaunchIndLabels(' + JSON.stringify(_createdInds.map(function(i){ return i.ind_id; })) + ')">🏷️ ラベル発行へ</button>' +
-        '</div>'
-      );
+    const _createdInds = (res && Array.isArray(res.created_individuals)) ? res.created_individuals : [];
+    if (_indMembers.length > 0 && _createdInds.length > 0) {
+      const _indIds = _createdInds.map(function(i){ return i.ind_id; });
+      window._t2PendingLabels = { indIds: _indIds, inds: _createdInds, members: _indMembers };
+      // 確認なしで即ラベル発行開始
+      Pages._t2LaunchAllLabels();
     } else {
       routeTo('qr-scan', { mode: 't2' });
     }

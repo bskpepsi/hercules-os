@@ -4,7 +4,7 @@
 // label.js v5 — PNG画像出力ベース（Brother QL-820NWB 62mm連続ロール対応）
 //
 // サイズ:
-// build: 20260413v
+// build: 20260413ab
 // 20260413v 修正:
 //   - INDラベル: 成長記録がStoreにない場合GASから取得して表示
 // 20260413u 修正:
@@ -343,6 +343,11 @@ Pages.labelGen = function (params = {}) {
   const _eblQueueIdx   = params._eblQueueIdx   !== undefined ? parseInt(params._eblQueueIdx,10)   : -1;
   const _eblQueueTotal = params._eblQueueTotal  !== undefined ? parseInt(params._eblQueueTotal,10) : 0;
   const _inEblQueue    = _eblQueueIdx >= 0 && _eblQueueTotal > 0;
+  // T2個別化ラベルモード
+  const _t2LabelMode   = !!params._t2LabelMode;
+  const _t2LabelIdx    = params._t2LabelIdx   !== undefined ? parseInt(params._t2LabelIdx,10)   : 0;
+  const _t2LabelTotal  = params._t2LabelTotal !== undefined ? parseInt(params._t2LabelTotal,10) : 0;
+  const _inT2LabelMode = _t2LabelMode && _t2LabelTotal > 0;
 
   const inds = Store.filterIndividuals({ status: 'alive' });
   const lots = Store.filterLots({ status: 'active' });
@@ -465,7 +470,19 @@ Pages.labelGen = function (params = {}) {
               <button class="btn btn-ghost" style="flex:1"
                 onclick="Pages._lblGenerate('${targetType}','${targetId}','${labelType}')">🔄 再生成</button>
             </div>
-            ${_inEblQueue ? `
+            ${_inT2LabelMode ? `
+            <div style="font-size:.72rem;color:var(--text3);padding:4px 0;text-align:center;margin-bottom:4px">
+              ${_t2LabelIdx + 1} / ${_t2LabelTotal}枚目
+            </div>
+            ${_t2LabelIdx + 1 < _t2LabelTotal ? `
+            <button class="btn btn-primary btn-full" style="font-weight:700;margin-bottom:4px"
+              onclick="if(window._t2LabelNextFn){window._t2LabelNextFn();}else{routeTo('qr-scan',{mode:'t2'});}">
+              次の個体ラベルへ → (${_t2LabelIdx + 2}/${_t2LabelTotal}枚目)
+            </button>` : `
+            <button class="btn btn-primary btn-full" style="font-weight:700;color:var(--green);margin-bottom:4px"
+              onclick="if(window._t2LabelNextFn){window._t2LabelNextFn();}else{routeTo('qr-scan',{mode:'t2'});}">
+              ✅ 全${_t2LabelTotal}枚完了 — QRスキャンへ
+            </button>`}` : _inEblQueue ? `
             <div style="font-size:.72rem;color:var(--text3);padding:4px 0;text-align:center;margin-bottom:4px">
               ${_eblQueueIdx+1} / ${_eblQueueTotal}枚目
             </div>
