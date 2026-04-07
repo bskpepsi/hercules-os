@@ -1,7 +1,7 @@
 // ────────────────────────────────────────────────────────────────
 // ════════════════════════════════════════════════════════════════
 // t1_session.js — T1移行編成セッション画面
-// build: 20260413n
+// build: 20260413p
 //
 // 20260413n 修正:
 //   - セッション開始時に個別飼育用正式IDも予約（ind_display_ids）
@@ -258,10 +258,10 @@ function _renderT1Session(s) {
       </button>
 
       <!-- ④ 未処理個体パネル -->
-      ${_renderUnprocessedPanel(s)}
+      <div id="t1-unproc-panel">${_renderUnprocessedPanel(s)}</div>
 
       <!-- ⑤ ユニット作成エリア -->
-      ${_renderUnitCreateArea(s)}
+      <div id="t1-unit-create-area">${_renderUnitCreateArea(s)}</div>
 
       <!-- ⑥ 確定済みユニット一覧 -->
       ${_renderConfirmedUnits(s)}
@@ -716,20 +716,23 @@ Pages._t1SetSize = function (lotId, itemNo, size) {
   if (!ind) return;
   ind.size_category = ind.size_category === size ? null : size;
   _saveSessionToStorage();
-  // ★ 全再描画ではなく該当ボタンのスタイルだけ更新（キーボードを閉じない）
+
+  // ★ 区分ボタンのスタイルだけ即時更新（キーボードを閉じない）
   const rowEl = document.getElementById('t1-ind-row-' + lotId + '-' + itemNo);
   if (rowEl) {
     ['大','中','小'].forEach(function(s) {
       const btn = rowEl.querySelector('[data-size="' + s + '"]');
       if (!btn) return;
       const on = ind.size_category === s;
-      btn.style.background = on ? 'var(--green)' : 'var(--surface2)';
-      btn.style.borderColor = on ? 'var(--green)' : 'var(--border)';
-      btn.style.color = on ? '#fff' : 'var(--text2)';
+      btn.style.background  = on ? 'var(--green)'  : 'var(--surface2)';
+      btn.style.borderColor = on ? 'var(--green)'  : 'var(--border)';
+      btn.style.color       = on ? '#fff'          : 'var(--text2)';
     });
   }
-  // サマリ部分だけ軽量更新
-  _updateSummaryOnly();
+
+  // ★ 未処理パネル・ユニット作成エリア・サマリを部分更新
+  // フォーカス中の入力欄（体重・メモ）は再描画しない
+  _refreshPanels();
 };
 
 // _t1SetWeight kept as alias for any external calls, but weight updates are now commit-on-blur
@@ -1298,10 +1301,51 @@ function _buildSavePayload(s) {
 // ────────────────────────────────────────────────────────────────
 let _partialRefreshTimer = null;
 function _partialRefresh() {
-  // ★ 体重入力中は全再描画しない（キーボードが閉じるバグ防止）
-  // 入力完了後の save/assign 操作時は各関数が _renderT1Session を呼ぶ
+  // 体重入力中は全再描画しない（キーボードが閉じるバグ防止）
   clearTimeout(_partialRefreshTimer);
-  // なにもしない（サマリ更新は _updateSummaryOnly が直接行う）
+}
+
+// ★ パネル部分更新（区分変更時に使用）
+// 体重・メモ入力欄のフォーカスを保持しつつ、
+// 未処理パネル・ユニット作成エリア・サマリを再描画する
+function _refreshPanels() {
+  const s = window._t1Session;
+  if (!s) return;
+
+  // フォーカス中の要素を記録（体重・メモ入力欄）
+  const focused = document.activeElement;
+  const focusedId = focused && (focused.tagName === 'INPUT' || focused.tagName === 'TEXTAREA')
+    ? focused.id || null : null;
+  const focusedVal = focusedId ? focused.value : null;
+
+  // 未処理パネルを差し替え
+  const unprocEl = document.getElementById('t1-unproc-panel');
+  if (unprocEl) {
+    unprocEl.outerHTML = '<div id="t1-unproc-panel">' + _renderUnprocessedPanel(s) + '</div>';
+  }
+
+  // ユニット作成エリアを差し替え
+  const unitCreateEl = document.getElementById('t1-unit-create-area');
+  if (unitCreateEl) {
+    unitCreateEl.innerHTML = _renderUnitCreateArea(s);
+  }
+
+  // サマリ更新
+  const summaryEl = document.getElementById('t1-summary-area');
+  if (summaryEl) {
+    const stats = _calcStats(s);
+    const line  = Store.getLine(s.lineId);
+    summaryEl.innerHTML = _renderSummary(s, stats).replace(/^<div[^>]*>/, '').replace(/<\/div>$/, '');
+  }
+
+  // フォーカスを復元
+  if (focusedId) {
+    const el = document.getElementById(focusedId);
+    if (el) {
+      el.value = focusedVal;
+      el.focus();
+    }
+  }
 }
 
 // ────────────────────────────────────────────────────────────────
