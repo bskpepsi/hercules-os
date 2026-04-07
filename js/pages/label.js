@@ -4,7 +4,11 @@
 // label.js v5 — PNG画像出力ベース（Brother QL-820NWB 62mm連続ロール対応）
 //
 // サイズ:
-// build: 20260413m
+// build: 20260413n
+// 20260413n 修正:
+//   - IND_FORMAL 対応（T1個別飼育の正式IDラベル）
+//   - ユニットラベルの t1_date を ld に追加（日付が「移行」になるバグ修正）
+//   - label-gen 戻るボタンの確実化
 // 20260413m 修正:
 //   - IND_DRAFTラベルの display_id から「DRAFT」サフィックス除去
 //
@@ -114,7 +118,8 @@ function _labelDimensions(labelType, targetType) {
     labelType === 't1_unit'   ||
     targetType === 'IND'      ||
     targetType === 'UNIT'     ||
-    targetType === 'IND_DRAFT';
+    targetType === 'IND_DRAFT' ||
+    targetType === 'IND_FORMAL';
   if (isLarge) {
     return { wMm:62, hMm:70, wPx:234, hPx:265, scale:3, label:'62×70mm' };
   }
@@ -276,10 +281,13 @@ Pages.labelGen = function (params = {}) {
   const _unitForSale   = !!params.forSale;
   const _unitDraft     = params.unitDraft  || null;
 
-  // IND_DRAFT モード
-  const _isIndDraftMode = targetType === 'IND_DRAFT';
-  const _draftInd       = params.draftInd  || null;
-  const _singleIdx      = params.singleIdx !== undefined ? params.singleIdx : -1;
+  // IND_DRAFT モード（仮ID）
+  const _isIndDraftMode   = targetType === 'IND_DRAFT';
+  const _draftInd         = params.draftInd  || null;
+  // IND_FORMAL モード（正式ID確定済み個別ラベル）
+  const _isIndFormalMode  = targetType === 'IND_FORMAL';
+  const _formalInd        = params.formalInd || null;
+  const _singleIdx        = params.singleIdx !== undefined ? params.singleIdx : -1;
 
   // グローバルに保存（_lblGenerate はスコープ外のため）
   if (_isUnitMode) {
@@ -289,6 +297,9 @@ Pages.labelGen = function (params = {}) {
   }
   if (_isIndDraftMode) {
     window._lblIndDraftCtx = { draftInd: _draftInd, singleIdx: _singleIdx, backRoute: params.backRoute };
+  } else if (_isIndFormalMode) {
+    // IND_FORMAL: DRAFT と同じコンテキスト構造で保存
+    window._lblIndDraftCtx = { draftInd: _formalInd, singleIdx: _singleIdx, backRoute: params.backRoute, isFormal: true };
   } else {
     window._lblIndDraftCtx = null;
   }
@@ -299,7 +310,7 @@ Pages.labelGen = function (params = {}) {
   // backRoute / backParam
   const _backRoute = params.backRoute || null;
   const _backParam = params.backParam || (params.labeledDisplayId ? { labeledDisplayId: params.labeledDisplayId } : {});
-  if (_isIndDraftMode && _backRoute === 't1-session' && _singleIdx >= 0) {
+  if ((_isIndDraftMode || _isIndFormalMode) && _backRoute === 't1-session' && _singleIdx >= 0) {
     if (!_backParam.singleIdx) Object.assign(_backParam, { singleIdx: _singleIdx });
   }
 
@@ -312,7 +323,7 @@ Pages.labelGen = function (params = {}) {
   const lots = Store.filterLots({ status: 'active' });
   const pars = Store.getDB('parents') || [];
 
-  const isDirectMode = !!params.targetId || _isUnitMode || _isIndDraftMode;
+  const isDirectMode = !!params.targetId || _isUnitMode || _isIndDraftMode || _isIndFormalMode;
   const origin       = isDirectMode ? _detailPageKey(targetType, targetId) : null;
 
   const headerOpts = _backRoute
@@ -457,7 +468,7 @@ Pages.labelGen = function (params = {}) {
       </div>`;
 
     // 自動生成
-    if (targetId || (_isUnitMode && _unitDisplayId) || _isIndDraftMode) {
+    if (targetId || (_isUnitMode && _unitDisplayId) || _isIndDraftMode || _isIndFormalMode) {
       const _autoTargetId = (_isUnitMode && !targetId) ? _unitDisplayId : targetId;
       console.log('[LABEL] auto-generate', { targetType, _autoTargetId, labelType });
       setTimeout(() => Pages._lblGenerate(targetType, _autoTargetId, labelType), 100);
@@ -502,13 +513,16 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
   // UNIT / IND_DRAFT コンテキスト（グローバルから読む）
   const _unitCtx     = window._lblUnitCtx     || {};
   const _indDraftCtx = window._lblIndDraftCtx  || {};
-  const _genDisplayId = (targetType === 'UNIT')      ? (targetId || _unitCtx.displayId || '') : targetId;
-  const _genForSale   = (targetType === 'UNIT')      ? (!!_unitCtx.forSale) : false;
-  const _genUnitDraft = (targetType === 'UNIT')      ? (_unitCtx.draft || null) : null;
-  const _genIndDraft  = (targetType === 'IND_DRAFT') ? (_indDraftCtx.draftInd || null) : null;
+  const _genDisplayId  = (targetType === 'UNIT')       ? (targetId || _unitCtx.displayId || '') : targetId;
+  const _genForSale    = (targetType === 'UNIT')       ? (!!_unitCtx.forSale) : false;
+  const _genUnitDraft  = (targetType === 'UNIT')       ? (_unitCtx.draft || null) : null;
+  const _genIndDraft   = (targetType === 'IND_DRAFT')  ? (_indDraftCtx.draftInd || null) : null;
+  const _genIndFormal  = (targetType === 'IND_FORMAL') ? (_indDraftCtx.draftInd || null) : null;
+  const _genIsFormal   = (targetType === 'IND_FORMAL');
 
   if (targetType === 'UNIT'      && !_genDisplayId) { console.warn('[LABEL] early return: UNIT no displayId'); return; }
   if (targetType === 'IND_DRAFT' && !_genIndDraft)  { console.warn('[LABEL] early return: IND_DRAFT no draftInd'); return; }
+  if (targetType === 'IND_FORMAL' && !_genIndFormal) { console.warn('[LABEL] early return: IND_FORMAL no formalInd'); return; }
   if (targetType !== 'UNIT' && targetType !== 'IND_DRAFT' && !targetId) {
     console.warn('[LABEL] early return: no targetId for', targetType); return;
   }
@@ -646,6 +660,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         label_type:    't1_unit',
         note_private:  unit.note        || '',
         origin_lots_str: _originLotsStr,
+        t1_date:       unit.t1_date     || new Date().toISOString().slice(5,10),  // ★ 追加
       };
     } else if (targetType === 'IND_DRAFT') {
       console.log('[LABEL] branch IND_DRAFT');
@@ -653,7 +668,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
       const line = di.line_id ? (Store.getLine(di.line_id)||{}) : {};
       ld = {
         qr_text:      'IND:DRAFT',
-        display_id:   `${di.lot_display_id||''}#${di.lot_item_no||'?'}`,  // DRAFTサフィックス除去
+        display_id:   `${di.lot_display_id||''}#${di.lot_item_no||'?'}`,
         line_code:    di.line_code || line.line_code || line.display_id || '',
         stage_code:   di.stage_phase || 'T1',
         sex:          '',
@@ -665,6 +680,26 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         records:      [],
         label_type:   'ind_fixed',
         _isDraft:     true,
+      };
+    } else if (targetType === 'IND_FORMAL') {
+      // ★ 正式ID確定済み個別ラベル（T1セッションで個別割り当て時に発行）
+      console.log('[LABEL] branch IND_FORMAL');
+      const fi   = _genIndFormal || {};
+      const line = fi.line_id ? (Store.getLine(fi.line_id)||{}) : {};
+      ld = {
+        qr_text:      `IND:${fi.display_id || 'DRAFT'}`,
+        display_id:   fi.display_id || `${fi.lot_display_id||''}#${fi.lot_item_no||'?'}`,
+        line_code:    fi.line_code || line.line_code || line.display_id || '',
+        stage_code:   fi.stage_phase || 'T1',
+        sex:          '',
+        hatch_date:   '',
+        mat_type:     fi.mat_type  || 'T1',
+        mat_molt:     false,
+        size_category:fi.size_category || '',
+        note_private: `T1個別飼育 ${fi.lot_display_id||''} #${fi.lot_item_no||''}`,
+        records:      [],
+        label_type:   'ind_fixed',
+        _isDraft:     false,  // 正式ID確定済み
       };
     } else {
       console.log('[LABEL] branch SET - targetId:', targetId);

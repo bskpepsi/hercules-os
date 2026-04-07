@@ -1,11 +1,15 @@
-// FILE: js/pages/t1_session.js
-// build: 20260413m
-// 20260413m 修正:
-//   - sessionStorage → localStorage に変更（Androidブラウザでセッションが消えるバグ修正）
-//   - ラベル発行後に戻ると最初からになる問題を修正
 // ────────────────────────────────────────────────────────────────
 // ════════════════════════════════════════════════════════════════
 // t1_session.js — T1移行編成セッション画面
+// build: 20260413n
+//
+// 20260413n 修正:
+//   - セッション開始時に個別飼育用正式IDも予約（ind_display_ids）
+//   - 個別割り当て時に正式IDを付与してラベル発行（DRAFT廃止）
+//   - sessionStorage → localStorage（Android遷移でセッション消えるバグ修正）
+//   - 区分ボタン選択時の全再描画を軽量更新に変更（キーボード維持）
+//   - label-gen 戻るボタン動作の確実化
+//   - ユニットラベルの日付を実際の日付に修正
 // ════════════════════════════════════════════════════════════════
 // 設計確定事項:
 //  - 個体単位入力（lot_item_no = ロット内固定通番）
@@ -52,15 +56,18 @@ Pages.t1SessionStart = async function (lotId) {
     console.log('[T1] reserveDisplayIds start (background)');
     const _ts1 = performance.now();
     const res = await API.t1.reserveDisplayIds({
-      line_id: lot.line_id,
-      count:   lot.count,
+      line_id:   lot.line_id,
+      count:     lot.count,          // ユニット用（ロット頭数分）
+      ind_count: lot.count,          // 個別用（最大ロット頭数分を予約）
     });
-    console.log('[T1] reserveDisplayIds done', (performance.now()-_ts1).toFixed(1), 'ms / ids:', res.display_ids?.length);
+    console.log('[T1] reserveDisplayIds done', (performance.now()-_ts1).toFixed(1), 'ms / ids:', res.display_ids?.length, '/ ind_ids:', res.ind_display_ids?.length);
     // セッションに display_id を注入して再描画
     if (window._t1Session && window._t1Session.lineId === lot.line_id) {
-      window._t1Session.displayIdPool  = res.display_ids || [];
-      window._t1Session.displayIdIndex = 0;
-      window._t1Session._loading       = false;
+      window._t1Session.displayIdPool      = res.display_ids     || [];
+      window._t1Session.displayIdIndex     = 0;
+      window._t1Session.indDisplayIdPool   = res.ind_display_ids || [];
+      window._t1Session.indDisplayIdIndex  = 0;
+      window._t1Session._loading           = false;
       _saveSessionToStorage();
       // 現在 t1-session 画面が開いていれば再描画
       if (Store.getPage() === 't1-session') {
@@ -84,15 +91,17 @@ Pages.t1SessionStart = async function (lotId) {
 // ────────────────────────────────────────────────────────────────
 function _buildSession(lot, displayIds) {
   return {
-    sessionId:      Date.now().toString(36),
-    lineId:         lot.line_id,
-    lots: [_buildLotEntry(lot)],
-    units:          [],       // 確定済みユニット
-    singles:        [],       // 個別飼育
-    saleIndividuals:[],       // 販売候補（個体）
-    displayIdPool:  displayIds,
-    displayIdIndex: 0,
-    saving:         false,
+    sessionId:          Date.now().toString(36),
+    lineId:             lot.line_id,
+    lots:               [_buildLotEntry(lot)],
+    units:              [],       // 確定済みユニット
+    singles:            [],       // 個別飼育（正式ID付与済み）
+    saleIndividuals:    [],       // 販売候補（個体）
+    displayIdPool:      displayIds,
+    displayIdIndex:     0,
+    indDisplayIdPool:   [],  // 個別飼育用正式IDプール（reserveDisplayIds で注入）
+    indDisplayIdIndex:  0,
+    saving:             false,
   };
 }
 
@@ -123,10 +132,18 @@ function _buildLotEntry(lot) {
 
 function _nextDisplayId(session) {
   if (session.displayIdIndex >= session.displayIdPool.length) {
-    // display_id プール枯渇: 安全のためエラー（仮IDを絶対に使わない）
     throw new Error('ユニット番号の予約が不足しました。セッションをキャンセルしてやり直してください。');
   }
   return session.displayIdPool[session.displayIdIndex++];
+}
+
+function _nextIndDisplayId(session) {
+  if (!session.indDisplayIdPool || session.indDisplayIdIndex >= session.indDisplayIdPool.length) {
+    // プール枯渇時は仮IDで代替（GAS保存時に上書きされる）
+    console.warn('[T1] indDisplayIdPool 枯渇 - 仮IDを使用');
+    return null;
+  }
+  return session.indDisplayIdPool[session.indDisplayIdIndex++];
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -322,7 +339,7 @@ function _renderIndividualRow(ind, lotIdx) {
 
   const sizeBtns = ['大','中','小'].map(s => {
     const on = ind.size_category === s;
-    return `<button type="button" onclick="Pages._t1SetSize('${ind.lot_id}',${ind.lot_item_no},'${s}')"
+    return `<button type="button" data-size="${s}" onclick="Pages._t1SetSize('${ind.lot_id}',${ind.lot_item_no},'${s}')"
       style="padding:5px 8px;border-radius:6px;font-size:.78rem;font-weight:700;cursor:pointer;
         border:1px solid ${on ? 'var(--green)' : 'var(--border)'};
         background:${on ? 'var(--green)' : 'var(--surface2)'};
@@ -347,7 +364,8 @@ function _renderIndividualRow(ind, lotIdx) {
       </span>` : '';
 
   return `
-  <div style="display:grid;grid-template-columns:28px 90px 70px 90px 1fr;gap:4px;
+  <div id="t1-ind-row-${ind.lot_id}-${ind.lot_item_no}"
+    style="display:grid;grid-template-columns:28px 90px 70px 90px 1fr;gap:4px;
     align-items:center;padding:5px 0;border-bottom:1px solid var(--border2);
     background:${bgColor}">
     <div style="font-size:.7rem;color:var(--text3);text-align:center">
@@ -697,7 +715,21 @@ Pages._t1SetSize = function (lotId, itemNo, size) {
   const ind = _findInd(window._t1Session, lotId, itemNo);
   if (!ind) return;
   ind.size_category = ind.size_category === size ? null : size;
-  _renderT1Session(window._t1Session);
+  _saveSessionToStorage();
+  // ★ 全再描画ではなく該当ボタンのスタイルだけ更新（キーボードを閉じない）
+  const rowEl = document.getElementById('t1-ind-row-' + lotId + '-' + itemNo);
+  if (rowEl) {
+    ['大','中','小'].forEach(function(s) {
+      const btn = rowEl.querySelector('[data-size="' + s + '"]');
+      if (!btn) return;
+      const on = ind.size_category === s;
+      btn.style.background = on ? 'var(--green)' : 'var(--surface2)';
+      btn.style.borderColor = on ? 'var(--green)' : 'var(--border)';
+      btn.style.color = on ? '#fff' : 'var(--text2)';
+    });
+  }
+  // サマリ部分だけ軽量更新
+  _updateSummaryOnly();
 };
 
 // _t1SetWeight kept as alias for any external calls, but weight updates are now commit-on-blur
@@ -858,22 +890,8 @@ Pages._t1PrintUnit = function (unitIdx) {
   const u = s.units[unitIdx];
   if (!u) return;
   _saveSessionToStorage();
+  // unitDraft: Store未保存でもラベル描画できるよう最小データを渡す
   const line = Store.getLine(s.lineId);
-
-  // 由来ロットIDリスト（重複除去）
-  const sourceLotIds = [...new Set((u.members || []).map(m => m.lot_id).filter(Boolean))];
-
-  // メンバーに由来ロット短縮名を付加
-  // 例: lot_display_id="HM2026-B2-L06" → lot_short="L06"
-  const membersWithLot = (u.members || []).map(function(m) {
-    var short = '';
-    if (m.lot_display_id) {
-      var _mm = m.lot_display_id.match(/L\d+$/);
-      short = _mm ? _mm[0] : m.lot_display_id;
-    }
-    return Object.assign({}, m, { lot_short: short });
-  });
-
   const labelParams = {
     targetType:       'UNIT',
     displayId:        u.display_id,
@@ -890,9 +908,8 @@ Pages._t1PrintUnit = function (unitIdx) {
       for_sale:      u.for_sale,
       stage_phase:   'T1',
       mat_type:      'T1',
-      members:       membersWithLot,
-      source_lots:   sourceLotIds,   // 由来ロットIDリスト（origin_lots_str生成に使用）
-      t1_date:       new Date().toISOString().slice(5, 10),
+      members:       u.members || [],
+      t1_date:       new Date().toISOString().slice(5, 10),  // MM-DD 形式
     },
   };
   console.log('[T1] label route params', labelParams);
@@ -945,11 +962,17 @@ Pages._t1AssignSingle = function (lotId, itemNo) {
   ind.assigned_to = 'single';
   ind._selected   = false;
   const lot = s.lots.find(l => l.lot_id === lotId);
+  // ★ 個別割り当て時に正式IDを付与
+  const formalId = _nextIndDisplayId(s);
   s.singles.push({
-    lot_id: lotId, lot_item_no: itemNo,
+    lot_id:         lotId,
+    lot_item_no:    itemNo,
     lot_display_id: lot ? lot.display_id : lotId,
-    size_category: ind.size_category, weight_g: ind.weight_g,
+    size_category:  ind.size_category,
+    weight_g:       ind.weight_g,
+    display_id:     formalId,  // 正式ID（nullの場合はGAS保存時に採番）
   });
+  _saveSessionToStorage();
   _renderT1Session(s);
 };
 
@@ -993,12 +1016,34 @@ Pages._t1SingleToSale = function (idx) {
 };
 
 Pages._t1PrintSingle = function (idx) {
-  const s = window._t1Session;
+  const s   = window._t1Session;
   const ind = s.singles[idx];
   if (!ind) return;
   _saveSessionToStorage();
   const line = Store.getLine(s.lineId);
-  const labelParams = {
+
+  // 正式IDがある場合は通常INDラベル、ない場合はDRAFTフォールバック
+  const formalId = ind.display_id || null;
+  const labelParams = formalId ? {
+    // ★ 正式ID確定ラベル（IND_FORMAL）
+    targetType:  'IND_FORMAL',
+    labelType:   'ind_fixed',
+    backRoute:   't1-session',
+    singleIdx:   idx,
+    formalInd: {
+      display_id:    formalId,
+      line_id:       s.lineId,
+      line_code:     line ? (line.line_code || line.display_id) : '',
+      size_category: ind.size_category,
+      weight_g:      ind.weight_g,
+      stage_phase:   'T1',
+      mat_type:      'T1',
+      lot_id:        ind.lot_id,
+      lot_item_no:   ind.lot_item_no,
+      lot_display_id:ind.lot_display_id,
+    },
+  } : {
+    // フォールバック（IDプール枯渇時）
     targetType:  'IND_DRAFT',
     labelType:   'ind_fixed',
     backRoute:   't1-session',
@@ -1015,7 +1060,7 @@ Pages._t1PrintSingle = function (idx) {
       lot_display_id:ind.lot_display_id,
     },
   };
-  console.log('[T1] single label params', labelParams);
+  console.log('[T1] single label params (formalId:', formalId, ')', labelParams);
   routeTo('label-gen', labelParams);
 };
 
@@ -1236,8 +1281,12 @@ function _buildSavePayload(s) {
       size_category: u.size_category,
       members:       u.members,
     })),
-    singles:          s.singles,
-    sale_individuals: s.saleIndividuals,
+    singles:          s.singles.map(function(sg) {
+      return Object.assign({}, sg);  // display_id が含まれている
+    }),
+    sale_individuals: s.saleIndividuals.map(function(sg) {
+      return Object.assign({}, sg);
+    }),
     dead: allInds.filter(i => i.assigned_to === 'dead').map(i => ({
       lot_id: i.lot_id, lot_item_no: i.lot_item_no,
     })),
