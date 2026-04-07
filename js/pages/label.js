@@ -4,7 +4,9 @@
 // label.js v5 — PNG画像出力ベース（Brother QL-820NWB 62mm連続ロール対応）
 //
 // サイズ:
-// build: 20260413r
+// build: 20260413s
+// 20260413s 修正:
+//   - backRoute を window._t1LabelBackup からもフォールバック取得
 // 20260413r 修正:
 //   - プレビューエリア表示条件に IND_FORMAL を追加（根本原因修正）
 // 20260413q 修正:
@@ -316,10 +318,16 @@ Pages.labelGen = function (params = {}) {
   console.log('[LABEL] params', { targetType, targetId, labelType, _isUnitMode, _unitDisplayId, hasDraft: !!_unitDraft });
 
   // backRoute / backParam
-  const _backRoute = params.backRoute || null;
+  // IND_FORMAL/IND_DRAFT は window._t1LabelBackup からもフォールバック取得
+  const _t1Backup  = window._t1LabelBackup || {};
+  const _backRoute = params.backRoute
+    || ((_isIndDraftMode || _isIndFormalMode) ? _t1Backup.backRoute : null)
+    || null;
   const _backParam = params.backParam || (params.labeledDisplayId ? { labeledDisplayId: params.labeledDisplayId } : {});
-  if ((_isIndDraftMode || _isIndFormalMode) && _backRoute === 't1-session' && _singleIdx >= 0) {
-    if (!_backParam.singleIdx) Object.assign(_backParam, { singleIdx: _singleIdx });
+  const _resolvedSingleIdx = _singleIdx >= 0 ? _singleIdx
+    : ((_isIndDraftMode || _isIndFormalMode) ? (_t1Backup.singleIdx ?? -1) : -1);
+  if ((_isIndDraftMode || _isIndFormalMode) && _backRoute === 't1-session' && _resolvedSingleIdx >= 0) {
+    if (!_backParam.singleIdx) Object.assign(_backParam, { singleIdx: _resolvedSingleIdx });
   }
 
   // 卵ロット一括キュー

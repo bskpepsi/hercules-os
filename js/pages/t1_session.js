@@ -1,7 +1,7 @@
 // ────────────────────────────────────────────────────────────────
 // ════════════════════════════════════════════════════════════════
 // t1_session.js — T1移行編成セッション画面
-// build: 20260413p
+// build: 20260413s
 //
 // 20260413n 修正:
 //   - セッション開始時に個別飼育用正式IDも予約（ind_display_ids）
@@ -915,6 +915,8 @@ Pages._t1PrintUnit = function (unitIdx) {
       t1_date:       new Date().toISOString().slice(5, 10),  // MM-DD 形式
     },
   };
+  // ★ backRoute を window に保存
+  window._t1LabelBackup = { backRoute: 't1-session', labeledDisplayId: u.display_id };
   console.log('[T1] label route params', labelParams);
   routeTo('label-gen', labelParams);
 };
@@ -1063,6 +1065,8 @@ Pages._t1PrintSingle = function (idx) {
       lot_display_id:ind.lot_display_id,
     },
   };
+  // ★ backRoute/singleIdx を window に保存（URLパラメータ経由で消えても復元できるよう）
+  window._t1LabelBackup = { backRoute: 't1-session', singleIdx: idx };
   console.log('[T1] single label params (formalId:', formalId, ')', labelParams);
   routeTo('label-gen', labelParams);
 };
