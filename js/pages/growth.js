@@ -1,7 +1,10 @@
 // ════════════════════════════════════════════════════════════════
 // growth.js v5 — 成長記録入力画面（体重測定UIベース・全導線統一）
-// build: 20260413k
+// build: 20260413l
 //
+// 20260413l 修正:
+//   - 区分の初期値をlocalStorageから読む（GAS同期で消えるバグ修正）
+//   - 保存時にlocalStorage(hcos_sizeCat_<ind_id>)へ永続保存
 // 20260413k 修正:
 //   - 区分ボタン「—」廃止、同ボタン2度タップで解除
 //   - 成長記録保存時にsize_categoryをStoreに反映（個体詳細表示・次回初期値保持）
@@ -77,7 +80,11 @@ Pages.growthRecord = function (params = {}) {
     if (!_selStage)     _selStage     = (obj.current_stage || obj.stage || '').toUpperCase();
     if (!_selContainer) _selContainer = obj.current_container || obj.container_size || '';
     if (!_selMat)       _selMat       = obj.current_mat       || obj.mat_type       || '';
-    if (!_selSizeCat)   _selSizeCat   = obj.size_category     || '';
+    // 区分: localStorageから読む（GAS同期で上書きされないよう個別保存）
+    if (!_selSizeCat) {
+      var _lsKey = 'hcos_sizeCat_' + targetId;
+      _selSizeCat = localStorage.getItem(_lsKey) || obj.size_category || '';
+    }
     if (!displayId)     displayId     = obj.display_id || targetId;
   }
 
@@ -665,8 +672,12 @@ Pages.growthRecord = function (params = {}) {
       Store.addGrowthRecord(id, Object.assign({}, payload, { record_id: res.record_id, age_days: res.age_days }));
       if (type === 'IND') {
         var indPatch = { latest_weight_g: weight, current_stage: stage };
-        if (sizeCat) indPatch.size_category = sizeCat;  // 区分をStoreに反映（個体詳細表示・次回初期値用）
+        if (sizeCat) indPatch.size_category = sizeCat;
         Store.patchDBItem('individuals', 'ind_id', id, indPatch);
+        // 区分をlocalStorageに永続保存（GAS同期で上書きされない）
+        if (sizeCat) {
+          localStorage.setItem('hcos_sizeCat_' + id, sizeCat);
+        }
       }
       if (type === 'LOT') {
         var lu = {};

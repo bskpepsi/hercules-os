@@ -2,8 +2,10 @@
 // individual.js
 // 役割: 個体の一覧・詳細・新規登録・編集・ステータス変更を担う。
 //       個体台帳の中心画面。ロット・成長記録・ラベルへの導線も持つ。
-// build: 20260413k
+// build: 20260413l
 //
+// 20260413l 修正:
+//   - 基本情報の区分表示をlocalStorageから読む（GAS同期で消えるバグ修正）
 // 20260413k 修正:
 //   - 基本情報セクションに「区分」（size_category）表示を追加
 //
@@ -625,7 +627,7 @@ function _renderDetail(ind, main) {
             ${_infoRow('容器',     ind.current_container || '—')}
             ${_infoRow('マット',   ind.current_mat       || '—')}
             ${_infoRow('保管場所', ind.storage_location  || '—')}
-            ${ind.size_category ? _infoRow('区分', ind.size_category) : ''}
+            ${(ind.size_category || localStorage.getItem('hcos_sizeCat_' + ind.ind_id)) ? _infoRow('区分', ind.size_category || localStorage.getItem('hcos_sizeCat_' + ind.ind_id)) : ''}
           </div>
         </div>
       </div>
