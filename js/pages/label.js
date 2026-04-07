@@ -4,7 +4,9 @@
 // label.js v5 — PNG画像出力ベース（Brother QL-820NWB 62mm連続ロール対応）
 //
 // サイズ:
-// build: 20260413t
+// build: 20260413u
+// 20260413u 修正:
+//   - T1セッション戻るボタンをゴーストボタン形式に統一・onclick修正
 // 20260413t 修正:
 //   - _detailPageKey に IND_FORMAL/IND_DRAFT → t1-session を追加
 //   - アクションバーに「T1セッションに戻る」ボタンを追加
@@ -474,9 +476,8 @@ Pages.labelGen = function (params = {}) {
               onclick="window._eblGoNextLabel(${_eblQueueIdx})">
               ✅ 完了画面へ戻る（全${_eblQueueTotal}枚発行済み）
             </button>`}` : (_isIndDraftMode || _isIndFormalMode) ? `
-            <!-- T1セッション専用戻るボタン（確実に表示） -->
-            <button class="btn btn-primary btn-full" style="margin-top:6px;font-size:.95rem;font-weight:700;padding:14px"
-              onclick="routeTo('t1-session',${JSON.stringify({ singleIdx: _resolvedSingleIdx })})">
+            <button class="btn btn-ghost btn-full" style="margin-top:2px;font-size:.82rem"
+              onclick="routeTo('t1-session',{singleIdx:${_resolvedSingleIdx}})">
               ← T1セッションに戻る
             </button>` : origin ? `
             <button class="btn btn-ghost btn-full" style="margin-top:2px;font-size:.82rem"
