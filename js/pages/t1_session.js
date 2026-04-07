@@ -1,7 +1,7 @@
 // ────────────────────────────────────────────────────────────────
 // ════════════════════════════════════════════════════════════════
 // t1_session.js — T1移行編成セッション画面
-// build: 20260413s
+// build: 20260413t
 //
 // 20260413n 修正:
 //   - セッション開始時に個別飼育用正式IDも予約（ind_display_ids）
@@ -43,10 +43,41 @@ Pages.t1SessionStart = async function (lotId) {
     UI.toast('T0ロット以外はT1移行できません', 'error'); return;
   }
 
+  // ── 途中セッション検出: localStorage に保存済みセッションがあれば確認 ──
+  const _savedRaw = localStorage.getItem('_t1SessionData');
+  if (_savedRaw) {
+    try {
+      const _saved = JSON.parse(_savedRaw);
+      // 同じロットを含むセッションか確認
+      const _savedLots = (_saved.lots || []).map(function(l){ return l.lot_id; });
+      if (_saved.sessionId && (_savedLots.includes(lotId) || _savedLots.length > 0)) {
+        const _savedLotNames = (_saved.lots || []).map(function(l){ return l.display_id; }).join(', ');
+        const _units    = (_saved.units    || []).length;
+        const _singles  = (_saved.singles  || []).length;
+        var _msg = '前回の未完了セッションがあります。' + '\n\n'
+          + 'ロット: ' + _savedLotNames + '\n'
+          + '確定済みユニット: ' + _units + '件\n'
+          + '個別飼育: ' + _singles + '頭\n\n'
+          + 'OK=続きから再開 / キャンセル=破棄して新規開始';
+        const _resume = confirm(_msg);
+        if (_resume) {
+          // 続きから再開
+          window._t1Session = _saved;
+          routeTo('t1-session');
+          return;
+        } else {
+          // 新規開始: localStorage をクリア
+          localStorage.removeItem('_t1SessionData');
+        }
+      }
+    } catch(_e) {
+      localStorage.removeItem('_t1SessionData');
+    }
+  }
+
   // ── 案A: 先に画面遷移、画面内で初期化 ──────────────────────
-  // セッションを「初期化中」状態で作成して即遷移（APIを待たない）
-  window._t1Session = _buildSession(lot, []);   // displayIdPool は空で先行
-  window._t1Session._loading = true;             // 画面側でスピナーを出すフラグ
+  window._t1Session = _buildSession(lot, []);
+  window._t1Session._loading = true;
   _saveSessionToStorage();
   console.log('[T1] navigate first (before reserveDisplayIds)', (performance.now()-_ts0).toFixed(1), 'ms');
   routeTo('t1-session');  // ← ここで即遷移。以下はバックグラウンドで実行

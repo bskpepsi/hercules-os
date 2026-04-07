@@ -4,7 +4,10 @@
 // label.js v5 — PNG画像出力ベース（Brother QL-820NWB 62mm連続ロール対応）
 //
 // サイズ:
-// build: 20260413s
+// build: 20260413t
+// 20260413t 修正:
+//   - _detailPageKey に IND_FORMAL/IND_DRAFT → t1-session を追加
+//   - アクションバーに「T1セッションに戻る」ボタンを追加
 // 20260413s 修正:
 //   - backRoute を window._t1LabelBackup からもフォールバック取得
 // 20260413r 修正:
@@ -106,11 +109,13 @@ function _defaultLabelType(targetType) {
 
 // ── 遷移元の詳細ページキー ───────────────────────────────────────
 function _detailPageKey(targetType, targetId) {
-  if (targetType === 'IND')  return { page: 'ind-detail',     params: { indId: targetId } };
-  if (targetType === 'LOT')  return { page: 'lot-detail',     params: { lotId: targetId } };
-  if (targetType === 'PAR')  return { page: 'parent-detail',  params: { parId: targetId } };
-  if (targetType === 'SET')  return { page: 'pairing-detail', params: { pairingId: targetId } };
-  if (targetType === 'UNIT') return { page: 't1-session',     params: {} };
+  if (targetType === 'IND')       return { page: 'ind-detail',     params: { indId: targetId } };
+  if (targetType === 'LOT')       return { page: 'lot-detail',     params: { lotId: targetId } };
+  if (targetType === 'PAR')       return { page: 'parent-detail',  params: { parId: targetId } };
+  if (targetType === 'SET')       return { page: 'pairing-detail', params: { pairingId: targetId } };
+  if (targetType === 'UNIT')      return { page: 't1-session',     params: {} };
+  if (targetType === 'IND_DRAFT') return { page: 't1-session',     params: {} };
+  if (targetType === 'IND_FORMAL')return { page: 't1-session',     params: {} };
   return null;
 }
 
@@ -468,7 +473,12 @@ Pages.labelGen = function (params = {}) {
             <button class="btn btn-ghost btn-full" style="font-weight:700;color:var(--green)"
               onclick="window._eblGoNextLabel(${_eblQueueIdx})">
               ✅ 完了画面へ戻る（全${_eblQueueTotal}枚発行済み）
-            </button>`}` : origin ? `
+            </button>`}` : (_isIndDraftMode || _isIndFormalMode) ? `
+            <!-- T1セッション専用戻るボタン（確実に表示） -->
+            <button class="btn btn-primary btn-full" style="margin-top:6px;font-size:.95rem;font-weight:700;padding:14px"
+              onclick="routeTo('t1-session',${JSON.stringify({ singleIdx: _resolvedSingleIdx })})">
+              ← T1セッションに戻る
+            </button>` : origin ? `
             <button class="btn btn-ghost btn-full" style="margin-top:2px;font-size:.82rem"
               onclick="routeTo('${origin.page}',${JSON.stringify(origin.params)})">
               ← ${targetType==='IND'?'個体':targetType==='LOT'?'ロット':targetType==='PAR'?'種親':'詳細'}に戻る
