@@ -143,41 +143,89 @@ Pages.lotList = function () {
           const mw  = m.weight_g   ? m.weight_g + 'g' : '—';
           const msc = m.size_category || '';
           const msx = m.sex && m.sex !== '不明' ? m.sex : '';
-          const numLabel = mi === 0 ? '①' : '②';
-          return `<div style="display:flex;align-items:center;gap:5px;
-            background:var(--surface2);border-radius:6px;padding:4px 8px;font-size:.75rem">
-            <span style="color:var(--text3);font-weight:700;min-width:16px">${numLabel}</span>
-            ${msx ? sexIcon(msx) : '<span style="color:var(--text3)">?</span>'}
+          return `<div style="display:flex;align-items:center;gap:4px;
+            background:var(--surface2);border-radius:6px;padding:3px 7px;font-size:.72rem">
+            <span style="color:var(--text3);font-size:.62rem">${mi+1}頭目</span>
+            ${msx ? sexIcon(msx) : ''}
             ${msc ? `<span style="font-weight:700;color:var(--text1)">${msc}</span>` : ''}
             <span style="color:var(--text2);font-weight:700">${mw}</span>
           </div>`;
         }).join('');
 
-        // members が空の場合は size_category と head_count のみ表示
-        const memberRow = membersArr.length > 0
-          ? `<div style="display:flex;flex-direction:column;gap:4px;margin-top:5px">${memberChips}</div>`
-          : `<div style="font-size:.76rem;color:var(--text2);margin-top:3px">${hc}頭 / 区分:${sc}</div>`;
+        // 各頭の縦2行リスト（① ♂ 大 85g 形式）
+        const sexColor = (sx) => sx === '♂' ? '#3366cc' : sx === '♀' ? '#cc3366' : 'var(--text3)';
+        const memberLines = membersArr.slice(0, 2).map((m, mi) => {
+          const mw  = m.weight_g   ? m.weight_g + 'g' : '—';
+          const msc = m.size_category || '—';
+          const msx = (m.sex && m.sex !== '不明') ? m.sex : '?';
+          return `<div style="font-size:.78rem;display:flex;align-items:center;gap:4px;margin-bottom:1px">
+            <span style="color:var(--text3);font-size:.65rem;min-width:14px">${mi===0?'①':'②'}</span>
+            <span style="font-weight:700;color:${sexColor(msx)}">${msx}</span>
+            <span style="font-weight:700;color:var(--text1)">${msc}</span>
+            <span style="color:var(--text2);font-weight:700">${mw}</span>
+          </div>`;
+        }).join('');
+
+        // members なし時は size_category と head_count
+        const memberBlock = membersArr.length > 0
+          ? memberLines
+          : `<div style="font-size:.76rem;color:var(--text2)">${hc}頭 / 区分:${sc}</div>`;
+
+        // 由来ロット（短縮）
+        const srcLotsText = (() => {
+          try {
+            const sl = u.source_lots ? JSON.parse(u.source_lots) : [];
+            if (!sl.length) return '';
+            const names = sl.map(lid => {
+              const lot = Store.getLot && Store.getLot(lid);
+              return lot ? (lot.display_id || lid).replace(/^HM\d+-/,'') : lid;
+            });
+            return '由来: ' + names.join('/');
+          } catch(_e){ return ''; }
+        })();
 
         const uid = (u.display_id||u.unit_id||'').replace(/['"]/g,'');
-        return `<div class="ind-card" onclick="Pages._goUnitDetail('${uid}')" style="padding:10px 12px">
-          <!-- 1行目: ID + ステージバッジ + › -->
-          <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-            <span style="font-family:var(--font-mono);font-weight:700;font-size:.9rem;flex:1;color:var(--gold)">
+        return `<div class="ind-card" onclick="Pages._goUnitDetail('${uid}')"
+          style="padding:10px 12px;display:flex;align-items:center;gap:0">
+
+          <!-- ①列: ライン + 頭数 -->
+          <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;
+            min-width:34px;padding-right:8px;border-right:1px solid var(--border2);margin-right:8px;
+            flex-shrink:0">
+            <span style="font-size:.88rem;font-weight:800;color:${phColor};line-height:1.2">${lc}</span>
+            <span style="font-size:.68rem;color:var(--text3);margin-top:2px">${hc}頭</span>
+          </div>
+
+          <!-- ②列: ID + 由来 -->
+          <div style="display:flex;flex-direction:column;justify-content:center;
+            min-width:0;flex:1.2;margin-right:6px">
+            <div style="font-family:var(--font-mono);font-weight:700;font-size:.82rem;color:var(--gold);
+              white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
               ${u.display_id||u.unit_id}${stBadge}
-            </span>
-            <span style="display:inline-block;font-size:1.05rem;font-weight:800;
-              color:${phColor};border:1.5px solid ${phColor};border-radius:6px;
-              padding:1px 8px;min-width:32px;text-align:center;line-height:1.4">
-              ${ph}
-            </span>
+            </div>
+            ${srcLotsText
+              ? `<div style="font-size:.65rem;color:var(--text3);margin-top:2px;
+                  white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${srcLotsText}</div>`
+              : ''}
+          </div>
+
+          <!-- ③列: 各頭情報 -->
+          <div style="display:flex;flex-direction:column;justify-content:center;
+            flex:1.3;min-width:0;margin-right:6px">
+            ${memberBlock}
+          </div>
+
+          <!-- ④列: ステージバッジ + › -->
+          <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
+            <div style="display:flex;flex-direction:column;align-items:center">
+              <span style="font-size:.95rem;font-weight:800;
+                color:${phColor};border:1.5px solid ${phColor};border-radius:6px;
+                padding:1px 7px;text-align:center;line-height:1.5">
+                ${ph}
+              </span>
+            </div>
             <span style="color:var(--text3);font-size:1rem">›</span>
           </div>
-          <!-- 2行目: ライン -->
-          <div style="font-size:.74rem;color:var(--text2);margin-bottom:2px">
-            L:${lc}  ${srcLots ? '/ ' + srcLots.replace(/<[^>]+>/g,'').replace('由来: ','由来:') : ''}
-          </div>
-          <!-- 3行目: 各頭の情報チップ -->
-          ${memberRow}
         </div>`;
       }).join('') : `<div style="color:var(--text3);text-align:center;padding:24px">該当するユニットがありません</div>`) +
       `</div></div>`;
