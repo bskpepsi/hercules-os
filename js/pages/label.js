@@ -116,7 +116,7 @@ function _labelDimensions(labelType, targetType) {
   }
   // PAR (種親): 62×35mm  ← 35mm
   if (labelType === 'parent' || targetType === 'PAR') {
-    return { wMm:62, hMm:32, wPx:234, hPx:121, scale:3, label:'62×32mm' };
+    return { wMm:62, hMm:40, wPx:234, hPx:151, scale:3, label:'62×40mm' };
   }
   return { wMm:62, hMm:40, wPx:234, hPx:151, scale:3, label:'62×40mm' };
 }
@@ -577,6 +577,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         locality:     par.locality  || '',
         generation:   par.generation|| '',
         eclosion_date:par.eclosion_date || '',
+        feeding_date: par.feeding_start_date || '',
         paternal_raw: (function() {
           var r = par.paternal_raw || '';
           try { var a = JSON.parse(r); if (Array.isArray(a)) return a.filter(Boolean).join(' '); } catch(_){}
@@ -1178,60 +1179,90 @@ function _buildParentLabelHTML(ld, _unused, qrSrc) {
   var idParts = rawId.split('-');
   var idCode  = idParts.length >= 2 ? idParts[idParts.length - 1] : rawId;
 
-  // ld.size_mm はすでに "68mm" 形式（_lblGenerate で + 'mm' 付与済み）
-  var sizeStr = ld.size_mm  || '';   // "68mm" そのまま（追加mm不要）
-  var wtStr   = ld.weight_g || '';   // "22g" そのまま
-  var ecStr   = ld.eclosion_date ? '羽化: ' + ld.eclosion_date : '';
-  var locStr  = [ld.locality, ld.generation].filter(Boolean).join(' / ');
-  var patStr = ld.paternal_raw
-    ? '親♂: ' + ld.paternal_raw.slice(0,20) + (ld.paternal_size ? ' (' + ld.paternal_size + ')' : '')
+  var sizeStr    = ld.size_mm        || '';
+  var wtStr      = ld.weight_g       || '';
+  var ecStr      = ld.eclosion_date  ? ld.eclosion_date  : '';
+  var feedStr    = ld.feeding_date   ? ld.feeding_date   : '';
+  var locStr     = [ld.locality, ld.generation].filter(Boolean).join(' / ');
+  var patStr     = ld.paternal_raw
+    ? ld.paternal_raw.slice(0, 22) + (ld.paternal_size ? ' ' + ld.paternal_size : '')
     : '';
-  var matStr = ld.maternal_raw
-    ? '親♀: ' + ld.maternal_raw.slice(0,20) + (ld.maternal_size ? ' (' + ld.maternal_size + ')' : '')
+  var matStr     = ld.maternal_raw
+    ? ld.maternal_raw.slice(0, 22) + (ld.maternal_size ? ' ' + ld.maternal_size : '')
     : '';
 
-  // バッジサイズ: 1文字→34px、2文字→28px、3文字以上→20px
-  var badgeFz = idCode.length <= 1 ? '34px' : idCode.length <= 2 ? '28px' : '20px';
+  // バッジサイズ: 1文字→36px、2文字→28px、3文字以上→20px
+  var badgeFz = idCode.length <= 1 ? '36px' : idCode.length <= 2 ? '28px' : '20px';
+
+  // 性別アイコン色
+  var sexColor = ld.sex === '♂' ? '#1a6bb5' : ld.sex === '♀' ? '#b51a5a' : '#000';
 
   return '<!DOCTYPE html>\n<html><head><meta charset="utf-8">\n<style>\n'
-    + '  @page { size: 62mm 32mm; margin: 0; }\n'
+    + '  @page { size: 62mm 40mm; margin: 0; }\n'
     + '  * { margin:0; padding:0; box-sizing:border-box; }\n'
-    + '  body { width:62mm; height:32mm; font-family:sans-serif; font-size:7px; background:#fff; color:#000; overflow:hidden; }\n'
+    + '  body { width:62mm; height:40mm; font-family:sans-serif; font-size:7px; background:#fff; color:#000; overflow:hidden; }\n'
     + '  @media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }\n'
     + '</style></head><body>\n'
-    + '<div style="width:62mm;height:32mm;display:flex;flex-direction:column">\n'
+    + '<div style="width:62mm;height:40mm;display:flex;flex-direction:column">\n'
 
     // ── ヘッダー（黒ベタ）
     + '  <div style="background:#000;color:#fff;font-size:8px;font-weight:700;'
-    + 'padding:0.5mm 2mm;height:4mm;display:flex;align-items:center;flex-shrink:0">'
+    + 'padding:0.6mm 2mm;height:4.5mm;display:flex;align-items:center;flex-shrink:0">'
     + '種親 | HerculesOS</div>\n'
 
-    // ── QR + 情報 + 右バッジ
-    + '  <div style="display:flex;flex:1;padding:0.8mm 1.5mm;gap:0;overflow:hidden">\n'
+    // ── メインエリア: QR + 中央情報 + 右バッジ
+    + '  <div style="display:flex;flex:1;padding:1mm 1.5mm 0.5mm;gap:0;overflow:hidden">\n'
 
-    // QR
-    + '    <div style="flex-shrink:0;margin-right:1.5mm">' + _qrBox(qr, 34) + '</div>\n'
+    // QR（42px）
+    + '    <div style="flex-shrink:0;margin-right:1.5mm">' + _qrBox(qr, 42) + '</div>\n'
 
     // 中央情報列
-    + '    <div style="flex:1;min-width:0;padding-left:1.5mm;border-left:1.5px solid #000;padding-right:0.5mm;overflow:hidden">\n'
-    + '      <div style="font-family:monospace;font-size:9px;font-weight:700;color:#000;'
-    + 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + rawId + '</div>\n'
-    + '      <div style="font-size:8px;font-weight:700;color:#000;margin-top:1px">'
-    + (ld.sex   ? ld.sex   + '&nbsp;' : '')
-    + (sizeStr  ? sizeStr  + '&nbsp;' : '')
-    + (wtStr    ? wtStr    : '')
-    + '</div>\n'
-    + (ecStr   ? '      <div style="font-size:7px;font-weight:700;color:#000">' + ecStr + '</div>\n' : '')
-    + (locStr  ? '      <div style="font-size:6.5px;font-weight:700;color:#000">' + locStr + '</div>\n' : '')
-    + (patStr  ? '      <div style="font-size:6px;font-weight:700;color:#000">' + patStr + '</div>\n' : '')
-    + (matStr  ? '      <div style="font-size:6px;font-weight:700;color:#000">' + matStr + '</div>\n' : '')
+    + '    <div style="flex:1;min-width:0;padding-left:1.5mm;border-left:2px solid #000;'
+    + 'padding-right:0.5mm;overflow:hidden;display:flex;flex-direction:column;justify-content:space-between">\n'
+
+    // ID（モノスペース）
+    + '      <div style="font-family:monospace;font-size:9px;font-weight:800;color:#000;'
+    + 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.3">' + rawId + '</div>\n'
+
+    // 性別 + サイズ（大きめ・色付き）
+    + '      <div style="display:flex;align-items:baseline;gap:2px;margin-top:1px">\n'
+    + '        <span style="font-size:10px;font-weight:800;color:' + sexColor + '">' + (ld.sex || '') + '</span>\n'
+    + '        <span style="font-size:9px;font-weight:700;color:#000">' + sizeStr + '</span>\n'
+    + (wtStr ? '        <span style="font-size:7px;color:#555"> / ' + wtStr + '</span>\n' : '')
+    + '      </div>\n'
+
+    // 羽化日 + 後食日（2列）
+    + '      <div style="display:flex;gap:3px;margin-top:2px">\n'
+    + '        <div style="flex:1">\n'
+    + '          <div style="font-size:5.5px;color:#555;font-weight:600">羽化日</div>\n'
+    + '          <div style="font-size:7px;font-weight:700;color:#000;border-bottom:1px solid #999;min-width:18mm;letter-spacing:.5px">'
+    + (ecStr ? ecStr : '&nbsp;&nbsp;&nbsp;&nbsp;/&nbsp;&nbsp;/&nbsp;&nbsp;') + '</div>\n'
+    + '        </div>\n'
+    + '        <div style="flex:1">\n'
+    + '          <div style="font-size:5.5px;color:#555;font-weight:600">後食日</div>\n'
+    + '          <div style="font-size:7px;font-weight:700;color:#000;border-bottom:1px solid #999;min-width:18mm;letter-spacing:.5px">'
+    + (feedStr ? feedStr : '&nbsp;&nbsp;&nbsp;&nbsp;/&nbsp;&nbsp;/&nbsp;&nbsp;') + '</div>\n'
+    + '        </div>\n'
+    + '      </div>\n'
+
+    // 産地 / 血統
+    + (locStr ? '      <div style="font-size:6.5px;font-weight:700;color:#000;margin-top:2px">' + locStr + '</div>\n' : '')
+
+    // 親情報（♂♀ サイズ付き）
+    + '      <div style="margin-top:1.5px;border-top:1px solid #ccc;padding-top:1.5px">\n'
+    + (patStr ? '        <div style="font-size:5.8px;font-weight:700;color:#000;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
+      + '<span style="color:#1a6bb5">♂</span> ' + patStr + '</div>\n' : '')
+    + (matStr ? '        <div style="font-size:5.8px;font-weight:700;color:#000;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
+      + '<span style="color:#b51a5a">♀</span> ' + matStr + '</div>\n' : '')
+    + '      </div>\n'
+
     + '    </div>\n'
 
-    // 右側: 識別コード巨大バッジ（縦線なし、直接配置）
-    + '    <div style="flex-shrink:0;width:13mm;display:flex;align-items:center;justify-content:center">\n'
-    + '      <div style="border:2.5px solid #000;border-radius:4px;padding:2px 3px;'
-    + 'font-size:' + badgeFz + ';font-weight:700;color:#000;line-height:1;text-align:center;'
-    + 'min-width:9mm;display:flex;align-items:center;justify-content:center">'
+    // 右: 識別コードバッジ
+    + '    <div style="flex-shrink:0;width:13mm;display:flex;align-items:center;justify-content:center;padding-left:1.5mm">\n'
+    + '      <div style="border:2.5px solid #000;border-radius:5px;padding:3px 2px;'
+    + 'font-size:' + badgeFz + ';font-weight:800;color:#000;line-height:1;text-align:center;'
+    + 'width:11mm;min-height:11mm;display:flex;align-items:center;justify-content:center">'
     + idCode + '</div>\n'
     + '    </div>\n'
 
@@ -1410,7 +1441,7 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
 
   var lineBadgeHtml   = lineCode  ? '<span style="' + bLg + '">' + lineCode  + '</span>' : '';
   var unitSuffixHtml  = unitSuffix ? '<span style="' + bLg + '">' + unitSuffix + '</span>' : '';
-  var prefixLine = prefix ? '<div style="font-size:7px;font-weight:700;color:#000;margin-bottom:1px">' + prefix + '-</div>' : '';
+  var prefixLine = '';  // prefix は lineBadge と同一行で表示するため不要（下で inline処理）
 
   var saleBadge = forSale
     ? '<span style="border:1.5px solid #000;padding:0 3px;font-size:7px;font-weight:700;color:#000;margin-left:3px">販売</span>'
@@ -1446,11 +1477,12 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
     + '    <div style="flex:1;min-width:0;padding-left:1.5mm;border-left:2px solid #000">\n'
 
     // prefix行（控えめ）
-    + '      ' + prefixLine
 
     // [B1] [U001] バッジ行 + 右上に頭数バッジ
     + '      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">\n'
-    + '        <div>' + lineBadgeHtml + unitSuffixHtml + '</div>\n'
+    + '        <div>'
+    + (prefix ? '<span style="font-size:8px;font-weight:700;color:#000;margin-right:1px">' + prefix + '-</span>' : '')
+    + lineBadgeHtml + unitSuffixHtml + '</div>\n'
     + '        <div>' + countBadge + '</div>\n'
     + '      </div>\n'
 
