@@ -160,6 +160,8 @@ Pages.eggLotBulk = function (params = {}) {
   const initSetId  = params.setId  || params.set_id  || '';
   let _selLineId   = initLineId;
   let _commonDate  = new Date().toISOString().split('T')[0];
+  // ★ _commonDate は常にハイフン形式（YYYY-MM-DD）で保持する
+  function _normalizeDate(d) { return d ? String(d).replace(/\//g, '-') : d; }
   let _nextRowId   = 4;
   let _savedResults = null;
 
@@ -176,7 +178,7 @@ Pages.eggLotBulk = function (params = {}) {
       if (_eggRecs.length > 0) {
         const _latestEgg = _eggRecs.sort((a,b)=>String(b.collect_date||b.date||'').localeCompare(String(a.collect_date||a.date||'')))[0];
         const _eDate = _latestEgg.collect_date || _latestEgg.date;
-        if (_eDate) _commonDate = _eDate.replace(/\//g, '-');
+        if (_eDate) _commonDate = String(_eDate).replace(/\//g, '-').replace(/\./g, '-');
       }
     }
   }
@@ -498,12 +500,17 @@ Pages.eggLotBulk = function (params = {}) {
 
   Pages._eblOnLineChange = function(v) { _readDom(); _selLineId = v; render(true); };
 
-  Pages._eblSetCommonDate = function(v) { _commonDate = v; };
+  Pages._eblSetCommonDate = function(v) { _commonDate = v ? v.replace(/\//g, '-') : v; };
 
   Pages._eblApplyCommonDate = function() {
     // ★ DOMから直接読んで確実に最新値を取得（onchange未発火対策）
     const cmnDateEl = document.getElementById('ebl-common-date');
-    if (cmnDateEl && cmnDateEl.value) _commonDate = cmnDateEl.value;
+    if (cmnDateEl && cmnDateEl.value) {
+      _commonDate = cmnDateEl.value.replace(/\//g, '-');
+    } else if (_commonDate) {
+      // inputが空の場合でも _commonDate をハイフン形式に正規化
+      _commonDate = _commonDate.replace(/\//g, '-');
+    }
     _readDom();
     // 全行に適用
     const target = _commonDate;

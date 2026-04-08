@@ -4,12 +4,12 @@
 //       フロントの他のコードはこのファイルのメソッドのみを通してGASと通信する。
 //       成功時は data を返し、失敗時は Error をスローする。
 //       リトライ・タイムアウト・エラー整形もここで行う。
-// build: 20260413ao
+// build: 20260413ap
 // ════════════════════════════════════════════════════════════════
 
 'use strict';
 
-window.__API_BUILD = '20260413ao';
+window.__API_BUILD = '20260413ap';
 console.log('[API] ===== api.js LOADED BUILD=' + window.__API_BUILD + ' =====');
 var API = (() => {
   console.log('[API] IIFE start - BUILD:', window.__API_BUILD);
