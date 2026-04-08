@@ -1416,8 +1416,8 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
     ? '<span style="border:1.5px solid #000;padding:0 3px;font-size:7px;font-weight:700;color:#000;margin-left:3px">販売</span>'
     : '';
 
-  // 孵化日（ロットラベルは下部に専用欄があるのでヘッダーには出さない）
-  var hatchHtml = (!isLot && ld.hatch_date)
+  // 孵化日
+  var hatchHtml = ld.hatch_date
     ? '<div style="font-size:6.5px;font-weight:700;color:#000">孵: ' + ld.hatch_date + '</div>'
     : '';
 
