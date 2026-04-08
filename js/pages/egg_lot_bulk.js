@@ -224,6 +224,9 @@ Pages.eggLotBulk = function (params = {}) {
       onclick="Pages._eblSetRowContainer(${rowId},'${val}')">${val}</button>`;
   }
 
+  // 全行日付反映中は collectDate の DOM 上書きをスキップするフラグ
+  let _skipDateReadDom = false;
+
   // DOM から全状態を読み込む（再描画前に必ず呼ぶ）
   function _readDom() {
     const lineEl  = document.getElementById('ebl-line');
@@ -240,9 +243,8 @@ Pages.eggLotBulk = function (params = {}) {
       const c = document.getElementById('ebl-cnt-' + row.id);
       const d = document.getElementById('ebl-dat-' + row.id);
       if (c) row.count = c.value;
-      // ★ collectDate は DOM の値が存在する場合のみ更新
-      //    （全行反映直後に古いDOM値で上書きされるのを防ぐ）
-      if (d && d.value) row.collectDate = d.value;
+      // ★ collectDate は全行反映フラグが立っていない場合のみDOM値で更新
+      if (d && d.value && !_skipDateReadDom) row.collectDate = d.value;
       // container は _eblSetRowContainer で直接更新するので DOM 読み不要
     });
   }
@@ -508,15 +510,18 @@ Pages.eggLotBulk = function (params = {}) {
     if (cmnDateEl && cmnDateEl.value) {
       _commonDate = cmnDateEl.value.replace(/\//g, '-');
     } else if (_commonDate) {
-      // inputが空の場合でも _commonDate をハイフン形式に正規化
       _commonDate = _commonDate.replace(/\//g, '-');
     }
+    // ★ 卵数・容器などだけ読み込み（collectDate は上書きしない）
     _readDom();
     // 全行に適用
     const target = _commonDate;
     if (!target) { UI.toast('採卵日を入力してください', 'error'); return; }
     _rows.forEach(r => { r.collectDate = target; });
+    // ★ render 中の _readDom が collectDate を上書きしないようフラグON
+    _skipDateReadDom = true;
     render(true);
+    _skipDateReadDom = false;
     UI.toast('全行に採卵日を反映しました: ' + target.replace(/-/g, '/'), 'success', 1500);
   };
 
