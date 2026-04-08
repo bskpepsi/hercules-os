@@ -1176,81 +1176,87 @@ function _buildLabelHTML(ld, qrSrc) {
 function _buildParentLabelHTML(ld, _unused, qrSrc) {
   var qr = (typeof _unused === 'string' && _unused.startsWith('data:')) ? _unused : qrSrc;
 
-  var rawId   = ld.display_id || '';
-  var idParts = rawId.split('-');
-  var idCode  = idParts.length >= 2 ? idParts[idParts.length - 1] : rawId;
+  var rawId    = ld.display_id || '';
+  var idParts  = rawId.split('-');
+  var idCode   = idParts.length >= 2 ? idParts[idParts.length - 1] : rawId;
 
   var sizeStr  = ld.size_mm       || '';
   var ecStr    = ld.eclosion_date || '';
   var feedStr  = ld.feeding_date  || '';
   var locStr   = [ld.locality, ld.generation].filter(Boolean).join(' / ');
-  var patStr   = ld.paternal_raw  ? ld.paternal_raw.slice(0, 24)  + (ld.paternal_size  ? ' ' + ld.paternal_size  : '') : '';
-  var matStr   = ld.maternal_raw  ? ld.maternal_raw.slice(0, 24)  + (ld.maternal_size  ? ' ' + ld.maternal_size  : '') : '';
+  var patStr   = ld.paternal_raw ? ld.paternal_raw.slice(0,26) + (ld.paternal_size ? ' ' + ld.paternal_size : '') : '';
+  var matStr   = ld.maternal_raw ? ld.maternal_raw.slice(0,26) + (ld.maternal_size ? ' ' + ld.maternal_size : '') : '';
 
-  var badgeFz  = idCode.length <= 1 ? '34px' : idCode.length <= 2 ? '26px' : '18px';
+  var badgeFz  = idCode.length <= 1 ? '32px' : idCode.length <= 2 ? '24px' : '16px';
   var sexColor = ld.sex === '♂' ? '#1a6bb5' : ld.sex === '♀' ? '#b51a5a' : '#000';
+
+  // 日付行: ラベル+値を横並び1行
+  function dateRow(label, val) {
+    return '<div style="display:flex;align-items:baseline;gap:2mm;line-height:1.6">'
+      + '<span style="font-size:5.5px;color:#666;font-weight:700;white-space:nowrap;min-width:6mm">' + label + '</span>'
+      + '<span style="font-size:7.5px;font-weight:700;border-bottom:1px solid #555;flex:1;letter-spacing:.2px">'
+      + (val ? val : '<span style="color:#ccc;font-size:7px">____/__/__</span>')
+      + '</span></div>\n';
+  }
 
   return '<!DOCTYPE html>\n<html><head><meta charset="utf-8">\n<style>\n'
     + '  @page { size: 62mm 40mm; margin: 0; }\n'
     + '  * { margin:0; padding:0; box-sizing:border-box; }\n'
-    + '  body { width:62mm; height:40mm; font-family:sans-serif; font-size:7px; background:#fff; color:#000; overflow:hidden; }\n'
+    + '  body { width:62mm; height:40mm; font-family:sans-serif; background:#fff; color:#000; overflow:hidden; }\n'
     + '  @media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }\n'
     + '</style></head><body>\n'
     + '<div style="width:62mm;height:40mm;display:flex;flex-direction:column">\n'
-    + '  <div style="background:#000;color:#fff;font-size:8px;font-weight:700;padding:0.6mm 2mm;height:4.5mm;display:flex;align-items:center;flex-shrink:0">種親 | HerculesOS</div>\n'
+
+    // ── ヘッダー
+    + '  <div style="background:#000;color:#fff;font-size:7.5px;font-weight:700;'
+    + 'padding:0 2mm;height:4mm;display:flex;align-items:center;flex-shrink:0;letter-spacing:.5px">'
+    + '種親 | HerculesOS</div>\n'
 
     + '  <div style="display:flex;flex:1;overflow:hidden">\n'
 
-    // QR
-    + '    <div style="flex-shrink:0;padding:1mm 1mm 0.5mm 1.5mm">' + _qrBox(qr, 42) + '</div>\n'
-
-    // 中央: 全情報
-    + '    <div style="flex:1;min-width:0;border-left:2px solid #000;padding:0.8mm 1mm 0.5mm 1.5mm;'
-    + 'display:flex;flex-direction:column;justify-content:space-between;overflow:hidden">\n'
-
-    // 行1: ID + 性別+サイズ 同一行
-    + '      <div style="display:flex;align-items:baseline;gap:3px;margin-bottom:1px">\n'
-    + '        <span style="font-family:monospace;font-size:8.5px;font-weight:800;color:#000;'
-    + 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">' + rawId + '</span>\n'
-    + '        <span style="font-size:9px;font-weight:800;color:' + sexColor + ';flex-shrink:0">' + (ld.sex||'') + '</span>\n'
-    + '        <span style="font-size:8.5px;font-weight:700;color:#000;flex-shrink:0">' + sizeStr + '</span>\n'
-    + '      </div>\n'
-
-    // 行2: 産地
-    + (locStr ? '      <div style="font-size:6.5px;font-weight:600;color:#444;margin-bottom:2px">' + locStr + '</div>\n' : '')
-
-    // 行3: 羽化日・後食日 2列
-    + '      <div style="display:flex;gap:4px;margin-bottom:3px">\n'
-    + '        <div style="flex:1;border-bottom:1px solid #888;padding-bottom:0.5px">\n'
-    + '          <div style="font-size:5px;color:#777;font-weight:700;letter-spacing:.3px">羽化日</div>\n'
-    + '          <div style="font-size:7px;font-weight:700;color:#000">'
-    + (ecStr ? ecStr : '<span style="color:#bbb">____/__/__</span>') + '</div>\n'
-    + '        </div>\n'
-    + '        <div style="flex:1;border-bottom:1px solid #888;padding-bottom:0.5px">\n'
-    + '          <div style="font-size:5px;color:#777;font-weight:700;letter-spacing:.3px">後食日</div>\n'
-    + '          <div style="font-size:7px;font-weight:700;color:#000">'
-    + (feedStr ? feedStr : '<span style="color:#bbb">____/__/__</span>') + '</div>\n'
-    + '        </div>\n'
-    + '      </div>\n'
-
-    // 行4: 親情報
-    + '      <div style="border-top:0.8px solid #ccc;padding-top:1.5px">\n'
-    + (patStr ? '        <div style="font-size:5.8px;font-weight:700;color:#000;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'
-      + '<span style="color:#1a6bb5">♂</span> ' + patStr + '</div>\n' : '')
-    + (matStr ? '        <div style="font-size:5.8px;font-weight:700;color:#000;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'
-      + '<span style="color:#b51a5a">♀</span> ' + matStr + '</div>\n' : '')
-    + '      </div>\n'
-
-    + '    </div>\n'
-
-    // 右: 識別バッジ
-    + '    <div style="flex-shrink:0;width:12mm;display:flex;align-items:center;justify-content:center;padding:0 1mm">\n'
-    + '      <div style="border:2.5px solid #000;border-radius:5px;'
-    + 'font-size:' + badgeFz + ';font-weight:800;color:#000;line-height:1;text-align:center;'
-    + 'width:10mm;height:10mm;display:flex;align-items:center;justify-content:center">'
+    // ── 左列: QR上部 ＋ バッジ下部
+    + '    <div style="flex-shrink:0;width:13mm;display:flex;flex-direction:column;'
+    + 'align-items:center;padding:1mm 0 1mm 1.5mm">\n'
+    + '      <div>' + _qrBox(qr, 38) + '</div>\n'
+    + '      <div style="flex:1;display:flex;align-items:center;justify-content:center;padding-top:1mm">\n'
+    + '        <div style="border:2px solid #000;border-radius:4px;'
+    + 'font-size:' + badgeFz + ';font-weight:900;color:#000;line-height:1;'
+    + 'width:9mm;height:9mm;display:flex;align-items:center;justify-content:center">'
     + idCode + '</div>\n'
+    + '      </div>\n'
     + '    </div>\n'
 
+    // ── 右列: 全情報
+    + '    <div style="flex:1;min-width:0;border-left:1.5px solid #000;'
+    + 'padding:0.8mm 1mm 0.6mm 1.5mm;display:flex;flex-direction:column;'
+    + 'justify-content:space-between;overflow:hidden">\n'
+
+    // ① ID ＋ 性別＋サイズ
+    + '      <div style="display:flex;align-items:baseline;gap:2px;line-height:1.2">\n'
+    + '        <span style="font-family:monospace;font-size:9px;font-weight:800;'
+    + 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + rawId + '</span>\n'
+    + '        <span style="font-size:9px;font-weight:800;color:' + sexColor + ';flex-shrink:0">' + (ld.sex||'') + '&nbsp;</span>\n'
+    + '        <span style="font-size:9px;font-weight:700;flex-shrink:0">' + sizeStr + '</span>\n'
+    + '      </div>\n'
+
+    // ② 産地
+    + (locStr ? '      <div style="font-size:6.5px;color:#333;font-weight:600">' + locStr + '</div>\n' : '')
+
+    // ③ 羽化日（1行）
+    + '      ' + dateRow('羽化日', ecStr)
+
+    // ④ 後食日（1行）
+    + '      ' + dateRow('後食日', feedStr)
+
+    // ⑤ 親情報
+    + '      <div style="border-top:0.8px solid #bbb;padding-top:0.8mm">\n'
+    + (patStr ? '        <div style="font-size:6px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.5">'
+      + '<span style="color:#1a6bb5">♂</span>&nbsp;' + patStr + '</div>\n' : '')
+    + (matStr ? '        <div style="font-size:6px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.5">'
+      + '<span style="color:#b51a5a">♀</span>&nbsp;' + matStr + '</div>\n' : '')
+    + '      </div>\n'
+
+    + '    </div>\n'
     + '  </div>\n'
     + '</div>\n</body></html>';
 }
@@ -1263,94 +1269,81 @@ function _buildSetLabelHTML(ld, _unused, qrSrc) {
   var rawId  = ld.display_id || '';
   var _rawLC = ld.line_code  || '';
 
-  // ライン短コード抽出
-  function _shortCode(s) {
-    if (!s) return '';
-    if (/^SET-/i.test(s)) return '';
+  function _sc(s) {
+    if (!s || /^SET-/i.test(s)) return '';
     var p = s.split('-').filter(Boolean);
     if (p.length >= 3) return p[1];
-    if (p.length === 2) return p[0].replace(/^[A-Za-z]{1,3}[0-9]{4}/, '') || '';
-    return s.replace(/^[A-Za-z]{1,3}[0-9]{4}/, '');
+    return p[0] ? p[0].replace(/^[A-Za-z]{1,3}[0-9]{4}/,'') : '';
   }
-  var lineCode = _shortCode(_rawLC) || '';
-  var badgeFz  = lineCode.length <= 1 ? '30px' : lineCode.length <= 2 ? '24px' : '16px';
+  var lineCode = _sc(_rawLC) || '';
+  var badgeFz  = lineCode.length <= 1 ? '28px' : lineCode.length <= 2 ? '22px' : '15px';
 
-  var fInfo    = ld.father_info  || '';
-  var mInfo    = ld.mother_info  || '';
-  var fSize    = ld.father_size  || '';
-  var mSize    = ld.mother_size  || '';
-  var fBlood   = ld.father_blood || '';
-  var mBlood   = ld.mother_blood || '';
-
-  // 親表示: "M26-A (168mm)" 形式
-  var fMain    = fInfo  + (fSize  ? ' (' + fSize  + ')' : '');
-  var mMain    = mInfo  + (mSize  ? ' (' + mSize  + ')' : '');
-
-  // 血統（短縮）
-  var fBloodSh = fBlood ? fBlood.slice(0, 18) : '';
-  var mBloodSh = mBlood ? mBlood.slice(0, 18) : '';
-
-  // セパレータ線スタイル
-  var sepH = 'border-top:1px solid #000';
+  var fInfo  = ld.father_info  || '—';
+  var mInfo  = ld.mother_info  || '—';
+  var fSize  = ld.father_size  ? ' (' + ld.father_size  + ')' : '';
+  var mSize  = ld.mother_size  ? ' (' + ld.mother_size  + ')' : '';
+  var fBlood = ld.father_blood ? ld.father_blood.slice(0, 20) : '';
+  var mBlood = ld.mother_blood ? ld.mother_blood.slice(0, 20) : '';
 
   return '<!DOCTYPE html>\n<html><head><meta charset="utf-8">\n<style>\n'
     + '  @page { size: 62mm 40mm; margin: 0; }\n'
     + '  * { margin:0; padding:0; box-sizing:border-box; }\n'
-    + '  body { width:62mm; height:40mm; font-family:sans-serif; font-size:7px; background:#fff; color:#000; overflow:hidden; }\n'
+    + '  body { width:62mm; height:40mm; font-family:sans-serif; background:#fff; color:#000; overflow:hidden; }\n'
     + '  @media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }\n'
     + '</style></head><body>\n'
     + '<div style="width:62mm;height:40mm;display:flex;flex-direction:column">\n'
 
-    // ── ヘッダー
-    + '  <div style="background:#000;color:#fff;font-size:8px;font-weight:700;'
-    + 'padding:0.6mm 2mm;height:4.5mm;display:flex;align-items:center;flex-shrink:0">'
+    // ヘッダー
+    + '  <div style="background:#000;color:#fff;font-size:7.5px;font-weight:700;'
+    + 'padding:0 2mm;height:4mm;display:flex;align-items:center;flex-shrink:0;letter-spacing:.5px">'
     + '産卵セット | HerculesOS</div>\n'
 
-    // ── メインエリア: QR ｜ ラインバッジ ｜ 右3段（ID+日付 / ♂ / ♀）
     + '  <div style="display:flex;flex:1;overflow:hidden">\n'
 
-    // ① QR
-    + '    <div style="flex-shrink:0;padding:1mm 1mm 0.5mm 1.5mm">' + _qrBox(qr, 42) + '</div>\n'
+    // ── QR
+    + '    <div style="flex-shrink:0;padding:1mm 0 0 1.5mm">' + _qrBox(qr, 38) + '</div>\n'
 
-    // ② ラインバッジ列（細め）
-    + '    <div style="flex-shrink:0;width:11mm;border-left:1.5px solid #000;border-right:1.5px solid #000;'
+    // ── ラインバッジ（縦線付き・細め9mm）
+    + '    <div style="flex-shrink:0;width:9mm;border-left:1.5px solid #000;border-right:1.5px solid #000;'
     + 'display:flex;align-items:center;justify-content:center">\n'
     + (lineCode
-      ? '<div style="border:2px solid #000;border-radius:4px;'
-        + 'font-size:' + badgeFz + ';font-weight:800;color:#000;line-height:1.1;'
-        + 'text-align:center;width:8.5mm;min-height:8.5mm;display:flex;align-items:center;justify-content:center">'
-        + lineCode + '</div>\n'
+      ? '      <div style="border:2px solid #000;border-radius:3px;font-size:' + badgeFz + ';'
+        + 'font-weight:900;color:#000;line-height:1;width:7mm;height:7mm;'
+        + 'display:flex;align-items:center;justify-content:center">' + lineCode + '</div>\n'
       : '')
     + '    </div>\n'
 
-    // ③ 右列：3段（ID+日付 / ♂ / ♀）
+    // ── 右列：3段
     + '    <div style="flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden">\n'
 
-    // 段1: SET ID + ペアリング日
-    + '      <div style="padding:0.8mm 1.5mm 0.6mm;border-bottom:1.5px solid #000;flex-shrink:0">\n'
-    + '        <div style="font-family:monospace;font-size:8.5px;font-weight:800;color:#000;'
+    // 段1: ID + ペアリング日
+    + '      <div style="padding:0.6mm 1.5mm;border-bottom:1.5px solid #000;flex-shrink:0">\n'
+    + '        <div style="font-family:monospace;font-size:8.5px;font-weight:800;'
     + 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + rawId + '</div>\n'
     + (ld.pairing_start
-      ? '        <div style="font-size:7px;font-weight:600;color:#444;margin-top:1px">ペアリング: ' + ld.pairing_start + '</div>\n'
-      : '')
+      ? '        <div style="font-size:6.5px;color:#444;font-weight:600">ペアリング: ' + ld.pairing_start + '</div>\n'
+      : '        <div style="font-size:6.5px;color:#aaa">ペアリング日未設定</div>\n')
     + '      </div>\n'
 
-    // 段2: ♂ 情報
-    + '      <div style="padding:0.7mm 1.5mm;border-bottom:1px solid #ddd;flex:1;display:flex;flex-direction:column;justify-content:center">\n'
-    + '        <div style="display:flex;align-items:baseline;gap:3px;flex-wrap:nowrap;overflow:hidden">\n'
-    + '          <span style="font-size:8.5px;font-weight:800;color:#1a6bb5;flex-shrink:0">♂</span>\n'
-    + '          <span style="font-size:8px;font-weight:700;color:#000;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + fMain + '</span>\n'
+    // 段2: ♂
+    + '      <div style="padding:0.5mm 1.5mm;border-bottom:1px solid #ddd;flex:1;'
+    + 'display:flex;flex-direction:column;justify-content:center">\n'
+    + '        <div style="display:flex;align-items:baseline;gap:2px;overflow:hidden">\n'
+    + '          <span style="font-size:9px;font-weight:900;color:#1a6bb5;flex-shrink:0">♂</span>\n'
+    + '          <span style="font-size:8px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
+    + fInfo + fSize + '</span>\n'
     + '        </div>\n'
-    + (fBloodSh ? '        <div style="font-size:6px;color:#555;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:1px">' + fBloodSh + '</div>\n' : '')
+    + (fBlood ? '        <div style="font-size:6px;color:#555;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + fBlood + '</div>\n' : '')
     + '      </div>\n'
 
-    // 段3: ♀ 情報
-    + '      <div style="padding:0.7mm 1.5mm;flex:1;display:flex;flex-direction:column;justify-content:center">\n'
-    + '        <div style="display:flex;align-items:baseline;gap:3px;flex-wrap:nowrap;overflow:hidden">\n'
-    + '          <span style="font-size:8.5px;font-weight:800;color:#b51a5a;flex-shrink:0">♀</span>\n'
-    + '          <span style="font-size:8px;font-weight:700;color:#000;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + mMain + '</span>\n'
+    // 段3: ♀
+    + '      <div style="padding:0.5mm 1.5mm;flex:1;display:flex;flex-direction:column;justify-content:center">\n'
+    + '        <div style="display:flex;align-items:baseline;gap:2px;overflow:hidden">\n'
+    + '          <span style="font-size:9px;font-weight:900;color:#b51a5a;flex-shrink:0">♀</span>\n'
+    + '          <span style="font-size:8px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
+    + mInfo + mSize + '</span>\n'
     + '        </div>\n'
-    + (mBloodSh ? '        <div style="font-size:6px;color:#555;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:1px">' + mBloodSh + '</div>\n' : '')
+    + (mBlood ? '        <div style="font-size:6px;color:#555;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + mBlood + '</div>\n' : '')
     + '      </div>\n'
 
     + '    </div>\n'
