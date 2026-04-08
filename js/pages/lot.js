@@ -116,26 +116,68 @@ Pages.lotList = function () {
         const st = u.status||'active';
         const stBadge = st==='individualized'
           ? `<span style="font-size:.62rem;color:var(--amber);background:rgba(224,144,64,.15);padding:1px 5px;border-radius:4px;margin-left:4px">個別化済</span>` : '';
-        const phColor = ph==='T2'?'var(--blue)':ph==='T3'?'var(--amber)':'var(--text3)';
+        const phColor = ph==='T1' ? 'var(--green)'
+          : ph==='T2' ? 'var(--blue)'
+          : ph==='T3' ? 'var(--amber)'
+          : 'var(--text3)';
         let srcLots = '';
         try {
           const sl = u.source_lots ? JSON.parse(u.source_lots) : [];
           if (sl.length) srcLots = `<div style="font-size:.65rem;color:var(--text3)">由来: ${sl.map(lid=>{const lot=Store.getLot&&Store.getLot(lid);return lot?(lot.display_id||lid):lid;}).join('/')}</div>`;
         } catch(_e){}
+        // members を解析して①②の情報を組み立て
+        let membersArr = [];
+        try {
+          const raw = u.members;
+          membersArr = Array.isArray(raw) ? raw
+            : (typeof raw === 'string' && raw.trim()) ? JSON.parse(raw) : [];
+        } catch(_e) {}
+
+        // 性別アイコン
+        const sexIcon = (sex) => sex === '♂' ? '<span style="color:#3366cc;font-weight:700">♂</span>'
+          : sex === '♀' ? '<span style="color:#cc3366;font-weight:700">♀</span>'
+          : '<span style="color:var(--text3)">?</span>';
+
+        // 各頭の簡易情報（最大2頭）
+        const memberChips = membersArr.slice(0, 2).map((m, mi) => {
+          const mw  = m.weight_g   ? m.weight_g + 'g' : '—';
+          const msc = m.size_category || '';
+          const msx = m.sex && m.sex !== '不明' ? m.sex : '';
+          const numLabel = mi === 0 ? '①' : '②';
+          return `<div style="display:flex;align-items:center;gap:5px;
+            background:var(--surface2);border-radius:6px;padding:4px 8px;font-size:.75rem">
+            <span style="color:var(--text3);font-weight:700;min-width:16px">${numLabel}</span>
+            ${msx ? sexIcon(msx) : '<span style="color:var(--text3)">?</span>'}
+            ${msc ? `<span style="font-weight:700;color:var(--text1)">${msc}</span>` : ''}
+            <span style="color:var(--text2);font-weight:700">${mw}</span>
+          </div>`;
+        }).join('');
+
+        // members が空の場合は size_category と head_count のみ表示
+        const memberRow = membersArr.length > 0
+          ? `<div style="display:flex;flex-direction:column;gap:4px;margin-top:5px">${memberChips}</div>`
+          : `<div style="font-size:.76rem;color:var(--text2);margin-top:3px">${hc}頭 / 区分:${sc}</div>`;
+
         const uid = (u.display_id||u.unit_id||'').replace(/['"]/g,'');
-        return `<div class="card" style="cursor:pointer;padding:12px 14px" onclick="Pages._goUnitDetail('${uid}')">
-          <div style="display:flex;align-items:center;gap:10px">
-            <div style="flex:1;min-width:0">
-              <div style="font-size:.88rem;font-weight:700;color:var(--gold)">${u.display_id||u.unit_id}${stBadge}</div>
-              <div style="font-size:.72rem;color:var(--text3);margin-top:2px">L:${lc} / ${hc}頭 / 区分:${sc}</div>
-              ${srcLots}
-            </div>
-            <div style="text-align:right;flex-shrink:0">
-              <div style="font-size:.85rem;font-weight:700;color:${phColor}">${ph}</div>
-              <div style="font-size:.62rem;color:var(--text3)">ステージ</div>
-            </div>
-            <div style="color:var(--text3);font-size:1.1rem">›</div>
+        return `<div class="ind-card" onclick="Pages._goUnitDetail('${uid}')" style="padding:10px 12px">
+          <!-- 1行目: ID + ステージバッジ + › -->
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+            <span style="font-family:var(--font-mono);font-weight:700;font-size:.9rem;flex:1;color:var(--gold)">
+              ${u.display_id||u.unit_id}${stBadge}
+            </span>
+            <span style="display:inline-block;font-size:1.05rem;font-weight:800;
+              color:${phColor};border:1.5px solid ${phColor};border-radius:6px;
+              padding:1px 8px;min-width:32px;text-align:center;line-height:1.4">
+              ${ph}
+            </span>
+            <span style="color:var(--text3);font-size:1rem">›</span>
           </div>
+          <!-- 2行目: ライン -->
+          <div style="font-size:.74rem;color:var(--text2);margin-bottom:2px">
+            L:${lc}  ${srcLots ? '/ ' + srcLots.replace(/<[^>]+>/g,'').replace('由来: ','由来:') : ''}
+          </div>
+          <!-- 3行目: 各頭の情報チップ -->
+          ${memberRow}
         </div>`;
       }).join('') : `<div style="color:var(--text3);text-align:center;padding:24px">該当するユニットがありません</div>`) +
       `</div></div>`;
@@ -192,8 +234,8 @@ Pages.lotList = function () {
     }
     const lines = Store.getDB('lines') || [];
     const title = isLineLimited
-      ? (fixedLine ? (fixedLine.line_code || fixedLine.display_id) + ' のロット' : 'ロット一覧')
-      : 'ロット一覧';
+      ? (fixedLine ? (fixedLine.line_code || fixedLine.display_id) + ' のロット・ユニット' : 'ロット・ユニット管理')
+      : 'ロット・ユニット管理';
     const headerOpts = isLineLimited
       ? { back: true, action: { fn: "routeTo('lot-new',{lineId:'" + fixedLineId + "'})", icon: '＋' } }
       : { action: { fn: "routeTo('lot-new')", icon: '＋' } };

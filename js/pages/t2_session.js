@@ -186,7 +186,7 @@ function _buildT2Members(unit) {
       status:        'normal',   // normal / dead
       mat_molt:      true,       // モルトパウダー入り（デフォルトON）
       container:     '2.7L',    // 個体別容器サイズ
-      mat_type:      '',         // 個体別マット種別（空=自動）
+      mat_type:      'T2',       // 個体別マット種別（T2移行デフォルトT2）
       exchange_type: 'FULL',    // 個体別交換種別（デフォルト全交換）
       decision:      null,       // continue / individualize / sale / dead
       memo:          '',
@@ -312,10 +312,29 @@ function _renderT2Session(s) {
         <span style="color:var(--text3)">※ T2移行後の通常交換は「継続読取りモード」を使います。</span>
       </div>
 
-      <!-- ③ ユニット共通設定カード（交換種別 — 個体カードで個別変更可） -->
+      <!-- ③ ユニット共通設定カード -->
       <div style="margin-top:8px;border-radius:10px;border:1.5px solid var(--border);
         background:var(--surface1,var(--surface));padding:12px 14px">
-        <div style="font-size:.8rem;font-weight:700;color:var(--text2);margin-bottom:4px">
+
+        <!-- マット種別 一括 -->
+        <div style="font-size:.8rem;font-weight:700;color:var(--text2);margin-bottom:6px">
+          🌿 マット種別 — 一括設定
+          <span style="font-size:.62rem;font-weight:400;color:var(--text3);margin-left:4px">個体カードで個別変更可</span>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:14px">
+          ${['T1','T2','T3','MD'].map(v => `
+            <button type="button" onclick="Pages._t2SetMatAll('${v}')"
+              style="flex:1;padding:10px 0;border-radius:8px;font-size:.9rem;font-weight:700;cursor:pointer;
+                border:2px solid ${s.members.length && s.members.every(m=>m.mat_type===v||m.status==='dead') ? 'var(--green)' : 'var(--border)'};
+                background:${s.members.length && s.members.every(m=>m.mat_type===v||m.status==='dead') ? 'rgba(76,175,120,.15)' : 'var(--bg2)'};
+                color:${s.members.length && s.members.every(m=>m.mat_type===v||m.status==='dead') ? 'var(--green)' : 'var(--text2)'}">
+              ${v}
+            </button>
+          `).join('')}
+        </div>
+
+        <!-- 交換種別 一括 -->
+        <div style="font-size:.8rem;font-weight:700;color:var(--text2);margin-bottom:6px">
           🔄 交換種別 — 一括設定
           <span style="font-size:.62rem;font-weight:400;color:var(--text3);margin-left:4px">個体カードで個別変更可</span>
         </div>
@@ -546,13 +565,13 @@ function _renderT2MemberCard(m, idx, s) {
         <span style="font-weight:400;margin-left:4px">（空=自動）</span>
       </div>
       <div style="display:flex;gap:6px;margin-bottom:10px">
-        ${['T1','T2','T3','MD',''].map(v => `
+        ${['T1','T2','T3','MD'].map(v => `
           <button type="button" onclick="Pages._t2SetMemberMat(${idx},'${v}')"
             style="flex:1;padding:7px 0;border-radius:7px;font-size:.82rem;font-weight:700;cursor:pointer;
               border:2px solid ${m.mat_type===v ? 'var(--green)' : 'var(--border)'};
               background:${m.mat_type===v ? 'rgba(76,175,120,.15)' : 'var(--bg2)'};
               color:${m.mat_type===v ? 'var(--green)' : 'var(--text2)'}">
-            ${v || '自動'}
+            ${v}
           </button>
         `).join('')}
       </div>
@@ -815,6 +834,15 @@ Pages._t2SetMatType = function(v) {
   s.mat_type = v;  // 空文字=自動
   _renderT2Session(s);
 };
+// マット種別: 一括設定（共通設定ボタン用）
+Pages._t2SetMatAll = function(v) {
+  const s = window._t2Session;
+  if (!s) return;
+  s.mat_type = v;
+  s.members.forEach(function(m) { if (m.status !== 'dead') m.mat_type = v; });
+  _renderT2Session(s);
+};
+
 // 交換種別: 一括設定（共通設定ボタン用）
 Pages._t2SetExchangeAll = function(v) {
   const s = window._t2Session;
@@ -908,7 +936,7 @@ Pages._t2SessionSave = async function () {
         memo:          m.memo        || '',
         mat_molt:      m.mat_molt      !== undefined ? m.mat_molt  : true,
         container:     m.container     || '2.7L',
-        mat_type:      m.mat_type       || '',
+        mat_type:      m.mat_type       || 'T2',
         exchange_type: m.exchange_type  || s.exchange_type || 'FULL',
       })),
     };
