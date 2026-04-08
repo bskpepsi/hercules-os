@@ -615,6 +615,11 @@ function _renderLotDetail(lot, main) {
           ✂️ 分割
         </button>
       </div>
+        <button style="grid-column:span 2;padding:12px 8px;border-radius:var(--radius);font-weight:700;font-size:.88rem;
+          background:var(--surface3,#3a3a4a);color:var(--gold);border:1px solid rgba(200,168,75,.4);cursor:pointer"
+          onclick="routeTo('label-gen',{targetType:'LOT',targetId:'${lot.lot_id}'})">
+          🏷️ ラベル発行・QRコード生成
+        </button>
 
       <div class="card">
         <div class="card-title">ロット情報</div>
