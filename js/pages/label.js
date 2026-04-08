@@ -678,6 +678,8 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         mother_info:   _setMother.parent_display_id || _setMother.display_name || set.mother_display_name || (set.mother_par_id ? '（ID:'+set.mother_par_id+'）' : '---'),
         father_size:   _setFather.size_mm ? String(_setFather.size_mm).replace(/mm$/,'') + 'mm' : (set.father_size_mm ? set.father_size_mm + 'mm' : ''),
         mother_size:   _setMother.size_mm ? String(_setMother.size_mm).replace(/mm$/,'') + 'mm' : (set.mother_size_mm ? set.mother_size_mm + 'mm' : ''),
+        father_blood:  (function(){ var r=_setFather.paternal_raw||''; try{var a=JSON.parse(r);if(Array.isArray(a))return a.filter(Boolean).join(' ');}catch(_){} return r; })(),
+        mother_blood:  (function(){ var r=_setMother.paternal_raw||''; try{var a=JSON.parse(r);if(Array.isArray(a))return a.filter(Boolean).join(' ');}catch(_){} return r; })(),
         pairing_start: set.pairing_start || '',
         label_type:    'set',
       };
@@ -1275,38 +1277,38 @@ function _buildParentLabelHTML(ld, _unused, qrSrc) {
 function _buildSetLabelHTML(ld, _unused, qrSrc) {
   var qr = (typeof _unused === 'string' && _unused.startsWith('data:')) ? _unused : qrSrc;
 
-  // ラインバッジ: line_code を優先、なければ display_id からパース
-    // ── ラインバッジ ─────────────────────────────────────────────
-  // 優先順位: 1) ld.line_code, 2) display_idから抽出
-  // SET display_id = "SET-YYYYMM-NN" は抽出に使わない
-  var rawId = ld.display_id || '';
-  var _rawLC = ld.line_code || '';
+  var rawId  = ld.display_id || '';
+  var _rawLC = ld.line_code  || '';
 
-  // ライン短コード抽出: "HM2026A1" → "A1", "HM2026-B1-S01" → "B1"
+  // ライン短コード抽出
   function _shortCode(s) {
     if (!s) return '';
-    if (/^SET-/i.test(s)) return '';      // SET形式は無視
+    if (/^SET-/i.test(s)) return '';
     var p = s.split('-').filter(Boolean);
-    if (p.length >= 3) return p[1];       // "HM2026-B1-S01" → "B1"
-    if (p.length === 2) {
-      var stripped = p[0].replace(/^[A-Za-z]{1,3}[0-9]{4}/, '');
-      return stripped || '';              // "HM2026A1" → "A1"
-    }
+    if (p.length >= 3) return p[1];
+    if (p.length === 2) return p[0].replace(/^[A-Za-z]{1,3}[0-9]{4}/, '') || '';
     return s.replace(/^[A-Za-z]{1,3}[0-9]{4}/, '');
   }
-
-  // line_code が有効ならそれを優先使用（display_idは使わない）
   var lineCode = _shortCode(_rawLC) || '';
-  // バッジサイズ: 1文字→32px、2文字→26px、3文字以上→18px
-  var badgeFz = lineCode.length <= 1 ? '32px' : lineCode.length <= 2 ? '26px' : '18px';
+  var badgeFz  = lineCode.length <= 1 ? '30px' : lineCode.length <= 2 ? '24px' : '16px';
 
-  var fInfo = ld.father_info || '';
-  var mInfo = ld.mother_info || '';
-  var fSize = ld.father_size || '';
-  var mSize = ld.mother_size || '';
-  // "血統名 (68mm)" 形式に整形（サイズがある場合）
-  var fDisplay = fInfo ? (fInfo + (fSize ? ' (' + fSize + ')' : '')) : '---';
-  var mDisplay = mInfo ? (mInfo + (mSize ? ' (' + mSize + ')' : '')) : '---';
+  var fInfo    = ld.father_info  || '';
+  var mInfo    = ld.mother_info  || '';
+  var fSize    = ld.father_size  || '';
+  var mSize    = ld.mother_size  || '';
+  var fBlood   = ld.father_blood || '';
+  var mBlood   = ld.mother_blood || '';
+
+  // 親表示: "M26-A (168mm)" 形式
+  var fMain    = fInfo  + (fSize  ? ' (' + fSize  + ')' : '');
+  var mMain    = mInfo  + (mSize  ? ' (' + mSize  + ')' : '');
+
+  // 血統（短縮）
+  var fBloodSh = fBlood ? fBlood.slice(0, 18) : '';
+  var mBloodSh = mBlood ? mBlood.slice(0, 18) : '';
+
+  // セパレータ線スタイル
+  var sepH = 'border-top:1px solid #000';
 
   return '<!DOCTYPE html>\n<html><head><meta charset="utf-8">\n<style>\n'
     + '  @page { size: 62mm 40mm; margin: 0; }\n'
@@ -1316,44 +1318,59 @@ function _buildSetLabelHTML(ld, _unused, qrSrc) {
     + '</style></head><body>\n'
     + '<div style="width:62mm;height:40mm;display:flex;flex-direction:column">\n'
 
-    // ── ヘッダー（黒ベタ）
+    // ── ヘッダー
     + '  <div style="background:#000;color:#fff;font-size:8px;font-weight:700;'
-    + 'padding:0.8mm 2mm;height:4.5mm;display:flex;align-items:center;flex-shrink:0">'
+    + 'padding:0.6mm 2mm;height:4.5mm;display:flex;align-items:center;flex-shrink:0">'
     + '産卵セット | HerculesOS</div>\n'
 
-    // ── QR + 情報 + ラインバッジ
-    + '  <div style="display:flex;flex:1;padding:1mm 1.5mm;gap:0;overflow:hidden">\n'
+    // ── メインエリア: QR ｜ ラインバッジ ｜ 右3段（ID+日付 / ♂ / ♀）
+    + '  <div style="display:flex;flex:1;overflow:hidden">\n'
 
-    // QR
-    + '    <div style="flex-shrink:0;margin-right:1.5mm">' + _qrBox(qr, 40) + '</div>\n'
+    // ① QR
+    + '    <div style="flex-shrink:0;padding:1mm 1mm 0.5mm 1.5mm">' + _qrBox(qr, 42) + '</div>\n'
 
-    // 中央情報
-    + '    <div style="flex:1;min-width:0;padding-left:1.5mm;border-left:1.5px solid #000;overflow:hidden">\n'
-    + '      <div style="font-family:monospace;font-size:9px;font-weight:700;color:#000;'
-    + 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + rawId + '</div>\n'
-
-    // ペアリング日
-    + (ld.pairing_start
-      ? '      <div style="font-size:7.5px;font-weight:700;color:#000;margin-top:1px">ペアリング: ' + ld.pairing_start + '</div>\n'
-      : '')
-
-    // 親情報: ♂ 血統名 (サイズ)
-    + '      <div style="font-size:7px;font-weight:700;color:#000;margin-top:2px">♂ ' + fDisplay + '</div>\n'
-    // 親情報: ♀
-    + '      <div style="font-size:7px;font-weight:700;color:#000">♀ ' + mDisplay + '</div>\n'
-
-    + '    </div>\n'
-
-    // 右側: ラインバッジ（縦線なし）
-    + '    <div style="flex-shrink:0;width:12mm;display:flex;align-items:center;justify-content:center">\n'
+    // ② ラインバッジ列（縦線で区切り）
+    + '    <div style="flex-shrink:0;width:12mm;border-left:1.5px solid #000;border-right:1.5px solid #000;'
+    + 'display:flex;align-items:center;justify-content:center">\n'
     + (lineCode
-      ? '      <div style="border:2.5px solid #000;border-radius:4px;padding:2px 3px;'
-        + 'font-size:' + badgeFz + ';font-weight:700;color:#000;line-height:1;'
-        + 'text-align:center;min-width:9mm;display:flex;align-items:center;justify-content:center">'
+      ? '<div style="border:2.5px solid #000;border-radius:4px;'
+        + 'font-size:' + badgeFz + ';font-weight:800;color:#000;line-height:1.1;'
+        + 'text-align:center;width:9mm;min-height:9mm;display:flex;align-items:center;justify-content:center">'
         + lineCode + '</div>\n'
       : '')
     + '    </div>\n'
 
+    // ③ 右列：3段（ID+日付 / ♂ / ♀）
+    + '    <div style="flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden">\n'
+
+    // 段1: SET ID + ペアリング日
+    + '      <div style="padding:1mm 1.5mm 0.8mm;border-bottom:1.5px solid #000;flex-shrink:0">\n'
+    + '        <div style="font-family:monospace;font-size:8px;font-weight:800;color:#000;'
+    + 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + rawId + '</div>\n'
+    + (ld.pairing_start
+      ? '        <div style="font-size:6.5px;font-weight:700;color:#555;margin-top:1px">ペアリング: ' + ld.pairing_start + '</div>\n'
+      : '')
+    + '      </div>\n'
+
+    // 段2: ♂ 情報
+    + '      <div style="padding:0.8mm 1.5mm;border-bottom:1px solid #ccc;flex:1;display:flex;flex-direction:column;justify-content:center">\n'
+    + '        <div style="display:flex;align-items:baseline;gap:2px">\n'
+    + '          <span style="font-size:8px;font-weight:800;color:#1a6bb5">♂</span>\n'
+    + '          <span style="font-size:7.5px;font-weight:700;color:#000;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + fMain + '</span>\n'
+    + '        </div>\n'
+    + (fBloodSh ? '        <div style="font-size:5.8px;color:#555;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + fBloodSh + '</div>\n' : '')
+    + '      </div>\n'
+
+    // 段3: ♀ 情報
+    + '      <div style="padding:0.8mm 1.5mm;flex:1;display:flex;flex-direction:column;justify-content:center">\n'
+    + '        <div style="display:flex;align-items:baseline;gap:2px">\n'
+    + '          <span style="font-size:8px;font-weight:800;color:#b51a5a">♀</span>\n'
+    + '          <span style="font-size:7.5px;font-weight:700;color:#000;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + mMain + '</span>\n'
+    + '        </div>\n'
+    + (mBloodSh ? '        <div style="font-size:5.8px;color:#555;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + mBloodSh + '</div>\n' : '')
+    + '      </div>\n'
+
+    + '    </div>\n'
     + '  </div>\n'
     + '</div>\n</body></html>';
 }
