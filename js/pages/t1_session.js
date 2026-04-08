@@ -1,7 +1,7 @@
 // ────────────────────────────────────────────────────────────────
 // ════════════════════════════════════════════════════════════════
 // t1_session.js — T1移行編成セッション画面
-// build: 20260413t
+// build: 20260413aj
 //
 // 20260413n 修正:
 //   - セッション開始時に個別飼育用正式IDも予約（ind_display_ids）
@@ -780,8 +780,9 @@ Pages._t1CommitWeight = function (lotId, itemNo, val) {
   if (ind.weight_g === newWeight) return;  // 変化なしなら再描画しない
   ind.weight_g = newWeight;
   _saveSessionToStorage();
-  // 全体再描画ではなくサマリ部分だけ更新
-  _updateSummaryOnly();
+  // ★ blur後（入力完了後）はフォーカスが離れているので _refreshPanels を安全に呼べる
+  // キーボードは既に閉じているため全パネル更新してOK
+  _refreshPanels();
 };
 
 // サマリ・バッジだけを軽量更新（入力欄は触らない）
