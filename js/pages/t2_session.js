@@ -187,6 +187,7 @@ function _buildT2Members(unit) {
       mat_molt:      true,       // モルトパウダー入り（デフォルトON）
       container:     '2.7L',    // 個体別容器サイズ
       mat_type:      '',         // 個体別マット種別（空=自動）
+      exchange_type: 'FULL',    // 個体別交換種別（デフォルト全交換）
       decision:      null,       // continue / individualize / sale / dead
       memo:          '',
     });
@@ -311,15 +312,16 @@ function _renderT2Session(s) {
         <span style="color:var(--text3)">※ T2移行後の通常交換は「継続読取りモード」を使います。</span>
       </div>
 
-      <!-- ③ ユニット共通設定カード（交換種別のみ） -->
+      <!-- ③ ユニット共通設定カード（交換種別 — 個体カードで個別変更可） -->
       <div style="margin-top:8px;border-radius:10px;border:1.5px solid var(--border);
         background:var(--surface1,var(--surface));padding:12px 14px">
-        <div style="font-size:.8rem;font-weight:700;color:var(--text2);margin-bottom:8px">
-          🔄 交換種別 — ユニット共通
+        <div style="font-size:.8rem;font-weight:700;color:var(--text2);margin-bottom:4px">
+          🔄 交換種別 — 一括設定
+          <span style="font-size:.62rem;font-weight:400;color:var(--text3);margin-left:4px">個体カードで個別変更可</span>
         </div>
         <div style="display:flex;gap:8px">
           ${[{v:'FULL',l:'全交換'},{v:'PARTIAL',l:'追加のみ'},{v:'NONE',l:'なし'}].map(x => `
-            <button type="button" onclick="Pages._t2SetExchange('${x.v}')"
+            <button type="button" onclick="Pages._t2SetExchangeAll('${x.v}')"
               style="flex:1;padding:10px 0;border-radius:8px;font-size:.85rem;font-weight:700;cursor:pointer;
                 border:2px solid ${s.exchange_type===x.v ? 'var(--green)' : 'var(--border)'};
                 background:${s.exchange_type===x.v ? 'rgba(76,175,120,.15)' : 'var(--bg2)'};
@@ -389,9 +391,20 @@ function _renderT2MemberCard(m, idx, s) {
   }).join('');
 
   // T1 体重の参照表示（記録がある場合のみ）
-  const t1WeightRef = m.t1_weight_g
-    ? `<span style="font-size:.65rem;color:var(--text3);margin-left:4px">T1: ${m.t1_weight_g}g</span>`
-    : '';
+  // 前回体重（T1時）の表示：前回値 + 今回入力があれば増減も表示
+  let t1WeightRef = '';
+  if (m.t1_weight_g) {
+    const diff = (m.weight_g && m.t1_weight_g)
+      ? (Number(m.weight_g) - Number(m.t1_weight_g)) : null;
+    const diffStr = diff !== null
+      ? (diff >= 0
+          ? `<span style="color:var(--green);font-weight:700"> +${diff}g</span>`
+          : `<span style="color:var(--red,#e05050);font-weight:700"> ${diff}g</span>`)
+      : '';
+    t1WeightRef = `<div style="font-size:.65rem;color:var(--text3);margin-top:3px;text-align:right">
+      前回: <b style="color:var(--text2)">${m.t1_weight_g}g</b>${diffStr}
+    </div>`;
+  }
 
   // ── 性別ボタン ──
   const sexOptions = ['不明', '♂', '♀'];
@@ -471,19 +484,21 @@ function _renderT2MemberCard(m, idx, s) {
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <!-- 区分ボタン -->
         <div style="display:flex;gap:6px">${sizeBtns}</div>
-        <!-- 体重入力 -->
-        <div style="display:flex;align-items:center;gap:4px;margin-left:auto">
-          <input type="number" inputmode="numeric" min="1" max="999" step="1"
-            placeholder="体重"
-            value="${m.weight_g !== null ? m.weight_g : ''}"
-            style="width:76px;padding:8px 6px;text-align:center;border-radius:8px;
-              border:2px solid ${m.weight_g ? 'var(--green)' : 'var(--border)'};
-              background:var(--bg2);font-size:1rem;font-weight:700;color:var(--text1);
-              opacity:${isDead ? '.3' : '1'};pointer-events:${isDead ? 'none' : 'auto'}"
-            ${isDead ? 'disabled' : ''}
-            onblur="Pages._t2CommitWeight(${idx},this.value)"
-            onkeydown="if(event.key==='Enter'){this.blur();event.preventDefault();}">
-          <span style="font-size:.8rem;color:var(--text3);font-weight:600">g</span>
+        <!-- 体重入力 + 前回体重 -->
+        <div style="display:flex;flex-direction:column;align-items:flex-end;margin-left:auto">
+          <div style="display:flex;align-items:center;gap:4px">
+            <input type="number" inputmode="numeric" min="1" max="999" step="1"
+              placeholder="体重"
+              value="${m.weight_g !== null ? m.weight_g : ''}"
+              style="width:76px;padding:8px 6px;text-align:center;border-radius:8px;
+                border:2px solid ${m.weight_g ? 'var(--green)' : 'var(--border)'};
+                background:var(--bg2);font-size:1rem;font-weight:700;color:var(--text1);
+                opacity:${isDead ? '.3' : '1'};pointer-events:${isDead ? 'none' : 'auto'}"
+              ${isDead ? 'disabled' : ''}
+              onblur="Pages._t2CommitWeight(${idx},this.value)"
+              onkeydown="if(event.key==='Enter'){this.blur();event.preventDefault();}">
+            <span style="font-size:.8rem;color:var(--text3);font-weight:600">g</span>
+          </div>
           ${t1WeightRef}
         </div>
       </div>
@@ -531,7 +546,7 @@ function _renderT2MemberCard(m, idx, s) {
         <span style="font-weight:400;margin-left:4px">（空=自動）</span>
       </div>
       <div style="display:flex;gap:6px;margin-bottom:10px">
-        ${['T1','T2','T3',''].map(v => `
+        ${['T1','T2','T3','MD',''].map(v => `
           <button type="button" onclick="Pages._t2SetMemberMat(${idx},'${v}')"
             style="flex:1;padding:7px 0;border-radius:7px;font-size:.82rem;font-weight:700;cursor:pointer;
               border:2px solid ${m.mat_type===v ? 'var(--green)' : 'var(--border)'};
@@ -541,19 +556,37 @@ function _renderT2MemberCard(m, idx, s) {
           </button>
         `).join('')}
       </div>
-      <!-- Mx（モルトパウダー） -->
-      <div style="font-size:.72rem;font-weight:700;color:var(--text3);margin-bottom:5px">🧪 Mx（モルト）</div>
-      <div style="display:flex;gap:8px">
-        <button type="button" onclick="Pages._t2SetMolt(${idx},true)"
-          style="flex:1;padding:8px 0;border-radius:8px;font-size:.85rem;font-weight:700;cursor:pointer;
-            border:2px solid ${m.mat_molt ? 'var(--green)' : 'var(--border)'};
-            background:${m.mat_molt ? 'rgba(76,175,120,.15)' : 'var(--bg2)'};
-            color:${m.mat_molt ? 'var(--green)' : 'var(--text2)'}">🧪 ON</button>
-        <button type="button" onclick="Pages._t2SetMolt(${idx},false)"
-          style="flex:1;padding:8px 0;border-radius:8px;font-size:.85rem;font-weight:700;cursor:pointer;
-            border:2px solid ${!m.mat_molt ? 'var(--amber)' : 'var(--border)'};
-            background:${!m.mat_molt ? 'rgba(224,144,64,.12)' : 'var(--bg2)'};
-            color:${!m.mat_molt ? 'var(--amber)' : 'var(--text2)'}">OFF</button>
+      <!-- モルトパウダー記録 -->
+      <div style="font-size:.72rem;font-weight:700;color:var(--text3);margin-bottom:5px">
+        🧪 モルトパウダー（記録）
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+        <!-- トグルスイッチ -->
+        <div onclick="Pages._t2SetMolt(${idx},${!m.mat_molt})"
+          style="cursor:pointer;width:52px;height:28px;border-radius:14px;position:relative;flex-shrink:0;
+            background:${m.mat_molt ? 'var(--green)' : 'rgba(128,128,128,.25)'};
+            transition:background .2s">
+          <div style="position:absolute;top:3px;left:${m.mat_molt ? '27px' : '3px'};
+            width:22px;height:22px;border-radius:50%;background:#fff;
+            box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .2s"></div>
+        </div>
+        <span style="font-size:.85rem;font-weight:700;color:${m.mat_molt ? 'var(--green)' : 'var(--text3)'}">
+          ${m.mat_molt ? '🧪 使用する（記録ON）' : '使用しない（記録OFF）'}
+        </span>
+      </div>
+      <!-- 交換種別（個別） -->
+      <div style="font-size:.72rem;font-weight:700;color:var(--text3);margin-bottom:5px">
+        🔄 交換種別
+        <span style="font-size:.62rem;font-weight:400;margin-left:3px">${m.exchange_type==='FULL'?'全交換':m.exchange_type==='PARTIAL'?'追加のみ':'なし'}</span>
+      </div>
+      <div style="display:flex;gap:6px">
+        ${[{v:'FULL',l:'全交換'},{v:'PARTIAL',l:'追加のみ'},{v:'NONE',l:'なし'}].map(x => `
+          <button type="button" onclick="Pages._t2SetMemberExchange(${idx},'${x.v}')"
+            style="flex:1;padding:7px 0;border-radius:7px;font-size:.78rem;font-weight:700;cursor:pointer;
+              border:2px solid ${m.exchange_type===x.v ? 'var(--green)' : 'var(--border)'};
+              background:${m.exchange_type===x.v ? 'rgba(76,175,120,.15)' : 'var(--bg2)'};
+              color:${m.exchange_type===x.v ? 'var(--green)' : 'var(--text2)'}">${x.l}</button>
+        `).join('')}
       </div>
     </div>` : ''}
 
@@ -782,11 +815,22 @@ Pages._t2SetMatType = function(v) {
   s.mat_type = v;  // 空文字=自動
   _renderT2Session(s);
 };
-Pages._t2SetExchange = function(v) {
+// 交換種別: 一括設定（共通設定ボタン用）
+Pages._t2SetExchangeAll = function(v) {
   const s = window._t2Session;
   if (!s) return;
-  s.exchange_type = v;
+  s.exchange_type = v;  // 共通値を更新
+  s.members.forEach(function(m) { if (m.status !== 'dead') m.exchange_type = v; });
   _renderT2Session(s);
+};
+// 後方互換（旧コードから呼ばれる場合）
+Pages._t2SetExchange = function(v) { Pages._t2SetExchangeAll(v); };
+// 交換種別: 個別設定（個体カードボタン用）
+Pages._t2SetMemberExchange = function(idx, v) {
+  const s = window._t2Session;
+  if (!s) return;
+  const m = s.members[idx];
+  if (m) { m.exchange_type = v; _renderT2Session(s); }
 };
 Pages._t2ToggleDetail = function() {
   const s = window._t2Session;
@@ -862,9 +906,10 @@ Pages._t2SessionSave = async function () {
         lot_id:        m.lot_id      || '',
         lot_item_no:   m.lot_item_no || '',
         memo:          m.memo        || '',
-        mat_molt:      m.mat_molt   !== undefined ? m.mat_molt  : true,
-        container:     m.container  || '2.7L',
-        mat_type:      m.mat_type   || '',
+        mat_molt:      m.mat_molt      !== undefined ? m.mat_molt  : true,
+        container:     m.container     || '2.7L',
+        mat_type:      m.mat_type       || '',
+        exchange_type: m.exchange_type  || s.exchange_type || 'FULL',
       })),
     };
 
