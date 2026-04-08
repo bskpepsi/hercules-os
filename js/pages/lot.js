@@ -1137,19 +1137,22 @@ Pages._lotEditSave = async function (lotId) {
   }
   const payload = { lot_id: lotId, hatch_date: hatch, count, container_size: container, mat_type: mat, note };
   if (lineId) payload.line_id = lineId;
-  try {
-    UI.loading(true);
-    UI.closeModal();
-    await API.lot.update(payload);
-    if (lineId) Store.patchDBItem('lots', 'lot_id', lotId, { line_id: lineId });
-    await syncAll(true);
-    UI.toast('ロット情報を更新しました');
-    Pages.lotDetail(lotId);
-  } catch(e) {
-    UI.toast('更新失敗: ' + e.message, 'error');
-  } finally {
-    UI.loading(false);
+
+  // ★ 即時: ローカルStore更新 → 即再描画
+  UI.closeModal();
+  const localPatch = { hatch_date: hatch, count, container_size: container, mat_type: mat, note };
+  if (lineId) localPatch.line_id = lineId;
+  if (typeof Store.patchDBItem === 'function') {
+    Store.patchDBItem('lots', 'lot_id', lotId, localPatch);
   }
+  UI.toast('ロット情報を更新しました ✅');
+  Pages.lotDetail(lotId);
+
+  // ★ バックグラウンド: GASに非同期保存
+  API.lot.update(payload).catch(function(e) {
+    console.warn('[LOT] update GAS save failed:', e.message);
+    UI.toast('サーバー保存に失敗しました（ローカルは反映済み）', 'error', 3000);
+  });
 };
 
 // 孵化日設定
@@ -1170,18 +1173,27 @@ Pages._lotHatchSave = async function (lotId) {
   const val = document.getElementById('lot-hatch-inp')?.value;
   if (!val) { UI.toast('日付を選択してください'); return; }
   const date = val.replace(/-/g, '/');
-  try {
-    UI.loading(true);
-    UI.closeModal();
-    await API.lot.update({ lot_id: lotId, hatch_date: date });
-    await syncAll(true);
-    UI.toast('孵化日を設定しました');
-    Pages.lotDetail(lotId);
-  } catch(e) {
-    UI.toast('設定失敗: ' + e.message, 'error');
-  } finally {
-    UI.loading(false);
+
+  // ★ 即時: ローカルStoreを先に更新 → 画面を即座に再描画
+  UI.closeModal();
+  if (typeof Store.patchDBItem === 'function') {
+    Store.patchDBItem('lots', 'lot_id', lotId, { hatch_date: date });
+  } else {
+    const lots = (Store.getDB('lots') || []).map(l =>
+      l.lot_id === lotId ? Object.assign({}, l, { hatch_date: date }) : l
+    );
+    Store.setDB('lots', lots);
   }
+  UI.toast('孵化日を設定しました ✅');
+  Pages.lotDetail(lotId);  // ← ローカル反映で即再描画
+
+  // ★ バックグラウンド: GASに非同期保存（awaitしない）
+  API.lot.update({ lot_id: lotId, hatch_date: date }).then(function() {
+    console.log('[LOT] hatch_date saved to GAS:', lotId, date);
+  }).catch(function(e) {
+    console.warn('[LOT] hatch_date GAS save failed (local already updated):', e.message);
+    UI.toast('サーバー保存に失敗しました（ローカルは反映済み）', 'error', 3000);
+  });
 };
 
 // ヘルパー
