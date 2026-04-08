@@ -1,3 +1,5 @@
+// FILE: js/pages/egg_lot_bulk.js
+// ────────────────────────────────────────────────────────────────
 // ════════════════════════════════════════════════════════════════
 // egg_lot_bulk.js v2 — 卵ロット一括作成
 //
@@ -235,8 +237,10 @@ Pages.eggLotBulk = function (params = {}) {
     _rows.forEach(row => {
       const c = document.getElementById('ebl-cnt-' + row.id);
       const d = document.getElementById('ebl-dat-' + row.id);
-      if (c) row.count       = c.value;
-      if (d) row.collectDate = d.value;
+      if (c) row.count = c.value;
+      // ★ collectDate は DOM の値が存在する場合のみ更新
+      //    （全行反映直後に古いDOM値で上書きされるのを防ぐ）
+      if (d && d.value) row.collectDate = d.value;
       // container は _eblSetRowContainer で直接更新するので DOM 読み不要
     });
   }
@@ -300,7 +304,7 @@ Pages.eggLotBulk = function (params = {}) {
             <div style="display:flex;gap:6px">
               <input type="date" id="ebl-common-date" class="input" style="flex:1"
                 value="${_commonDate}" max="${_todayYMD()}"
-                onchange="Pages._eblSetCommonDate(this.value)">
+                oninput="Pages._eblSetCommonDate(this.value)" onchange="Pages._eblSetCommonDate(this.value)">
               <button class="btn btn-ghost btn-sm" style="white-space:nowrap"
                 onclick="Pages._eblApplyCommonDate()">全行へ</button>
             </div>
@@ -497,9 +501,16 @@ Pages.eggLotBulk = function (params = {}) {
   Pages._eblSetCommonDate = function(v) { _commonDate = v; };
 
   Pages._eblApplyCommonDate = function() {
+    // ★ DOMから直接読んで確実に最新値を取得（onchange未発火対策）
+    const cmnDateEl = document.getElementById('ebl-common-date');
+    if (cmnDateEl && cmnDateEl.value) _commonDate = cmnDateEl.value;
     _readDom();
-    _rows.forEach(r => { r.collectDate = _commonDate; });
+    // 全行に適用
+    const target = _commonDate;
+    if (!target) { UI.toast('採卵日を入力してください', 'error'); return; }
+    _rows.forEach(r => { r.collectDate = target; });
     render(true);
+    UI.toast('全行に採卵日を反映しました: ' + target.replace(/-/g, '/'), 'success', 1500);
   };
 
   // 共通初期値を変更したとき（DOM読み込みのみ、再描画なし）
@@ -964,3 +975,7 @@ window.PAGES = window.PAGES || {};
 window.PAGES['egg-lot-bulk'] = function() {
   Pages.eggLotBulk(Store.getParams());
 };
+
+
+// ────────────────────────────────────────────────────────────────
+// FILE: js/pages/t1_session.js
