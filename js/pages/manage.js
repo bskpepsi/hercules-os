@@ -30,9 +30,11 @@ Pages.manage = function () {
       color: 'var(--gold)',
     },
     {
-      icon: '🥚', label: 'ロット管理', count: actLots.length, unit: 'ロット',
+      icon: '🥚🔗', label: 'ロット・ユニット管理',
+      count: actLots.length + ((Store.getDB('breeding_units')||[]).filter(u=>u.status==='active').length),
+      unit: '件',
       page: 'lot-list', newPage: 'lot-new',
-      sub: `総頭数 ${actLots.reduce((s,l)=>s+(+l.count||0),0)}頭`,
+      sub: `ロット${actLots.length}件 / ユニット${(Store.getDB('breeding_units')||[]).filter(u=>u.status==='active').length}件`,
       color: 'var(--green)',
     },
     {
