@@ -298,8 +298,13 @@ function _qrNavigate(mode, res, qrText) {
 
   } else if (mode === 'record') {
     var _ent = res.entity || {};
-    var _eid = _ent.ind_id || _ent.lot_id || _ent.unit_id || '';
-    var _ety = res.entity_type || 'IND';
+    // BU（飼育ユニット）は entity_type='BU' で来るが continuous-scan では 'UNIT' として扱う
+    var _rawEty = res.entity_type || 'IND';
+    var _ety = (_rawEty === 'BU') ? 'UNIT' : _rawEty;
+    // BUの場合は display_id を優先IDとして使用（unit-detail と同じ解決方法）
+    var _eid = (_rawEty === 'BU')
+      ? (_ent.display_id || _ent.unit_id || _extractIdFromQr('BU') || '')
+      : (_ent.ind_id || _ent.lot_id || _ent.unit_id || '');
     if (_eid && (_ety === 'UNIT' || _ety === 'IND')) {
       // ★ 継続読取りモード: Gemini OCR画面へ
       routeTo('continuous-scan', {
@@ -309,7 +314,7 @@ function _qrNavigate(mode, res, qrText) {
       });
     } else if (_eid) {
       // LOT/SET等は従来通り growth-rec へ
-      routeTo('growth-rec', { targetType: _ety, targetId: _eid, displayId: _ent.display_id || _eid, _fromQR: true });
+      routeTo('growth-rec', { targetType: _rawEty, targetId: _eid, displayId: _ent.display_id || _eid, _fromQR: true });
     } else {
       UI.toast('対象が特定できませんでした（継続読取りモード）', 'error');
     }
