@@ -416,7 +416,7 @@ function _qrLocalResolve(v) {
   return null;
 }
 
-Pages._qrResolve = async function () {
+Pages._qrResolve = async function (overrideMode) {
   const _t0 = performance.now();
   const qrText = document.getElementById('qr-input')?.value?.trim();
   const errEl  = document.getElementById('qr-error');
@@ -424,10 +424,12 @@ Pages._qrResolve = async function () {
   if (!qrText) { if (errEl) errEl.textContent = 'QRコードを入力してください'; return; }
   if (errEl) errEl.textContent = '';
 
-  console.log('[QR] build:20260408b recognized', qrText, 'at', _t0.toFixed(1), 'ms');
+  console.log('[QR] build:20260413bc recognized', qrText, 'at', _t0.toFixed(1), 'ms');
 
-  // ── 現在のスキャンモードを取得 ──
-  const mode = window._qrScanMode || 'confirm';
+  // ── 現在のスキャンモードを取得（overrideModeが渡された場合は優先）──
+  // 画像選択ダイアログを開くとAndroidでwindow._qrScanModeがリセットされる場合があるため
+  // _qrReadFromImageなどから明示的にモードを渡せるようにしている
+  const mode = overrideMode || window._qrScanMode || 'confirm';
 
   // ── ① ローカルキャッシュで即解決（APIなし） ──────────────────
   const _t1 = performance.now();
@@ -635,6 +637,11 @@ Pages._qrReadFromImage = function (input) {
   if (!file) return;
   if (typeof jsQR === 'undefined') { UI.toast('QRライブラリ未ロード', 'error'); return; }
 
+  // ★ ファイル選択ダイアログを開く前にモードを保存
+  // Androidでは画像選択中にwindow._qrScanModeがリセットされる場合があるため
+  const savedMode = window._qrScanMode || 'confirm';
+  console.log('[QR] _qrReadFromImage: savedMode=', savedMode);
+
   const reader = new FileReader();
   reader.onload = function (e) {
     const img = new Image();
@@ -652,7 +659,7 @@ Pages._qrReadFromImage = function (input) {
         const qrInput = document.getElementById('qr-input');
         if (qrInput) { qrInput.value = code.data; Pages._qrPreviewInput(code.data); }
         UI.toast('QRコードを読み取りました', 'success');
-        Pages._qrResolve();
+        Pages._qrResolve(savedMode);  // ★ 保存したモードを渡す
       } else {
         UI.toast('QRコードが見つかりませんでした。鮮明な画像を使用してください', 'error', 4000);
       }
