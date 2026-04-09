@@ -56,7 +56,7 @@ Pages.qrScan = function (params = {}) {
           <button style="flex:1;border:none;padding:7px 4px;border-radius:8px;cursor:pointer;font-size:.75rem;${_modeStyle('transition')}"
             onclick="Pages._qrSwitchMode('transition')">🔄 移行編成</button>
           <button style="flex:1;border:none;padding:7px 4px;border-radius:8px;cursor:pointer;font-size:.75rem;${_modeStyle('record')}"
-            onclick="Pages._qrSwitchMode('record')">📷 継続読取り</button>
+            onclick="routeTo('continuous-scan')">📷 継続読取り</button>
         </div>
         <!-- 移行編成サブモード -->
         ${_scanMode === 'transition' ? `
