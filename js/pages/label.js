@@ -4169,7 +4169,7 @@ Pages._qrDiffSave = async function (entityType, entityId) {
 // ════════════════════════════════════════════════════════════════
 
 // ── 体重閾値定義（将来的に設定画面から変更可能にする拡張ポイント）──
-const WM_THRESHOLDS = [
+var WM_THRESHOLDS = [
   { min: 170, badge: '⭐ 超大型候補', color: '#c8a84b', bg: 'rgba(200,168,75,.15)' },
   { min: 150, badge: '🔥 大型候補',   color: 'var(--amber)', bg: 'rgba(224,144,64,.12)' },
 ];
