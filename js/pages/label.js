@@ -11,12 +11,12 @@
 //   html2canvas が有効 → PNG生成 → img プレビュー → PNG保存 / 共有
 //   html2canvas なし   → iframe フォールバック
 //
-// build: 20260413bf
+// build: 20260413bi
 // 変更点: _buildT1UnitLabelHTML の t1Date フォールバックを '移行' → '' に修正
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-window._LABEL_BUILD = '20260413bf';
+window._LABEL_BUILD = '20260413bi';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 // ── ステージコード正規化 ─────────────────────────────────────────
@@ -758,7 +758,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
 
   (async function _lblRender() {
     try {
-      console.log('[LABEL] qr build start - build:20260413bf');
+      console.log('[LABEL] qr build start - build:20260413bi');
       console.log('[LABEL] qr target type:', targetType, '| targetId:', targetId);
       console.log('[LABEL] qr rect:', JSON.stringify(QR_RECT_MM));
       console.log('[LABEL] qr target text:', qrText);
@@ -845,6 +845,18 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
 function _chkThermal(label, checked) {
   return '<span style="margin-right:5px;font-weight:700;color:#000">'
     + (checked ? '■' : '□') + label + '</span>';
+}
+
+
+// ── 性別表示ヘルパー ──────────────────────────────────────────────
+// ラベル右上に「♂ ・ ♀」を印刷。性別確定済みの場合は◯を付ける。
+// sex: '' | '♂' | '♀'
+function _sexDisplay(sex) {
+  var mStr = (sex === '♂' ? '&#9711;' : '') + '&#9794;'; // (◯)♂
+  var fStr = (sex === '♀' ? '&#9711;' : '') + '&#9792;'; // (◯)♀
+  return '<span style="font-size:9px;font-weight:700;color:#000">'
+    + mStr + '&nbsp;&#183;&nbsp;' + fStr
+    + '</span>';
 }
 
 function _qrBox(qrSrc, sizePx) {
@@ -957,9 +969,8 @@ function _buildLabelHTML(ld, qrSrc) {
       + ld.count + '頭</span>'
     : '';
 
-  var sexHtml = !isLot && ld.sex
-    ? '<span style="font-size:9px;font-weight:700;color:#000">' + ld.sex + '&nbsp;</span>'
-    : '';
+  // ▼ 性別表示: 性別未確定でも「♂ ・ ♀」を印刷、確定済みは「◯♂ ・ ♀」
+  var sexHtml = !isLot ? _sexDisplay(ld.sex || '') : '';
 
   var hatchHtml = (!isLot && ld.hatch_date)
     ? '<div style="font-size:6.5px;font-weight:700;color:#000">孵: ' + ld.hatch_date + '</div>'
@@ -1240,8 +1251,18 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
 
   var m0 = (ld.members && ld.members[0]) ? ld.members[0] : null;
   var m1 = (ld.members && ld.members[1]) ? ld.members[1] : null;
-  var m0w = m0 && m0.weight_g ? String(m0.weight_g) : '';
-  var m1w = m1 && m1.weight_g ? String(m1.weight_g) : '';
+  var m0w  = m0 && m0.weight_g ? String(m0.weight_g) : '';
+  var m1w  = m1 && m1.weight_g ? String(m1.weight_g) : '';
+  var m0sex = m0 ? (m0.sex || '') : '';
+  var m1sex = m1 ? (m1.sex || '') : '';
+  // ユニット性別表示「①◯♂ ②♀」形式
+  function _unitMemberSex(idx, sex) {
+    var circle = sex ? '&#9711;' : '';
+    var sym    = sex === '♂' ? '&#9794;' : sex === '♀' ? '&#9792;' : (idx===0?'&#9794;':'&#9792;');
+    return (idx+1) + circle + sym;
+  }
+  var unitSexHtml = '<span style="font-size:7px;font-weight:700;color:#000">'
+    + _unitMemberSex(0, m0sex) + '&nbsp;' + _unitMemberSex(1, m1sex) + '</span>';
 
   var showMx = (mat === 'T2' || mat === 'T3');
   var mxIsOn = ld.mat_molt === true || ld.mat_molt === 'true';
@@ -1314,7 +1335,7 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
     + '        <div>'
     + (prefix ? '<span style="font-size:8px;font-weight:700;color:#000;margin-right:1px">' + prefix + '-</span>' : '')
     + lineBadgeHtml + unitSuffixHtml + '</div>\n'
-    + '        <div>' + countBadge + '</div>\n'
+    + '        <div>' + countBadge + '&nbsp;' + unitSexHtml + '</div>\n'
     + '      </div>\n'
 
     + '      ' + hatchHtml + '\n'
