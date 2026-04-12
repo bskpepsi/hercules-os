@@ -480,7 +480,7 @@ Pages.continuousScan = function(params) {
         { text: prompt },
         { inline_data: { mime_type: mimeType, data: base64Data } }
       ]}],
-      generationConfig: { temperature: 0.1, maxOutputTokens: 512 },
+      generationConfig: { temperature: 0.1, maxOutputTokens: 1024 },
     };
 
     var response = await fetch(
