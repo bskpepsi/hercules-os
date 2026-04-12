@@ -1,5 +1,5 @@
 // FILE: js/pages/t3_session.js
-// build: 20260413bi
+// build: 20260413bj
 // 変更点(20260413a→bi):
 //   - セッション初期値に mat_type:'T3'・exchange_type:'FULL' を追加
 //   - _buildT3Members にメンバー別 mat_type:'T3'・exchange_type:'FULL'・container:'2.7L'・mat_molt:true を追加
@@ -75,7 +75,7 @@ Pages.t3SessionStartFromInd = async function (indIdOrDisplayId) {
     sex:           ind.sex || '不明',
     mx_done:       false,
     status:        'normal',
-    mat_molt:      true,
+    mat_molt:      false, // ▼ モルトパウダー初期値OFF
     container:     '2.7L',
     mat_type:      'T3',   // ▼ T3初期値
     exchange_type: 'FULL', // ▼ 全交換初期値
@@ -137,7 +137,7 @@ function _buildT3Members(unit) {
       sex:           src.sex || '不明',
       mx_done:       false,
       status:        'normal',
-      mat_molt:      true,
+      mat_molt:      false, // ▼ モルトパウダー初期値OFF
       container:     '2.7L',
       mat_type:      'T3',   // ▼ T3移行デフォルト
       exchange_type: 'FULL', // ▼ 全交換デフォルト
@@ -281,8 +281,6 @@ function _renderT3Session(s) {
         </div>
       </div>
 
-      <!-- Mx 共通設定 -->
-      ${_renderT3MxSection(s)}
 
       <!-- 個体カード -->
       ${s.members.map((m, i) => _renderT3MemberCard(m, i, s)).join('')}
@@ -658,7 +656,7 @@ Pages._t3SessionSave = async function () {
         lot_id:        m.lot_id      || '',
         lot_item_no:   m.lot_item_no || '',
         memo:          m.memo        || '',
-        mat_molt:      m.mat_molt      !== undefined ? m.mat_molt : true,
+        mat_molt:      m.mat_molt      !== undefined ? m.mat_molt : false,
         container:     m.container     || '2.7L',
         mat_type:      m.mat_type       || 'T3',
         exchange_type: m.exchange_type  || s.exchange_type || 'FULL',
