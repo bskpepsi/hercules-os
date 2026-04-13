@@ -644,40 +644,67 @@ Pages.growthRecord = function (params = {}) {
       }
     }
 
-    var btn = document.getElementById('gr-save-btn');
-    if (btn) { btn.disabled = true; btn.textContent = '⏳ 保存中...'; }
-
-    try {
-      var res = await apiCall(function() { return API.growth.create(payload); }, '記録しました ✅');
-      Store.addGrowthRecord(id, Object.assign({}, payload, { record_id: res.record_id, age_days: res.age_days }));
-      if (type === 'IND') {
-        var indPatch = { latest_weight_g: weight, current_stage: stage };
-        if (sizeCat) indPatch.size_category = sizeCat;
-        Store.patchDBItem('individuals', 'ind_id', id, indPatch);
-        if (sizeCat) localStorage.setItem('hcos_sizeCat_' + id, sizeCat);
-      }
-      if (type === 'LOT') {
-        var lu = {};
-        if (stage) lu.stage = stage;
-        if (payload.after_count !== undefined) { lu.count = payload.after_count; if (payload.after_count === 0) lu.status = 'individualized'; }
-        if (Object.keys(lu).length) Store.patchDBItem('lots', 'lot_id', id, lu);
-      }
-      var wEl = document.getElementById('gr-weight'); if (wEl) wEl.value = '';
-      _photoB64 = null; _aiResult = null; _hasMalt = false;
-      var cached = Store.getGrowthRecords(id);
-      var histEl = document.getElementById('gr-history');
-      if (histEl && cached) histEl.innerHTML = UI.weightTable(cached);
-      if (btn) { btn.disabled = false; btn.textContent = '💾 保存して次へ'; }
-      if (_fromQR) {
-        setTimeout(function() { routeTo('qr-scan', { mode: 'weight', autoCamera: true }); }, 800);
-      } else if (type === 'LOT') {
-        _grShowNextLotBar(id);
-      } else {
-        setTimeout(function() { var w = document.getElementById('gr-weight'); if (w) w.focus(); }, 200);
-      }
-    } catch (e) {
-      if (btn) { btn.disabled = false; btn.textContent = '💾 保存して次へ'; }
+    // ── 楽観的更新: Storeを即時更新して画面遷移、GASはバックグラウンドで ──
+    // Storeに仮記録（record_idなし）を追加して即座にUIに反映
+    var _tmpRecord = Object.assign({}, payload, { record_id: '_tmp_' + Date.now(), age_days: null });
+    Store.addGrowthRecord(id, _tmpRecord);
+    if (type === 'IND') {
+      var indPatch = { latest_weight_g: weight, current_stage: stage };
+      if (sizeCat) indPatch.size_category = sizeCat;
+      Store.patchDBItem('individuals', 'ind_id', id, indPatch);
+      if (sizeCat) localStorage.setItem('hcos_sizeCat_' + id, sizeCat);
     }
+    if (type === 'LOT') {
+      var lu = {};
+      if (stage) lu.stage = stage;
+      if (payload.after_count !== undefined) { lu.count = payload.after_count; if (payload.after_count === 0) lu.status = 'individualized'; }
+      if (Object.keys(lu).length) Store.patchDBItem('lots', 'lot_id', id, lu);
+    }
+
+    // 即座に次画面へ
+    _photoB64 = null; _aiResult = null; _hasMalt = false;
+    if (_fromQR) {
+      routeTo('qr-scan', { mode: 'weight', autoCamera: true });
+    } else if (type === 'LOT') {
+      var wEl2 = document.getElementById('gr-weight'); if (wEl2) wEl2.value = '';
+      _grShowNextLotBar(id);
+    } else {
+      var wEl2 = document.getElementById('gr-weight'); if (wEl2) wEl2.value = '';
+      render();
+      setTimeout(function() { var w = document.getElementById('gr-weight'); if (w) w.focus(); }, 150);
+    }
+
+    // バックグラウンドでGASに保存（最大2回リトライ付き）
+    (async function() {
+      async function _createWithRetry(pl, maxRetry) {
+        for (var attempt = 0; attempt <= maxRetry; attempt++) {
+          try {
+            return await API.growth.create(pl);
+          } catch(e) {
+            if (attempt < maxRetry) {
+              console.warn('[GR] save retry ' + (attempt+1) + '/' + maxRetry + ':', e.message);
+              await new Promise(function(r){ setTimeout(r, 2000); }); // 2秒待ってリトライ
+            } else {
+              throw e;
+            }
+          }
+        }
+      }
+      try {
+        var res = await _createWithRetry(payload, 2);
+        // 仮記録を正式なrecord_idで差し替え
+        var _recs = Store.getGrowthRecords(id) || [];
+        var _idx = _recs.findIndex(function(r){ return r.record_id === _tmpRecord.record_id; });
+        if (_idx >= 0 && res && res.record_id) {
+          _recs[_idx] = Object.assign({}, _recs[_idx], { record_id: res.record_id, age_days: res.age_days });
+          Store.setGrowthRecords(id, _recs);
+        }
+        UI.toast('✅ 記録しました', 'success', 2000);
+      } catch (e) {
+        console.error('[GR] bg save error (all retries failed):', e);
+        UI.toast('⚠️ 保存失敗（リトライ2回）: ' + (e.message || '通信エラー') + ' — 手動で再入力してください', 'error', 8000);
+      }
+    })();
   };
 
   render();

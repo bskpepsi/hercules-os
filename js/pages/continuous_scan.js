@@ -520,6 +520,23 @@ Pages.continuousScan = function(params) {
     reader.readAsDataURL(file);
   };
 
+  // ── 画像圧縮（Gemini送信用・転送量削減で高速化） ───────────────
+  function _resizeImageForOCR(base64, maxPx) {
+    return new Promise(function(resolve) {
+      var img = new Image();
+      img.onload = function() {
+        var w=img.width, h=img.height;
+        if(w<=maxPx && h<=maxPx){resolve(base64);return;}
+        var scale=maxPx/Math.max(w,h), sw=Math.round(w*scale), sh=Math.round(h*scale);
+        var cv=document.createElement('canvas'); cv.width=sw; cv.height=sh;
+        cv.getContext('2d').drawImage(img,0,0,sw,sh);
+        resolve(cv.toDataURL('image/jpeg',0.80));
+      };
+      img.onerror=function(){resolve(base64);};
+      img.src=base64;
+    });
+  }
+
   // ── 画像処理 ──────────────────────────────────────────────────
   Pages._cScanProcessImage = async function(base64) {
     _state.capturedImage=base64; _state.qrError=null; _state.tableRows=null; _state.detectedSex=null;
@@ -527,9 +544,13 @@ Pages.continuousScan = function(params) {
     var geminiKey=(typeof CONFIG!=='undefined'&&CONFIG.GEMINI_KEY)||Store.getSetting('gemini_key')||'';
     var results;
     try {
+      // QR検出はフル解像度・OCRは640pxに縮小して並列実行（転送量削減）
+      var _ocrPromise = geminiKey
+        ? _resizeImageForOCR(base64, 640).then(function(small){ return _callGeminiOCR(geminiKey, small); })
+        : Promise.resolve({_confidence:'low',_error:'Gemini APIキー未設定'});
       results=await Promise.all([
         _extractQrFromImage(base64),
-        geminiKey?_callGeminiOCR(geminiKey,base64):Promise.resolve({_confidence:'low',_error:'Gemini APIキー未設定'}),
+        _ocrPromise,
       ]);
     } catch(err){
       _state.step='capture'; _state.qrError='解析中にエラーが発生しました: '+(err.message||'不明なエラー');
@@ -633,49 +654,71 @@ Pages.continuousScan = function(params) {
     var hasData=rows.some(function(r){return r.weight1||r.weight2||r.date;});
     if(!hasData){UI.toast('体重または日付を少なくとも1行入力してください','error');return;}
 
-    _state.step='saving'; render();
-    try {
-      var savedCount=0;
-      var detectedSex=_state.detectedSex;
+    // ── 楽観的更新: バリデーション後即座に遷移、バックグラウンドで保存 ──
+    var _savedTargetType = _state.targetType;
+    var _savedDisplayId  = _state.displayId;
+    var _savedTargetId   = _state.targetId;
+    var _savedDetectedSex= _state.detectedSex;
 
-      function mkPayload(row, extra) {
-        var rd=row.date?row.date.trim():recDate||new Date().toISOString().split('T')[0].replace(/-/g,'/');
-        if(rd&&rd.match(/^\d{1,2}\/\d{1,2}$/)) rd=new Date().getFullYear()+'/'+rd;
-        var p=Object.assign({
-          target_type:_state.targetType, target_id:_state.targetId,
-          stage:stage, mat_type:row.mat_type||'', container_size:row.container||'',
-          exchange_type:row.exchange||'NONE', record_date:rd,
-          event_type:'WEIGHT_ONLY', note_private:note, has_malt:false,
-        }, extra);
-        // 個体の場合、性別が確定していればsexも送信
-        if(!isUnit && detectedSex) p.sex = detectedSex;
-        return p;
-      }
+    // 即座に詳細画面へ遷移
+    UI.toast('💾 保存中...（バックグラウンド）','info',2000);
+    if(_savedTargetType==='UNIT') routeTo('unit-detail',{unitDisplayId:_savedDisplayId});
+    else                           routeTo('ind-detail', {indId:_savedTargetId});
 
-      if(isUnit){
-        for(var i=0;i<rows.length;i++){
-          var r=rows[i]; if(!r.weight1&&!r.weight2&&!r.date)continue;
-          var mbs=_state.members;
-          if(r.weight1!==''||mbs[0]){await API.growth.create(mkPayload(r,{unit_slot_no:1,weight_g:r.weight1?parseFloat(r.weight1):''}));savedCount++;}
-          if(r.weight2!==''||mbs[1]){await API.growth.create(mkPayload(r,{unit_slot_no:2,weight_g:r.weight2?parseFloat(r.weight2):''}));savedCount++;}
-        }
-      } else {
-        for(var k=0;k<rows.length;k++){
-          var row=rows[k]; if(!row.weight1&&!row.date)continue;
-          await API.growth.create(mkPayload(row,{weight_g:row.weight1?parseFloat(row.weight1):''}));
-          savedCount++;
+    // バックグラウンドで保存実行（最大2回リトライ付き）
+    (async function() {
+      // リトライ付きAPI呼び出しヘルパー
+      async function _createWithRetry(payload, maxRetry) {
+        for (var attempt = 0; attempt <= maxRetry; attempt++) {
+          try {
+            return await API.growth.create(payload);
+          } catch(e) {
+            if (attempt < maxRetry) {
+              console.warn('[CS] save retry ' + (attempt+1) + '/' + maxRetry + ':', e.message);
+              await new Promise(function(r){ setTimeout(r, 2000); }); // 2秒待ってリトライ
+            } else {
+              throw e; // 最終試行も失敗したら投げる
+            }
+          }
         }
       }
 
-      UI.toast('✅ '+savedCount+'件の成長記録を保存しました','success',3000);
-      if(_state.targetType==='UNIT') routeTo('unit-detail',{unitDisplayId:_state.displayId});
-      else                            routeTo('ind-detail', {indId:_state.targetId});
+      try {
+        var savedCount=0;
 
-    } catch(err){
-      console.error('[CS] save error:',err);
-      _state.step='confirm'; render();
-      UI.toast('保存失敗: '+(err.message||'通信エラー'),'error',5000);
-    }
+        function mkPayload(row, extra) {
+          var rd=row.date?row.date.trim():recDate||new Date().toISOString().split('T')[0].replace(/-/g,'/');
+          if(rd&&rd.match(/^\d{1,2}\/\d{1,2}$/)) rd=new Date().getFullYear()+'/'+rd;
+          var p=Object.assign({
+            target_type:_savedTargetType, target_id:_savedTargetId,
+            stage:stage, mat_type:row.mat_type||'', container_size:row.container||'',
+            exchange_type:row.exchange||'NONE', record_date:rd,
+            event_type:'WEIGHT_ONLY', note_private:note, has_malt:false,
+          }, extra);
+          if(!isUnit && _savedDetectedSex) p.sex = _savedDetectedSex;
+          return p;
+        }
+
+        if(isUnit){
+          for(var i=0;i<rows.length;i++){
+            var r=rows[i]; if(!r.weight1&&!r.weight2&&!r.date)continue;
+            var mbs=_state.members;
+            if(r.weight1!==''||mbs[0]){await _createWithRetry(mkPayload(r,{unit_slot_no:1,weight_g:r.weight1?parseFloat(r.weight1):''}),2);savedCount++;}
+            if(r.weight2!==''||mbs[1]){await _createWithRetry(mkPayload(r,{unit_slot_no:2,weight_g:r.weight2?parseFloat(r.weight2):''}),2);savedCount++;}
+          }
+        } else {
+          for(var k=0;k<rows.length;k++){
+            var row=rows[k]; if(!row.weight1&&!row.date)continue;
+            await _createWithRetry(mkPayload(row,{weight_g:row.weight1?parseFloat(row.weight1):''}),2);
+            savedCount++;
+          }
+        }
+        UI.toast('✅ '+savedCount+'件の記録を保存しました','success',3000);
+      } catch(err){
+        console.error('[CS] bg save error (all retries failed):',err);
+        UI.toast('⚠️ 保存失敗（リトライ2回）: '+(err.message||'通信エラー')+' — 手動で再入力してください','error',8000);
+      }
+    })();
   };
 
   Pages._cScanBackToCapture = function() {
