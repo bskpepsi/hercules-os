@@ -6,13 +6,8 @@
 //       共通UIユーティリティを担う。各画面JSの呼び出し元。
 //       画面ごとのrender関数を呼び分けるシンプルなSPAルーター。
 //
-// P0-1修正: routeTo の二重実行を解消
-//   Store.navigate() に第3引数 _skipNavEvent=true を追加。
-//   routeTo 経由では nav イベントを発火させず、
-//   _renderPage を routeTo 内で1回だけ呼ぶ。
-//   Store.on('nav') は Store.back() などの内部遷移専用として残す。
-//
-// P0-2修正: sale-list を PAGES に追加、managePages に sale-list を追加。
+// build: 20260413bj
+// 変更点: UI.weightTable — 増減列にg/日速度を追加
 // ════════════════════════════════════════════════════════════════
 
 'use strict';
@@ -111,22 +106,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // ────────────────────────────────────────────────────────────────
 // _renderPage — DOM描画を担う内部関数
-// ページ関数を呼び出し、ナビを更新する。
-// routeTo と Store.on('nav') の両方から呼ばれる。
 // ────────────────────────────────────────────────────────────────
 function _renderPage(pageId) {
   const main = document.getElementById('main');
   if (!main) return;
-  // ── カメラストリームを必ず停止（どの画面へ移動する場合も） ──────
-  // video.srcObject が残っていたらトラックを全停止してから DOM を破棄する。
-  // これにより QR画面 → 成長記録画面 などの遷移でもカメラが裏で動き続けない。
   try {
     const vid = document.getElementById('qr-video');
     if (vid && vid.srcObject) {
       vid.srcObject.getTracks().forEach(function(t) { t.stop(); });
       vid.srcObject = null;
     }
-    // _qrStopCamera が存在する場合は UI状態も一緒に片付ける
     if (typeof Pages._qrStopCamera === 'function') Pages._qrStopCamera();
   } catch (_) {}
 
@@ -143,32 +132,21 @@ function _renderPage(pageId) {
 
 // ────────────────────────────────────────────────────────────────
 // routeTo — 外部から呼ぶ唯一の遷移関数
-//
-// 【P0-1修正の核心】
-//   Store.navigate(pageId, params, true) の第3引数 true が
-//   nav イベント発火をスキップさせる（store.js 側で対応済み）。
-//   これにより Store.on('nav') と routeTo 自身の二重描画が解消される。
 // ────────────────────────────────────────────────────────────────
 function routeTo(pageId, params = {}) {
-  // 文字列で渡された場合は { id: '...' } に正規化（後方互換）
   if (typeof params === 'string') params = { id: params };
   if (!params || typeof params !== 'object') params = {};
 
-  // 状態更新（_skipNavEvent=true で nav event は発火しない）
   Store.navigate(pageId, params, true);
 
-  // URLハッシュ更新（リロード時に復元できるよう）
   const hashParts = { page: pageId, ...(params || {}) };
   const hashStr = new URLSearchParams(hashParts).toString();
   history.replaceState(null, '', '#' + hashStr);
 
-  // 描画は1回だけここで実行
   _renderPage(pageId);
 }
 
 // Store.on('nav') — Store.back() など内部遷移専用ハンドラ
-// routeTo 経由では nav event が発火しないため二重描画は起きない。
-// Store.back() → navigate() → _notify('nav') → ここが動く、という経路のみ。
 Store.on('nav', () => {
   _renderPage(Store.getPage());
 });
@@ -187,15 +165,13 @@ function bindNav() {
 
 function renderNav() {
   const cur = Store.getPage();
-  // QR系ページ → QRタブをアクティブに
   const qrPages = ['qr-scan','qr-diff','weight-mode'];
-  // 管理系ページ → 管理タブをアクティブに（sale-list を追加）
   const managePages = [
     'lot-list','line-list','parent-list','bloodline-list','pairing-list',
     'line-new','lot-new','parent-new','bloodline-new','pairing-new',
     'lot-detail','line-detail','parent-detail','bloodline-detail','pairing-detail',
     'label-gen',
-    'sale-list',   // 販売管理も管理タブ配下
+    'sale-list',
   ];
   document.querySelectorAll('.nav-tab').forEach(el => {
     const nav = el.dataset.nav;
@@ -209,12 +185,10 @@ function renderNav() {
 
 // ── グローバルイベント ─────────────────────────────────────────
 function bindGlobalEvents() {
-  // ローディング
   Store.on('loading', () => {
     const el = document.getElementById('loading-overlay');
     if (el) el.style.display = Store.isLoading() ? 'flex' : 'none';
   });
-  // 動的ナビ（data-nav 属性クリック委譲）
   document.addEventListener('click', (e) => {
     const nav = e.target.closest('[data-nav]');
     if (nav) {
@@ -232,7 +206,7 @@ async function syncIfNeeded() {
   if (!gasUrl) return;
   const last = localStorage.getItem(CONFIG.LS_KEYS.LAST_SYNC);
   const age  = last ? Date.now() - new Date(last).getTime() : Infinity;
-  if (age < 5 * 60 * 1000) return; // 5分以内は skip
+  if (age < 5 * 60 * 1000) return;
   await syncAll(true);
 }
 
@@ -304,7 +278,6 @@ const UI = {
 
   // ── ステータスバッジ ────────────────────────────────────────
   stageBadge(code) {
-    // 旧コードを新6区分に丸めてから表示
     const _STAGE_NORM = {
       L1:'L1L2', L2_EARLY:'L1L2', L2_LATE:'L1L2',
       EGG:'L1L2', T0:'L1L2', T1:'L1L2',
@@ -326,7 +299,6 @@ const UI = {
 
   bloodlineBadge(code) {
     if (!code) return '';
-    // unknown / UNKNOWN の場合はバッジを出さない
     if (String(code).toLowerCase() === 'unknown') return '';
     const s = Object.values(BLOODLINE_STATUS).find(x => x.code === String(code).toLowerCase());
     if (!s) return '';
@@ -429,6 +401,7 @@ const UI = {
   },
 
   // ── 体重推移 HTML テーブル ──────────────────────────────────
+  // build: 20260413bj — 増減列にg/日速度を追加
   weightTable(records, opts = {}) {
     const wts = records.filter(r => r.weight_g && +r.weight_g > 0)
       .sort((a,b) => a.record_date.localeCompare(b.record_date));
@@ -439,25 +412,35 @@ const UI = {
     const rows = wts.map((r, i) => {
       const prev  = i > 0 ? +wts[i-1].weight_g : null;
       const delta = prev !== null ? (+r.weight_g - prev) : null;
-      const dStr  = delta !== null
-        ? `<span class="delta ${delta>=0?'pos':'neg'}">${delta>=0?'+':''}${delta.toFixed(1)}</span>`
-        : '—';
-      // age_days: GASからなければ前回記録との日数差を計算
+      // ▼ 前回記録との日数差を計算（g/日の算出にも使う）
+      let _intervalDays = null;
       let _recAgeDays = r.age_days || null;
-      if (!_recAgeDays && i > 0) {
+      if (i > 0) {
         const _prevRec = wts[i-1];
         if (_prevRec && _prevRec.record_date && r.record_date) {
           const _d1 = new Date(String(_prevRec.record_date).replace(/\//g,'-'));
           const _d2 = new Date(String(r.record_date).replace(/\//g,'-'));
           const _dayDiff = Math.round((_d2 - _d1) / 86400000);
           if (_dayDiff > 0) {
-            const _wks = Math.floor(_dayDiff / 7);
-            _recAgeDays = _wks > 0
-              ? '前回+' + _dayDiff + '日（' + _wks + '週）'
-              : '前回+' + _dayDiff + '日';
+            _intervalDays = _dayDiff;
+            if (!_recAgeDays) {
+              const _wks = Math.floor(_dayDiff / 7);
+              _recAgeDays = _wks > 0
+                ? '前回+' + _dayDiff + '日（' + _wks + '週）'
+                : '前回+' + _dayDiff + '日';
+            }
           }
         }
       }
+      // ▼ g/日 = 増減 ÷ 経過日数（小数1桁）
+      const gPerDay = (delta !== null && _intervalDays !== null && _intervalDays > 0)
+        ? (delta / _intervalDays) : null;
+      const gPerDayStr = gPerDay !== null
+        ? `<div style="font-size:.65rem;color:var(--text3);margin-top:1px">${gPerDay >= 0 ? '+' : ''}${gPerDay.toFixed(1)}g/日</div>`
+        : '';
+      const dStr = delta !== null
+        ? `<span class="delta ${delta>=0?'pos':'neg'}">${delta>=0?'+':''}${delta.toFixed(1)}</span>${gPerDayStr}`
+        : '—';
       const recAge = _recAgeDays ? (typeof _recAgeDays === 'number' ? Store.formatRecordAge(_recAgeDays) : String(_recAgeDays)) : '';
       const contStr = r.container  || '';
       const exchStr = r.exchange_type === 'FULL'    ? '全交換'
@@ -472,7 +455,7 @@ const UI = {
       return `<tr>
         <td style="white-space:nowrap">${r.record_date}</td>
         <td style="white-space:nowrap"><b>${r.weight_g}g</b></td>
-        <td>${dStr}</td>
+        <td style="white-space:nowrap">${dStr}</td>
         <td>${UI.stageBadge(r.stage)}</td>
         <td style="font-size:.72rem;color:var(--text3);white-space:nowrap">${[contStr,matStr,exchStr].filter(Boolean).join('/')}</td>
         <td class="td-age" style="white-space:nowrap">${recAge}</td>
@@ -485,7 +468,7 @@ const UI = {
         <thead><tr>
           <th style="white-space:nowrap">日付</th>
           <th style="white-space:nowrap">体重</th>
-          <th style="white-space:nowrap">増減</th>
+          <th style="white-space:nowrap">増減/速度</th>
           <th style="white-space:nowrap">ステージ</th>
           <th style="white-space:nowrap">容器/マット</th>
           <th style="white-space:nowrap">日齢</th>
