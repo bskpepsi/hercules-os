@@ -1426,73 +1426,60 @@ Pages._lblSharePNG = async function () {
 
 Pages._lblBrotherPrint = function() {
   const label = window._currentLabel || {};
-  if (!label.html) { UI.toast('先にラベルを生成してください', 'error'); return; }
-  const dims = label.dims || { wMm:62, hMm:70 };
-
-  // Brother Print Service Plugin 向け @page サイズ指定
-  // mm単位で正確に指定することでBrotherプラグインがラベルサイズを自動認識
-  const pageCSS = `@page {
-    size: ${dims.wMm}mm ${dims.hMm}mm;
-    margin: 0;
+  if (!label.pngDataUrl && !label.html) {
+    UI.toast('先にラベルを生成してください', 'error'); return;
   }
-  @media print {
-    html, body {
-      width: ${dims.wMm}mm;
-      height: ${dims.hMm}mm;
-      margin: 0;
-      padding: 0;
-      background: #fff;
-      -webkit-print-color-adjust: exact;
-      print-color-adjust: exact;
+  const dims = label.dims || { wMm:62, hMm:70 };
+  const png  = label.pngDataUrl;
+
+  // ── PNG方式（確実・推奨） ──────────────────────────────────────
+  // pngDataUrlがあればPNG画像をページに埋め込んで印刷
+  // @page に正確なmm指定 → Brother Print Service Pluginがサイズ自動認識
+  if (png) {
+    const printDoc = '<!DOCTYPE html><html><head>'
+      + '<meta charset="utf-8">'
+      + '<style>'
+      + '@page { size: ' + dims.wMm + 'mm ' + dims.hMm + 'mm; margin: 0; }'
+      + 'html,body { margin:0; padding:0; background:#fff; width:' + dims.wMm + 'mm; height:' + dims.hMm + 'mm; overflow:hidden; }'
+      + 'img { display:block; width:' + dims.wMm + 'mm; height:' + dims.hMm + 'mm; object-fit:contain; }'
+      + '</style></head><body>'
+      + '<img src="' + png + '">'
+      + '<script>window.addEventListener("load",function(){setTimeout(function(){window.print();},300);});<' + '/script>'
+      + '</body></html>';
+
+    const blob = new Blob([printDoc], { type:'text/html;charset=utf-8' });
+    const url  = URL.createObjectURL(blob);
+    const win  = window.open(url, '_blank');
+    if (!win) {
+      UI.toast('ポップアップを許可してください（アドレスバー右端のアイコンをタップ）', 'error', 5000);
+      return;
     }
-    body > * { display: none; }
-    #print-target { display: block !important; }
-  }`;
-
-  // ラベルHTMLから<style>タグを抽出してpageCSS付きで再構築
-  let labelHtml = label.html || '';
-
-  // 既存のstyleタグを探してpageCSSを注入、なければhead内に追加
-  const printDoc = `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<style>
-${pageCSS}
-* { box-sizing: border-box; }
-html, body {
-  width: ${dims.wMm}mm;
-  height: ${dims.hMm}mm;
-  margin: 0; padding: 0;
-  background: #fff;
-  overflow: hidden;
-}
-</style>
-</head>
-<body>
-${labelHtml}
-<script>
-  // Brother Print Service Plugin:
-  // window.print() をページ読み込み後に呼ぶ
-  window.addEventListener('load', function() {
-    setTimeout(function() { window.print(); }, 300);
-  });
-<\/script>
-</body>
-</html>`;
-
-  // popupブロック対策: data URIで開く
-  const blob = new Blob([printDoc], { type: 'text/html;charset=utf-8' });
-  const url  = URL.createObjectURL(blob);
-  const win  = window.open(url, '_blank');
-  if (!win) {
-    // popupブロックされた場合: 直接 window.print() フォールバック
-    UI.toast('ポップアップが許可されていません。ブラウザの設定で許可してください。', 'error', 4000);
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 10000);
     return;
   }
-  // BlobURLは開いたら解放
-  setTimeout(function() { URL.revokeObjectURL(url); }, 5000);
+
+  // ── HTMLフォールバック（PNG未生成の場合） ─────────────────────
+  // html は iframe用に &quot; エスケープされているので元に戻す
+  const rawHtml = (label.html || '').replace(/&quot;/g, '"');
+  const printDoc2 = '<!DOCTYPE html><html><head>'
+    + '<meta charset="utf-8">'
+    + '<style>'
+    + '@page { size: ' + dims.wMm + 'mm ' + dims.hMm + 'mm; margin: 0; }'
+    + 'html,body { margin:0; padding:0; background:#fff; width:' + dims.wMm + 'mm; height:' + dims.hMm + 'mm; }'
+    + '-webkit-print-color-adjust:exact; print-color-adjust:exact;'
+    + '</style></head><body>'
+    + rawHtml
+    + '<script>window.addEventListener("load",function(){setTimeout(function(){window.print();},400);});<' + '/script>'
+    + '</body></html>';
+
+  const blob2 = new Blob([printDoc2], { type:'text/html;charset=utf-8' });
+  const url2  = URL.createObjectURL(blob2);
+  const win2  = window.open(url2, '_blank');
+  if (!win2) {
+    UI.toast('ポップアップを許可してください（アドレスバー右端のアイコンをタップ）', 'error', 5000);
+    return;
+  }
+  setTimeout(function(){ URL.revokeObjectURL(url2); }, 10000);
 };
 
 // 後方互換
