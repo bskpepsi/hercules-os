@@ -11,12 +11,12 @@
 //   html2canvas が有効 → PNG生成 → img プレビュー → PNG保存 / 共有
 //   html2canvas なし   → iframe フォールバック
 //
-// build: 20260413bi
+// build: 20260413bj
 // 変更点: _buildT1UnitLabelHTML の t1Date フォールバックを '移行' → '' に修正
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-window._LABEL_BUILD = '20260413bi';
+window._LABEL_BUILD = '20260413bj';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 // ── ステージコード正規化 ─────────────────────────────────────────
@@ -852,10 +852,20 @@ function _chkThermal(label, checked) {
 // ラベル右上に「♂ ・ ♀」を印刷。性別確定済みの場合は◯を付ける。
 // sex: '' | '♂' | '♀'
 function _sexDisplay(sex) {
-  var mStr = (sex === '♂' ? '&#9711;' : '') + '&#9794;'; // (◯)♂
-  var fStr = (sex === '♀' ? '&#9711;' : '') + '&#9792;'; // (◯)♀
+  // 確定済み: 記号を丸ボックスで囲む / 未確定: そのまま表示
+  function _circled(sym, active) {
+    if (active) {
+      return '<span style="display:inline-flex;align-items:center;justify-content:center;'
+        + 'width:13px;height:13px;border-radius:50%;border:1.5px solid #000;'
+        + 'font-size:8px;font-weight:700;color:#000;line-height:1;vertical-align:middle">'
+        + sym + '</span>';
+    }
+    return '<span style="font-size:9px;font-weight:700;color:#000;vertical-align:middle">' + sym + '</span>';
+  }
+  var mHtml = _circled('&#9794;', sex === '♂');
+  var fHtml = _circled('&#9792;', sex === '♀');
   return '<span style="font-size:9px;font-weight:700;color:#000">'
-    + mStr + '&nbsp;&#183;&nbsp;' + fStr
+    + mHtml + '&nbsp;&#183;&nbsp;' + fHtml
     + '</span>';
 }
 
@@ -1257,9 +1267,15 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
   var m1sex = m1 ? (m1.sex || '') : '';
   // ユニット性別表示「①◯♂ ②♀」形式
   function _unitMemberSex(idx, sex) {
-    var circle = sex ? '&#9711;' : '';
-    var sym    = sex === '♂' ? '&#9794;' : sex === '♀' ? '&#9792;' : (idx===0?'&#9794;':'&#9792;');
-    return (idx+1) + circle + sym;
+    var sym = sex === '♂' ? '&#9794;' : sex === '♀' ? '&#9792;' : (idx===0?'&#9794;':'&#9792;');
+    if (sex) {
+      // 性別確定: 丸ボックスで囲む
+      return (idx+1) + '<span style="display:inline-flex;align-items:center;justify-content:center;'
+        + 'width:11px;height:11px;border-radius:50%;border:1.2px solid #000;'
+        + 'font-size:7px;font-weight:700;color:#000;line-height:1;vertical-align:middle">'
+        + sym + '</span>';
+    }
+    return (idx+1) + '<span style="font-size:7px;font-weight:700;color:#000">' + sym + '</span>';
   }
   var unitSexHtml = '<span style="font-size:7px;font-weight:700;color:#000">'
     + _unitMemberSex(0, m0sex) + '&nbsp;' + _unitMemberSex(1, m1sex) + '</span>';
