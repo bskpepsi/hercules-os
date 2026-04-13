@@ -321,7 +321,10 @@ Pages.analysisMenu = function() {
 
     '<div style="font-size:.78rem;color:var(--text3);padding:0 2px;margin-bottom:12px">飼育データを分析して次のブリードに活かしましょう</div>' +
 
-    '<div style="font-size:.72rem;font-weight:700;color:var(--text2);margin-bottom:8px;padding:0 2px">🧬 血統分析</div>' +
+    '<div style="font-size:.72rem;font-weight:700;color:var(--text2);margin-bottom:8px;padding:0 2px">📊 成長グラフ</div>' +
+    _menuCard('📊', '成長分布・分析グラフ', '体重分布・ライン比較・成虫サイズ・還元率・成長曲線（全5グラフ）', 'growth-charts') +
+
+    '<div style="font-size:.72rem;font-weight:700;color:var(--text2);margin-bottom:8px;margin-top:16px;padding:0 2px">🧬 血統分析</div>' +
     _menuCard('🧬', '血統×成長 相関分析', '父系・母系タグ別の平均体重ランキング＆組み合わせヒートマップ', 'bloodline-analysis') +
     _menuCard('📈', 'ライン分析', 'ライン別の成長・生存率ランキング', 'line-analysis') +
     _menuCard('♀', '母系ランキング', '母親別の平均体重・成虫サイズランキング', 'mother-ranking') +

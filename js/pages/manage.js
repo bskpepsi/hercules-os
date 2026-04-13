@@ -149,6 +149,10 @@ Pages.manage = function () {
             style="grid-column:span 2;border-color:rgba(91,168,232,.35);color:var(--blue);font-weight:700">
             🧬 血統×成長 相関分析（父系・母系タグ別ランキング）
           </button>
+          <button class="btn btn-ghost" onclick="routeTo('growth-charts')"
+            style="grid-column:span 2;border-color:rgba(200,168,75,.4);color:var(--gold);font-weight:700">
+            📊 成長分布グラフ（体重分布・ライン比較・成長曲線・還元率）
+          </button>
         </div>
       </div>`);
   }
@@ -448,6 +452,17 @@ function _renderLineDetail(line, main) {
           ${line.note_private    ? _lnRow('内部メモ', line.note_private)   : ''}
         </div>
       </div>
+      <!-- 成長グラフ（遅延ロード） -->
+      <div class="card" style="padding:12px 14px" id="line-chart-section-${line.line_id}">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <div style="font-size:.8rem;font-weight:700;color:var(--text2)">📊 成長グラフ</div>
+          <button class="btn btn-ghost btn-sm" onclick="Pages._lineExpandCharts('${line.line_id}')">グラフを表示</button>
+        </div>
+        <div id="line-chart-body-${line.line_id}" style="font-size:.76rem;color:var(--text3)">
+          ボタンを押すとこのラインの成長グラフを表示します
+        </div>
+      </div>
+
       <div class="card" style="padding:10px 14px">
         <div style="font-size:.72rem;font-weight:700;color:var(--text3);letter-spacing:.06em;margin-bottom:8px">詳細集計</div>
         <div style="font-size:.78rem">
@@ -487,6 +502,22 @@ function _lnRow(key, val) {
     <span class="info-val">${val}</span>
   </div>`;
 }
+
+Pages._lineExpandCharts = function(lineId) {
+  var body = document.getElementById('line-chart-body-' + lineId);
+  if (!body) return;
+  if (typeof Pages.growthChartsForLine !== 'function') {
+    body.innerHTML = '<div style="font-size:.76rem;color:var(--amber)">growth_charts.jsが読み込まれていません</div>';
+    return;
+  }
+  Pages.growthChartsForLine(lineId, 'line-chart-body-' + lineId);
+  // ボタンを非表示にする
+  var section = document.getElementById('line-chart-section-' + lineId);
+  if (section) {
+    var btn = section.querySelector('button');
+    if (btn) btn.style.display = 'none';
+  }
+};
 
 Pages.lineNew = function (params = {}) {
   const main   = document.getElementById('main');

@@ -60,6 +60,7 @@ window.PAGES = {
   'batch-scan':       () => Pages.batchScan(Store.getParams()),
   'env-record':        () => Pages.envRecordList(Store.getParams()),
   'bloodline-analysis':() => Pages.bloodlineAnalysis ? Pages.bloodlineAnalysis() : null,
+  'growth-charts':     () => Pages.growthCharts ? Pages.growthCharts(Store.getParams()) : null,
   'analysis-menu':     () => Pages.analysisMenu ? Pages.analysisMenu() : null,
   'qr-diff':     () => Pages.qrDiff(Store.getParams()),
   'weight-mode': () => Pages.weightMode(Store.getParams()),
