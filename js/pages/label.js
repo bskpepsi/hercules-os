@@ -384,7 +384,8 @@ Pages.labelGen = function (params = {}) {
               📤 共有 / Brotherアプリへ送る
             </button>
             <div style="display:flex;gap:8px;margin-bottom:8px">
-              <button class="btn btn-ghost" style="flex:1" onclick="Pages._lblPrintHTML()">🖨 ブラウザ印刷</button>
+              <button class="btn btn-primary" style="flex:2;font-weight:700;font-size:.92rem"
+                onclick="Pages._lblBrotherPrint()">🖨️ Brother印刷（1タップ）</button>
               <button class="btn btn-ghost" style="flex:1"
                 onclick="Pages._lblGenerate('${targetType}','${targetId}','${labelType}')">🔄 再生成</button>
             </div>
@@ -407,8 +408,9 @@ Pages.labelGen = function (params = {}) {
             </button>` : ''}
             <div style="font-size:.7rem;color:var(--text3);margin-top:10px;line-height:1.6;
               padding-top:8px;border-top:1px solid var(--border)">
-              💡 保存したPNGをAndroidのギャラリーから「Brother Print Service Plugin」で印刷。
-              62mm連続ロール使用、「62mm × 1m」を選択してください。
+              💡「Brother印刷」ボタンで印刷ダイアログが開きます。
+              初回のみ <b>Brother Print Service Plugin</b>（Google Play）のインストールが必要です。
+              <a href="#" onclick="Pages._lblPrintSetupGuide();return false;" style="color:var(--blue)">初回セットアップ手順を見る</a>
             </div>
           </div>
         </div>
@@ -1422,18 +1424,113 @@ Pages._lblSharePNG = async function () {
   }
 };
 
-Pages._lblPrintHTML = function () {
+Pages._lblBrotherPrint = function() {
   const label = window._currentLabel || {};
   if (!label.html) { UI.toast('先にラベルを生成してください', 'error'); return; }
-  const win = window.open('', '_blank');
-  if (!win) { UI.toast('ポップアップをブロックされています', 'error'); return; }
-  win.document.write(label.html);
-  win.document.close();
-  win.onload = () => { win.print(); };
+  const dims = label.dims || { wMm:62, hMm:70 };
+
+  // Brother Print Service Plugin 向け @page サイズ指定
+  // mm単位で正確に指定することでBrotherプラグインがラベルサイズを自動認識
+  const pageCSS = `@page {
+    size: ${dims.wMm}mm ${dims.hMm}mm;
+    margin: 0;
+  }
+  @media print {
+    html, body {
+      width: ${dims.wMm}mm;
+      height: ${dims.hMm}mm;
+      margin: 0;
+      padding: 0;
+      background: #fff;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    body > * { display: none; }
+    #print-target { display: block !important; }
+  }`;
+
+  // ラベルHTMLから<style>タグを抽出してpageCSS付きで再構築
+  let labelHtml = label.html || '';
+
+  // 既存のstyleタグを探してpageCSSを注入、なければhead内に追加
+  const printDoc = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+${pageCSS}
+* { box-sizing: border-box; }
+html, body {
+  width: ${dims.wMm}mm;
+  height: ${dims.hMm}mm;
+  margin: 0; padding: 0;
+  background: #fff;
+  overflow: hidden;
+}
+</style>
+</head>
+<body>
+${labelHtml}
+<script>
+  // Brother Print Service Plugin:
+  // window.print() をページ読み込み後に呼ぶ
+  window.addEventListener('load', function() {
+    setTimeout(function() { window.print(); }, 300);
+  });
+<\/script>
+</body>
+</html>`;
+
+  // popupブロック対策: data URIで開く
+  const blob = new Blob([printDoc], { type: 'text/html;charset=utf-8' });
+  const url  = URL.createObjectURL(blob);
+  const win  = window.open(url, '_blank');
+  if (!win) {
+    // popupブロックされた場合: 直接 window.print() フォールバック
+    UI.toast('ポップアップが許可されていません。ブラウザの設定で許可してください。', 'error', 4000);
+    return;
+  }
+  // BlobURLは開いたら解放
+  setTimeout(function() { URL.revokeObjectURL(url); }, 5000);
 };
 
-Pages._lblPrint    = Pages._lblPrintHTML;
+// 後方互換
+Pages._lblPrintHTML = Pages._lblBrotherPrint;
+Pages._lblPrint     = Pages._lblBrotherPrint;
 Pages._lblDownload = Pages._lblDownloadPNG;
+
+// Brother Print Service Plugin セットアップ案内
+Pages._lblPrintSetupGuide = function() {
+  UI.modal(
+    '<div class="modal-title" style="font-size:.92rem;font-weight:700;padding-bottom:8px">🖨️ Brother印刷 初回セットアップ</div>' +
+    '<div style="font-size:.8rem;line-height:1.9;padding:4px 0">' +
+      '<div style="font-weight:700;color:var(--gold);margin-bottom:6px">【1回だけ必要な作業】</div>' +
+      '<div style="margin-bottom:12px">' +
+        '<b>① Google Playでインストール</b><br>' +
+        '<span style="color:var(--text3)">「Brother Print Service Plugin」を検索してインストール</span>' +
+      '</div>' +
+      '<div style="margin-bottom:12px">' +
+        '<b>② Androidの印刷設定を開く</b><br>' +
+        '<span style="color:var(--text3)">設定 → 接続済みデバイス → 印刷 → Brother Print Service → 有効にする</span>' +
+      '</div>' +
+      '<div style="margin-bottom:12px">' +
+        '<b>③ プリンターを追加</b><br>' +
+        '<span style="color:var(--text3)">「プリンターを追加」→ QL-820NWBをWi-Fiで検索・選択</span>' +
+      '</div>' +
+      '<div style="background:rgba(76,175,120,.08);border:1px solid rgba(76,175,120,.25);border-radius:8px;padding:10px 12px;font-size:.76rem">' +
+        '<b style="color:var(--green)">✅ セットアップ完了後の印刷手順</b><br>' +
+        '① HerculesOSで「Brother印刷」ボタンをタップ<br>' +
+        '② 印刷ダイアログが開く → プリンター: QL-820NWBを選択<br>' +
+        '③ 用紙サイズが自動設定される（62×70mm または 62×40mm）<br>' +
+        '④「印刷」→ 完了 🎉' +
+      '</div>' +
+    '</div>' +
+    '<div class="modal-footer">' +
+      '<button class="btn btn-primary btn-full" onclick="UI.closeModal&&UI.closeModal()">OK</button>' +
+    '</div>'
+  );
+};
 Pages._lblOpenDrive = function () { UI.toast('Drive保存は非対応です', 'info'); };
 
 window._currentLabel  = window._currentLabel  || { displayId:'', fileName:'', html:'', pngDataUrl:'', dims:null };
