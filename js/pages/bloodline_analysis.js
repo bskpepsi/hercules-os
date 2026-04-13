@@ -292,3 +292,45 @@ window.PAGES = window.PAGES || {};
 window.PAGES['bloodline-analysis'] = function() {
   Pages.bloodlineAnalysis();
 };
+
+
+// ════════════════════════════════════════════════════════════════
+// Pages.analysisMenu — 分析機能メニュー画面
+// 管理タブから routeTo('analysis-menu') で到達
+// ════════════════════════════════════════════════════════════════
+Pages.analysisMenu = function() {
+  var main = document.getElementById('main');
+
+  function _menuCard(icon, title, desc, route) {
+    return '<div class="card" style="padding:14px 16px;margin-bottom:10px;cursor:pointer" '
+      + 'onclick="routeTo(\'' + route + '\')">'
+      + '<div style="display:flex;align-items:center;gap:12px">'
+      +   '<div style="font-size:1.6rem;width:40px;text-align:center">' + icon + '</div>'
+      +   '<div style="flex:1">'
+      +     '<div style="font-size:.9rem;font-weight:700;color:var(--text1)">' + title + '</div>'
+      +     '<div style="font-size:.74rem;color:var(--text3);margin-top:2px">' + desc + '</div>'
+      +   '</div>'
+      +   '<span style="color:var(--text3);font-size:1.2rem">›</span>'
+      + '</div>'
+      + '</div>';
+  }
+
+  main.innerHTML =
+    UI.header('📊 分析メニュー', {back: true}) +
+    '<div class="page-body">' +
+
+    '<div style="font-size:.78rem;color:var(--text3);padding:0 2px;margin-bottom:12px">飼育データを分析して次のブリードに活かしましょう</div>' +
+
+    '<div style="font-size:.72rem;font-weight:700;color:var(--text2);margin-bottom:8px;padding:0 2px">🧬 血統分析</div>' +
+    _menuCard('🧬', '血統×成長 相関分析', '父系・母系タグ別の平均体重ランキング＆組み合わせヒートマップ', 'bloodline-analysis') +
+    _menuCard('📈', 'ライン分析', 'ライン別の成長・生存率ランキング', 'line-analysis') +
+    _menuCard('♀', '母系ランキング', '母親別の平均体重・成虫サイズランキング', 'mother-ranking') +
+    _menuCard('🔥', '血統ヒートマップ（GAS版）', '父系×母系タグの体重ヒートマップ（GASデータ使用）', 'heatmap') +
+
+    '<div style="font-size:.72rem;font-weight:700;color:var(--text2);margin-bottom:8px;margin-top:16px;padding:0 2px">👑 種親管理</div>' +
+    _menuCard('📅', '種親ダッシュボード', 'ペアリング可能状況・♂回数ランキング', 'parent-dashboard') +
+
+    '</div>';
+};
+
+window.PAGES['analysis-menu'] = function() { Pages.analysisMenu(); };

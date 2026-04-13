@@ -60,6 +60,7 @@ window.PAGES = {
   'batch-scan':       () => Pages.batchScan(Store.getParams()),
   'env-record':        () => Pages.envRecordList(Store.getParams()),
   'bloodline-analysis':() => Pages.bloodlineAnalysis ? Pages.bloodlineAnalysis() : null,
+  'analysis-menu':     () => Pages.analysisMenu ? Pages.analysisMenu() : null,
   'qr-diff':     () => Pages.qrDiff(Store.getParams()),
   'weight-mode': () => Pages.weightMode(Store.getParams()),
   // ── 販売管理（sale.js でも window.PAGES['sale-list'] を自己登録するが、ここにも定義して確実に接続）
@@ -175,6 +176,7 @@ function renderNav() {
     'lot-detail','line-detail','parent-detail','bloodline-detail','pairing-detail',
     'label-gen',
     'sale-list',
+    'analysis-menu','line-analysis','mother-ranking','heatmap','parent-dashboard','bloodline-analysis',
   ];
   document.querySelectorAll('.nav-tab').forEach(el => {
     const nav = el.dataset.nav;
@@ -572,18 +574,37 @@ Object.assign(PAGES, {
     body.insertBefore(div.firstChild, body.firstChild);
   }
 
-  // manage ページをフック
+  // manage ページをフック（バチルスリマインド＋分析ボタン差し込み）
   var _origManage = null;
   Object.defineProperty(Pages, 'manage', {
     get: function() { return _origManage; },
     set: function(fn) {
       _origManage = function() {
         fn.apply(this, arguments);
-        setTimeout(_injectBacilusIfNeeded, 100);
+        setTimeout(function(){
+          _injectBacilusIfNeeded();
+          _injectAnalysisButton();
+        }, 100);
       };
     },
     configurable: true,
   });
+
+  function _injectAnalysisButton() {
+    if (document.getElementById('inject-analysis-btn')) return;
+    var body = document.querySelector('.page-body');
+    if (!body) return;
+    var wrapper = document.createElement('div');
+    wrapper.id = 'inject-analysis-btn';
+    wrapper.style.cssText = 'margin-bottom:12px';
+    var btn = document.createElement('button');
+    btn.className = 'btn btn-ghost btn-full';
+    btn.style.cssText = 'padding:14px;font-size:.92rem;display:flex;align-items:center;justify-content:center;gap:8px';
+    btn.innerHTML = '<span>&#x1F4CA;</span><span>分析メニュー</span><span style="margin-left:auto;color:var(--text3)">›</span>';
+    btn.addEventListener('click', function(){ routeTo('analysis-menu'); });
+    wrapper.appendChild(btn);
+    body.insertBefore(wrapper, body.firstChild);
+  }
 
   // dashboard ページもフック
   var _origDash = Pages.dashboard;
@@ -594,11 +615,3 @@ Object.assign(PAGES, {
     };
   }
 })();
-
-
-// ════════════════════════════════════════════════════════════════
-// 【4】JavaScript (Pages)
-// ════════════════════════════════════════════════════════════════
-
-
-// ────────────────────────────────────────────────────────────────
