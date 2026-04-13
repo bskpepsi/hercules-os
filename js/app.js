@@ -58,6 +58,8 @@ window.PAGES = {
   'unit-detail':     () => Pages.unitDetail ? Pages.unitDetail(Store.getParams()) : null,
   'continuous-scan': () => Pages.continuousScan(Store.getParams()),
   'batch-scan':       () => Pages.batchScan(Store.getParams()),
+  'env-record':        () => Pages.envRecordList(Store.getParams()),
+  'bloodline-analysis':() => Pages.bloodlineAnalysis ? Pages.bloodlineAnalysis() : null,
   'qr-diff':     () => Pages.qrDiff(Store.getParams()),
   'weight-mode': () => Pages.weightMode(Store.getParams()),
   // ── 販売管理（sale.js でも window.PAGES['sale-list'] を自己登録するが、ここにも定義して確実に接続）
@@ -553,6 +555,45 @@ Object.assign(PAGES, {
   'heatmap':         () => Pages.bloodlineHeatmap(),
   'parent-dashboard':() => Pages.parentDashboard(),
 });
+
+// ── バチルスリマインドを管理タブ・ダッシュボードに差し込む ────────
+// Pages.manage / Pages.dashboard をラップして
+// ページ描画後にリマインドバナーを先頭に挿入する
+(function() {
+  function _injectBacilusIfNeeded() {
+    if (typeof window._getBacilusDueReminders !== 'function') return;
+    var due = window._getBacilusDueReminders();
+    if (!due.length) return;
+    // page-body の先頭に挿入
+    var body = document.querySelector('.page-body');
+    if (!body || body.querySelector('#bacilus-remind-area')) return;
+    var div = document.createElement('div');
+    div.innerHTML = window._renderBacilusReminderBanner();
+    body.insertBefore(div.firstChild, body.firstChild);
+  }
+
+  // manage ページをフック
+  var _origManage = null;
+  Object.defineProperty(Pages, 'manage', {
+    get: function() { return _origManage; },
+    set: function(fn) {
+      _origManage = function() {
+        fn.apply(this, arguments);
+        setTimeout(_injectBacilusIfNeeded, 100);
+      };
+    },
+    configurable: true,
+  });
+
+  // dashboard ページもフック
+  var _origDash = Pages.dashboard;
+  if (typeof _origDash === 'function') {
+    Pages.dashboard = function() {
+      _origDash.apply(this, arguments);
+      setTimeout(_injectBacilusIfNeeded, 100);
+    };
+  }
+})();
 
 
 // ════════════════════════════════════════════════════════════════

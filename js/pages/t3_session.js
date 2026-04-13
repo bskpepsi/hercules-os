@@ -688,6 +688,11 @@ Pages._t3SessionSave = async function () {
 
     window._t3Session = null; sessionStorage.removeItem('_t3SessionData');
     UI.toast('T3（3齢後期）移行を完了しました ✅', 'success', 3000);
+
+    // ── 腸内菌リセットリマインドを登録 ──────────────────────────
+    // T3交換日+30日後にバチルスキング添加を促す
+    _registerBacilusReminder(s.unit_id, s.display_id, today);
+
     routeTo('qr-scan', { mode: 't3' });
 
   } catch (e) {
@@ -695,6 +700,149 @@ Pages._t3SessionSave = async function () {
     UI.toast('保存失敗: ' + (e.message || '通信エラー'), 'error', 5000);
   }
 };
+
+
+// ════════════════════════════════════════════════════════════════
+// 腸内菌リセットリマインド管理
+// LS key: hcos_bacilus_reminders → [{id, unit_id, display_id, exchange_date, remind_date, done}]
+// ════════════════════════════════════════════════════════════════
+
+var _BACILUS_LS = 'hcos_bacilus_reminders';
+
+function _getBacilusReminders() {
+  try { return JSON.parse(localStorage.getItem(_BACILUS_LS) || '[]'); } catch(e) { return []; }
+}
+function _setBacilusReminders(arr) {
+  try { localStorage.setItem(_BACILUS_LS, JSON.stringify(arr)); } catch(e) {}
+}
+
+function _registerBacilusReminder(unitId, displayId, exchangeDate) {
+  var reminders = _getBacilusReminders();
+  // 同じユニットの未完了リマインドがあれば上書き
+  reminders = reminders.filter(function(r){ return r.unit_id !== unitId || r.done; });
+
+  // remind_date = exchange_date + 30日
+  var d = new Date(String(exchangeDate).replace(/\//g, '-'));
+  d.setDate(d.getDate() + 30);
+  var remindDate = d.getFullYear() + '/'
+    + String(d.getMonth()+1).padStart(2,'0') + '/'
+    + String(d.getDate()).padStart(2,'0');
+
+  reminders.push({
+    id:            'bacilus_' + unitId + '_' + Date.now(),
+    unit_id:       unitId,
+    display_id:    displayId,
+    exchange_date: exchangeDate,
+    remind_date:   remindDate,
+    done:          false,
+    done_date:     null,
+  });
+  _setBacilusReminders(reminders);
+  console.log('[T3] バチルスリマインド登録:', displayId, '→', remindDate);
+}
+
+// 完了マーク（管理タブから呼ぶ）
+window.Pages._bacilusMarkDone = function(reminderId) {
+  var reminders = _getBacilusReminders();
+  var today = new Date().toISOString().split('T')[0].replace(/-/g, '/');
+  reminders = reminders.map(function(r){
+    return r.id === reminderId ? Object.assign({}, r, {done:true, done_date:today}) : r;
+  });
+  _setBacilusReminders(reminders);
+  UI.toast('✅ バチルスキング添加を記録しました', 'success', 2000);
+  // 管理タブを再描画（バナーを消す）
+  if (typeof Pages._refreshBacilusReminders === 'function') Pages._refreshBacilusReminders();
+};
+
+// スヌーズ（3日後に再表示）
+window.Pages._bacilusSnooze = function(reminderId) {
+  var reminders = _getBacilusReminders();
+  var snoozeDate = new Date(); snoozeDate.setDate(snoozeDate.getDate() + 3);
+  var sd = snoozeDate.getFullYear() + '/'
+    + String(snoozeDate.getMonth()+1).padStart(2,'0') + '/'
+    + String(snoozeDate.getDate()).padStart(2,'0');
+  reminders = reminders.map(function(r){
+    return r.id === reminderId ? Object.assign({}, r, {remind_date: sd}) : r;
+  });
+  _setBacilusReminders(reminders);
+  UI.toast('3日後に再通知します', 'info', 2000);
+  if (typeof Pages._refreshBacilusReminders === 'function') Pages._refreshBacilusReminders();
+};
+
+// 期限到来リマインドを取得（today以降のみ）
+window._getBacilusDueReminders = function() {
+  var today = new Date().toISOString().split('T')[0].replace(/-/g, '/');
+  return _getBacilusReminders().filter(function(r){
+    return !r.done && r.remind_date <= today;
+  });
+};
+
+// リマインドバナーHTML（管理タブに埋め込む用）
+window._renderBacilusReminderBanner = function() {
+  var due = window._getBacilusDueReminders();
+  if (!due.length) return '';
+
+  return '<div id="bacilus-remind-area">'
+    + due.map(function(r){
+        var daysOver = Math.round(
+          (new Date() - new Date(r.remind_date.replace(/\//g,'-'))) / 86400000
+        );
+        var urgency = daysOver >= 7
+          ? { color:'#e05050', bg:'rgba(224,80,80,.08)', border:'rgba(224,80,80,.3)', label:'⚠️ 超過 '+daysOver+'日' }
+          : daysOver >= 3
+          ? { color:'var(--amber)', bg:'rgba(224,144,64,.08)', border:'rgba(224,144,64,.3)', label:'🔔 '+daysOver+'日経過' }
+          : { color:'var(--green)', bg:'rgba(76,175,120,.08)', border:'rgba(76,175,120,.3)', label:'🟢 本日' };
+
+        return '<div style="background:'+urgency.bg+';border:1px solid '+urgency.border+';border-radius:10px;padding:12px 14px;margin-bottom:8px">'
+          + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">'
+          +   '<div>'
+          +     '<div style="font-size:.82rem;font-weight:700;color:var(--text1)">🧫 腸内菌リセット</div>'
+          +     '<div style="font-size:.75rem;color:var(--text3);margin-top:2px">バチルスキング添加のタイミングです</div>'
+          +   '</div>'
+          +   '<span style="font-size:.72rem;font-weight:700;color:'+urgency.color+'">'+urgency.label+'</span>'
+          + '</div>'
+          + '<div style="background:var(--surface2);border-radius:8px;padding:8px 10px;margin-bottom:10px">'
+          +   '<div style="font-size:.82rem;font-weight:700;color:var(--gold)">'+r.display_id+'</div>'
+          +   '<div style="display:flex;gap:16px;margin-top:4px;font-size:.74rem;color:var(--text3)">'
+          +     '<span>T3交換日: <b style="color:var(--text2)">'+r.exchange_date+'</b></span>'
+          +     '<span>リマインド日: <b style="color:'+urgency.color+'">'+r.remind_date+'</b></span>'
+          +   '</div>'
+          + '</div>'
+          + '<div style="display:flex;gap:8px">'
+          +   '<button class="btn btn-ghost btn-sm" style="flex:1" '
+          +     'onclick="Pages._bacilusSnoozeIdx(' + due.indexOf(r) + ')">\u23f0 3日後</button>'
+          +   '<button class="btn btn-primary" style="flex:2;padding:10px" '
+          +     'onclick="Pages._bacilusDoneIdx(' + due.indexOf(r) + ')">✅ 添加完了</button>'
+          + '</div>'
+          + '</div>';
+      }).join('')
+    + '</div>';
+};
+
+// インデックス経由のヘルパー（onclick内クォートネスト回避）
+window.Pages._bacilusDoneIdx = function(idx) {
+  var due = window._getBacilusDueReminders();
+  var r   = due[idx];
+  if (r) window.Pages._bacilusMarkDone(r.id);
+};
+window.Pages._bacilusSnoozeIdx = function(idx) {
+  var due = window._getBacilusDueReminders();
+  var r   = due[idx];
+  if (r) window.Pages._bacilusSnooze(r.id);
+};
+
+// 管理タブのリマインドエリアだけ再描画
+window.Pages._refreshBacilusReminders = function() {
+  var area = document.getElementById('bacilus-remind-area');
+  if (!area) return;
+  var newHtml = window._renderBacilusReminderBanner();
+  if (newHtml) {
+    area.outerHTML = newHtml;
+  } else {
+    area.remove();
+  }
+};
+
 
 window.PAGES = window.PAGES || {};
 window.PAGES['t3-session'] = function () { Pages.t3Session(Store.getParams()); };
