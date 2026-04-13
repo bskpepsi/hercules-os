@@ -57,6 +57,7 @@ window.PAGES = {
   'unit-list':   () => Pages.unitList   ? Pages.unitList(Store.getParams())   : null,
   'unit-detail':     () => Pages.unitDetail ? Pages.unitDetail(Store.getParams()) : null,
   'continuous-scan': () => Pages.continuousScan(Store.getParams()),
+  'batch-scan':       () => Pages.batchScan(Store.getParams()),
   'qr-diff':     () => Pages.qrDiff(Store.getParams()),
   'weight-mode': () => Pages.weightMode(Store.getParams()),
   // ── 販売管理（sale.js でも window.PAGES['sale-list'] を自己登録するが、ここにも定義して確実に接続）

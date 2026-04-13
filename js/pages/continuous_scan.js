@@ -161,6 +161,11 @@ Pages.continuousScan = function(params) {
         '<button class="btn btn-primary btn-full" style="padding:18px;font-size:1rem;margin-bottom:10px" onclick="Pages._cScanOpenCameraPreview()"><span style="font-size:1.5rem;margin-right:8px">📷</span>カメラでラベルを撮影</button>' +
         '<input type="file" id="cs-gallery-input" accept="image/*" style="display:none" onchange="Pages._cScanOnImageSelected(this)">' +
         '<button class="btn btn-ghost btn-full" style="font-size:.88rem" onclick="Pages._cScanOpenGallery()">🖼️ ギャラリーから選択</button>' +
+        '<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border2)">' +
+          '<button class="btn btn-ghost btn-full" style="font-size:.88rem;color:var(--blue)" onclick="routeTo(\'batch-scan\')">' +
+            '📦 一括読取りモード（複数枚まとめて処理）' +
+          '</button>' +
+        '</div>' +
       '</div>' +
       (_state.qrError ? '<div style="background:rgba(224,64,64,.08);border:1px solid rgba(224,64,64,.3);border-radius:8px;padding:12px 14px;font-size:.78rem;color:#e04040">⚠️ '+_state.qrError+'<br><span style="color:var(--text3);font-size:.72rem">明るい場所でラベル全体が枠に収まるよう再撮影してください。</span></div>' : '') +
       '</div>';
@@ -728,7 +733,757 @@ Pages.continuousScan = function(params) {
   render();
 };
 
+
+// ════════════════════════════════════════════════════════════════
+// Pages.batchScan — 一括撮影モード
+// ════════════════════════════════════════════════════════════════
+// 動作フロー:
+//   1. 撮影フェーズ: 1枚撮るたびにOCRをバックグラウンド開始（最大10枚）
+//   2. 確認フェーズ: 1件ずつ確認・修正（上部に「N/M件目」表示）
+//   3. 完了画面: 保存結果サマリ
+//
+// _bs_queue: [{
+//   capturedImage, ocrPromise, ocrResult(後で埋まる),
+//   resolved(QR解決済みか), targetType, targetId, displayId,
+//   entity, members, tableRows, detectedSex,
+//   error(null or string)
+// }]
+// ════════════════════════════════════════════════════════════════
+
+Pages.batchScan = function(params) {
+  params = params || {};
+  var main = document.getElementById('main');
+  var MAX_BATCH = 20;
+
+  var MAT_OPTIONS  = ['T0','T1','T2','T3','MD'];
+  var CONT_OPTIONS = ['1.8L','2.7L','4.8L','8L','10L'];
+
+  // バッチキュー
+  var _queue = [];
+  // 現在確認中のインデックス
+  var _curIdx = 0;
+  // バッチフェーズ: 'shoot' | 'confirm' | 'done'
+  var _phase = 'shoot';
+  // 撮影フェーズ中のエラー表示
+  var _shootError = null;
+
+  // ── shared utils（continuous_scanと同じロジックをローカルに持つ） ─
+  function _bsResolveEntity(type, id) {
+    if(type==='UNIT') return (Store.getUnitByDisplayId&&Store.getUnitByDisplayId(id))||(Store.getDB('breeding_units')||[]).find(function(u){return u.unit_id===id||u.display_id===id;})||null;
+    if(type==='IND')  return (Store.getIndividual&&Store.getIndividual(id))||(Store.getDB('individuals')||[]).find(function(i){return i.ind_id===id||i.display_id===id;})||null;
+    return null;
+  }
+  function _bsParseMembers(entity) {
+    if(!entity||!entity.members) return [];
+    try{ var r=entity.members; return Array.isArray(r)?r:JSON.parse(r); }catch(_){return [];}
+  }
+  function _bsResolveFromQrText(qrText) {
+    if(!qrText)return null;
+    var parts=qrText.split(':'); if(parts.length<2)return null;
+    var prefix=parts[0].toUpperCase(), id=parts.slice(1).join(':').trim();
+    if(prefix==='BU'){
+      var units=Store.getDB('breeding_units')||[];
+      var unit=units.find(function(u){return u.display_id===id;})||units.find(function(u){return u.unit_id===id;})||{display_id:id,unit_id:id};
+      return {targetType:'UNIT',targetId:unit.display_id||id,displayId:unit.display_id||id,entity:unit};
+    }
+    if(prefix==='IND'){
+      var ind=(Store.getIndividual&&Store.getIndividual(id))||(Store.getDB('individuals')||[]).find(function(i){return i.ind_id===id||i.display_id===id;});
+      if(!ind)return null;
+      return {targetType:'IND',targetId:ind.ind_id||id,displayId:ind.display_id||id,entity:ind};
+    }
+    return null;
+  }
+  function _bsBuildTableRows(ocrResult, isUnit) {
+    var ocr=ocrResult||{}, ocrRows=ocr.records||[];
+    var defMat=ocr.mat_type||'', rows=[];
+    var maxRows=isUnit?4:8;
+    for(var i=0;i<maxRows;i++){
+      var ocrRow=ocrRows[i]||null;
+      var row={date:'',weight1:'',weight2:'',exchange:'',mat_type:defMat,container:'',
+               date_state:'empty',weight1_state:'empty',weight2_state:'empty',exchange_state:'empty',
+               mat_state:'auto',container_state:'auto'};
+      if(ocrRow){
+        if(ocrRow.date)    {row.date=String(ocrRow.date);      row.date_state    =ocrRow._confidence==='low'?'low':'high';}
+        if(ocrRow.weight)  {row.weight1=String(ocrRow.weight); row.weight1_state =ocrRow._confidence==='low'?'low':'high';}
+        if(ocrRow.weight1) {row.weight1=String(ocrRow.weight1);row.weight1_state =ocrRow._confidence==='low'?'low':'high';}
+        if(isUnit&&ocrRow.weight2){row.weight2=String(ocrRow.weight2);row.weight2_state=ocrRow._confidence==='low'?'low':'high';}
+        if(ocrRow.exchange){row.exchange=ocrRow.exchange;row.exchange_state=ocrRow._confidence==='low'?'low':'high';}
+      }
+      rows.push(row);
+    }
+    return rows;
+  }
+  function _emptyRow(defMat, defCont) {
+    return {date:'',weight1:'',weight2:'',exchange:'',mat_type:defMat||'',container:defCont||'',
+            date_state:'empty',weight1_state:'empty',weight2_state:'empty',exchange_state:'empty',
+            mat_state:'auto',container_state:'auto'};
+  }
+
+  // ── render ────────────────────────────────────────────────────
+  function render() {
+    if(_phase==='shoot')   return renderShoot();
+    if(_phase==='confirm') return renderConfirmItem(_curIdx);
+    if(_phase==='done')    return renderDone();
+  }
+
+  // ── Step1: 撮影フェーズ ────────────────────────────────────────
+  function renderShoot() {
+    var count = _queue.length;
+    var canProceed = count > 0;
+    var canShoot   = count < MAX_BATCH;
+
+    // 撮影済みサムネイルリスト
+    var thumbs = '';
+    if(count > 0){
+      thumbs = '<div style="display:flex;gap:6px;overflow-x:auto;padding:4px 0;margin-bottom:8px">'
+        + _queue.map(function(item, i){
+            var statusIcon = item.error ? '❌' : item.ocrResult ? '✅' : '⏳';
+            var statusColor = item.error ? '#e05050' : item.ocrResult ? '#4caf78' : 'var(--amber)';
+            var label = item.displayId || ('撮影'+(i+1));
+            return '<div style="flex-shrink:0;text-align:center;cursor:pointer" onclick="Pages._bsRemoveItem('+i+')">'
+              + '<div style="position:relative;width:56px;height:56px">'
+              +   '<img src="'+item.capturedImage+'" style="width:56px;height:56px;object-fit:cover;border-radius:6px;border:2px solid '+statusColor+'">'
+              +   '<div style="position:absolute;top:-4px;right:-4px;font-size:.75rem;background:var(--bg2);border-radius:50%;width:18px;height:18px;display:flex;align-items:center;justify-content:center;">'+statusIcon+'</div>'
+              + '</div>'
+              + '<div style="font-size:.6rem;color:var(--text3);margin-top:2px;max-width:56px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+label+'</div>'
+            + '</div>';
+          }).join('')
+        + '</div>';
+    }
+
+    main.innerHTML =
+      UI.header('📷 一括読取り', {back:true}) +
+      '<div class="page-body">' +
+
+      // 説明
+      '<div class="card" style="padding:12px 14px">' +
+        '<div style="font-size:.82rem;font-weight:700;color:var(--text2);margin-bottom:6px">📋 使い方</div>' +
+        '<div style="font-size:.74rem;color:var(--text3);line-height:1.8">' +
+          '① ラベルを1枚ずつ撮影（最大'+MAX_BATCH+'枚）<br>' +
+          '② OCRはバックグラウンドで処理されます<br>' +
+          '③「確認・保存へ」で1件ずつ確認・保存<br>' +
+          '💡 サムネイルをタップで削除できます' +
+        '</div>' +
+      '</div>' +
+
+      // 撮影済みサムネイル
+      (count > 0 ?
+        '<div class="card" style="padding:12px 14px">' +
+          '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">' +
+            '<div style="font-size:.8rem;font-weight:700;color:var(--text2)">撮影済み <span style="color:var(--green)">'+count+'</span>/'+MAX_BATCH+'枚</div>' +
+            '<div style="font-size:.7rem;color:var(--text3)">タップで削除</div>' +
+          '</div>' +
+          thumbs +
+        '</div>' : '') +
+
+      // エラー表示
+      (_shootError ?
+        '<div style="background:rgba(224,64,64,.08);border:1px solid rgba(224,64,64,.3);border-radius:8px;padding:12px 14px;font-size:.78rem;color:#e04040">'+
+          '⚠️ '+_shootError+
+        '</div>' : '') +
+
+      // カメラプレビュー（ガイド枠）
+      '<div id="bs-camera-preview" style="display:none">' +
+        '<div style="position:relative;width:100%;background:#000;border-radius:8px;overflow:hidden">' +
+          '<video id="bs-video" autoplay playsinline muted style="width:100%;display:block;max-height:280px;object-fit:cover"></video>' +
+          '<canvas id="bs-canvas" style="display:none"></canvas>' +
+          '<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none">' +
+            '<div style="position:absolute;inset:0;background:rgba(0,0,0,0.4)"></div>' +
+            '<div style="position:relative;width:62%;padding-bottom:70%;z-index:1">' +
+              '<div style="position:absolute;inset:0;border:3px solid #4caf78;border-radius:4px">' +
+                '<div style="position:absolute;top:-3px;left:-3px;width:18px;height:18px;border-top:4px solid #4caf78;border-left:4px solid #4caf78;border-radius:2px 0 0 0"></div>' +
+                '<div style="position:absolute;top:-3px;right:-3px;width:18px;height:18px;border-top:4px solid #4caf78;border-right:4px solid #4caf78;border-radius:0 2px 0 0"></div>' +
+                '<div style="position:absolute;bottom:-3px;left:-3px;width:18px;height:18px;border-bottom:4px solid #4caf78;border-left:4px solid #4caf78;border-radius:0 0 0 2px"></div>' +
+                '<div style="position:absolute;bottom:-3px;right:-3px;width:18px;height:18px;border-bottom:4px solid #4caf78;border-right:4px solid #4caf78;border-radius:0 0 2px 0"></div>' +
+              '</div>' +
+              '<div style="position:absolute;bottom:-26px;left:0;right:0;text-align:center;font-size:.72rem;color:#4caf78;font-weight:700;white-space:nowrap">ラベルを枠に合わせてください</div>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+        '<div style="display:flex;gap:8px;margin-top:8px">' +
+          '<button class="btn btn-ghost" style="flex:1" onclick="Pages._bsStopCamera()">✕ キャンセル</button>' +
+          '<button class="btn btn-primary" style="flex:2;font-size:1rem;padding:14px" onclick="Pages._bsTakePhoto()">📷 撮影する</button>' +
+        '</div>' +
+      '</div>' +
+
+      // 撮影ボタンエリア
+      '<div id="bs-btn-area" class="card" style="padding:16px;text-align:center">' +
+        '<input type="file" id="bs-file-input" accept="image/*" capture="environment" style="display:none" onchange="Pages._bsOnImageSelected(this)">' +
+        (canShoot ?
+          '<button class="btn btn-primary btn-full" style="padding:16px;font-size:1rem;margin-bottom:10px" onclick="Pages._bsOpenCamera()">' +
+            '<span style="font-size:1.4rem;margin-right:8px">📷</span>ラベルを撮影する' +
+            (count > 0 ? ' <span style="font-size:.82rem;opacity:.8">（'+count+'枚目まで完了）</span>' : '') +
+          '</button>' :
+          '<div style="font-size:.82rem;color:var(--amber);padding:8px;margin-bottom:10px">⚠️ 最大'+MAX_BATCH+'枚に達しました</div>'
+        ) +
+        '<input type="file" id="bs-gallery-input" accept="image/*" style="display:none" onchange="Pages._bsOnImageSelected(this)">' +
+        '<button class="btn btn-ghost btn-full" style="font-size:.88rem" onclick="Pages._bsOpenGallery()">🖼️ ギャラリーから選択</button>' +
+      '</div>' +
+
+      '</div>' +
+
+      // 固定フッター
+      '<div class="quick-action-bar">' +
+        '<button class="btn btn-ghost" style="flex:1;padding:14px 0" onclick="Store.back()">← 戻る</button>' +
+        '<button class="btn btn-gold" style="flex:2;padding:14px 0;font-weight:700;font-size:.95rem"' +
+          (canProceed ? '' : ' disabled') +
+          ' onclick="Pages._bsStartConfirm()">確認・保存へ → （'+count+'件）</button>' +
+      '</div>';
+  }
+
+  // ── Step2: 確認フェーズ（1件ずつ） ────────────────────────────
+  function renderConfirmItem(idx) {
+    var item = _queue[idx];
+    if(!item){ _phase='done'; render(); return; }
+
+    // OCR未完了の場合は待機
+    if(!item.ocrResult && !item.error){
+      main.innerHTML =
+        UI.header('📋 確認中... ('+( idx+1)+'/'+_queue.length+'件目)', {}) +
+        '<div class="page-body" style="text-align:center;padding-top:40px">' +
+          '<div style="font-size:2rem;margin-bottom:16px">⏳</div>' +
+          '<div style="font-size:.88rem;color:var(--text2)">OCR処理完了待ち...</div>' +
+          '<div style="font-size:.74rem;color:var(--text3);margin-top:8px">しばらくお待ちください</div>' +
+        '</div>';
+      // 500ms後に再チェック
+      setTimeout(function(){ if(_phase==='confirm'&&_curIdx===idx) renderConfirmItem(idx); }, 500);
+      return;
+    }
+
+    // エラーアイテムはスキップ可能
+    if(item.error){
+      main.innerHTML =
+        UI.header('❌ 読取りエラー ('+(idx+1)+'/'+_queue.length+'件目)', {back:true, backFn:'Pages._bsPrevItem()'}) +
+        '<div class="page-body">' +
+          _bsProgressBar(idx) +
+          '<div style="background:rgba(224,64,64,.08);border:1px solid rgba(224,64,64,.3);border-radius:10px;padding:16px;margin-top:8px">' +
+            '<div style="font-size:.9rem;font-weight:700;color:#e04040;margin-bottom:8px">⚠️ この枚数は処理できませんでした</div>' +
+            '<div style="font-size:.78rem;color:var(--text3)">'+item.error+'</div>' +
+            (item.capturedImage ?
+              '<div style="margin-top:12px;background:#000;border-radius:6px;overflow:hidden"><img src="'+item.capturedImage+'" style="width:100%;max-height:200px;object-fit:contain;display:block"></div>' : '') +
+          '</div>' +
+        '</div>' +
+        '<div class="quick-action-bar">' +
+          '<button class="btn btn-ghost" style="flex:1;padding:14px 0" onclick="Pages._bsPrevItem()">← 前へ</button>' +
+          '<button class="btn btn-primary" style="flex:2;padding:14px 0;font-weight:700" onclick="Pages._bsNextItem()">スキップして次へ →</button>' +
+        '</div>';
+      return;
+    }
+
+    var ocr = item.ocrResult || {};
+    var isUnit = item.targetType === 'UNIT';
+    var members = item.members || [];
+    var dispId  = item.displayId || '—';
+    var entityStage = item.entity ? (item.entity.current_stage || item.entity.stage_phase || '') : '';
+    var prevRecs = (Store.getGrowthRecords&&Store.getGrowthRecords(item.targetId))||[];
+    var lastRec  = prevRecs.length
+      ? prevRecs.slice().sort(function(a,b){return String(b.record_date).localeCompare(String(a.record_date));})[0]
+      : null;
+
+    if(!item.tableRows) item.tableRows = _bsBuildTableRows(ocr, isUnit);
+
+    var today   = new Date().toISOString().split('T')[0];
+    var recDate = (ocr.record_date||today).replace(/\//g,'-');
+    var stage   = ocr.stage||entityStage||'';
+    var mat     = ocr.mat_type||'';
+    var curSex  = item.detectedSex || (item.entity&&item.entity.sex) || '';
+
+    var matOpts = MAT_OPTIONS.map(function(m){return '<option value="'+m+'"'+(mat===m?' selected':'')+'>'+m+'</option>';}).join('');
+    var stageOpts = [{v:'L1L2',l:'L1L2'},{v:'L3',l:'L3'},{v:'PREPUPA',l:'前蛹'},{v:'PUPA',l:'蛹'},{v:'ADULT_PRE',l:'成虫（未後食）'},{v:'ADULT',l:'成虫（活動中）'}]
+      .map(function(s){return '<option value="'+s.v+'"'+(stage===s.v?' selected':'')+'>'+s.l+'</option>';}).join('');
+
+    var isLast = idx === _queue.length - 1;
+
+    main.innerHTML =
+      UI.header('📋 確認・修正', {back:true, backFn:'Pages._bsPrevItem()'}) +
+      '<div class="page-body">' +
+
+      // ▼ プログレスバー（上部に何件目か表示）
+      _bsProgressBar(idx) +
+
+      // 対象情報
+      '<div class="card" style="padding:12px 14px">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between">' +
+          '<div>' +
+            '<div style="font-size:.9rem;font-weight:700;color:var(--gold)">'+dispId+'</div>' +
+            '<div style="font-size:.72rem;color:var(--text3)">'+(isUnit?'ユニット':'個別飼育')+(entityStage?' / '+entityStage:'')+'</div>' +
+            (lastRec?'<div style="font-size:.68rem;color:var(--text3);margin-top:2px">前回: '+lastRec.record_date+' / '+(lastRec.weight_g||'—')+'g</div>':'') +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+
+      // OCR信頼度
+      (ocr._confidence==='low'
+        ? '<div style="background:rgba(224,144,64,.1);border:1px solid rgba(224,144,64,.3);border-radius:8px;padding:10px 12px;font-size:.76rem;color:var(--amber)">⚠️ 一部の値が読み取れなかった可能性があります。内容を確認してください。</div>'
+        : '<div style="background:rgba(76,175,120,.08);border:1px solid rgba(76,175,120,.25);border-radius:8px;padding:10px 12px;font-size:.76rem;color:var(--green)">✅ OCR読み取り完了。セルをタップして修正できます。</div>'
+      ) +
+
+      // 撮影画像
+      (item.capturedImage ?
+        '<div class="card" style="padding:10px 12px"><div style="font-size:.72rem;font-weight:700;color:var(--text2);margin-bottom:6px">📸 撮影画像</div><div style="background:#000;border-radius:6px;overflow:hidden"><img src="'+item.capturedImage+'" style="width:100%;max-height:200px;object-fit:contain;display:block"></div></div>' : '') +
+
+      // 凡例
+      '<div style="display:flex;gap:8px;font-size:.68rem;padding:0 2px;flex-wrap:wrap">' +
+        '<span style="display:flex;align-items:center;gap:3px"><span style="width:10px;height:10px;background:rgba(76,175,120,.35);border-radius:2px;display:inline-block"></span>OCR読取済</span>' +
+        '<span style="display:flex;align-items:center;gap:3px"><span style="width:10px;height:10px;background:rgba(224,200,64,.35);border-radius:2px;display:inline-block"></span>要確認</span>' +
+      '</div>' +
+
+      // テーブル
+      _bsRenderTable(idx) +
+
+      // 共通設定
+      '<div class="card" style="padding:14px">' +
+        '<div style="font-size:.78rem;font-weight:700;color:var(--text2);margin-bottom:10px">🗓️ 共通設定</div>' +
+        (!isUnit ?
+          '<div style="margin-bottom:10px">' +
+            '<label style="font-size:.72rem;color:var(--text3);font-weight:700">性別</label>' +
+            '<div style="display:flex;gap:8px;margin-top:6px">' +
+              '<button class="btn '+(curSex==='♂'?'btn-primary':'btn-ghost')+'" style="flex:1;padding:10px" data-bs-idx="'+idx+'" data-bs-sex="♂" onclick="Pages._bsSetSexBtn(this)">◯♂ 雄確定</button>' +
+              '<button class="btn '+(curSex==='♀'?'btn-primary':'btn-ghost')+'" style="flex:1;padding:10px" data-bs-idx="'+idx+'" data-bs-sex="♀" onclick="Pages._bsSetSexBtn(this)">◯♀ 雌確定</button>' +
+              '<button class="btn '+(!curSex?'btn-primary':'btn-ghost')+'" style="flex:1;padding:10px" data-bs-idx="'+idx+'" data-bs-sex="" onclick="Pages._bsSetSexBtn(this)">未確定</button>' +
+            '</div>' +
+          '</div>' : '') +
+        '<div style="margin-bottom:10px">' +
+          '<label style="font-size:.72rem;color:var(--text3);font-weight:700">記録日</label>' +
+          '<input type="date" id="bs-date" class="input" value="'+recDate+'" style="margin-top:4px">' +
+        '</div>' +
+        '<div style="margin-bottom:10px">' +
+          '<label style="font-size:.72rem;color:var(--text3);font-weight:700">📊 ステージ <span style="color:var(--red)">*</span></label>' +
+          '<select id="bs-stage" class="input" style="margin-top:4px"><option value="">選択...</option>'+stageOpts+'</select>' +
+        '</div>' +
+        '<div>' +
+          '<label style="font-size:.72rem;color:var(--text3);font-weight:700">メモ（任意）</label>' +
+          '<input type="text" id="bs-note" class="input" value="'+(ocr.note||'')+'" placeholder="気になることがあれば..." style="margin-top:4px">' +
+        '</div>' +
+      '</div>' +
+
+      '</div>' +
+      '<div class="quick-action-bar">' +
+        '<button class="btn btn-ghost" style="flex:1;padding:14px 0" onclick="Pages._bsPrevItem()">← 戻る</button>' +
+        '<button class="btn btn-gold" style="flex:2;padding:14px 0;font-weight:700;font-size:.95rem" onclick="Pages._bsSaveItem('+idx+')">' +
+          (isLast ? '💾 保存して完了' : '💾 保存して次へ →') +
+        '</button>' +
+      '</div>';
+  }
+
+  // ── プログレスバー ────────────────────────────────────────────
+  function _bsProgressBar(idx) {
+    var total = _queue.length;
+    var cur   = idx + 1;
+    var pct   = Math.round(cur / total * 100);
+    var dots  = '';
+    for(var i=0;i<total;i++){
+      var item = _queue[i];
+      var col = i < idx ? 'var(--green)' : i === idx ? 'var(--gold)' : 'var(--border)';
+      var icon = item && item.error ? '✕' : (item && item.saved ? '✓' : String(i+1));
+      dots += '<div style="width:28px;height:28px;border-radius:50%;background:'+col+';display:flex;align-items:center;justify-content:center;font-size:.7rem;font-weight:700;color:#fff;flex-shrink:0">'+icon+'</div>';
+    }
+    return '<div style="background:var(--surface2);border-radius:10px;padding:10px 14px;margin-bottom:4px">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">' +
+        '<div style="font-size:.82rem;font-weight:700;color:var(--text2)">' +
+          '<span style="color:var(--gold);font-size:1rem;font-weight:800">'+cur+'</span>' +
+          '<span style="color:var(--text3)">/'+total+'件目</span>' +
+        '</div>' +
+        '<div style="font-size:.72rem;color:var(--text3)">'+pct+'% 完了</div>' +
+      '</div>' +
+      '<div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap">'+dots+'</div>' +
+    '</div>';
+  }
+
+  // ── Step3: 完了画面 ────────────────────────────────────────────
+  function renderDone() {
+    var saved   = _queue.filter(function(q){ return q.saved; }).length;
+    var errored = _queue.filter(function(q){ return q.error; }).length;
+    var skipped = _queue.filter(function(q){ return !q.saved && !q.error; }).length;
+
+    main.innerHTML =
+      UI.header('✅ 一括読取り完了', {}) +
+      '<div class="page-body" style="text-align:center;padding-top:24px">' +
+        '<div style="font-size:3rem;margin-bottom:16px">✅</div>' +
+        '<div style="font-size:1.1rem;font-weight:700;color:var(--green);margin-bottom:8px">'+saved+'件を保存しました</div>' +
+        (errored > 0 ? '<div style="font-size:.82rem;color:#e04040;margin-bottom:4px">読取りエラー: '+errored+'件</div>' : '') +
+        (skipped > 0 ? '<div style="font-size:.82rem;color:var(--amber);margin-bottom:4px">スキップ: '+skipped+'件</div>' : '') +
+        '<div style="display:flex;gap:10px;margin-top:24px;justify-content:center">' +
+          '<button class="btn btn-primary" style="padding:14px 24px;font-size:.95rem" onclick="Pages.batchScan()">続けて撮影</button>' +
+          '<button class="btn btn-ghost" style="padding:14px 24px;font-size:.95rem" onclick="routeTo(\'dashboard\')">ホームへ</button>' +
+        '</div>' +
+      '</div>';
+  }
+
+  // ── テーブル描画（_renderRecordTableの簡易版） ─────────────────
+  function _bsRenderTable(idx) {
+    var item = _queue[idx];
+    if(!item||!item.tableRows) return '';
+    var rows = item.tableRows;
+    var isUnit = item.targetType === 'UNIT';
+    var members = item.members || [];
+    var m0l = members&&members[0]?((members[0].sex||'?')+' ①'):'①';
+    var m1l = members&&members[1]?((members[1].sex||'?')+' ②'):'②';
+
+    function bg(s){
+      if(s==='high') return 'background:rgba(76,175,120,.25);';
+      if(s==='low')  return 'background:rgba(224,200,64,.25);';
+      if(s==='auto') return 'background:rgba(100,180,255,.12);';
+      if(s==='manual') return 'background:rgba(76,175,120,.18);';
+      return 'background:rgba(255,255,255,.05);';
+    }
+    function exch(v){
+      if(v==='FULL') return '<span style="color:#60d080;font-weight:700">■全</span><br><span style="color:var(--text3)">□追</span>';
+      if(v==='ADD')  return '<span style="color:var(--text3)">□全</span><br><span style="color:#60d080;font-weight:700">■追</span>';
+      return '<span style="color:var(--text3)">□全</span><br><span style="color:var(--text3)">□追</span>';
+    }
+    function td(bgS,content,oc,extra){
+      return '<td style="border:1.5px solid var(--border);padding:5px 2px;font-size:.72rem;font-weight:700;text-align:center;cursor:pointer;min-width:0;'+(bgS)+(extra||'')+'" onclick="'+oc+'">'+content+'</td>';
+    }
+    function tdWt(bgS,val,oc){return td(bgS,val?val+'<span style="font-size:.55rem">g</span>':'<span style="color:var(--text3)">—</span>',oc);}
+    function tdSm(bgS,val,oc){return td(bgS,val||'—',oc,'font-size:.65rem;');}
+    var thS='border:1.5px solid var(--border);padding:4px 2px;font-size:.65rem;font-weight:700;color:var(--text2);text-align:center;background:var(--surface2)';
+    var sep='<td style="width:2px;background:var(--border);padding:0"></td>';
+
+    var html='<div class="card" style="padding:10px 12px">' +
+      '<div style="font-size:.78rem;font-weight:700;color:var(--text2);margin-bottom:6px">📝 記録テーブル <span style="font-size:.65rem;color:var(--text3);font-weight:400">（セルをタップして編集）</span></div>' +
+      '<div style="overflow-x:auto">';
+
+    if(isUnit){
+      html+='<table style="width:100%;border-collapse:collapse;table-layout:fixed"><thead><tr>' +
+        '<th style="'+thS+';width:18%">日付</th><th style="'+thS+';width:13%">'+m0l+'</th><th style="'+thS+';width:13%">'+m1l+'</th><th style="'+thS+';width:18%">交換</th><th style="'+thS+';width:14%">マット</th><th style="'+thS+';width:14%">容器</th>' +
+        '</tr></thead><tbody>';
+      for(var i=0;i<4;i++){
+        var r=rows[i]||{date:'',weight1:'',weight2:'',exchange:'',mat_type:'',container:'',date_state:'empty',weight1_state:'empty',weight2_state:'empty',exchange_state:'empty',mat_state:'auto',container_state:'auto'};
+        html+='<tr>'+
+          td(bg(r.date_state),r.date||'—','Pages._bsEditCell('+idx+','+i+',\'date\')')+
+          tdWt(bg(r.weight1_state),r.weight1,'Pages._bsEditCell('+idx+','+i+',\'weight1\')')+
+          tdWt(bg(r.weight2_state),r.weight2,'Pages._bsEditCell('+idx+','+i+',\'weight2\')')+
+          td(bg(r.exchange_state),exch(r.exchange),'Pages._bsEditCell('+idx+','+i+',\'exchange\')')+
+          tdSm(bg(r.mat_state),r.mat_type||'—','Pages._bsEditCell('+idx+','+i+',\'mat\')')+
+          tdSm(bg(r.container_state),r.container||'—','Pages._bsEditCell('+idx+','+i+',\'container\')')+
+          '</tr>';
+      }
+    } else {
+      html+='<table style="min-width:520px;width:100%;border-collapse:collapse;table-layout:fixed"><thead><tr>'+
+        '<th style="'+thS+';width:11%">日付</th><th style="'+thS+';width:9%">体重</th><th style="'+thS+';width:12%">交換</th><th style="'+thS+';width:8%">M</th><th style="'+thS+';width:8%">容器</th>'+sep+
+        '<th style="'+thS+';width:11%">日付</th><th style="'+thS+';width:9%">体重</th><th style="'+thS+';width:12%">交換</th><th style="'+thS+';width:8%">M</th><th style="'+thS+';width:8%">容器</th>'+
+        '</tr></thead><tbody>';
+      for(var j=0;j<4;j++){
+        var lr=rows[j]||_emptyRow('',''), rr=rows[j+4]||_emptyRow('',''), ri=j+4;
+        html+='<tr>'+
+          td(bg(lr.date_state),lr.date||'—','Pages._bsEditCell('+idx+','+j+',\'date\')')+
+          tdWt(bg(lr.weight1_state),lr.weight1,'Pages._bsEditCell('+idx+','+j+',\'weight1\')')+
+          td(bg(lr.exchange_state),exch(lr.exchange),'Pages._bsEditCell('+idx+','+j+',\'exchange\')')+
+          tdSm(bg(lr.mat_state),lr.mat_type||'—','Pages._bsEditCell('+idx+','+j+',\'mat\')')+
+          tdSm(bg(lr.container_state),lr.container||'—','Pages._bsEditCell('+idx+','+j+',\'container\')')+
+          sep+
+          td(bg(rr.date_state),rr.date||'—','Pages._bsEditCell('+idx+','+ri+',\'date\')')+
+          tdWt(bg(rr.weight1_state),rr.weight1,'Pages._bsEditCell('+idx+','+ri+',\'weight1\')')+
+          td(bg(rr.exchange_state),exch(rr.exchange),'Pages._bsEditCell('+idx+','+ri+',\'exchange\')')+
+          tdSm(bg(rr.mat_state),rr.mat_type||'—','Pages._bsEditCell('+idx+','+ri+',\'mat\')')+
+          tdSm(bg(rr.container_state),rr.container||'—','Pages._bsEditCell('+idx+','+ri+',\'container\')')+
+          '</tr>';
+      }
+    }
+    html+='</tbody></table></div></div>';
+    return html;
+  }
+
+  // ── テーブルのセル更新（テーブル部分のみ再描画） ────────────────
+  function _bsRefreshTable(idx) {
+    var cards = main.querySelectorAll('.card');
+    for(var i=0;i<cards.length;i++){
+      if(cards[i].innerHTML.indexOf('記録テーブル')!==-1){
+        var tmp=document.createElement('div'); tmp.innerHTML=_bsRenderTable(idx);
+        cards[i].parentNode.replaceChild(tmp.firstChild,cards[i]); return;
+      }
+    }
+  }
+
+  // ── セル編集 ─────────────────────────────────────────────────
+  Pages._bsEditCell = function(itemIdx, rowIdx, col) {
+    var item = _queue[itemIdx];
+    if(!item||!item.tableRows) return;
+    while(item.tableRows.length<=rowIdx) item.tableRows.push(_emptyRow('',''));
+    var row = item.tableRows[rowIdx];
+    var isUnit = item.targetType === 'UNIT';
+
+    if(col==='exchange'){
+      var cur=row.exchange||'';
+      UI.modal(
+        '<div class="modal-title" style="font-size:.9rem;font-weight:700;padding-bottom:8px">'+(rowIdx+1)+'行目 — 交換種別</div>' +
+        '<div style="display:flex;flex-direction:column;gap:10px;padding:8px 0">' +
+          '<button class="btn '+(cur==='FULL'?'btn-primary':'btn-ghost')+'" style="padding:16px;font-size:1rem" data-bi="'+itemIdx+'" data-ri="'+rowIdx+'" data-col="exchange" data-val="FULL" onclick="Pages._bsCellSaveBtn(this)">■全 — 全交換</button>' +
+          '<button class="btn '+(cur==='ADD'?'btn-primary':'btn-ghost')+'" style="padding:16px;font-size:1rem" data-bi="'+itemIdx+'" data-ri="'+rowIdx+'" data-col="exchange" data-val="ADD" onclick="Pages._bsCellSaveBtn(this)">■追 — 追加マット</button>' +
+          '<button class="btn '+((!cur||cur==='NONE')?'btn-primary':'btn-ghost')+'" style="padding:16px;font-size:1rem" data-bi="'+itemIdx+'" data-ri="'+rowIdx+'" data-col="exchange" data-val="NONE" onclick="Pages._bsCellSaveBtn(this)">□ — なし</button>' +
+        '</div><div class="modal-footer"><button class="btn btn-ghost btn-full" onclick="UI.closeModal()">キャンセル</button></div>'
+      ); return;
+    }
+    if(col==='mat'){
+      var curM=row.mat_type||'';
+      var btns=MAT_OPTIONS.map(function(m){return '<button class="btn '+(curM===m?'btn-primary':'btn-ghost')+'" style="flex:1;padding:12px 4px;font-size:.9rem" data-bi="'+itemIdx+'" data-ri="'+rowIdx+'" data-col="mat" data-val="'+m+'" onclick="Pages._bsCellSaveBtn(this)">'+m+'</button>';}).join('');
+      UI.modal('<div class="modal-title" style="font-size:.9rem;font-weight:700;padding-bottom:8px">'+(rowIdx+1)+'行目 — マット</div><div style="font-size:.74rem;color:var(--text3);margin-bottom:8px">この行から以降に適用</div><div style="display:flex;gap:6px;padding:4px 0;flex-wrap:wrap">'+btns+'</div><div class="modal-footer"><button class="btn btn-ghost btn-full" onclick="UI.closeModal()">キャンセル</button></div>'); return;
+    }
+    if(col==='container'){
+      var curC=row.container||'';
+      var cbtns=CONT_OPTIONS.map(function(c){return '<button class="btn '+(curC===c?'btn-primary':'btn-ghost')+'" style="flex:1;padding:12px 4px;font-size:.9rem" data-bi="'+itemIdx+'" data-ri="'+rowIdx+'" data-col="container" data-val="'+c+'" onclick="Pages._bsCellSaveBtn(this)">'+c+'</button>';}).join('');
+      UI.modal('<div class="modal-title" style="font-size:.9rem;font-weight:700;padding-bottom:8px">'+(rowIdx+1)+'行目 — 容器</div><div style="font-size:.74rem;color:var(--text3);margin-bottom:8px">この行から以降に適用</div><div style="display:flex;gap:6px;padding:4px 0;flex-wrap:wrap">'+cbtns+'</div><div class="modal-footer"><button class="btn btn-ghost btn-full" onclick="UI.closeModal()">キャンセル</button></div>'); return;
+    }
+
+    var lbl = col==='date'?'日付': col==='weight1'?(isUnit?'①体重(g)':'体重(g)'):'②体重(g)';
+    var tp  = col==='date'?'date':'number';
+    var cur2= row[col]||'';
+    if(col==='date'&&cur2){ var m=cur2.match(/^(\d{1,2})\/(\d{1,2})$/); if(m) cur2=new Date().getFullYear()+'-'+String(m[1]).padStart(2,'0')+'-'+String(m[2]).padStart(2,'0'); }
+    UI.modal(
+      '<div class="modal-title" style="font-size:.9rem;font-weight:700;padding-bottom:8px">'+(rowIdx+1)+'行目 — '+lbl+'を編集</div>' +
+      '<div style="padding:8px 0"><input id="bs-cell-input" type="'+tp+'" class="input" value="'+cur2+'" inputmode="'+(col==='date'?'text':'decimal')+'" step="'+(col==='date'?'':'0.1')+'" style="font-size:1.1rem;text-align:center">'+(col!=='date'?'<div style="font-size:.7rem;color:var(--text3);margin-top:6px;text-align:center">g（グラム）</div>':'')+'</div>' +
+      '<div class="modal-footer"><button class="btn btn-ghost" style="flex:1" onclick="UI.closeModal()">キャンセル</button><button class="btn btn-primary" style="flex:2" data-bi="'+itemIdx+'" data-ri="'+rowIdx+'" data-col="'+col+'" onclick="Pages._bsCellSaveBtnText(this)">確定</button></div>'
+    );
+    setTimeout(function(){ var inp=document.getElementById('bs-cell-input'); if(inp)inp.focus(); },100);
+  };
+
+  // data属性経由のセル保存（onclick内クォートネスト回避）
+  Pages._bsCellSaveBtn = function(btn) {
+    var itemIdx = parseInt(btn.getAttribute('data-bi'), 10);
+    var rowIdx  = parseInt(btn.getAttribute('data-ri'), 10);
+    var col     = btn.getAttribute('data-col') || '';
+    var val     = btn.getAttribute('data-val') || '';
+    Pages._bsCellSave(itemIdx, rowIdx, col, val);
+  };
+  Pages._bsCellSaveBtnText = function(btn) {
+    var itemIdx = parseInt(btn.getAttribute('data-bi'), 10);
+    var rowIdx  = parseInt(btn.getAttribute('data-ri'), 10);
+    var col     = btn.getAttribute('data-col') || '';
+    var inp     = document.getElementById('bs-cell-input');
+    var val     = inp ? inp.value.trim() : '';
+    Pages._bsCellSave(itemIdx, rowIdx, col, val);
+  };
+
+  Pages._bsCellSave = function(itemIdx, rowIdx, col, forceVal) {
+    var item = _queue[itemIdx];
+    if(!item||!item.tableRows) return;
+    while(item.tableRows.length<=rowIdx) item.tableRows.push(_emptyRow('',''));
+    var rows = item.tableRows, row = rows[rowIdx];
+    var val = forceVal!==undefined ? forceVal : (function(){ var inp=document.getElementById('bs-cell-input'); return inp?inp.value.trim():''; })();
+
+    if(col==='date'){
+      if(val&&val.match(/^\d{4}-\d{2}-\d{2}$/)) val=val.slice(5).replace('-','/');
+      row.date=val; row.date_state=val?'high':'empty';
+    } else if(col==='weight1'){row.weight1=val;row.weight1_state=val?'high':'empty';}
+    else if(col==='weight2'){row.weight2=val;row.weight2_state=val?'high':'empty';}
+    else if(col==='exchange'){row.exchange=val;row.exchange_state=val&&val!=='NONE'?'high':'empty';}
+    else if(col==='mat'){for(var i=rowIdx;i<rows.length;i++){rows[i].mat_type=val;rows[i].mat_state='manual';}}
+    else if(col==='container'){for(var j=rowIdx;j<rows.length;j++){rows[j].container=val;rows[j].container_state='manual';}}
+
+    UI.closeModal&&UI.closeModal();
+    _bsRefreshTable(itemIdx);
+  };
+
+  // ── 性別ボタン ────────────────────────────────────────────────
+  Pages._bsSetSex = function(idx, sex) {
+    var item = _queue[idx];
+    if(!item) return;
+    item.detectedSex = sex || null;
+    var btns = main.querySelectorAll('[onclick^="Pages._bsSetSex"]');
+    btns.forEach(function(b){
+      var m = b.getAttribute('onclick').match(/','([^']*)'\)/);
+      var v = m ? m[1] : '';
+      b.className = 'btn ' + ((v===sex||(v===''&&!sex))?'btn-primary':'btn-ghost');
+      b.style.flex='1'; b.style.padding='10px';
+    });
+  };
+
+  // data属性ラッパー（onclick内のシングルクォートネスト回避）
+  Pages._bsSetSexBtn = function(btn) {
+    var idx = parseInt(btn.getAttribute('data-bs-idx'), 10);
+    var sex = btn.getAttribute('data-bs-sex') || '';
+    Pages._bsSetSex(idx, sex);
+  };
+
+  // ── ナビゲーション ─────────────────────────────────────────────
+  Pages._bsPrevItem = function() {
+    if(_phase==='shoot') return;
+    if(_curIdx === 0){ _phase='shoot'; render(); return; }
+    _curIdx--; renderConfirmItem(_curIdx);
+  };
+  Pages._bsNextItem = function() {
+    _curIdx++;
+    if(_curIdx >= _queue.length){ _phase='done'; render(); }
+    else renderConfirmItem(_curIdx);
+  };
+  Pages._bsStartConfirm = function() {
+    if(_queue.length===0) return;
+    _phase='confirm'; _curIdx=0; renderConfirmItem(0);
+  };
+  Pages._bsRemoveItem = function(idx) {
+    _queue.splice(idx, 1);
+    _shootError = null;
+    render();
+  };
+
+  // ── 保存 ─────────────────────────────────────────────────────
+  Pages._bsSaveItem = function(idx) {
+    var item = _queue[idx];
+    if(!item) return;
+    var stage   = document.getElementById('bs-stage')?.value || '';
+    var recDate = (document.getElementById('bs-date')?.value||'').replace(/-/g,'/');
+    var note    = document.getElementById('bs-note')?.value  || '';
+    var isUnit  = item.targetType === 'UNIT';
+
+    if(!stage){ UI.toast('ステージを選択してください','error'); return; }
+    var rows = item.tableRows || [];
+    var hasData = rows.some(function(r){ return r.weight1||r.weight2||r.date; });
+    if(!hasData){ UI.toast('体重または日付を少なくとも1行入力してください','error'); return; }
+
+    // 楽観的更新: 即次へ
+    item.saved = true;
+    UI.toast('💾 保存中（バックグラウンド）...','info',1500);
+    Pages._bsNextItem();
+
+    // バックグラウンド保存（リトライ2回）
+    (async function() {
+      async function _retry(payload, max) {
+        for(var i=0;i<=max;i++){
+          try{ return await API.growth.create(payload); }
+          catch(e){
+            if(i<max) await new Promise(function(r){setTimeout(r,2000);}); else throw e;
+          }
+        }
+      }
+      try {
+        var savedCount = 0;
+        function mkPayload(row, extra) {
+          var rd = row.date?row.date.trim():recDate||new Date().toISOString().split('T')[0].replace(/-/g,'/');
+          if(rd&&rd.match(/^\d{1,2}\/\d{1,2}$/)) rd=new Date().getFullYear()+'/'+rd;
+          var p = Object.assign({
+            target_type:item.targetType, target_id:item.targetId,
+            stage:stage, mat_type:row.mat_type||'', container_size:row.container||'',
+            exchange_type:row.exchange||'NONE', record_date:rd,
+            event_type:'WEIGHT_ONLY', note_private:note, has_malt:false,
+          }, extra);
+          if(!isUnit && item.detectedSex) p.sex = item.detectedSex;
+          return p;
+        }
+        if(isUnit){
+          var mbs = item.members||[];
+          for(var i=0;i<rows.length;i++){
+            var r=rows[i]; if(!r.weight1&&!r.weight2&&!r.date)continue;
+            if(r.weight1!==''||mbs[0]){await _retry(mkPayload(r,{unit_slot_no:1,weight_g:r.weight1?parseFloat(r.weight1):''}),2);savedCount++;}
+            if(r.weight2!==''||mbs[1]){await _retry(mkPayload(r,{unit_slot_no:2,weight_g:r.weight2?parseFloat(r.weight2):''}),2);savedCount++;}
+          }
+        } else {
+          for(var k=0;k<rows.length;k++){
+            var row=rows[k]; if(!row.weight1&&!row.date)continue;
+            await _retry(mkPayload(row,{weight_g:row.weight1?parseFloat(row.weight1):''}),2);
+            savedCount++;
+          }
+        }
+        UI.toast('✅ '+item.displayId+' 保存完了','success',2000);
+      } catch(e) {
+        item.saved = false;
+        console.error('[BS] save error:', e);
+        UI.toast('⚠️ '+item.displayId+' 保存失敗（リトライ2回）: '+(e.message||'通信エラー'),'error',7000);
+      }
+    })();
+  };
+
+  // ── カメラ制御 ────────────────────────────────────────────────
+  Pages._bsOpenCamera = async function() {
+    var pa=document.getElementById('bs-camera-preview'), ba=document.getElementById('bs-btn-area');
+    if(!pa||!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
+      var inp=document.getElementById('bs-file-input'); if(inp){inp.setAttribute('capture','environment');inp.click();} return;
+    }
+    try {
+      var stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920,min:640},height:{ideal:1080,min:480}}});
+      var video=document.getElementById('bs-video');
+      if(!video){stream.getTracks().forEach(function(t){t.stop();});return;}
+      video.srcObject=stream; pa.style.display='block'; if(ba)ba.style.display='none'; video.play();
+    } catch(e){ var inp=document.getElementById('bs-file-input'); if(inp){inp.setAttribute('capture','environment');inp.click();} }
+  };
+  Pages._bsStopCamera = function() {
+    var video=document.getElementById('bs-video');
+    if(video&&video.srcObject){video.srcObject.getTracks().forEach(function(t){t.stop();});video.srcObject=null;}
+    var pa=document.getElementById('bs-camera-preview'), ba=document.getElementById('bs-btn-area');
+    if(pa)pa.style.display='none'; if(ba)ba.style.display='block';
+  };
+  Pages._bsTakePhoto = function() {
+    var video=document.getElementById('bs-video'), canvas=document.getElementById('bs-canvas');
+    if(!video||!canvas)return;
+    canvas.width=video.videoWidth||1280; canvas.height=video.videoHeight||720;
+    var ctx=canvas.getContext('2d'); ctx.drawImage(video,0,0);
+    var fw=canvas.width, fh=canvas.height;
+    var cw=Math.round(fw*0.72), ch=Math.round(cw*(70/62));
+    if(ch>fh*0.95){ch=Math.round(fh*0.95);cw=Math.round(ch*(62/70));}
+    var cx=Math.round((fw-cw)/2), cy=Math.round((fh-ch)/2);
+    var cc=document.createElement('canvas'); cc.width=cw; cc.height=ch;
+    cc.getContext('2d').drawImage(canvas,cx,cy,cw,ch,0,0,cw,ch);
+    Pages._bsStopCamera();
+    Pages._bsAddImage(cc.toDataURL('image/jpeg',0.92));
+  };
+  Pages._bsOpenGallery = function() {
+    var inp=document.getElementById('bs-gallery-input'); if(inp){inp.removeAttribute('capture');inp.click();}
+  };
+  Pages._bsOnImageSelected = function(input) {
+    var file=input&&input.files&&input.files[0]; if(!file)return;
+    var reader=new FileReader();
+    reader.onload=function(e){ Pages._bsAddImage(e.target.result); };
+    reader.readAsDataURL(file);
+  };
+
+  // ── 画像をキューに追加してOCRをバックグラウンド開始 ────────────
+  Pages._bsAddImage = function(base64) {
+    if(_queue.length >= MAX_BATCH){
+      UI.toast('最大'+MAX_BATCH+'枚まです','error'); return;
+    }
+    _shootError = null;
+    var geminiKey=(typeof CONFIG!=='undefined'&&CONFIG.GEMINI_KEY)||Store.getSetting('gemini_key')||'';
+
+    // アイテムをキューに追加（OCR完了前）
+    var item = {
+      capturedImage: base64,
+      ocrResult:     null,
+      ocrPromise:    null,
+      targetType:    null, targetId: null, displayId: null,
+      entity:        null, members:  [],
+      tableRows:     null, detectedSex: null,
+      saved:         false, error: null,
+    };
+    _queue.push(item);
+    render(); // サムネイル更新
+
+    // バックグラウンドでQR+OCR処理
+    (async function() {
+      try {
+        var _smallBase64 = await _resizeImageForOCR(base64, 640);
+        var results = await Promise.all([
+          _extractQrFromImage(base64),
+          geminiKey ? _callGeminiOCR(geminiKey, _smallBase64) : Promise.resolve({_confidence:'low'}),
+        ]);
+        var qrText = results[0], ocrResult = results[1];
+        if(!qrText&&ocrResult&&ocrResult.qr_text) qrText=ocrResult.qr_text;
+        var qrResolved = _bsResolveFromQrText(qrText);
+        if(!qrResolved){
+          item.error = qrText ? 'QRコードの対象が特定できませんでした（'+qrText+'）' : 'QRコードが検出できませんでした';
+        } else {
+          item.targetType = qrResolved.targetType;
+          item.targetId   = qrResolved.targetId;
+          item.displayId  = qrResolved.displayId;
+          item.entity     = qrResolved.entity || _bsResolveEntity(qrResolved.targetType, qrResolved.targetId);
+          item.members    = _bsParseMembers(item.entity);
+          item.ocrResult  = ocrResult;
+          if(ocrResult&&ocrResult.sex) item.detectedSex = ocrResult.sex;
+        }
+      } catch(e) {
+        item.error = 'OCR処理エラー: ' + (e.message||'不明なエラー');
+      }
+      // 撮影フェーズ中なら再描画してサムネイルを更新
+      if(_phase==='shoot') render();
+      // 確認フェーズでこのアイテムを表示中なら再描画
+      else if(_phase==='confirm' && _curIdx === _queue.indexOf(item)) renderConfirmItem(_curIdx);
+    })();
+  };
+
+  render();
+};
+
 window.PAGES = window.PAGES || {};
 window.PAGES['continuous-scan'] = function() {
   Pages.continuousScan(Store.getParams());
 };
+window.PAGES['batch-scan'] = function() { Pages.batchScan(Store.getParams()); };
