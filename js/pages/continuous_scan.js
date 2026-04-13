@@ -7,6 +7,149 @@
 //   - 撮影画像を大きく表示、カメラガイド枠付きプレビュー
 //   - 右列交換欄を□全/□追表示、個体8行対応
 
+// ────────────────────────────────────────────────────────────────
+// 共有ユーティリティ（continuousScan / batchScan 両方から使用）
+// ────────────────────────────────────────────────────────────────
+
+// 画像圧縮（Gemini送信用・転送量削減で高速化）
+function _resizeImageForOCR(base64, maxPx) {
+  return new Promise(function(resolve) {
+    var img = new Image();
+    img.onload = function() {
+      var w=img.width, h=img.height;
+      if(w<=maxPx && h<=maxPx){resolve(base64);return;}
+      var scale=maxPx/Math.max(w,h), sw=Math.round(w*scale), sh=Math.round(h*scale);
+      var cv=document.createElement('canvas'); cv.width=sw; cv.height=sh;
+      cv.getContext('2d').drawImage(img,0,0,sw,sh);
+      resolve(cv.toDataURL('image/jpeg',0.80));
+    };
+    img.onerror=function(){resolve(base64);};
+    img.src=base64;
+  });
+}
+
+// Canvas前処理（グレースケール+コントラスト強調）
+function _preprocessCanvas(canvas, ctx, w, h) {
+  var d=ctx.getImageData(0,0,w,h),px=d.data,ga=new Uint8Array(w*h),mn=255,mx=0;
+  for (var i=0;i<px.length;i+=4){var g=Math.round(px[i]*0.299+px[i+1]*0.587+px[i+2]*0.114);ga[i>>2]=g;if(g<mn)mn=g;if(g>mx)mx=g;}
+  var rng=mx-mn||1;
+  for (var j=0;j<ga.length;j++){var bw=Math.round((ga[j]-mn)/rng*255)>128?255:0;px[j*4]=px[j*4+1]=px[j*4+2]=bw;px[j*4+3]=255;}
+  ctx.putImageData(d,0,0); return ctx.getImageData(0,0,w,h);
+}
+
+// QRコード検出
+function _extractQrFromImage(url) {
+  return new Promise(function(resolve) {
+    if (typeof jsQR==='undefined') {resolve(null);return;}
+    var img=new Image();
+    img.onload=function() {
+      var cv=document.createElement('canvas'); cv.width=img.width; cv.height=img.height;
+      var ctx=cv.getContext('2d'); ctx.drawImage(img,0,0);
+      var d1=ctx.getImageData(0,0,cv.width,cv.height);
+      var c1=jsQR(d1.data,d1.width,d1.height,{inversionAttempts:'attemptBoth'});
+      if(c1&&c1.data){resolve(c1.data);return;}
+      ctx.drawImage(img,0,0);
+      var d2=_preprocessCanvas(cv,ctx,cv.width,cv.height);
+      var c2=jsQR(d2.data,d2.width,d2.height,{inversionAttempts:'attemptBoth'});
+      if(c2&&c2.data){resolve(c2.data);return;}
+      if(img.width>1200){
+        var sc=1200/img.width,sw=Math.round(img.width*sc),sh=Math.round(img.height*sc);
+        cv.width=sw;cv.height=sh;ctx.drawImage(img,0,0,sw,sh);
+        var d3=ctx.getImageData(0,0,sw,sh);
+        var c3=jsQR(d3.data,d3.width,d3.height,{inversionAttempts:'attemptBoth'});
+        if(c3&&c3.data){resolve(c3.data);return;}
+      }
+      resolve(null);
+    };
+    img.onerror=function(){resolve(null);}; img.src=url;
+  });
+}
+
+// QRテキストからエンティティ解決
+function _resolveFromQrText(qrText) {
+  if(!qrText)return null;
+  var parts=qrText.split(':'); if(parts.length<2)return null;
+  var prefix=parts[0].toUpperCase(), id=parts.slice(1).join(':').trim();
+  if(prefix==='BU'){
+    var units=Store.getDB('breeding_units')||[];
+    var unit=units.find(function(u){return u.display_id===id;})||units.find(function(u){return u.unit_id===id;})||{display_id:id,unit_id:id};
+    return {targetType:'UNIT',targetId:unit.display_id||id,displayId:unit.display_id||id,entity:unit};
+  }
+  if(prefix==='IND'){
+    var ind=(Store.getIndividual&&Store.getIndividual(id))||(Store.getDB('individuals')||[]).find(function(i){return i.ind_id===id||i.display_id===id;});
+    if(!ind)return null;
+    return {targetType:'IND',targetId:ind.ind_id||id,displayId:ind.display_id||id,entity:ind};
+  }
+  return null;
+}
+
+// Gemini OCR呼び出し
+async function _callGeminiOCR(apiKey, imageDataUrl) {
+  var base64Data=imageDataUrl.split(',')[1];
+  var mimeType=imageDataUrl.split(';')[0].split(':')[1]||'image/jpeg';
+  var prompt=
+'あなたはクワガタ飼育ラベルのOCR専門AIです。\n'+
+'このラベル画像から情報を読み取り、必ずJSON形式のみで返答してください。\n\n'+
+'【ラベルの構造】\n'+
+'上部: QRコード / ID / 性別表示(♂・♀) / 区分チェック / マット(M)チェック / ステージ(St)チェック\n'+
+'下部: 記録テーブル（日付 / 体重 / 交換）\n\n'+
+'【QRコードの読み取り】\n'+
+'画像内のQRコードを解析してqr_textに格納。読めない場合はnull。\n\n'+
+'【性別の読み取り】\n'+
+'ラベル右上に「♂ ・ ♀」の表示があります。\n'+
+'手書きで◯（丸）が付いている方が確定した性別です。\n'+
+'例: 「◯♂ ・ ♀」→ sex="♂"\n'+
+'例: 「♂ ・ ◯♀」→ sex="♀"\n'+
+'◯がない場合や読み取れない場合 → sex=null\n\n'+
+'【チェックボックスの読み取りルール】\n'+
+'■=チェック済み（黒塗り）、□=未チェック（空白）\n'+
+'左から右の順に並んでいる。連続する■の中で一番右の■が現在の状態。\n'+
+'右側に□があっても問題なし（まだそのステージ/マットに到達していないだけ）。\n'+
+'例: □T0 ■T1 □T2 □T3 □MD → 現在マット="T1"\n'+
+'例: □T0 ■T1 ■T2 □T3 □MD → 現在マット="T2"\n'+
+'例: □T0 ■T1 ■T2 ■T3 □MD → 現在マット="T3"\n'+
+'マット(M行): T0→T1→T2→T3→MD の順\n'+
+'ステージ(St行): L1L2→L3→前蛹→蛹→成虫 の順\n'+
+'  ステージ値: L1L2/L3/PREPUPA/PUPA/ADULT_PRE/ADULT\n\n'+
+'【区分チェック（体重区分）】\n'+
+'連続する■の中で一番右が現在の区分: ■大→"大" / ■中→"中" / ■小→"小"\n'+
+'※区分は容器サイズではなく体重によるサイズ分類です\n\n'+
+'【記録テーブルの読み取り】\n'+
+'個体ラベル: 最大8行（左4行+右4行）\n'+
+'ユニットラベル: 最大4行（日付/①体重/②体重/交換）\n'+
+'書き込みがある行をすべてrecordsに格納\n'+
+'日付: MM/DD形式 / 体重: 数値のみ(g)\n'+
+'交換: 「全」にチェック→"FULL" / 「追」にチェック→"ADD" / なし→"NONE"\n\n'+
+'【出力JSON（他のテキスト不要）】\n'+
+'{\n'+
+'  "qr_text": "BU:xxx または IND:xxx または null",\n'+
+'  "sex": "♂ または ♀ または null",\n'+
+'  "mat_type": "T0|T1|T2|T3|MD または null",\n'+
+'  "stage": "L1L2|L3|PREPUPA|PUPA|ADULT_PRE|ADULT または null",\n'+
+'  "size_category": "大|中|小 または null",\n'+
+'  "records": [\n'+
+'    {"date":"MM/DD","weight":数値,"weight1":数値,"weight2":数値,"exchange":"FULL|ADD|NONE","_confidence":"high|low"}\n'+
+'  ],\n'+
+'  "note": "読み取れなかった部分があれば記述",\n'+
+'  "_confidence": "high|medium|low"\n'+
+'}';
+
+  var resp=await fetch(
+    'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key='+apiKey,
+    {method:'POST',headers:{'Content-Type':'application/json'},
+     body:JSON.stringify({
+       contents:[{parts:[{text:prompt},{inline_data:{mime_type:mimeType,data:base64Data}}]}],
+       generationConfig:{temperature:0.1,maxOutputTokens:2048,thinkingConfig:{thinkingBudget:0}},
+     })}
+  );
+  if(!resp.ok){var et=await resp.text();throw new Error('Gemini API エラー ('+resp.status+'): '+et.slice(0,200));}
+  var data=await resp.json();
+  var rawText=(((data.candidates||[])[0]||{}).content||{parts:[{text:''}]}).parts[0].text||'';
+  var clean=rawText.replace(/\`\`\`json\s*/g,'').replace(/\`\`\`\s*/g,'').trim();
+  try{return JSON.parse(clean);}
+  catch(_){var m=clean.match(/\{[\s\S]*\}/);if(m)return JSON.parse(m[0]);throw new Error('JSONパース失敗: '+clean.slice(0,100));}
+}
+
 Pages.continuousScan = function(params) {
   params = params || {};
   var main = document.getElementById('main');
@@ -32,60 +175,9 @@ Pages.continuousScan = function(params) {
     try { var r=entity.members; return Array.isArray(r)?r:JSON.parse(r); } catch(_){return [];}
   }
 
-  // ── Canvas前処理 ──────────────────────────────────────────────
-  function _preprocessCanvas(canvas, ctx, w, h) {
-    var d=ctx.getImageData(0,0,w,h),px=d.data,ga=new Uint8Array(w*h),mn=255,mx=0;
-    for (var i=0;i<px.length;i+=4){var g=Math.round(px[i]*0.299+px[i+1]*0.587+px[i+2]*0.114);ga[i>>2]=g;if(g<mn)mn=g;if(g>mx)mx=g;}
-    var rng=mx-mn||1;
-    for (var j=0;j<ga.length;j++){var bw=Math.round((ga[j]-mn)/rng*255)>128?255:0;px[j*4]=px[j*4+1]=px[j*4+2]=bw;px[j*4+3]=255;}
-    ctx.putImageData(d,0,0); return ctx.getImageData(0,0,w,h);
-  }
+  // ── QR検出・エンティティ解決はトップレベル関数を使用 ──
 
-  // ── QR検出 ───────────────────────────────────────────────────
-  function _extractQrFromImage(url) {
-    return new Promise(function(resolve) {
-      if (typeof jsQR==='undefined') {resolve(null);return;}
-      var img=new Image();
-      img.onload=function() {
-        var cv=document.createElement('canvas'); cv.width=img.width; cv.height=img.height;
-        var ctx=cv.getContext('2d'); ctx.drawImage(img,0,0);
-        var d1=ctx.getImageData(0,0,cv.width,cv.height);
-        var c1=jsQR(d1.data,d1.width,d1.height,{inversionAttempts:'attemptBoth'});
-        if(c1&&c1.data){resolve(c1.data);return;}
-        ctx.drawImage(img,0,0);
-        var d2=_preprocessCanvas(cv,ctx,cv.width,cv.height);
-        var c2=jsQR(d2.data,d2.width,d2.height,{inversionAttempts:'attemptBoth'});
-        if(c2&&c2.data){resolve(c2.data);return;}
-        if(img.width>1200){
-          var sc=1200/img.width,sw=Math.round(img.width*sc),sh=Math.round(img.height*sc);
-          cv.width=sw;cv.height=sh;ctx.drawImage(img,0,0,sw,sh);
-          var d3=ctx.getImageData(0,0,sw,sh);
-          var c3=jsQR(d3.data,d3.width,d3.height,{inversionAttempts:'attemptBoth'});
-          if(c3&&c3.data){resolve(c3.data);return;}
-        }
-        resolve(null);
-      };
-      img.onerror=function(){resolve(null);}; img.src=url;
-    });
-  }
-
-  function _resolveFromQrText(qrText) {
-    if(!qrText)return null;
-    var parts=qrText.split(':'); if(parts.length<2)return null;
-    var prefix=parts[0].toUpperCase(), id=parts.slice(1).join(':').trim();
-    if(prefix==='BU'){
-      var units=Store.getDB('breeding_units')||[];
-      var unit=units.find(function(u){return u.display_id===id;})||units.find(function(u){return u.unit_id===id;})||{display_id:id,unit_id:id};
-      return {targetType:'UNIT',targetId:unit.display_id||id,displayId:unit.display_id||id,entity:unit};
-    }
-    if(prefix==='IND'){
-      var ind=(Store.getIndividual&&Store.getIndividual(id))||(Store.getDB('individuals')||[]).find(function(i){return i.ind_id===id||i.display_id===id;});
-      if(!ind)return null;
-      return {targetType:'IND',targetId:ind.ind_id||id,displayId:ind.display_id||id,entity:ind};
-    }
-    return null;
-  }
-
+  
   // ── テーブル行初期化 ──────────────────────────────────────────
   function _emptyRow(defMat, defCont) {
     return {date:'',weight1:'',weight2:'',exchange:'',mat_type:defMat||'',container:defCont||'',
@@ -579,73 +671,7 @@ Pages.continuousScan = function(params) {
     _state.step='confirm'; render();
   };
 
-  // ── Gemini OCR ────────────────────────────────────────────────
-  async function _callGeminiOCR(apiKey, imageDataUrl) {
-    var base64Data=imageDataUrl.split(',')[1];
-    var mimeType=imageDataUrl.split(';')[0].split(':')[1]||'image/jpeg';
-    var prompt=
-'あなたはクワガタ飼育ラベルのOCR専門AIです。\n'+
-'このラベル画像から情報を読み取り、必ずJSON形式のみで返答してください。\n\n'+
-'【ラベルの構造】\n'+
-'上部: QRコード / ID / 性別表示(♂・♀) / 区分チェック / マット(M)チェック / ステージ(St)チェック\n'+
-'下部: 記録テーブル（日付 / 体重 / 交換）\n\n'+
-'【QRコードの読み取り】\n'+
-'画像内のQRコードを解析してqr_textに格納。読めない場合はnull。\n\n'+
-'【性別の読み取り】\n'+
-'ラベル右上に「♂ ・ ♀」の表示があります。\n'+
-'手書きで◯（丸）が付いている方が確定した性別です。\n'+
-'例: 「◯♂ ・ ♀」→ sex="♂"\n'+
-'例: 「♂ ・ ◯♀」→ sex="♀"\n'+
-'◯がない場合や読み取れない場合 → sex=null\n\n'+
-'【チェックボックスの読み取りルール】\n'+
-'■=チェック済み（黒塗り）、□=未チェック（空白）\n'+
-'左から右の順に並んでいる。連続する■の中で一番右の■が現在の状態。\n'+
-'右側に□があっても問題なし（まだそのステージ/マットに到達していないだけ）。\n'+
-'例: □T0 ■T1 □T2 □T3 □MD → 現在マット="T1"\n'+
-'例: □T0 ■T1 ■T2 □T3 □MD → 現在マット="T2"\n'+
-'例: □T0 ■T1 ■T2 ■T3 □MD → 現在マット="T3"\n'+
-'マット(M行): T0→T1→T2→T3→MD の順\n'+
-'ステージ(St行): L1L2→L3→前蛹→蛹→成虫 の順\n'+
-'  ステージ値: L1L2/L3/PREPUPA/PUPA/ADULT_PRE/ADULT\n\n'+
-'【区分チェック（体重区分）】\n'+
-'連続する■の中で一番右が現在の区分: ■大→"大" / ■中→"中" / ■小→"小"\n'+
-'※区分は容器サイズではなく体重によるサイズ分類です\n\n'+
-'【記録テーブルの読み取り】\n'+
-'個体ラベル: 最大8行（左4行+右4行）\n'+
-'ユニットラベル: 最大4行（日付/①体重/②体重/交換）\n'+
-'書き込みがある行をすべてrecordsに格納\n'+
-'日付: MM/DD形式 / 体重: 数値のみ(g)\n'+
-'交換: 「全」にチェック→"FULL" / 「追」にチェック→"ADD" / なし→"NONE"\n\n'+
-'【出力JSON（他のテキスト不要）】\n'+
-'{\n'+
-'  "qr_text": "BU:xxx または IND:xxx または null",\n'+
-'  "sex": "♂ または ♀ または null",\n'+
-'  "mat_type": "T0|T1|T2|T3|MD または null",\n'+
-'  "stage": "L1L2|L3|PREPUPA|PUPA|ADULT_PRE|ADULT または null",\n'+
-'  "size_category": "大|中|小 または null",\n'+
-'  "records": [\n'+
-'    {"date":"MM/DD","weight":数値,"weight1":数値,"weight2":数値,"exchange":"FULL|ADD|NONE","_confidence":"high|low"}\n'+
-'  ],\n'+
-'  "note": "読み取れなかった部分があれば記述",\n'+
-'  "_confidence": "high|medium|low"\n'+
-'}';
 
-    var resp=await fetch(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key='+apiKey,
-      {method:'POST',headers:{'Content-Type':'application/json'},
-       body:JSON.stringify({
-         contents:[{parts:[{text:prompt},{inline_data:{mime_type:mimeType,data:base64Data}}]}],
-         generationConfig:{temperature:0.1,maxOutputTokens:2048,thinkingConfig:{thinkingBudget:0}},
-       })}
-    );
-    if(!resp.ok){var et=await resp.text();throw new Error('Gemini API エラー ('+resp.status+'): '+et.slice(0,200));}
-    var data=await resp.json();
-    var rawText=(((data.candidates||[])[0]||{}).content||{parts:[{text:''}]}).parts[0].text||'';
-    console.log('[CS] Gemini raw:',rawText);
-    var clean=rawText.replace(/```json\s*/g,'').replace(/```\s*/g,'').trim();
-    try{return JSON.parse(clean);}
-    catch(_){var m=clean.match(/\{[\s\S]*\}/);if(m)return JSON.parse(m[0]);throw new Error('JSONパース失敗: '+clean.slice(0,100));}
-  }
 
   // ── 保存処理 ──────────────────────────────────────────────────
   Pages._cScanSave = async function() {
@@ -777,7 +803,7 @@ Pages.batchScan = function(params) {
     if(!entity||!entity.members) return [];
     try{ var r=entity.members; return Array.isArray(r)?r:JSON.parse(r); }catch(_){return [];}
   }
-  function _bsResolveFromQrText(qrText) {
+  function _resolveFromQrText(qrText) {
     if(!qrText)return null;
     var parts=qrText.split(':'); if(parts.length<2)return null;
     var prefix=parts[0].toUpperCase(), id=parts.slice(1).join(':').trim();
@@ -916,8 +942,11 @@ Pages.batchScan = function(params) {
           '</button>' :
           '<div style="font-size:.82rem;color:var(--amber);padding:8px;margin-bottom:10px">⚠️ 最大'+MAX_BATCH+'枚に達しました</div>'
         ) +
-        '<input type="file" id="bs-gallery-input" accept="image/*" style="display:none" onchange="Pages._bsOnImageSelected(this)">' +
-        '<button class="btn btn-ghost btn-full" style="font-size:.88rem" onclick="Pages._bsOpenGallery()">🖼️ ギャラリーから選択</button>' +
+        '<input type="file" id="bs-gallery-input" accept="image/*" multiple style="display:none" onchange="Pages._bsOnImageSelected(this)">' +
+        '<button class="btn btn-ghost btn-full" style="font-size:.88rem" onclick="Pages._bsOpenGallery()">' +
+          '🖼️ ギャラリーから選択' +
+          (count < MAX_BATCH ? '<span style="font-size:.75rem;color:var(--text3);margin-left:6px">（残り'+(MAX_BATCH-count)+'枚まで追加可）</span>' : '<span style="font-size:.75rem;color:var(--amber);margin-left:6px">（上限に達しています）</span>') +
+        '</button>' +
       '</div>' +
 
       '</div>' +
@@ -1403,6 +1432,10 @@ Pages.batchScan = function(params) {
     if(pa)pa.style.display='none'; if(ba)ba.style.display='block';
   };
   Pages._bsTakePhoto = function() {
+    if(_queue.length >= MAX_BATCH){
+      UI.toast('上限'+MAX_BATCH+'枚に達しています。撮影できません。','error',3000);
+      Pages._bsStopCamera(); return;
+    }
     var video=document.getElementById('bs-video'), canvas=document.getElementById('bs-canvas');
     if(!video||!canvas)return;
     canvas.width=video.videoWidth||1280; canvas.height=video.videoHeight||720;
@@ -1420,10 +1453,20 @@ Pages.batchScan = function(params) {
     var inp=document.getElementById('bs-gallery-input'); if(inp){inp.removeAttribute('capture');inp.click();}
   };
   Pages._bsOnImageSelected = function(input) {
-    var file=input&&input.files&&input.files[0]; if(!file)return;
-    var reader=new FileReader();
-    reader.onload=function(e){ Pages._bsAddImage(e.target.result); };
-    reader.readAsDataURL(file);
+    var files=input&&input.files;
+    if(!files||files.length===0)return;
+    // 複数選択対応: 残り枚数まで順次追加
+    var toAdd = Math.min(files.length, MAX_BATCH - _queue.length);
+    for(var fi=0; fi<toAdd; fi++){
+      (function(file){
+        var reader=new FileReader();
+        reader.onload=function(e){ Pages._bsAddImage(e.target.result); };
+        reader.readAsDataURL(file);
+      })(files[fi]);
+    }
+    if(files.length > toAdd){
+      UI.toast((files.length - toAdd)+'枚は上限のため追加されませんでした','info',3000);
+    }
   };
 
   // ── 画像をキューに追加してOCRをバックグラウンド開始 ────────────
@@ -1457,7 +1500,7 @@ Pages.batchScan = function(params) {
         ]);
         var qrText = results[0], ocrResult = results[1];
         if(!qrText&&ocrResult&&ocrResult.qr_text) qrText=ocrResult.qr_text;
-        var qrResolved = _bsResolveFromQrText(qrText);
+        var qrResolved = _resolveFromQrText(qrText);
         if(!qrResolved){
           item.error = qrText ? 'QRコードの対象が特定できませんでした（'+qrText+'）' : 'QRコードが検出できませんでした';
         } else {
