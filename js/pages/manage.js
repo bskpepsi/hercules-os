@@ -1,11 +1,6 @@
 // FILE: js/pages/manage.js
-// ────────────────────────────────────────────────────────────────
-// ════════════════════════════════════════════════════════════════
-// manage.js
-// 役割: 管理メニュー（5タブの「管理」画面）。
-//       ライン・ロット・種親・血統・産卵セット各管理への入口と
-//       それぞれのサマリー数値を1画面で俯瞰できる。
-//       ライン登録フォームもここに内包する。
+// build: 20260413bj
+// 変更点: 管理画面の「分析・ランキング」セクションに「🧬 血統×成長 相関分析」ボタンを追加
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
@@ -150,10 +145,15 @@ Pages.manage = function () {
           <button class="btn btn-ghost" onclick="routeTo('line-analysis')">📈 ライン分析</button>
           <button class="btn btn-ghost" onclick="routeTo('mother-ranking')">♀ 母系ランキング</button>
           <button class="btn btn-ghost" onclick="routeTo('heatmap')">🗺️ 血統ヒートマップ</button>
+          <button class="btn btn-ghost" onclick="routeTo('bloodline-analysis')"
+            style="grid-column:span 2;border-color:rgba(91,168,232,.35);color:var(--blue);font-weight:700">
+            🧬 血統×成長 相関分析（父系・母系タグ別ランキング）
+          </button>
         </div>
       </div>`);
   }
 };
+
 
 // ════════════════════════════════════════════════════════════════
 // ライン一覧・詳細・登録（manage.js に内包）
@@ -186,14 +186,10 @@ function _lineCardHTML(line) {
     var m = Store.getParent(line.mother_par_id);
     var lineCode = line.line_code || line.display_id || '?';
     var year     = line.hatch_year || '—';
-
-    // 父母表示（サイズ先頭・強調）
     var fName = f ? (f.parent_display_id || f.display_name || '') : '';
     var mName = m ? (m.parent_display_id || m.display_name || '') : '';
     var fSize = f && f.size_mm ? f.size_mm + 'mm' : '';
     var mSize = m && m.size_mm ? m.size_mm + 'mm' : '';
-
-    // 血統情報
     var _tags = function(t) { try { return (JSON.parse(t||'[]')||[]).slice(0,3).join(' '); } catch(e){ return ''; } };
     var fRaw  = f ? (f.bloodline_raw || '') : '';
     var mRaw  = m ? (m.bloodline_raw || '') : '';
@@ -201,8 +197,6 @@ function _lineCardHTML(line) {
     var mTag  = m ? _tags(m.maternal_tags || '') : '';
     var fBlood = (fRaw || fTag || '').slice(0, 28);
     var mBlood = (mRaw || mTag || '').slice(0, 28);
-
-    // 親情報行: サイズ優先
     var fPart = fName
       ? '<span style="color:var(--male,#5ba8e8)">♂</span>'
         + (fSize ? '<strong style="font-size:.88rem;margin-right:2px"> ' + fSize + '</strong>' : '')
@@ -213,24 +207,20 @@ function _lineCardHTML(line) {
         + (mSize ? '<strong style="font-size:.88rem;margin-right:2px"> ' + mSize + '</strong>' : '')
         + '<span style="color:var(--text3);font-size:.72rem">' + mName + '</span>'
       : '';
-
     var parentRow = (fPart || mPart)
       ? '<div style="display:flex;gap:10px;flex-wrap:wrap;font-size:.8rem;margin-bottom:2px">'
         + (fPart ? '<span>' + fPart + '</span>' : '')
         + (mPart ? '<span>' + mPart + '</span>' : '')
         + '</div>'
       : '<div style="font-size:.8rem;color:var(--text3)">親情報なし</div>';
-
     var bloodRow = (fBlood || mBlood)
       ? '<div style="font-size:.72rem;color:var(--text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:1px">'
         + [fBlood, mBlood].filter(Boolean).join(' × ') + '</div>'
       : '';
-
     var locRow = (line.locality || line.generation)
       ? '<div style="font-size:.7rem;color:var(--text3);margin-top:2px">'
         + [line.locality, line.generation].filter(Boolean).join(' / ') + '</div>'
       : '';
-
     return '<div class="card" style="padding:12px 14px;cursor:pointer;display:flex;align-items:center;gap:12px;margin-bottom:8px"'
       + ' onclick="routeTo(\'line-detail\',{lineId:\'' + line.line_id + '\'})">'
       + '<div style="min-width:48px;text-align:center;flex-shrink:0">'
@@ -258,43 +248,25 @@ Pages._lineShowClosed = function () {
   );
 };
 
-// ── ライン詳細 ───────────────────────────────────────────────────
 Pages.lineDetail = async function (lineId) {
   if (lineId && typeof lineId === 'object') lineId = lineId.id || lineId.lineId || '';
   var main = document.getElementById('main');
-
-  console.log('[LINE_DETAIL] ===== lineDetail start =====');
-  console.log('[LINE_DETAIL] lineId       :', lineId);
-  console.log('[LINE_DETAIL] __API_BUILD  :', window.__API_BUILD  || '(not set)');
-  console.log('[LINE_DETAIL] __INDEX_BUILD:', window.__INDEX_BUILD || '(not set)');
-  console.log('[LINE_DETAIL] GAS_URL      :', (window.CONFIG && window.CONFIG.GAS_URL || '').slice(0, 60) || '(unset)');
-
-  // ① キャッシュで即時描画
   var line = Store.getLine(lineId);
   var hasCached = !!line;
   if (hasCached) {
-    console.log('[LINE_DETAIL] cached line exists:', line.display_id);
     _renderLineDetail(line, main);
   } else {
-    console.log('[LINE_DETAIL] no cache - showing spinner');
     main.innerHTML = UI.header('ライン詳細', { back: true }) + UI.spinner();
   }
-
-  // ② バックグラウンドで最新データ取得
   try {
-    console.log('[LINE_DETAIL] fetch detail start - action: getLine');
     var res = await API.line.get(lineId);
     if (Store.getPage() !== 'line-detail') return;
     line = res.line;
     if (Store.patchDBItem) Store.patchDBItem('lines', 'line_id', lineId, line);
-    console.log('[LINE_DETAIL] fetch detail success:', line && line.display_id);
     _renderLineDetail(line, main);
   } catch (e) {
-    console.error('[LINE_DETAIL] fetch detail failed:', e.message);
     if (Store.getPage() !== 'line-detail') return;
-
     if (hasCached) {
-      // キャッシュ表示を維持 → warning バナーだけ差し込む
       var pb = main.querySelector('.page-body');
       if (pb && !document.getElementById('line-warn-banner')) {
         var b = document.createElement('div');
@@ -303,35 +275,28 @@ Pages.lineDetail = async function (lineId) {
           + 'border-radius:10px;padding:10px 12px;margin-bottom:10px;font-size:.78rem';
         b.innerHTML = '<b style="color:var(--amber)">⚠️ 最新情報の取得に失敗しました</b>'
           + '<div style="color:var(--text2);margin-top:3px">表示中はキャッシュです。再読み込みをお試しください。</div>'
-          + '<div style="font-size:.68rem;color:var(--text3);margin-top:2px">' + e.message.slice(0, 80) + '</div>'
           + '<button class="btn btn-ghost btn-sm" style="margin-top:6px" id="line-retry-btn">🔄 再試行</button>';
         pb.insertBefore(b, pb.firstChild);
         var retryBtn = document.getElementById('line-retry-btn');
         if (retryBtn) retryBtn.addEventListener('click', function() { Pages.lineDetail(lineId); });
       }
     } else {
-      // キャッシュなし → エラー画面
       main.innerHTML = UI.header('ライン詳細', { back: true })
         + '<div class="page-body">'
-        + '<div style="background:rgba(224,80,80,.08);border:1px solid rgba(224,80,80,.3);'
-        + 'border-radius:10px;padding:14px;font-size:.82rem" id="line-err-box">'
-        + '<div style="font-weight:700;color:var(--red,#e05050);margin-bottom:6px">⚠️ ライン情報の取得に失敗しました</div>'
-        + '<div>' + e.message + '</div>'
-        + '<div style="font-size:.72rem;color:var(--text3);margin-top:6px">設定画面のGAS URLとデプロイ状態を確認してください。</div>'
+        + UI.empty('取得失敗: ' + e.message)
         + '<button class="btn btn-ghost btn-sm" style="margin-top:10px" id="line-err-retry">🔄 再試行</button>'
-        + '</div></div>';
+        + '</div>';
       var errRetry = document.getElementById('line-err-retry');
       if (errRetry) errRetry.addEventListener('click', function() { Pages.lineDetail(lineId); });
     }
   }
-}
+};
 
-// ── 親情報ヘルパー（_renderLineDetail から使用）────────────────
 function _parentInfo(p, pBld, sexColor) {
   if (!p) return '<span style="color:var(--text3)">—（未設定）</span>';
   const bldStr  = pBld ? (pBld.abbreviation || pBld.bloodline_name || '') : '';
   const sizeStr = p.size_mm ? ' <strong>' + p.size_mm + 'mm</strong>' : '';
-  return '<span style="cursor:pointer;color:' + sexColor + '" onclick="routeTo(\x27parent-detail\x27,{parId:\x27' + p.par_id + '\x27})">' 
+  return '<span style="cursor:pointer;color:' + sexColor + '" onclick="routeTo(\x27parent-detail\x27,{parId:\x27' + p.par_id + '\x27})">'
     + (p.parent_display_id || p.display_name) + sizeStr
     + (bldStr ? '<span style="color:var(--text3);font-size:.78rem"> / ' + bldStr + '</span>' : '')
     + '</span>';
@@ -339,83 +304,47 @@ function _parentInfo(p, pBld, sexColor) {
 
 function _renderLineDetail(line, main) {
   try {
-  const f    = Store.getParent(line.father_par_id);
-  const m    = Store.getParent(line.mother_par_id);
-  const bld  = Store.getBloodline(line.bloodline_id);
-  const blds = Store.getDB('bloodlines') || [];
-  const fBld = f && f.bloodline_id ? blds.find(b=>b.bloodline_id===f.bloodline_id) : null;
-  const mBld = m && m.bloodline_id ? blds.find(b=>b.bloodline_id===m.bloodline_id) : null;
+    const f    = Store.getParent(line.father_par_id);
+    const m    = Store.getParent(line.mother_par_id);
+    const bld  = Store.getBloodline(line.bloodline_id);
+    const blds = Store.getDB('bloodlines') || [];
+    const fBld = f && f.bloodline_id ? blds.find(b=>b.bloodline_id===f.bloodline_id) : null;
+    const mBld = m && m.bloodline_id ? blds.find(b=>b.bloodline_id===m.bloodline_id) : null;
+    const _lotsById  = Store.filterLots({ line_id: line.line_id, status: 'all' });
+    const _pairingSetIds = new Set((Store.getDB('pairings') || []).map(p => p.set_id).filter(Boolean));
+    const _lotsByPairing = (Store.getDB('lots') || []).filter(l =>
+      l.pairing_set_id && _pairingSetIds.has(l.pairing_set_id) &&
+      !_lotsById.some(x => x.lot_id === l.lot_id)
+    );
+    const allLots    = [..._lotsById, ..._lotsByPairing];
+    const activeLots = allLots.filter(l => l.status === 'active');
+    const allInds    = Store.getIndividualsByLine(line.line_id);
+    const aliveInds  = allInds.filter(i => i.status !== 'dead');
+    const allPairings = Store.getDB('pairings') || [];
+    const pairings = allPairings.filter(p => {
+      if (p.line_id === line.line_id) return true;
+      if (!p.line_id && line.father_par_id && line.mother_par_id) {
+        return (p.father_par_id === line.father_par_id && p.mother_par_id === line.mother_par_id);
+      }
+      return false;
+    });
+    const eggRecords  = Store.getDB('egg_records') || [];
+    const lineEggRecs = eggRecords.filter(r => pairings.some(p => p.set_id === r.set_id));
+    const totalEggs   = lineEggRecs.length > 0
+      ? lineEggRecs.reduce((s, r) => s + (parseInt(r.egg_count, 10) || 0), 0)
+      : pairings.reduce((s, p) => s + (parseInt(p.total_eggs, 10) || 0), 0);
+    const rottenEggs  = lineEggRecs.reduce((s, r) => s + (parseInt(r.failed_count, 10) || 0), 0);
+    const rootLots     = allLots.filter(l => !l.parent_lot_id || l.parent_lot_id === '');
+    const lotInitTotal = rootLots.reduce((s, l) => s + (parseInt(l.initial_count, 10) || 0), 0);
+    const allLotIds   = new Set(allLots.map(l => l.lot_id));
+    const directInds  = allInds.filter(i => !i.lot_id || i.lot_id === '' || !allLotIds.has(i.lot_id));
+    const unLotEggs   = Math.max(0, totalEggs - rottenEggs - lotInitTotal - directInds.length);
+    const lotCurrentTotal = activeLots.reduce((s, l) => s + (parseInt(l.count, 10) || 0), 0);
+    const attritionTotal  = allLots.reduce((s, l) => s + (parseInt(l.attrition_total, 10) || 0), 0);
 
-  // このラインに属する個体・ロット（全状態）
-  // status='all' で dissolved/individualized も含めて取得
-  // 【フォールバック】lot.line_id が空 / 不整合でも pairing_set_id 経由で拾う
-  const _lotsById  = Store.filterLots({ line_id: line.line_id, status: 'all' });
-  const _pairingSetIds = new Set((Store.getDB('pairings') || []).map(p => p.set_id).filter(Boolean));
-  const _lotsByPairing = (Store.getDB('lots') || []).filter(l =>
-    l.pairing_set_id && _pairingSetIds.has(l.pairing_set_id) &&
-    !_lotsById.some(x => x.lot_id === l.lot_id)
-  );
-  const allLots    = [..._lotsById, ..._lotsByPairing];
-  const activeLots = allLots.filter(l => l.status === 'active');
-  const allInds    = Store.getIndividualsByLine(line.line_id);
-  const aliveInds  = allInds.filter(i => i.status !== 'dead');
-
-  // 産卵セット紐づき: line_id で照合（正常ケース）
-  // line_id 未設定データの後方互換フォールバック:
-  //   createPairing は現在常に line_id を自動生成するため、新規データには発生しない
-  //   旧データ（自動生成前に登録されたもの）のみフォールバック照合
-  const allPairings = Store.getDB('pairings') || [];
-  const pairings = allPairings.filter(p => {
-    if (p.line_id === line.line_id) return true;
-    // 後方互換: line_id 未設定かつ父母IDが一致する場合
-    if (!p.line_id && line.father_par_id && line.mother_par_id) {
-      return (p.father_par_id === line.father_par_id && p.mother_par_id === line.mother_par_id);
-    }
-    return false;
-  });
-
-  // ════════════════════════════════════════════════════
-  // ライン集計 — 卵の流れに沿った定義
-  // ════════════════════════════════════════════════════
-
-  // ① 採卵数 = SUM(egg_records.egg_count)  / フォールバック: pairings.total_eggs
-  const eggRecords  = Store.getDB('egg_records') || [];
-  const lineEggRecs = eggRecords.filter(r => pairings.some(p => p.set_id === r.set_id));
-  const totalEggs   = lineEggRecs.length > 0
-    ? lineEggRecs.reduce((s, r) => s + (parseInt(r.egg_count, 10) || 0), 0)
-    : pairings.reduce((s, p) => s + (parseInt(p.total_eggs, 10) || 0), 0);
-
-  // ② 腐卵数 = SUM(egg_records.failed_count)
-  const rottenEggs  = lineEggRecs.reduce((s, r) => s + (parseInt(r.failed_count, 10) || 0), 0);
-
-  // ③ ロット化累計 = ルートロット（parent_lot_id が空）の initial_count 合計
-  //    分割で作られた子ロットは initial_count を持つが重複カウントを避けるため除外
-  const rootLots     = allLots.filter(l => !l.parent_lot_id || l.parent_lot_id === '');
-  const lotInitTotal = rootLots.reduce((s, l) => s + (parseInt(l.initial_count, 10) || 0), 0);
-
-  // ④ 直接個体化数 = lot_id が空 OR このラインのロットに属さない個体
-  //    lot_id に値があっても、対応ロットが別ラインなら直接個体化として計上
-  const allLotIds   = new Set(allLots.map(l => l.lot_id));
-  const directInds  = allInds.filter(i =>
-    !i.lot_id || i.lot_id === '' || !allLotIds.has(i.lot_id)
-  );
-
-  // ⑤ 未配分卵 = MAX(採卵数 - 腐卵数 - 配分済み, 0)
-  //    配分済み = ロット化累計 + 直接個体化数（ロット内減耗は配分後のため含まない）
-  const unLotEggs   = Math.max(0, totalEggs - rottenEggs - lotInitTotal - directInds.length);
-
-  // ⑥ 現在ロット内頭数 = SUM(active lots.count)
-  const lotCurrentTotal = activeLots.reduce((s, l) => s + (parseInt(l.count, 10) || 0), 0);
-
-  // ⑦ ロット内減耗 = SUM(lots.attrition_total)（dissolved含む全ロット）
-  const attritionTotal  = allLots.reduce((s, l) => s + (parseInt(l.attrition_total, 10) || 0), 0);
-
-  
     main.innerHTML = `
     ${UI.header(line.display_id + ' 詳細', { back: true, action: { fn: "routeTo('line-new',{editId:'" + line.line_id + "'})", icon: '✏️' } })}
     <div class="page-body">
-
-      <!-- サマリーカード -->
       <div class="card card-gold" style="padding:14px">
         <div style="display:flex;align-items:flex-start;justify-content:space-between">
           <div>
@@ -451,8 +380,6 @@ function _renderLineDetail(line, main) {
           </div>
         </div>
       </div>
-
-      <!-- 主要アクションボタン -->
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
         <button style="flex:1;padding:14px 8px;border-radius:var(--radius);font-weight:700;font-size:.9rem;
           background:var(--blue);color:#fff;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:4px"
@@ -475,8 +402,6 @@ function _renderLineDetail(line, main) {
           ＋ 個体追加
         </button>
       </div>
-
-      <!-- 産卵セット紐づき -->
       ${pairings.length ? `
       <div class="card">
         <div class="card-title">🥚 産卵セット (${pairings.length}件)</div>
@@ -490,8 +415,6 @@ function _renderLineDetail(line, main) {
             <span style="font-size:.78rem">${p.total_eggs ? p.total_eggs + '卵' : ''}</span>
           </div>`).join('')}
       </div>` : ''}
-
-      <!-- 親情報 -->
       <div class="card">
         <div class="card-title">親情報</div>
         <div class="info-list">
@@ -499,15 +422,12 @@ function _renderLineDetail(line, main) {
           ${_lnRow('<span style="color:var(--female)">♀親</span>', _parentInfo(m, mBld, 'var(--female)'))}
         </div>
       </div>
-
-      <!-- 血統・ライン情報 -->
       <div class="card">
         <div class="card-title">血統・ライン情報</div>
         <div class="info-list">
           ${line.locality   ? _lnRow('産地', line.locality)   : ''}
           ${line.generation ? _lnRow('累代', line.generation) : ''}
           ${(()=>{
-            // 父母の血統タグを自動表示
             const _parseTags2 = t => { try { const a = JSON.parse(t||'[]'); return Array.isArray(a) ? a.join(' / ') : String(a); } catch(e) { return ''; } };
             const fTags = f ? _parseTags2(f.bloodline_tags) : '';
             const mTags = m ? _parseTags2(m.bloodline_tags) : '';
@@ -528,30 +448,25 @@ function _renderLineDetail(line, main) {
           ${line.note_private    ? _lnRow('内部メモ', line.note_private)   : ''}
         </div>
       </div>
-
-      <!-- 詳細集計（常時表示） -->
       <div class="card" style="padding:10px 14px">
         <div style="font-size:.72rem;font-weight:700;color:var(--text3);letter-spacing:.06em;margin-bottom:8px">詳細集計</div>
         <div style="font-size:.78rem">
           <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border)">
-            <span style="color:var(--text3)">採卵数</span>
-            <span style="font-weight:600">${totalEggs}個</span>
+            <span style="color:var(--text3)">採卵数</span><span style="font-weight:600">${totalEggs}個</span>
           </div>
           <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border)">
             <span style="color:var(--text3)">腐卵数</span>
             <span style="color:${rottenEggs>0?'var(--red)':'var(--text3)'};font-weight:600">${rottenEggs > 0 ? rottenEggs+'個' : '—'}</span>
           </div>
           <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border)">
-            <span style="color:var(--text3)">ロット化累計</span>
-            <span style="font-weight:600">${lotInitTotal}個</span>
+            <span style="color:var(--text3)">ロット化累計</span><span style="font-weight:600">${lotInitTotal}個</span>
           </div>
           <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border)">
             <span style="color:var(--text3)">直接個体化</span>
             <span style="color:${directInds.length>0?'var(--blue)':'var(--text3)'};font-weight:600">${directInds.length > 0 ? directInds.length+'頭' : '—'}</span>
           </div>
           <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border)">
-            <span style="color:var(--text3)">現在ロット内頭数</span>
-            <span style="font-weight:600">${lotCurrentTotal}頭</span>
+            <span style="color:var(--text3)">現在ロット内頭数</span><span style="font-weight:600">${lotCurrentTotal}頭</span>
           </div>
           <div style="display:flex;justify-content:space-between;padding:4px 0">
             <span style="color:var(--text3)">ロット内減耗</span>
@@ -559,7 +474,6 @@ function _renderLineDetail(line, main) {
           </div>
         </div>
       </div>
-
     </div>`;
   } catch(e) {
     main.innerHTML = UI.header((line && line.display_id) || 'ライン詳細', {back:true})
@@ -574,15 +488,12 @@ function _lnRow(key, val) {
   </div>`;
 }
 
-// ── ライン登録・編集 ─────────────────────────────────────────────
 Pages.lineNew = function (params = {}) {
   const main   = document.getElementById('main');
   const isEdit = !!params.editId;
   const line   = isEdit ? Store.getLine(params.editId) : null;
   const pars   = Store.getDB('parents')    || [];
   const blds   = Store.getDB('bloodlines') || [];
-  const males  = pars.filter(p => p.sex === '♂' && (!p.status || p.status === 'active'));
-  const females= pars.filter(p => p.sex === '♀' && (!p.status || p.status === 'active'));
   const v = (f, d = '') => line ? (line[f] !== undefined ? line[f] : d) : (params[f] || d);
   const curYear = new Date().getFullYear();
 
@@ -590,36 +501,28 @@ Pages.lineNew = function (params = {}) {
     ${UI.header(isEdit ? 'ライン編集' : 'ライン登録', { back: true })}
     <div class="page-body">
       <form id="line-form" class="form-section">
-
         <div class="form-title">ライン識別</div>
         <div class="form-row-2">
           ${UI.field('孵化年', UI.input('hatch_year', 'number', v('hatch_year', curYear), '例: 2025'), true)}
           ${UI.field('ラインコード', UI.input('line_code', 'text', v('line_code'), '例: A1 / B2'), true)}
         </div>
         ${UI.field('ライン名（任意）', UI.input('line_name', 'text', v('line_name'), '例: GGB超大型ライン'))}
-
         <div class="form-title">産地・累代</div>
         <div class="form-row-2">
           ${UI.field('産地', UI.input('locality', 'text', v('locality', 'Guadeloupe')))}
           ${UI.field('累代', UI.input('generation', 'text', v('generation'), '例: WF1 / CBF2'))}
         </div>
-
-        <!-- 種親は産卵セットから自動取得のため選択不要 -->
-
         <div class="form-title">メモ</div>
         ${UI.field('特徴', UI.textarea('characteristics', v('characteristics'), 2, '例: 父175mm × 母大型系'))}
         ${UI.field('仮説タグ', UI.input('hypothesis_tags', 'text', v('hypothesis_tags'), '例: 高タンパク,pH6.2'))}
         ${UI.field('内部メモ', UI.textarea('note_private', v('note_private'), 2, ''))}
-
         ${isEdit ? UI.field('ステータス',
           UI.select('status', [
             { code:'active', label:'進行中' },
             { code:'closed', label:'終了' },
           ], v('status', 'active'))) : ''}
-
         <div style="display:flex;gap:10px;margin-top:8px">
-          <button type="button" class="btn btn-ghost" style="flex:1"
-            onclick="Store.back()">戻る</button>
+          <button type="button" class="btn btn-ghost" style="flex:1" onclick="Store.back()">戻る</button>
           <button type="button" class="btn btn-primary" style="flex:2"
             data-edit-id="${isEdit ? params.editId : ''}"
             onclick="Pages._lineSave(this.dataset.editId || '')">
@@ -631,7 +534,6 @@ Pages.lineNew = function (params = {}) {
 };
 
 Pages._lineSave = async function (editId) {
-  // 'undefined' 文字列や空文字は編集なしと判断
   if (!editId || editId === 'undefined') editId = '';
   const form = document.getElementById('line-form');
   if (!form) return;
@@ -654,7 +556,6 @@ Pages._lineSave = async function (editId) {
   }
 };
 
-// ── ペアリング履歴クイック追加 ────────────────────────────────
 Pages._quickAddPairing = function () {
   const parents = Store.getDB('parents') || [];
   const males   = parents.filter(p => p.sex === '♂' && p.status !== 'dead');
@@ -714,21 +615,12 @@ Pages._saveQuickPairing = async function () {
   const femaleId = document.getElementById('qp-female')?.value;
   const typeVal  = document.getElementById('qp-type')?.value || 'done_initial';
   const memo     = document.getElementById('qp-memo')?.value || '';
-
   if (!maleId)   { UI.toast('♂を選択してください', 'error'); return; }
   if (!femaleId) { UI.toast('♀を選択してください', 'error'); return; }
-
   const isPlanned = typeVal === 'planned';
   const type      = typeVal === 'done_initial' ? 'initial' : 'repairing';
   const status    = isPlanned ? 'planned' : 'done';
-
-  let payload = {
-    type, status,
-    male_parent_id:   maleId,
-    female_parent_id: femaleId,
-    memo,
-  };
-
+  let payload = { type, status, male_parent_id: maleId, female_parent_id: femaleId, memo };
   if (isPlanned) {
     const planned = document.getElementById('qp-planned')?.value;
     if (!planned) { UI.toast('予定日を選択してください', 'error'); return; }
@@ -738,12 +630,10 @@ Pages._saveQuickPairing = async function () {
     if (!date) { UI.toast('実施日を選択してください', 'error'); return; }
     payload.pairing_date = date.replace(/-/g, '/');
   }
-
   try {
     UI.loading(true);
     UI.closeModal();
     const res = await API.phase2.createPairingHistory(payload);
-    // ローカルキャッシュに即時反映
     Store.addDBItem('pairing_histories', {
       ...payload,
       pairing_id: res.pairing_id || ('tmp_' + Date.now()),
@@ -761,13 +651,6 @@ window.PAGES['manage']      = () => Pages.manage();
 window.PAGES['line-list']   = () => Pages.lineList();
 window.PAGES['line-detail'] = () => Pages.lineDetail(Store.getParams().lineId || Store.getParams().id);
 window.PAGES['line-new']    = () => Pages.lineNew(Store.getParams());
-
-
-
-
-
-// ────────────────────────────────────────────────────────────────
-// FILE: js/pages/settings.js
 
 // ════════════════════════════════════════════════════════════════
 // ユニット一覧（unit-list）
@@ -792,13 +675,9 @@ Pages.unitList = function (params) {
     let list = units.slice();
     if (filterPhase)  list = list.filter(u => u.stage_phase === filterPhase);
     if (filterStatus) list = list.filter(u => (u.status || 'active') === filterStatus);
-
     const el = document.getElementById('unit-list-body');
     if (!el) return;
-    if (list.length === 0) {
-      el.innerHTML = UI.empty('該当するユニットがありません');
-      return;
-    }
+    if (list.length === 0) { el.innerHTML = UI.empty('該当するユニットがありません'); return; }
     el.innerHTML = list.map(u => {
       const lc    = _lineCode(u.line_id);
       const phase = u.stage_phase || '—';
@@ -857,7 +736,7 @@ Pages.unitList = function (params) {
   Pages._unitPhaseFilter = function(p) {
     filterPhase = p;
     document.querySelectorAll('#phase-filter .pill').forEach(btn => {
-      btn.classList.toggle('active', phaseLabels[btn.textContent.trim()] !== undefined && btn.textContent.trim() === phaseLabels[p]);
+      btn.classList.toggle('active', btn.textContent.trim() === phaseLabels[p]);
     });
     _renderList();
   };
@@ -873,5 +752,4 @@ Pages.unitList = function (params) {
   _renderList();
 };
 
-window.PAGES = window.PAGES || {};
 window.PAGES['unit-list'] = function() { Pages.unitList(Store.getParams()); };
