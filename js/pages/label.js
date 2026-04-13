@@ -856,15 +856,15 @@ function _sexDisplay(sex) {
   function _circled(sym, active) {
     if (active) {
       return '<span style="display:inline-flex;align-items:center;justify-content:center;'
-        + 'width:13px;height:13px;border-radius:50%;border:1.5px solid #000;'
-        + 'font-size:8px;font-weight:700;color:#000;line-height:1;vertical-align:middle">'
+        + 'width:17px;height:17px;border-radius:50%;border:1.5px solid #000;'
+        + 'font-size:12px;font-weight:700;color:#000;line-height:1;vertical-align:middle">'
         + sym + '</span>';
     }
-    return '<span style="font-size:9px;font-weight:700;color:#000;vertical-align:middle">' + sym + '</span>';
+    return '<span style="font-size:13px;font-weight:700;color:#000;vertical-align:middle">' + sym + '</span>';
   }
   var mHtml = _circled('&#9794;', sex === '♂');
   var fHtml = _circled('&#9792;', sex === '♀');
-  return '<span style="font-size:9px;font-weight:700;color:#000">'
+  return '<span style="font-size:13px;font-weight:700;color:#000">'
     + mHtml + '&nbsp;&#183;&nbsp;' + fHtml
     + '</span>';
 }
@@ -1269,15 +1269,14 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
   function _unitMemberSex(idx, sex) {
     var sym = sex === '♂' ? '&#9794;' : sex === '♀' ? '&#9792;' : (idx===0?'&#9794;':'&#9792;');
     if (sex) {
-      // 性別確定: 丸ボックスで囲む
       return (idx+1) + '<span style="display:inline-flex;align-items:center;justify-content:center;'
-        + 'width:11px;height:11px;border-radius:50%;border:1.2px solid #000;'
-        + 'font-size:7px;font-weight:700;color:#000;line-height:1;vertical-align:middle">'
+        + 'width:14px;height:14px;border-radius:50%;border:1.2px solid #000;'
+        + 'font-size:10px;font-weight:700;color:#000;line-height:1;vertical-align:middle">'
         + sym + '</span>';
     }
-    return (idx+1) + '<span style="font-size:7px;font-weight:700;color:#000">' + sym + '</span>';
+    return (idx+1) + '<span style="font-size:10px;font-weight:700;color:#000">' + sym + '</span>';
   }
-  var unitSexHtml = '<span style="font-size:7px;font-weight:700;color:#000">'
+  var unitSexHtml = '<span style="font-size:10px;font-weight:700;color:#000">'
     + _unitMemberSex(0, m0sex) + '&nbsp;' + _unitMemberSex(1, m1sex) + '</span>';
 
   var showMx = (mat === 'T2' || mat === 'T3');
