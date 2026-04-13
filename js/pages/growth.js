@@ -73,7 +73,14 @@ Pages.growthRecord = function (params = {}) {
     if (!targetId) return;
     const obj = targetType === 'IND' ? Store.getIndividual(targetId) : Store.getLot(targetId);
     if (!obj) return;
-    if (!_selStage)     _selStage     = (obj.current_stage || obj.stage || '').toUpperCase();
+    // ステージ: 前回の成長記録 → 個体DB の順で引き継ぐ
+    if (!_selStage) {
+      const _recs = Store.getGrowthRecords(targetId) || [];
+      const _wts  = _recs.filter(function(r){ return r.weight_g && +r.weight_g > 0; });
+      const _last = _wts.length ? _wts[_wts.length - 1] : null;
+      const _lastStage = (_last && _last.stage) ? _last.stage : '';
+      _selStage = (_lastStage || obj.current_stage || obj.stage || '').toUpperCase();
+    }
     if (!_selContainer) _selContainer = obj.current_container || obj.container_size || '';
     if (!_selMat)       _selMat       = obj.current_mat       || obj.mat_type       || '';
     if (!_selSizeCat) {
