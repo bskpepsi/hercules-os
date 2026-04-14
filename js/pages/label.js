@@ -11,12 +11,12 @@
 //   html2canvas が有効 → PNG生成 → img プレビュー → PNG保存 / 共有
 //   html2canvas なし   → iframe フォールバック
 //
-// build: 20260414n
+// build: 20260414o
 // 変更点: QR位置修正 / ユニットID1行化 / ユニット日付を月/日形式に / 個別飼育体重g二重表示修正
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-window._LABEL_BUILD = '20260414n';
+window._LABEL_BUILD = '20260414o';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 // ── ステージコード正規化 ─────────────────────────────────────────
@@ -1081,7 +1081,7 @@ function _buildLabelHTML(ld, qrSrc) {
 
 
 // ── 種親ラベル（62mm × 25mm）─────────────────────────────────────
-// build: 20260414n - 手書きデザインに刷新
+// build: 20260414o - 手書きデザインに刷新
 function _buildParentLabelHTML(ld, _unused, qrSrc) {
   var qr = (typeof _unused === 'string' && _unused.startsWith('data:')) ? _unused : qrSrc;
 
@@ -1141,13 +1141,13 @@ function _buildParentLabelHTML(ld, _unused, qrSrc) {
     + '    <div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:1.5mm;padding-left:1mm">\n'
     + '      <div style="font-family:monospace;font-size:10px;font-weight:900;letter-spacing:.2px;white-space:nowrap">' + titleStr + '</div>\n'
     + '      <div style="display:flex;align-items:baseline;gap:2mm">\n'
-    + '        <span style="font-size:6.5px;font-weight:700;min-width:7mm;color:#555;white-space:nowrap">羽化日</span>\n'
-    + '        <span style="font-size:7.5px;font-weight:700;border-bottom:1px solid #888;min-width:20mm;padding-bottom:1px">'
+    + '        <span style="font-size:7px;font-weight:700;min-width:7mm;color:#555;white-space:nowrap">羽化日</span>\n'
+    + '        <span style="font-size:9.5px;font-weight:700;border-bottom:1px solid #888;min-width:20mm;padding-bottom:1px">'
     + ecDisp + '</span>\n'
     + '      </div>\n'
     + '      <div style="display:flex;align-items:baseline;gap:2mm">\n'
-    + '        <span style="font-size:6.5px;font-weight:700;min-width:7mm;color:#555;white-space:nowrap">後食日</span>\n'
-    + '        <span style="font-size:7.5px;font-weight:700;border-bottom:1px solid #888;min-width:20mm;padding-bottom:1px">'
+    + '        <span style="font-size:7px;font-weight:700;min-width:7mm;color:#555;white-space:nowrap">後食日</span>\n'
+    + '        <span style="font-size:9.5px;font-weight:700;border-bottom:1px solid #888;min-width:20mm;padding-bottom:1px">'
     + feedDisp + '</span>\n'
     + '      </div>\n'
     + '    </div>\n'
