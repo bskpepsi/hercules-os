@@ -11,12 +11,12 @@
 //   html2canvas が有効 → PNG生成 → img プレビュー → PNG保存 / 共有
 //   html2canvas なし   → iframe フォールバック
 //
-// build: 20260414k
+// build: 20260414l
 // 変更点: QR位置修正 / ユニットID1行化 / ユニット日付を月/日形式に / 個別飼育体重g二重表示修正
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-window._LABEL_BUILD = '20260414f';
+window._LABEL_BUILD = '20260414l';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 // ── ステージコード正規化 ─────────────────────────────────────────
@@ -782,6 +782,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         html:       html,
         pngDataUrl: '',
         dims:       dims,
+        labelType:  ld.label_type || '',
       };
 
       var _previewNow = document.getElementById('lbl-html-preview');
@@ -807,7 +808,9 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         console.warn('[LABEL] png build failed:', pngErr.message);
       }
 
-      if (pngDataUrl && qrSrc) {
+      // 種親ラベルはHTMLにQRを直接埋め込み済みのためコンポジット不要
+      var _skipComposite = (window._currentLabel && window._currentLabel.labelType === 'parent');
+      if (pngDataUrl && qrSrc && !_skipComposite) {
         var pngHasQr = await _checkPngHasQr(pngDataUrl, dims);
         console.log('[LABEL] qr composite mode:', pngHasQr ? 'on (verify+composite)' : 'on (needs composite)');
         try {
@@ -816,6 +819,8 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         } catch(compErr) {
           console.warn('[LABEL] qr composite failed:', compErr.message);
         }
+      } else if (pngDataUrl && _skipComposite) {
+        console.log('[LABEL] qr composite mode: skipped (parent label - QR already in HTML)');
       } else if (pngDataUrl && !qrSrc) {
         console.log('[LABEL] qr composite mode: skipped (no qrSrc)');
       }
@@ -1076,7 +1081,7 @@ function _buildLabelHTML(ld, qrSrc) {
 
 
 // ── 種親ラベル（62mm × 40mm）─────────────────────────────────────
-// build: 20260414k - 手書きデザインに刷新
+// build: 20260414l - 手書きデザインに刷新
 function _buildParentLabelHTML(ld, _unused, qrSrc) {
   var qr = (typeof _unused === 'string' && _unused.startsWith('data:')) ? _unused : qrSrc;
 
