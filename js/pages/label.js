@@ -11,12 +11,12 @@
 //   html2canvas が有効 → PNG生成 → img プレビュー → PNG保存 / 共有
 //   html2canvas なし   → iframe フォールバック
 //
-// build: 20260414o
+// build: 20260414p
 // 変更点: QR位置修正 / ユニットID1行化 / ユニット日付を月/日形式に / 個別飼育体重g二重表示修正
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-window._LABEL_BUILD = '20260414o';
+window._LABEL_BUILD = '20260414p';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 // ── ステージコード正規化 ─────────────────────────────────────────
@@ -385,7 +385,7 @@ Pages.labelGen = function (params = {}) {
             </button>
             <div style="display:flex;gap:8px;margin-bottom:8px">
               <button class="btn btn-primary" style="flex:2;font-weight:700;font-size:.92rem"
-                onclick="Pages._lblBrotherPrint()">🖨️ Brother印刷（1タップ）</button>
+                onclick="Pages._lblBrotherPrint()">🖨️ Brother印刷</button>
               <button class="btn btn-ghost" style="flex:1"
                 onclick="Pages._lblGenerate('${targetType}','${targetId}','${labelType}')">🔄 再生成</button>
             </div>
@@ -1081,7 +1081,7 @@ function _buildLabelHTML(ld, qrSrc) {
 
 
 // ── 種親ラベル（62mm × 25mm）─────────────────────────────────────
-// build: 20260414o - 手書きデザインに刷新
+// build: 20260414p - 手書きデザインに刷新
 function _buildParentLabelHTML(ld, _unused, qrSrc) {
   var qr = (typeof _unused === 'string' && _unused.startsWith('data:')) ? _unused : qrSrc;
 
