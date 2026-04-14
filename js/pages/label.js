@@ -11,12 +11,12 @@
 //   html2canvas が有効 → PNG生成 → img プレビュー → PNG保存 / 共有
 //   html2canvas なし   → iframe フォールバック
 //
-// build: 20260414q
+// build: 20260414r
 // 変更点: QR位置修正 / ユニットID1行化 / ユニット日付を月/日形式に / 個別飼育体重g二重表示修正
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-window._LABEL_BUILD = '20260414q';
+window._LABEL_BUILD = '20260414r';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 // ── ステージコード正規化 ─────────────────────────────────────────
@@ -548,8 +548,8 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
           try { var a = JSON.parse(r); if (Array.isArray(a)) return a.filter(Boolean).join(' '); } catch(_){}
           return r;
         })(),
-        paternal_size: par.paternal_size_mm ? par.paternal_size_mm + 'mm' : '',
-        maternal_size: par.maternal_size_mm ? par.maternal_size_mm + 'mm' : '',
+        paternal_size: par.father_parent_size_mm ? par.father_parent_size_mm + 'mm' : '',
+        maternal_size: par.mother_parent_size_mm ? par.mother_parent_size_mm + 'mm' : '',
         paternal_tags: pTags,
         maternal_tags: mTags,
         note_private: par.note     || '',
@@ -1081,7 +1081,7 @@ function _buildLabelHTML(ld, qrSrc) {
 
 
 // ── 種親ラベル（62mm × 25mm）─────────────────────────────────────
-// build: 20260414q - 手書きデザインに刷新
+// build: 20260414r - 手書きデザインに刷新
 function _buildParentLabelHTML(ld, _unused, qrSrc) {
   var qr = (typeof _unused === 'string' && _unused.startsWith('data:')) ? _unused : qrSrc;
 
@@ -1101,10 +1101,11 @@ function _buildParentLabelHTML(ld, _unused, qrSrc) {
   var feedDisp = feedStr ? feedStr : BLANK_DATE;
 
   // ♂親・♀親 血統原文＋サイズ
+  // paternal_size / maternal_size は既に 'XXXmm' 形式で入っている
   var patStr  = ld.paternal_raw  || '';
-  var patSize = ld.paternal_size ? ' (' + ld.paternal_size + 'mm)' : '';
+  var patSize = ld.paternal_size ? ' (' + ld.paternal_size + ')' : '';
   var matStr  = ld.maternal_raw  || '';
-  var matSize = ld.maternal_size ? ' (' + ld.maternal_size + 'mm)' : '';
+  var matSize = ld.maternal_size ? ' (' + ld.maternal_size + ')' : '';
 
   // ID表示（例: M25-A → "M25-A (164mm)"）
   var titleStr = rawId + (sizeStr ? '  (' + sizeStr + ')' : '');
