@@ -11,12 +11,12 @@
 //   html2canvas が有効 → PNG生成 → img プレビュー → PNG保存 / 共有
 //   html2canvas なし   → iframe フォールバック
 //
-// build: 20260413bj
-// 変更点: _buildT1UnitLabelHTML の t1Date フォールバックを '移行' → '' に修正
+// build: 20260414a
+// 変更点: QR_RECT_MM xMm: 3.5→3.0, yMm: 8.2→7.7 (左0.5mm・上0.5mmずらし)
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-window._LABEL_BUILD = '20260413bj';
+window._LABEL_BUILD = '20260414a';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 // ── ステージコード正規化 ─────────────────────────────────────────
@@ -46,7 +46,7 @@ function _stageCheckboxRow(stageCode) {
 }
 
 // ── QR位置定義（HTML・PNG両方が参照する単一矩形） ────────────────
-var QR_RECT_MM = { xMm: 3.5,  yMm: 8.2,  sizeMm: 11.67 };
+var QR_RECT_MM = { xMm: 3.0,  yMm: 7.7,  sizeMm: 11.67 };
 
 function _qrPxForDims(dims) {
   var pxPerMm = (dims && dims.wPx && dims.wMm) ? dims.wPx / dims.wMm : (234 / 62);
@@ -760,7 +760,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
 
   (async function _lblRender() {
     try {
-      console.log('[LABEL] qr build start - build:20260413bi');
+      console.log('[LABEL] qr build start - build:20260414a');
       console.log('[LABEL] qr target type:', targetType, '| targetId:', targetId);
       console.log('[LABEL] qr rect:', JSON.stringify(QR_RECT_MM));
       console.log('[LABEL] qr target text:', qrText);
@@ -1240,9 +1240,7 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
   var mat      = ld.mat_type || 'T1';
   var lineCode = ld.line_code || '';
   var originLS = ld.origin_lots_str || '';
-  // ▼▼▼ 修正箇所: t1_date が未設定の場合は空欄（バグ修正: '移行' → ''）▼▼▼
   var t1Date   = ld.t1_date || '';
-  // ▲▲▲ 修正箇所ここまで ▲▲▲
 
   var rawId     = ld.display_id || '';
   var idParts   = rawId.split('-');
@@ -1294,7 +1292,6 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
       + '</td>';
   }
 
-  // ▼▼▼ 修正箇所: 1行目の日付欄はt1Dateがあれば表示、なければ空欄 ▼▼▼
   var rowsHtml = '';
   for (var ri = 0; ri < 4; ri++) {
     var isT1Row = (ri === 0);
@@ -1308,7 +1305,6 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
       + '<td style="' + tdU + '">□全<br>□追</td>'
       + '</tr>';
   }
-  // ▲▲▲ 修正箇所ここまで ▲▲▲
 
   var bLg = 'display:inline-block;border:1.5px solid #000;border-radius:3px;'
     + 'padding:0 4px;font-size:12px;font-weight:700;color:#000;margin-right:2px;line-height:1.5';
@@ -1432,26 +1428,16 @@ Pages._lblBrotherPrint = function() {
   const dims = label.dims || { wMm:62, hMm:70 };
   const png  = label.pngDataUrl;
 
-  // ── Brother Print Service Plugin 向け印刷 ─────────────────────
-  // 用紙サイズは「62mm x 1m」連続テープを前提とする
-  // → @page sizeは指定せず、PNG を画面幅100%・上端に配置
-  // → ラベル高さ分だけ印刷され、プリンター側で自動カット
-  //
-  // PNG の実際のピクセルサイズ（wPx × hPx）をそのまま使い
-  // ブラウザのスケールに依存しないよう px 固定で配置
-  const wPx = dims.wPx || 234;
-  const hPx = dims.hPx || 265;
-
   if (png) {
+    const wPx = dims.wPx || 234;
+    const hPx = dims.hPx || 265;
     const printDoc = '<!DOCTYPE html><html><head>'
       + '<meta charset="utf-8">'
       + '<meta name="viewport" content="width=' + wPx + '">'
       + '<style>'
-      // margin:0、スクロールなし、背景白
       + '@page { margin: 0; }'
       + 'html { margin:0; padding:0; background:#fff; }'
       + 'body { margin:0; padding:0; background:#fff; width:' + wPx + 'px; }'
-      // 画像を幅100%・上端ぴったり配置
       + 'img {'
       +   'display:block;'
       +   'width:' + wPx + 'px;'
@@ -1481,6 +1467,8 @@ Pages._lblBrotherPrint = function() {
   }
 
   // ── HTMLフォールバック（PNG未生成の場合） ─────────────────────
+  const wPx = dims.wPx || 234;
+  const hPx = dims.hPx || 265;
   const rawHtml = (label.html || '').replace(/&quot;/g, '"');
   const printDoc2 = '<!DOCTYPE html><html><head>'
     + '<meta charset="utf-8">'
