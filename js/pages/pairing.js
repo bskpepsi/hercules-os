@@ -49,7 +49,17 @@ function _pairCardHTML(pair) {
     ) || null;
   }
   const lineCode = ln ? (ln.line_code || ln.display_id || '—') : '—';
-  const year     = ln ? (ln.hatch_year || '') : '';
+
+  // ★ 修正③: 年度表示をペアリング年（pairing_start の年）に変更
+  // hatch_year（孵化年=翌年）ではなくペアリング実施年を表示する
+  const year = (() => {
+    if (pair.pairing_start) {
+      const m = String(pair.pairing_start).match(/(\d{4})/);
+      if (m) return m[1];
+    }
+    // pairing_start がない場合はラインの hatch_year にフォールバック
+    return ln ? (ln.hatch_year || '') : '';
+  })();
 
   // 親情報
   const fName = f ? (f.parent_display_id || f.display_name || '') : '';
@@ -123,38 +133,6 @@ function _pairCardHTML(pair) {
 
     + '</div>';
 }
-
-// ════════════════════════════════════════════════════════════════
-// pairing.js  ―  産卵セット管理  v2
-// 改善: 採卵履歴カード形式・KPI・交換リマインド・ペアリング日名称
-// ════════════════════════════════════════════════════════════════
-'use strict';
-
-// ── 産卵セット一覧 ───────────────────────────────────────────────
-Pages.pairingList = function () {
-  const main = document.getElementById('main');
-  let statusFilter = 'active';
-
-  function render() {
-    const all  = Store.getDB('pairings') || [];
-    const list = statusFilter ? all.filter(p => p.status === statusFilter) : all;
-    main.innerHTML = `
-      ${UI.header('産卵セット', { action: { fn: "routeTo('pairing-new')", icon: '＋' } })}
-      <div class="page-body">
-        <div class="filter-bar">
-          <button class="pill ${statusFilter==='active'    ? 'active' : ''}" onclick="Pages._pairSetStatus('active')">進行中</button>
-          <button class="pill ${statusFilter==='completed' ? 'active' : ''}" onclick="Pages._pairSetStatus('completed')">完了</button>
-          <button class="pill ${statusFilter==='failed'    ? 'active' : ''}" onclick="Pages._pairSetStatus('failed')">失敗</button>
-          <button class="pill ${!statusFilter              ? 'active' : ''}" onclick="Pages._pairSetStatus('')">全て</button>
-        </div>
-        <div class="sec-hdr"><span class="sec-title">${list.length}セット</span></div>
-        ${list.length ? list.map(_pairCardHTML).join('') : UI.empty('産卵セットがありません', '右上の＋から登録できます')}
-      </div>`;
-  }
-
-  Pages._pairSetStatus = (s) => { statusFilter = s; render(); };
-  render();
-};
 
 
 function _calcExchangeDue(pair) {
@@ -990,7 +968,8 @@ Pages.pairingNew = function (params = {}) {
         ${UI.field('セット名（任意）', UI.input('set_name','text',v('set_name'),'例: 2025-A1ライン'))}
         <div class="form-title">日付</div>
         <div class="form-row-2">
-          ${UI.field('ペアリング日', UI.input('pairing_start','date',v('pairing_start')||today), true)}
+          ${/* ★ 修正①: 編集時は既存のpairing_startを使う。新規時のみtodayをデフォルトにする */ ''}
+          ${UI.field('ペアリング日', UI.input('pairing_start','date', isEdit ? v('pairing_start') : (v('pairing_start')||today)), true)}
           ${UI.field('セット開始日', UI.input('set_start','date',v('set_start')))}
         </div>
         <div class="form-row-2">
