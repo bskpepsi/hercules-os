@@ -11,7 +11,7 @@
 //   html2canvas が有効 → PNG生成 → img プレビュー → PNG保存 / 共有
 //   html2canvas なし   → iframe フォールバック
 //
-// build: 20260414g
+// build: 20260414i
 // 変更点: QR位置修正 / ユニットID1行化 / ユニット日付を月/日形式に / 個別飼育体重g二重表示修正
 // ════════════════════════════════════════════════════════════════
 'use strict';
@@ -1076,7 +1076,7 @@ function _buildLabelHTML(ld, qrSrc) {
 
 
 // ── 種親ラベル（62mm × 40mm）─────────────────────────────────────
-// build: 20260414g - 手書きデザインに刷新
+// build: 20260414i - 手書きデザインに刷新
 function _buildParentLabelHTML(ld, _unused, qrSrc) {
   var qr = (typeof _unused === 'string' && _unused.startsWith('data:')) ? _unused : qrSrc;
 
@@ -1084,7 +1084,7 @@ function _buildParentLabelHTML(ld, _unused, qrSrc) {
   // IDの末尾コード（例: M25-A → A）
   var idParts  = rawId.split('-');
   var idCode   = idParts.length >= 2 ? idParts[idParts.length - 1] : rawId;
-  var sizeStr  = ld.size_mm ? ld.size_mm + 'mm' : '';
+  var sizeStr  = ld.size_mm ? String(ld.size_mm).replace(/mm$/, '') + 'mm' : '';
   var ecStr    = ld.eclosion_date || '';
   var feedStr  = ld.feeding_date  || '';
   var sexColor = ld.sex === '♂' ? '#1a6bb5' : ld.sex === '♀' ? '#b51a5a' : '#000';
@@ -1105,43 +1105,44 @@ function _buildParentLabelHTML(ld, _unused, qrSrc) {
   var titleStr = rawId + (sizeStr ? '  (' + sizeStr + ')' : '');
 
   return '<!DOCTYPE html>\n<html><head><meta charset="utf-8">\n<style>\n'
-    + '  @page { size: 62mm 40mm; margin: 0; }\n'
+    + '  @page { size: 62mm 34mm; margin: 0; }\n'
     + '  * { margin:0; padding:0; box-sizing:border-box; }\n'
-    + '  body { width:62mm; height:40mm; font-family:sans-serif; background:#fff; color:#000; overflow:hidden; }\n'
+    + '  body { width:62mm; height:34mm; font-family:sans-serif; background:#fff; color:#000; overflow:hidden; }\n'
     + '  @media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }\n'
     + '</style></head><body>\n'
-    + '<div style="width:62mm;height:40mm;position:relative;padding:1.5mm 2mm 1mm">\n'
+    + '<div style="width:62mm;height:34mm;display:flex;flex-direction:column;padding:1.5mm 2mm 1.5mm">\n'
 
-    // 上段: QR＋性別バッジ（左）／ID＋サイズ（中右）
-    + '  <div style="display:flex;align-items:flex-start;gap:2mm;margin-bottom:1mm">\n'
-    + '    <div style="display:flex;flex-direction:row;gap:1.5mm;flex-shrink:0">\n'
-    +      (qr ? '      <div>' + _qrBox(qr, 20) + '</div>\n' : '')
+    // 上段: QR ＋ 性別マーク ＋ Aバッジ（左ブロック）／ ID・羽化日・後食日（右ブロック）
+    + '  <div style="display:flex;align-items:stretch;gap:2.5mm;flex:1">\n'
+
+    // 左: QR ・ ♂/♀ ・ Aバッジ 横並び
+    + '    <div style="display:flex;flex-direction:row;align-items:center;gap:1.5mm;flex-shrink:0">\n'
+    +      (qr ? '      <div>' + _qrBox(qr, 22) + '</div>\n' : '<div style="width:30px;height:30px;border:2px solid #ccc"></div>\n')
+    + '      <div style="font-size:16px;font-weight:900;line-height:1;color:' + sexColor + '">' + (ld.sex||'') + '</div>\n'
     + '      <div style="border:2.5px solid #000;border-radius:3px;font-size:' + badgeFz + ';font-weight:900;'
-    + 'line-height:1;width:9mm;height:9mm;display:flex;align-items:center;justify-content:center">\n'
+    + 'line-height:1;width:10mm;height:10mm;display:flex;align-items:center;justify-content:center">\n'
     + '        ' + idCode + '\n      </div>\n'
     + '    </div>\n'
-    + '    <div style="flex:1;min-width:0;padding-top:0.5mm">\n'
-    + '      <div style="font-family:monospace;font-size:9.5px;font-weight:900;letter-spacing:.2px;'
-    + 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + titleStr + '</div>\n'
 
-    // 羽化日・後食日
-    + '      <div style="margin-top:1.5mm">\n'
-    + '        <div style="display:flex;align-items:baseline;gap:1.5mm;margin-bottom:1mm">\n'
-    + '          <span style="font-size:6px;font-weight:700;min-width:7mm;color:#444">羽化日</span>\n'
-    + '          <span style="font-size:7.5px;font-weight:700;border-bottom:1px solid #777;flex:1;padding-bottom:0.5px">'
+    // 右: ID＋サイズ → 羽化日 → 後食日
+    + '    <div style="flex:1;min-width:0;display:flex;flex-direction:column;justify-content:space-between">\n'
+    + '      <div style="font-family:monospace;font-size:10px;font-weight:900;letter-spacing:.2px;'
+    + 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:1.5mm">' + titleStr + '</div>\n'
+    + '      <div style="display:flex;align-items:baseline;gap:1.5mm;margin-bottom:1.5mm">\n'
+    + '        <span style="font-size:6.5px;font-weight:700;min-width:7mm;color:#444">羽化日</span>\n'
+    + '        <span style="font-size:7.5px;font-weight:700;border-bottom:1px solid #777;flex:1;padding-bottom:1px">'
     + ecDisp + '</span>\n'
-    + '        </div>\n'
-    + '        <div style="display:flex;align-items:baseline;gap:1.5mm">\n'
-    + '          <span style="font-size:6px;font-weight:700;min-width:7mm;color:#444">後食日</span>\n'
-    + '          <span style="font-size:7.5px;font-weight:700;border-bottom:1px solid #777;flex:1;padding-bottom:0.5px">'
+    + '      </div>\n'
+    + '      <div style="display:flex;align-items:baseline;gap:1.5mm">\n'
+    + '        <span style="font-size:6.5px;font-weight:700;min-width:7mm;color:#444">後食日</span>\n'
+    + '        <span style="font-size:7.5px;font-weight:700;border-bottom:1px solid #777;flex:1;padding-bottom:1px">'
     + feedDisp + '</span>\n'
-    + '        </div>\n'
     + '      </div>\n'
     + '    </div>\n'
     + '  </div>\n'
 
     // 区切り線
-    + '  <div style="border-top:1px solid #999;margin:0 0 1.2mm"></div>\n'
+    + '  <div style="border-top:1px solid #aaa;margin:1.5mm 0 1mm"></div>\n'
 
     // 下段: ♂親・♀親 血統
     + '  <div style="display:flex;flex-direction:column;gap:1mm">\n'
