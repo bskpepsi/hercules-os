@@ -11,12 +11,12 @@
 //   html2canvas が有効 → PNG生成 → img プレビュー → PNG保存 / 共有
 //   html2canvas なし   → iframe フォールバック
 //
-// build: 20260414l
+// build: 20260414m
 // 変更点: QR位置修正 / ユニットID1行化 / ユニット日付を月/日形式に / 個別飼育体重g二重表示修正
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-window._LABEL_BUILD = '20260414l';
+window._LABEL_BUILD = '20260414m';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 // ── ステージコード正規化 ─────────────────────────────────────────
@@ -1081,7 +1081,7 @@ function _buildLabelHTML(ld, qrSrc) {
 
 
 // ── 種親ラベル（62mm × 40mm）─────────────────────────────────────
-// build: 20260414l - 手書きデザインに刷新
+// build: 20260414m - 手書きデザインに刷新
 function _buildParentLabelHTML(ld, _unused, qrSrc) {
   var qr = (typeof _unused === 'string' && _unused.startsWith('data:')) ? _unused : qrSrc;
 
@@ -1111,8 +1111,8 @@ function _buildParentLabelHTML(ld, _unused, qrSrc) {
 
   // QRをborder/paddingなしのimgで直接出力
   var qrImgTag = qr
-    ? '<img src="' + qr + '" style="width:26px;height:26px;display:block;line-height:0">'
-    : '<div style="width:26px;height:26px;border:1px dashed #ccc;font-size:5px;display:flex;align-items:center;justify-content:center">QR</div>';
+    ? '<img src="' + qr + '" style="width:38px;height:38px;display:block;line-height:0">'
+    : '<div style="width:38px;height:38px;border:1px dashed #ccc;font-size:5px;display:flex;align-items:center;justify-content:center">QR</div>';
 
   return '<!DOCTYPE html>\n<html><head><meta charset="utf-8">\n<style>\n'
     + '  @page { size: 62mm 34mm; margin: 0; }\n'
@@ -1120,12 +1120,12 @@ function _buildParentLabelHTML(ld, _unused, qrSrc) {
     + '  body { width:62mm; height:34mm; font-family:sans-serif; background:#fff; color:#000; overflow:hidden; }\n'
     + '  @media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }\n'
     + '</style></head><body>\n'
-    + '<div style="width:62mm;height:34mm;display:flex;flex-direction:column;padding:1.5mm 2mm 1mm">\n'
+    + '<div style="width:62mm;height:34mm;display:flex;flex-direction:column;padding:1mm 2mm 0mm">\n'
 
     // 上段: 左ブロック（QR・♂/♀・Aバッジ横並び） + 縦区切り + 右ブロック
-    + '  <div style="display:flex;flex-direction:row;align-items:center;gap:2mm;flex:1">\n'
+    + '  <div style="display:flex;flex-direction:row;align-items:center;gap:2mm;flex-shrink:0">\n'
 
-    // 左ブロック: QR → ♂/♀ → Aバッジ を横一列（各要素は独立・重なりなし）
+    // 左ブロック: QR → ♂/♀ → Aバッジ を横一列
     + '    <div style="display:flex;flex-direction:row;align-items:center;gap:1.5mm;flex-shrink:0">\n'
     + '      <div style="flex-shrink:0;line-height:0">' + qrImgTag + '</div>\n'
     + '      <div style="font-size:26px;font-weight:900;line-height:1;color:' + sexColor + ';flex-shrink:0">' + (ld.sex||'') + '</div>\n'
@@ -1137,7 +1137,7 @@ function _buildParentLabelHTML(ld, _unused, qrSrc) {
     // 縦区切り線
     + '    <div style="width:1px;background:#ccc;align-self:stretch;margin:0;flex-shrink:0"></div>\n'
 
-    // 右ブロック: ID・羽化日・後食日（左ブロックと縦中央揃え）
+    // 右ブロック: ID・羽化日・後食日（縦中央揃え）
     + '    <div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:1.5mm;padding-left:1mm">\n'
     + '      <div style="font-family:monospace;font-size:10px;font-weight:900;letter-spacing:.2px;white-space:nowrap">' + titleStr + '</div>\n'
     + '      <div style="display:flex;align-items:baseline;gap:2mm">\n'
@@ -1154,9 +1154,9 @@ function _buildParentLabelHTML(ld, _unused, qrSrc) {
     + '  </div>\n'
 
     // 区切り線
-    + '  <div style="border-top:1px solid #aaa;margin:1mm 0 1mm"></div>\n'
+    + '  <div style="border-top:1px solid #aaa;margin:1mm 0 0.8mm"></div>\n'
 
-    // 下段: ♂親・♀親 血統
+    // 下段: ♂親・♀親 血統（余白なし）
     + '  <div style="display:flex;flex-direction:column;gap:1mm">\n'
     + '    <div style="display:flex;align-items:baseline;gap:1.5mm">\n'
     + '      <span style="font-size:7px;font-weight:900;color:#1a6bb5;min-width:5mm">♂親</span>\n'
