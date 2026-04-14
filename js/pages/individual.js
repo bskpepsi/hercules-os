@@ -2,7 +2,7 @@
 // individual.js
 // 役割: 個体の一覧・詳細・新規登録・編集・ステータス変更を担う。
 //       個体台帳の中心画面。ロット・成長記録・ラベルへの導線も持つ。
-// build: 20260414a
+// build: 20260414b
 //
 // 20260414a 修正:
 //   - 個体一覧カードのステージバッジを短縮表示（成虫（活動開始）→活動中 等）
@@ -13,7 +13,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] individual.js v20260414a loaded');
+console.log('[HerculesOS] individual.js v20260414b loaded');
 
 const Pages = window.Pages || {};
 
@@ -311,32 +311,29 @@ function _toDisplayStageBadgeShort(code) {
 }
 
 // ────────────────────────────────────────────────────────────────
-// _indCardHTML — 個体一覧カード
+// _indCardHTML — 個体一覧カード（ロット・ユニット一覧と統一レイアウト）
 // ────────────────────────────────────────────────────────────────
 function _indCardHTML(ind) {
-  const ageObj   = ind.hatch_date ? Store.calcAge(ind.hatch_date) : null;
+  const ageObj     = ind.hatch_date ? Store.calcAge(ind.hatch_date) : null;
   const ageDaysStr = ageObj ? ageObj.days : null;
-  const stageGuess = ageObj ? ageObj.stageGuess : '';
 
   const w  = ind.latest_weight_g ? ind.latest_weight_g + 'g' : null;
   const sz = ind.adult_size_mm   ? ind.adult_size_mm + 'mm'  : null;
 
   const line    = ind.line_id ? Store.getLine(ind.line_id) : null;
   const lineStr = line ? (line.line_code || line.display_id || '') : '';
-  const lineLbl = lineStr ? lineStr + 'ライン' : '—';
-  const locality = ind.locality || (line ? line.locality : '') || '';
 
-  const stMap = {
-    alive:'飼育中', larva:'飼育中', prepupa:'飼育中', pupa:'飼育中', adult:'飼育中',
-    seed_candidate:'飼育中', seed_reserved:'飼育中',
-    for_sale:'販売候補', listed:'出品中', sold:'販売済み', dead:'死亡',
-  };
   const stColor = {
     alive:'var(--green)', larva:'var(--green)', prepupa:'var(--green)',
     pupa:'var(--green)', adult:'var(--green)',
     seed_candidate:'var(--green)', seed_reserved:'var(--green)',
     for_sale:'#9c27b0', listed:'#ff9800',
     sold:'var(--amber)', dead:'var(--red,#e05050)',
+  };
+  const stMap = {
+    alive:'飼育中', larva:'飼育中', prepupa:'飼育中', pupa:'飼育中', adult:'飼育中',
+    seed_candidate:'飼育中', seed_reserved:'飼育中',
+    for_sale:'販売候補', listed:'出品中', sold:'販売済み', dead:'死亡',
   };
   const stLbl = stMap[ind.status] || ind.status || '—';
   const stClr = stColor[ind.status] || 'var(--text3)';
@@ -350,47 +347,51 @@ function _indCardHTML(ind) {
   const sexColor = ind.sex === '♂' ? 'var(--male,#5ba8e8)' : ind.sex === '♀' ? 'var(--female,#e87fa0)' : 'var(--text3)';
   const dispId   = _safeDisplayId(ind);
 
-  let ageHtml = '';
-  if (ageDaysStr) {
-    ageHtml = '日齢' + ageDaysStr + (stageGuess ? ' · ' + stageGuess : '');
-  } else if (!ind.hatch_date) {
-    ageHtml = '<span style="color:var(--amber)">孵化日未設定</span>';
-  }
+  // サブ情報: ステージ / 日齢 / 体重 / 成虫サイズ（産地は非表示）
+  const stageLbl = _toDisplayStageLabelShort(ind.current_stage);
+  const stageColorMap = {
+    'L1L2':'var(--green)', 'L3':'var(--blue)', '前蛹':'#e65100',
+    '蛹':'#bf360c', '未後食':'#9c27b0', '活動中':'var(--gold)',
+  };
+  const stageC = stageColorMap[stageLbl] || 'var(--text3)';
 
-  // ★ 短縮バッジを使用（カード崩れ防止）
-  return '<div class="ind-card" onclick="routeTo(\'ind-detail\',{indId:\'' + ind.ind_id + '\'})" style="padding:10px 12px">'
-    + '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:nowrap;overflow:hidden">'
-    +   '<span style="font-weight:700;color:' + sexColor + ';font-size:.95rem;flex-shrink:0">' + (ind.sex || '?') + '</span>'
-    +   '<span style="font-family:var(--font-mono);font-weight:700;font-size:.9rem;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + dispId + '</span>'
-    +   (icons ? '<span style="font-size:.82rem;flex-shrink:0">' + icons + '</span>' : '')
-    +   '<span style="flex-shrink:0">' + _toDisplayStageBadgeShort(ind.current_stage) + '</span>'
+  const subParts = [];
+  if (stageLbl) subParts.push('<span style="font-weight:700;color:' + stageC + '">' + stageLbl + '</span>');
+  if (ageDaysStr) subParts.push('<span>' + ageDaysStr + '</span>');
+  else if (!ind.hatch_date) subParts.push('<span style="color:var(--amber);font-size:.7rem">孵化日未設定</span>');
+  if (w)  subParts.push('<span style="color:var(--green);font-weight:700">' + w + '</span>');
+  if (sz) subParts.push('<span style="color:var(--gold);font-weight:700">' + sz + '</span>');
+  const subHtml = subParts.join('<span style="font-size:.65rem;color:var(--border,rgba(255,255,255,.15));padding:0 2px">/</span>');
+
+  return '<div class="card" style="padding:12px 14px;cursor:pointer;display:flex;align-items:center;gap:0;margin-bottom:8px"'
+    + ' onclick="routeTo('ind-detail',{indId:'' + ind.ind_id + ''})">'
+
+    // ①列: ライン + 性別
+    + '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;'
+    +   'min-width:34px;padding-right:8px;border-right:1px solid var(--border2);margin-right:8px;flex-shrink:0">'
+    +   '<span style="font-size:.88rem;font-weight:800;color:var(--gold);line-height:1.2">' + (lineStr || '—') + '</span>'
+    +   '<span style="font-size:.82rem;font-weight:700;color:' + sexColor + ';margin-top:2px">' + (ind.sex || '?') + '</span>'
     + '</div>'
-    + '<div style="font-size:.76rem;color:var(--text2);margin-bottom:3px">'
-    +   lineLbl + (locality ? ' / ' + locality : '')
+
+    // ②列: ID + サブ情報
+    + '<div style="flex:1;min-width:0">'
+    +   '<div style="display:flex;align-items:center;gap:4px;margin-bottom:3px">'
+    +     '<span style="font-family:var(--font-mono);font-weight:700;font-size:.85rem;color:var(--text1);'
+    +       'overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + dispId + '</span>'
+    +     (icons ? '<span style="font-size:.8rem;flex-shrink:0">' + icons + '</span>' : '')
+    +   '</div>'
+    +   (subHtml ? '<div style="display:flex;align-items:center;gap:3px;flex-wrap:wrap;font-size:.78rem;color:var(--text2)">' + subHtml + '</div>' : '')
     + '</div>'
-    + (ageHtml ? '<div style="font-size:.76rem;color:var(--text3);margin-bottom:3px">' + ageHtml + '</div>' : '')
-    + (w || sz ? '<div style="font-size:.8rem;color:var(--text2);margin-bottom:4px">' + [w,sz].filter(Boolean).join(' / ') + '</div>' : '')
-    + '<div style="display:flex;align-items:center;justify-content:space-between">'
-    +   '<span style="font-size:.72rem;font-weight:700;color:' + stClr + '">' + stLbl + '</span>'
-    +   '<span style="color:var(--text3);font-size:1rem">›</span>'
+
+    // ③列: ステータス + ›
+    + '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px;flex-shrink:0;margin-left:6px">'
+    +   '<span style="font-size:.72rem;font-weight:700;color:' + stClr + ';white-space:nowrap">' + stLbl + '</span>'
+    +   '<span style="color:var(--text3);font-size:1.1rem">›</span>'
     + '</div>'
+
     + '</div>';
 }
 
-// QRスキャン
-Pages._indQrScan = function () {
-  const input = prompt('個体ID（IND-xxxxx）または表示ID（HM2025-A1-001）:');
-  if (!input) return;
-  const trimmed = input.trim();
-  if (trimmed.startsWith('IND-')) {
-    routeTo('ind-detail', { indId: trimmed });
-    return;
-  }
-  if (trimmed.startsWith('IND:')) {
-    routeTo('ind-detail', { indId: trimmed.replace('IND:', '') });
-    return;
-  }
-  const inds  = Store.getDB('individuals') || [];
   const found = inds.find(i =>
     i.display_id === trimmed ||
     i.display_id?.toLowerCase() === trimmed.toLowerCase()
