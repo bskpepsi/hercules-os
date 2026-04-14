@@ -64,8 +64,8 @@ function _pairCardHTML(pair) {
   // 親情報
   const fName = f ? (f.parent_display_id || f.display_name || '') : '';
   const mName = m ? (m.parent_display_id || m.display_name || '') : '';
-  const fSize = (f && f.size_mm) ? ' ' + f.size_mm + 'mm' : '';
-  const mSize = (m && m.size_mm) ? ' ' + m.size_mm + 'mm' : '';
+  const fSize = (f && f.size_mm) ? '（' + f.size_mm + 'mm）' : '';
+  const mSize = (m && m.size_mm) ? '（' + m.size_mm + 'mm）' : '';
 
   // 血統原文（父母から取得、20文字省略）
   const fRaw = f ? (f.bloodline_raw || '') : '';
@@ -961,8 +961,8 @@ Pages.pairingNew = function (params = {}) {
     <div class="page-body">
       <form id="pair-form" class="form-section">
         <div class="form-title">ペアリング情報</div>
-        ${UI.field('♂親（父）', UI.select('father_par_id', males.map(p=>({code:p.par_id,label:`${p.display_name}${p.size_mm?' '+p.size_mm+'mm':''}`})), v('father_par_id')), true)}
-        ${UI.field('♀親（母）', UI.select('mother_par_id', females.map(p=>({code:p.par_id,label:`${p.display_name}${p.size_mm?' '+p.size_mm+'mm':''}`})), v('mother_par_id')), true)}
+        ${UI.field('♂親（父）', UI.select('father_par_id', males.map(p=>({code:p.par_id,label:`${p.parent_display_id||p.display_name}${p.size_mm?'（'+p.size_mm+'mm）':''}`})), v('father_par_id')), true)}
+        ${UI.field('♀親（母）', UI.select('mother_par_id', females.map(p=>({code:p.par_id,label:`${p.parent_display_id||p.display_name}${p.size_mm?'（'+p.size_mm+'mm）':''}`})), v('mother_par_id')), true)}
         ${UI.field('セット名（任意）', UI.input('set_name','text',v('set_name'),'例: 2025-A1ライン'))}
         <div class="form-title">日付</div>
         <div class="form-row-2">
