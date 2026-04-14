@@ -11,7 +11,7 @@
 //   html2canvas が有効 → PNG生成 → img プレビュー → PNG保存 / 共有
 //   html2canvas なし   → iframe フォールバック
 //
-// build: 20260414i
+// build: 20260414j
 // 変更点: QR位置修正 / ユニットID1行化 / ユニット日付を月/日形式に / 個別飼育体重g二重表示修正
 // ════════════════════════════════════════════════════════════════
 'use strict';
@@ -1076,7 +1076,7 @@ function _buildLabelHTML(ld, qrSrc) {
 
 
 // ── 種親ラベル（62mm × 40mm）─────────────────────────────────────
-// build: 20260414i - 手書きデザインに刷新
+// build: 20260414j - 手書きデザインに刷新
 function _buildParentLabelHTML(ld, _unused, qrSrc) {
   var qr = (typeof _unused === 'string' && _unused.startsWith('data:')) ? _unused : qrSrc;
 
@@ -1115,27 +1115,26 @@ function _buildParentLabelHTML(ld, _unused, qrSrc) {
     // 上段: QR ＋ 性別マーク ＋ Aバッジ（左ブロック）／ ID・羽化日・後食日（右ブロック）
     + '  <div style="display:flex;align-items:stretch;gap:2.5mm;flex:1">\n'
 
-    // 左: QR ・ ♂/♀ ・ Aバッジ 横並び
-    + '    <div style="display:flex;flex-direction:row;align-items:center;gap:1.5mm;flex-shrink:0">\n'
-    +      (qr ? '      <div>' + _qrBox(qr, 22) + '</div>\n' : '<div style="width:30px;height:30px;border:2px solid #ccc"></div>\n')
-    + '      <div style="font-size:16px;font-weight:900;line-height:1;color:' + sexColor + '">' + (ld.sex||'') + '</div>\n'
+    // 左: QR ・ ♂/♀ ・ Aバッジ 横並び（重ならないよう各要素を独立配置）
+    + '    <div style="display:flex;flex-direction:row;align-items:center;gap:2mm;flex-shrink:0;padding-top:1mm">\n'
+    +      (qr ? '      <div style="flex-shrink:0">' + _qrBox(qr, 22) + '</div>\n' : '<div style="width:30px;height:30px;border:2px solid #ccc;flex-shrink:0"></div>\n')
+    + '      <div style="font-size:28px;font-weight:900;line-height:1;color:' + sexColor + ';flex-shrink:0">' + (ld.sex||'') + '</div>\n'
     + '      <div style="border:2.5px solid #000;border-radius:3px;font-size:' + badgeFz + ';font-weight:900;'
-    + 'line-height:1;width:10mm;height:10mm;display:flex;align-items:center;justify-content:center">\n'
+    + 'line-height:1;width:11mm;height:11mm;display:flex;align-items:center;justify-content:center;flex-shrink:0">\n'
     + '        ' + idCode + '\n      </div>\n'
     + '    </div>\n'
 
-    // 右: ID＋サイズ → 羽化日 → 後食日
-    + '    <div style="flex:1;min-width:0;display:flex;flex-direction:column;justify-content:space-between">\n'
-    + '      <div style="font-family:monospace;font-size:10px;font-weight:900;letter-spacing:.2px;'
-    + 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:1.5mm">' + titleStr + '</div>\n'
-    + '      <div style="display:flex;align-items:baseline;gap:1.5mm;margin-bottom:1.5mm">\n'
-    + '        <span style="font-size:6.5px;font-weight:700;min-width:7mm;color:#444">羽化日</span>\n'
-    + '        <span style="font-size:7.5px;font-weight:700;border-bottom:1px solid #777;flex:1;padding-bottom:1px">'
+    // 右: ID＋サイズ → 羽化日 → 後食日（幅は内容に合わせてauto）
+    + '    <div style="flex:0 0 auto;display:flex;flex-direction:column;justify-content:flex-start;gap:1.5mm;padding-top:1mm">\n'
+    + '      <div style="font-family:monospace;font-size:10px;font-weight:900;letter-spacing:.2px;white-space:nowrap">' + titleStr + '</div>\n'
+    + '      <div style="display:flex;align-items:baseline;gap:2mm">\n'
+    + '        <span style="font-size:6.5px;font-weight:700;min-width:7mm;color:#444;white-space:nowrap">羽化日</span>\n'
+    + '        <span style="font-size:7.5px;font-weight:700;border-bottom:1px solid #777;min-width:22mm;padding-bottom:1px">'
     + ecDisp + '</span>\n'
     + '      </div>\n'
-    + '      <div style="display:flex;align-items:baseline;gap:1.5mm">\n'
-    + '        <span style="font-size:6.5px;font-weight:700;min-width:7mm;color:#444">後食日</span>\n'
-    + '        <span style="font-size:7.5px;font-weight:700;border-bottom:1px solid #777;flex:1;padding-bottom:1px">'
+    + '      <div style="display:flex;align-items:baseline;gap:2mm">\n'
+    + '        <span style="font-size:6.5px;font-weight:700;min-width:7mm;color:#444;white-space:nowrap">後食日</span>\n'
+    + '        <span style="font-size:7.5px;font-weight:700;border-bottom:1px solid #777;min-width:22mm;padding-bottom:1px">'
     + feedDisp + '</span>\n'
     + '      </div>\n'
     + '    </div>\n'
