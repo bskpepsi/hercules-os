@@ -1,9 +1,8 @@
 // ════════════════════════════════════════════════════════════════
 // settings.js
 // 役割: アプリ全体の設定を管理する画面。
-//       GAS URL・Gemini APIキー・選別基準・ステージ目安・
-//       ブランドコード・ギネス閾値などを設定・保存する。
-//       設定はlocalStorageに永続化し、GASの設定シートにも同期する。
+// build: 20260414a
+// 変更点: 全データリセットボタンのonclick修正（window.Pages._devReset → Pages._devReset）
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
@@ -11,12 +10,9 @@ Pages.settings = function () {
   const main = document.getElementById('main');
   _renderSettings(main);
 
-  // 描画後に非同期でバックアップ情報を取得・更新
-  // （GASへの問い合わせは画面表示をブロックしない）
   if (Store.getSetting('gas_url')) {
     API.backup.getSettings().then(res => {
       if (!res) return;
-      // GASキー → ローカルstoreキー のマッピング
       const keyMap = {
         last_success_at:      'backup_last_success_at',
         last_fail_at:         'backup_last_fail_at',
@@ -30,12 +26,10 @@ Pages.settings = function () {
       Object.entries(keyMap).forEach(([gasKey, localKey]) => {
         if (res[gasKey] !== undefined) Store.setSetting(localKey, String(res[gasKey]));
       });
-    }).catch(() => { /* 未接続でも無視 */ });
+    }).catch(() => {});
 
-    // 履歴も非同期でロード（100ms遅延でDOM確実確保）
     setTimeout(() => Pages._bkLoadHistory(), 100);
   } else {
-    // GAS未設定時は「未実行」メッセージに差し替え
     setTimeout(() => {
       const el = document.getElementById('bk-history-list');
       if (el) el.innerHTML =
@@ -57,7 +51,6 @@ function _renderSettings(main) {
     ? new Date(lastSync).toLocaleString('ja-JP', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' })
     : '未同期';
 
-  // バックアップ関連（localStorageから即時読み込み。GASからの取得は非同期で後から上書き）
   const bkLastSuccessAt = Store.getSetting('backup_last_success_at') || '';
   const bkLastFailAt    = Store.getSetting('backup_last_fail_at')    || '';
   const bkLastType      = Store.getSetting('backup_last_type')       || '';
@@ -214,7 +207,7 @@ function _renderSettings(main) {
         <div style="font-size:.75rem;color:var(--text3);margin-bottom:10px">
           対象：ライン / ロット / 個体 / 種親 / 血統 / 産卵セット / 採卵記録 / 成長記録 / ラベル履歴 他
         </div>
-        <button class="btn btn-danger btn-full" onclick="window.Pages._devReset ? window.Pages._devReset() : alert('関数が見つかりません。ページをリロードしてください。')">
+        <button class="btn btn-danger btn-full" onclick="Pages._devReset()">
           🗑️ 全データリセット（テスト用）
         </button>
       </div>
@@ -247,7 +240,6 @@ function _renderSettings(main) {
       <div class="card" style="border-color:rgba(200,168,75,.25)">
         <div class="card-title" style="color:var(--gold)">🗄️ バックアップ管理</div>
 
-        <!-- 最終バックアップ情報（成功/失敗を分けて表示） -->
         <div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:.82rem">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">
             <span style="color:var(--text3);font-size:.7rem;min-width:60px">最終成功</span>
@@ -272,7 +264,6 @@ function _renderSettings(main) {
           </div>
         </div>
 
-        <!-- 手動バックアップ -->
         <div style="padding:10px 0;border-bottom:1px solid var(--border)">
           <input id="bk-memo" class="input" type="text" maxlength="60"
             placeholder="メモ（任意）例: Phase1完成前"
@@ -284,7 +275,6 @@ function _renderSettings(main) {
           <div id="bk-run-result" style="margin-top:6px;font-size:.78rem"></div>
         </div>
 
-        <!-- 自動バックアップ ON/OFF -->
         <div style="padding:10px 0;border-bottom:1px solid var(--border)">
           <div style="font-size:.8rem;font-weight:600;color:var(--text2);margin-bottom:8px">
             自動バックアップ設定
@@ -316,7 +306,6 @@ function _renderSettings(main) {
           </div>
         </div>
 
-        <!-- バックアップ履歴（直近5件） -->
         <div style="padding-top:10px">
           <div style="font-size:.8rem;font-weight:600;color:var(--text2);margin-bottom:6px">
             バックアップ履歴
@@ -350,7 +339,6 @@ Pages._setGasUrl = async function () {
 
   var resultEl = document.getElementById('gas-test-result');
 
-  console.log('[SETTINGS] ===== connect test start =====');
   console.log('[SETTINGS] ===== connect test start =====');
   console.log('[SETTINGS] __INDEX_BUILD :', window.__INDEX_BUILD || '(not set)');
   console.log('[SETTINGS] __API_BUILD   :', window.__API_BUILD   || '(not set)');
@@ -473,7 +461,6 @@ Pages._setThresholds = async function () {
   Store.setSetting('target_size_mm',           tMm);
   Store.setSetting('large_male_threshold_mm',  lMm);
 
-  // GASの設定シートにも反映
   const gasUrl = Store.getSetting('gas_url');
   if (gasUrl) {
     try {
@@ -530,7 +517,6 @@ Pages._devReset = async function () {
 
   try {
     const res = await API.system.resetAllData();
-    // ローカルキャッシュクリア
     try {
       Object.keys(localStorage).forEach(k => {
         if (k.startsWith('hercules')) localStorage.removeItem(k);
@@ -557,7 +543,6 @@ Pages._bkRunManual = async function () {
   try {
     const result = await API.backup.run(memo || 'settings画面から手動実行');
 
-    // 成功日時・種別・URLをローカルに保存
     Store.setSetting('backup_last_success_at', result.executed_at);
     Store.setSetting('backup_last_type',       'Manual');
     Store.setSetting('backup_last_url',        result.drive_url);
@@ -575,7 +560,6 @@ Pages._bkRunManual = async function () {
           style="color:var(--blue);font-size:.72rem">📁 ファイルを開く</a>
       </div>`;
 
-    // メモフィールドをクリア
     const memoEl = document.getElementById('bk-memo');
     if (memoEl) memoEl.value = '';
 
@@ -594,15 +578,10 @@ Pages._bkRunManual = async function () {
 Pages._bkToggleAuto = async function (settingKey, currentEnabled) {
   const newVal = currentEnabled ? 'false' : 'true';
   Store.setSetting(settingKey, newVal);
-  // GASにも反映
   try {
     await API.system.updateSetting(settingKey, newVal);
-  } catch (e) {
-    // GAS未接続でもローカル設定は保存済みなので続行
-  }
-  // 画面を再描画
+  } catch (e) {}
   _renderSettings(document.getElementById('main'));
-  // 再描画後に履歴を再ロード
   setTimeout(() => Pages._bkLoadHistory(), 100);
 };
 
@@ -691,7 +670,6 @@ Pages._integrityCheck = async function () {
       return;
     }
 
-    // サマリー行
     const summaryHtml = [
       summ.lot_line_missing       ? `line欠損: ${summ.lot_line_missing}`             : '',
       summ.lot_line_invalid       ? `line無効: ${summ.lot_line_invalid}`             : '',
@@ -701,7 +679,6 @@ Pages._integrityCheck = async function () {
       summ.attrition_total_mismatch ? `attrition不一致: ${summ.attrition_total_mismatch}` : '',
     ].filter(Boolean).join(' / ');
 
-    // 詳細行（最大20件）
     const detailRows = errs.slice(0, 20).map(function (e) {
       return `<div style="padding:5px 0;border-bottom:1px solid var(--border);font-size:.78rem">
         <span style="color:var(--red);font-weight:600">[${e.type}]</span>
@@ -754,13 +731,12 @@ Pages._recalcAll = async function () {
 
   try {
     const res = await API.integrity.recalculateAll();
-    await syncAll(true);   // キャッシュを最新化
+    await syncAll(true);
 
     const errHtml = (res.errors || []).slice(0, 5).map(function (e) {
       return `<div style="font-size:.72rem;color:var(--red)">${e.display || e.lot_id}: ${e.error}</div>`;
     }).join('');
 
-    // 変化があったロットのみ表示（最大10件）
     const changedRows = (res.results || [])
       .filter(function (r) {
         return r.old_count !== r.new_count || r.old_attrition !== r.new_attrition;
