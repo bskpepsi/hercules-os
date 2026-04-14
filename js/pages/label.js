@@ -11,12 +11,12 @@
 //   html2canvas が有効 → PNG生成 → img プレビュー → PNG保存 / 共有
 //   html2canvas なし   → iframe フォールバック
 //
-// build: 20260414p
+// build: 20260414q
 // 変更点: QR位置修正 / ユニットID1行化 / ユニット日付を月/日形式に / 個別飼育体重g二重表示修正
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-window._LABEL_BUILD = '20260414p';
+window._LABEL_BUILD = '20260414q';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 // ── ステージコード正規化 ─────────────────────────────────────────
@@ -1081,7 +1081,7 @@ function _buildLabelHTML(ld, qrSrc) {
 
 
 // ── 種親ラベル（62mm × 25mm）─────────────────────────────────────
-// build: 20260414p - 手書きデザインに刷新
+// build: 20260414q - 手書きデザインに刷新
 function _buildParentLabelHTML(ld, _unused, qrSrc) {
   var qr = (typeof _unused === 'string' && _unused.startsWith('data:')) ? _unused : qrSrc;
 
@@ -1156,17 +1156,17 @@ function _buildParentLabelHTML(ld, _unused, qrSrc) {
     // 区切り線
     + '  <div style="border-top:1px solid #aaa;margin:1mm 0 0.8mm"></div>\n'
 
-    // 下段: ♂親・♀親 血統（余白なし）
-    + '  <div style="display:flex;flex-direction:column;gap:1mm">\n'
-    + '    <div style="display:flex;align-items:baseline;gap:1.5mm">\n'
-    + '      <span style="font-size:7px;font-weight:900;color:#1a6bb5;min-width:5mm">♂親</span>\n'
-    + '      <span style="font-size:6.5px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'
-    + (patStr ? patStr + patSize : '_______________________________________________') + '</span>\n'
+    // 下段: ♂親・♀親 血統（折り返し・サイズ括弧書き）
+    + '  <div style="display:flex;flex-direction:column;gap:0.8mm">\n'
+    + '    <div style="display:flex;align-items:flex-start;gap:1.5mm">\n'
+    + '      <span style="font-size:7px;font-weight:900;color:#1a6bb5;min-width:5mm;flex-shrink:0;line-height:1.5">♂親</span>\n'
+    + '      <span style="font-size:6.5px;flex:1;word-break:break-all;line-height:1.45">'
+    + (patStr ? patStr + patSize : '______________________________') + '</span>\n'
     + '    </div>\n'
-    + '    <div style="display:flex;align-items:baseline;gap:1.5mm">\n'
-    + '      <span style="font-size:7px;font-weight:900;color:#b51a5a;min-width:5mm">♀親</span>\n'
-    + '      <span style="font-size:6.5px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'
-    + (matStr ? matStr + matSize : '_______________________________________________') + '</span>\n'
+    + '    <div style="display:flex;align-items:flex-start;gap:1.5mm">\n'
+    + '      <span style="font-size:7px;font-weight:900;color:#b51a5a;min-width:5mm;flex-shrink:0;line-height:1.5">♀親</span>\n'
+    + '      <span style="font-size:6.5px;flex:1;word-break:break-all;line-height:1.45">'
+    + (matStr ? matStr + matSize : '______________________________') + '</span>\n'
     + '    </div>\n'
     + '  </div>\n'
 
