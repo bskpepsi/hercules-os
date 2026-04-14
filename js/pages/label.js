@@ -11,12 +11,12 @@
 //   html2canvas が有効 → PNG生成 → img プレビュー → PNG保存 / 共有
 //   html2canvas なし   → iframe フォールバック
 //
-// build: 20260414m
+// build: 20260414n
 // 変更点: QR位置修正 / ユニットID1行化 / ユニット日付を月/日形式に / 個別飼育体重g二重表示修正
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-window._LABEL_BUILD = '20260414m';
+window._LABEL_BUILD = '20260414n';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 // ── ステージコード正規化 ─────────────────────────────────────────
@@ -65,7 +65,7 @@ const LABEL_TYPE_DEFS = [
   { code: 'ind_fixed', label: '③ 個別飼育',      target: 'IND',  desc: '個体管理用（記録表付き）62×70mm' },
   { code: 't1_unit',   label: '⑥ T1ユニット',   target: 'UNIT', desc: 'T1移行後の2頭飼育（記録表付き）62×70mm' },
   { code: 'set',       label: '④ 産卵セット',    target: 'SET',  desc: '産卵セット情報 62×40mm' },
-  { code: 'parent',    label: '⑤ 種親',          target: 'PAR',  desc: '種親QR・血統タグ 62×40mm' },
+  { code: 'parent',    label: '⑤ 種親',          target: 'PAR',  desc: '種親QR・血統タグ 62×25mm' },
 ];
 
 window._currentLabel  = { displayId:'', fileName:'', html:'', pngDataUrl:'', dims:null };
@@ -106,7 +106,7 @@ function _labelDimensions(labelType, targetType) {
     return { wMm:62, hMm:70, wPx:234, hPx:265, scale:3, label:'62×70mm' };
   }
   if (labelType === 'parent' || targetType === 'PAR') {
-    return { wMm:62, hMm:40, wPx:234, hPx:151, scale:3, label:'62×40mm' };
+    return { wMm:62, hMm:25, wPx:234, hPx:94, scale:3, label:'62×25mm' };
   }
   return { wMm:62, hMm:40, wPx:234, hPx:151, scale:3, label:'62×40mm' };
 }
@@ -1080,8 +1080,8 @@ function _buildLabelHTML(ld, qrSrc) {
 }
 
 
-// ── 種親ラベル（62mm × 40mm）─────────────────────────────────────
-// build: 20260414m - 手書きデザインに刷新
+// ── 種親ラベル（62mm × 25mm）─────────────────────────────────────
+// build: 20260414n - 手書きデザインに刷新
 function _buildParentLabelHTML(ld, _unused, qrSrc) {
   var qr = (typeof _unused === 'string' && _unused.startsWith('data:')) ? _unused : qrSrc;
 
@@ -1115,12 +1115,12 @@ function _buildParentLabelHTML(ld, _unused, qrSrc) {
     : '<div style="width:38px;height:38px;border:1px dashed #ccc;font-size:5px;display:flex;align-items:center;justify-content:center">QR</div>';
 
   return '<!DOCTYPE html>\n<html><head><meta charset="utf-8">\n<style>\n'
-    + '  @page { size: 62mm 34mm; margin: 0; }\n'
+    + '  @page { size: 62mm 25mm; margin: 0; }\n'
     + '  * { margin:0; padding:0; box-sizing:border-box; }\n'
-    + '  body { width:62mm; height:34mm; font-family:sans-serif; background:#fff; color:#000; overflow:hidden; }\n'
+    + '  body { width:62mm; height:25mm; font-family:sans-serif; background:#fff; color:#000; overflow:hidden; }\n'
     + '  @media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }\n'
     + '</style></head><body>\n'
-    + '<div style="width:62mm;height:34mm;display:flex;flex-direction:column;padding:1mm 2mm 0mm">\n'
+    + '<div style="width:62mm;height:25mm;display:flex;flex-direction:column;padding:1mm 2mm 0mm">\n'
 
     // 上段: 左ブロック（QR・♂/♀・Aバッジ横並び） + 縦区切り + 右ブロック
     + '  <div style="display:flex;flex-direction:row;align-items:center;gap:2mm;flex-shrink:0">\n'
