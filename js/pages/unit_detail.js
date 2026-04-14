@@ -1,5 +1,5 @@
 // ════════════════════════════════════════════════════════════════
-// unit_detail.js — 飼育ユニット（BU）詳細画面  build: 20260414b
+// unit_detail.js — 飼育ユニット（BU）詳細画面  build: 20260414c
 // 変更点: Pages._udLabelGen にフォールバック追加（_udLabelParams未設定時でも動作）
 // ════════════════════════════════════════════════════════════════
 'use strict';
@@ -183,14 +183,19 @@ function _renderUnitDetail(unit, main) {
     backRoute:  'unit-detail',
     backParam:  { unitDisplayId: unit.display_id },
     unitDraft: {
-      display_id:  unit.display_id,
-      line_id:     unit.line_id,
-      line_code:   line ? (line.line_code || line.display_id || '') : '',
-      head_count:  unit.head_count || 2,
-      for_sale:    !!unit.for_sale,
-      stage_phase: unit.stage_phase || 'T1',
-      mat_type:    unit.mat_type || 'T1',
-      members:     members,
+      display_id:    unit.display_id,
+      line_id:       unit.line_id,
+      line_code:     line ? (line.line_code || line.display_id || '') : '',
+      head_count:    unit.head_count || 2,
+      for_sale:      !!unit.for_sale,
+      stage_phase:   unit.stage_phase || 'T1',
+      mat_type:      unit.mat_type || 'T1',
+      size_category: unit.size_category || '',
+      hatch_date:    unit.hatch_date || '',
+      source_lots:   unit.source_lots || '',
+      origin_lot_id: unit.origin_lot_id || '',
+      t1_date:       unit.t1_date || unit.created_at || '',
+      members:       members,
     },
   };
 
@@ -334,13 +339,31 @@ Pages._udSaveBasic = async function (unitId, displayId) {
   UI.closeModal();
   const updates = { unit_id: unitId, hatch_date: hatch, mat_type: mat, container_size: cont, note };
   try {
+    UI.loading(true);
+    // GASへ保存
+    if (typeof API !== 'undefined' && API.unit && typeof API.unit.update === 'function') {
+      await API.unit.update(updates);
+    } else if (typeof API !== 'undefined' && API.breedingUnit && typeof API.breedingUnit.update === 'function') {
+      await API.breedingUnit.update(updates);
+    } else if (typeof apiCall === 'function' && typeof API !== 'undefined') {
+      // フォールバック: apiCallで直接GASを呼ぶ
+      await apiCall(() => API.post({ action: 'updateBreedingUnit', ...updates }), null);
+    }
+    // ローカルキャッシュ更新
     if (typeof Store.patchDBItem === 'function') {
       Store.patchDBItem('breeding_units', 'unit_id', unitId, updates);
     }
     UI.toast('基本情報を更新しました', 'success');
     Pages.unitDetail({ unitDisplayId: displayId });
   } catch(e) {
-    UI.toast('更新失敗: ' + (e.message || ''), 'error');
+    // GAS失敗時もローカルは更新（オフライン対応）
+    if (typeof Store.patchDBItem === 'function') {
+      Store.patchDBItem('breeding_units', 'unit_id', unitId, updates);
+    }
+    UI.toast('保存失敗（ローカルのみ更新）: ' + (e.message || ''), 'error');
+    Pages.unitDetail({ unitDisplayId: displayId });
+  } finally {
+    UI.loading(false);
   }
 };
 

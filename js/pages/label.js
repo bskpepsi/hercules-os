@@ -11,12 +11,12 @@
 //   html2canvas が有効 → PNG生成 → img プレビュー → PNG保存 / 共有
 //   html2canvas なし   → iframe フォールバック
 //
-// build: 20260414e
+// build: 20260414f
 // 変更点: QR位置修正 / ユニットID1行化 / ユニット日付を月/日形式に / 個別飼育体重g二重表示修正
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-window._LABEL_BUILD = '20260414e';
+window._LABEL_BUILD = '20260414f';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 // ── ステージコード正規化 ─────────────────────────────────────────
@@ -1243,7 +1243,10 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
   var _t1DateRaw = (ld.t1_date || '').replace(/\\/g, '/');
   var _t1DatePart = _t1DateRaw.split(' ')[0]; // 時間を除去
   var _t1DateM = _t1DatePart.match(/(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})/);
-  var t1Date = _t1DateM ? (parseInt(_t1DateM[2],10) + '/' + parseInt(_t1DateM[3],10)) : _t1DatePart;
+  var _t1DateM2 = !_t1DateM ? _t1DatePart.match(/^(\d{1,2})[\/-](\d{1,2})$/) : null;
+  var t1Date = _t1DateM ? (parseInt(_t1DateM[2],10) + '/' + parseInt(_t1DateM[3],10))
+             : _t1DateM2 ? (parseInt(_t1DateM2[1],10) + '/' + parseInt(_t1DateM2[2],10))
+             : _t1DatePart;
 
   var rawId     = ld.display_id || '';
   var idParts   = rawId.split('-');
