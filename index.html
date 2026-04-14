@@ -16,27 +16,9 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
   <!-- html2canvas: HTML→PNG変換（Brotherラベル印刷用） -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-  <!-- jsQR (カメラQRスキャン用) — ローカル最優先・CDNフォールバック -->
-  <script>
-    (function() {
-      var JSQR_URLS = [
-        'js/vendor/jsQR.min.js',
-        'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js',
-        'https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js',
-        'https://unpkg.com/jsqr@1.4.0/dist/jsQR.js'
-      ];
-      var _idx = 0;
-      function loadNext() {
-        if (_idx >= JSQR_URLS.length) { window._jsqrLoadFailed = true; return; }
-        var s = document.createElement('script');
-        s.src = JSQR_URLS[_idx++];
-        s.async = false;
-        s.onerror = function() { loadNext(); };
-        s.onload  = function() { window._jsqrLoaded = true; };
-        document.head.appendChild(s);
-      }
-      loadNext();
-    })();
+  <!-- jsQR (カメラQRスキャン用) — CDN優先ロード -->
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"
+    onerror="(function(){var s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js';s.onerror=function(){var s2=document.createElement('script');s2.src='js/vendor/jsQR.min.js';document.head.appendChild(s2);};document.head.appendChild(s);})()">
   </script>
 </head>
 <body>
@@ -88,7 +70,7 @@
 <!-- ════ JS 読み込み（順序厳守） ════ -->
 <script src="js/config.js?v=20260413bi"></script>
 <script src="js/api.js?v=20260413bi"></script>
-  <script>window.__INDEX_BUILD= '20260415a';console.log("[INDEX_BUILD]",window.__INDEX_BUILD,"loaded");</script>
+  <script>window.__INDEX_BUILD= '20260415b';console.log("[INDEX_BUILD]",window.__INDEX_BUILD,"loaded");</script>
 <script>console.log("[HTML] after api.js", typeof API, !!window.API);</script>
 <script src="js/store.js?v=20260413bi"></script>
 <!-- normalize.js: 表示正規化（config.js の後・app.js の前に必須） -->
