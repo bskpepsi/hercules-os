@@ -11,12 +11,12 @@
 //   html2canvas が有効 → PNG生成 → img プレビュー → PNG保存 / 共有
 //   html2canvas なし   → iframe フォールバック
 //
-// build: 20260414a
-// 変更点: QR_RECT_MM xMm: 3.5→3.0, yMm: 8.2→7.7 (左0.5mm・上0.5mmずらし)
+// build: 20260414c
+// 変更点: QR位置修正 / ユニットID1行化 / ユニット日付を月/日形式に / 個別飼育体重g二重表示修正
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-window._LABEL_BUILD = '20260414a';
+window._LABEL_BUILD = '20260414c';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 // ── ステージコード正規化 ─────────────────────────────────────────
@@ -936,9 +936,9 @@ function _buildLabelHTML(ld, qrSrc) {
     var lRec  = leftCol[i];
     var rRec  = rightCol[i];
     var lDate = lRec ? String(lRec.record_date||'').slice(5) : '';
-    var lWt   = lRec ? (lRec.weight_g ? lRec.weight_g + 'g' : '') : '';
+    var lWt   = lRec ? (lRec.weight_g ? String(lRec.weight_g) : '') : '';
     var rDate = rRec ? String(rRec.record_date||'').slice(5) : '';
-    var rWt   = rRec ? (rRec.weight_g ? rRec.weight_g + 'g' : '') : '';
+    var rWt   = rRec ? (rRec.weight_g ? String(rRec.weight_g) : '') : '';
     var lExch = '', rExch = '';
     if (lRec) {
       var le = lRec.exchange_type || '';
@@ -1240,7 +1240,10 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
   var mat      = ld.mat_type || 'T1';
   var lineCode = ld.line_code || '';
   var originLS = ld.origin_lots_str || '';
-  var t1Date   = ld.t1_date || '';
+  var _t1DateRaw = (ld.t1_date || '').replace(/\\/g, '/');
+  var _t1DatePart = _t1DateRaw.split(' ')[0]; // 時間を除去
+  var _t1DateM = _t1DatePart.match(/(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})/);
+  var t1Date = _t1DateM ? (parseInt(_t1DateM[2],10) + '/' + parseInt(_t1DateM[3],10)) : _t1DatePart;
 
   var rawId     = ld.display_id || '';
   var idParts   = rawId.split('-');
@@ -1344,13 +1347,13 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
     + '    <div style="flex-shrink:0;margin-right:1.5mm">' + _qrBox(qr, 44) + '</div>\n'
     + '    <div style="flex:1;min-width:0;padding-left:1.5mm;border-left:2px solid #000">\n'
 
-    + '      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">\n'
-    + '        <div>'
-    + (prefix ? '<span style="font-size:8px;font-weight:700;color:#000;margin-right:1px">' + prefix + '-</span>' : '')
-    + lineBadgeHtml + unitSuffixHtml + '</div>\n'
-    + '        <div>' + countBadge + '&nbsp;' + unitSexHtml + '</div>\n'
-    + '      </div>\n'
 
+    + '      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;flex-wrap:nowrap">\n'
+    + '        <div style="display:flex;align-items:center;white-space:nowrap;overflow:hidden">'
+    + (prefix ? '<span style="font-size:7px;font-weight:700;color:#000;margin-right:1px;flex-shrink:0">' + prefix + '-</span>' : '')
+    + lineBadgeHtml + unitSuffixHtml + '</div>\\n'
+    + '        <div style="flex-shrink:0;margin-left:2px;display:flex;align-items:center">' + countBadge + '&nbsp;' + unitSexHtml + '</div>\\n'
+    + '      </div>\\n'
     + '      ' + hatchHtml + '\n'
     + '      ' + originHtml + '\n'
 
