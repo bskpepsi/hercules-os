@@ -11,12 +11,12 @@
 //   html2canvas が有効 → PNG生成 → img プレビュー → PNG保存 / 共有
 //   html2canvas なし   → iframe フォールバック
 //
-// build: 20260414c
+// build: 20260414e
 // 変更点: QR位置修正 / ユニットID1行化 / ユニット日付を月/日形式に / 個別飼育体重g二重表示修正
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-window._LABEL_BUILD = '20260414c';
+window._LABEL_BUILD = '20260414e';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 // ── ステージコード正規化 ─────────────────────────────────────────
@@ -1351,9 +1351,12 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
     + '      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;flex-wrap:nowrap">\n'
     + '        <div style="display:flex;align-items:center;white-space:nowrap;overflow:hidden">'
     + (prefix ? '<span style="font-size:7px;font-weight:700;color:#000;margin-right:1px;flex-shrink:0">' + prefix + '-</span>' : '')
-    + lineBadgeHtml + unitSuffixHtml + '</div>\\n'
-    + '        <div style="flex-shrink:0;margin-left:2px;display:flex;align-items:center">' + countBadge + '&nbsp;' + unitSexHtml + '</div>\\n'
-    + '      </div>\\n'
+    + lineBadgeHtml + unitSuffixHtml + '</div>\n'
+    + '        <div style="flex-shrink:0;margin-left:2px;display:flex;flex-direction:column;align-items:center;gap:2px">'
+    + countBadge
+    + (unitSexHtml ? '<div style="font-size:9px;font-weight:700;color:#000;text-align:center">' + unitSexHtml + '</div>' : '')
+    + '</div>\n'
+    + '      </div>\n'
     + '      ' + hatchHtml + '\n'
     + '      ' + originHtml + '\n'
 
