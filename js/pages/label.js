@@ -11,12 +11,12 @@
 //   html2canvas が有効 → PNG生成 → img プレビュー → PNG保存 / 共有
 //   html2canvas なし   → iframe フォールバック
 //
-// build: 20260415a
+// build: 20260415b
 // 変更点: QR位置修正 / ユニットID1行化 / ユニット日付を月/日形式に / 個別飼育体重g二重表示修正
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-window._LABEL_BUILD = '20260415a';
+window._LABEL_BUILD = '20260415b';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 // ── ステージコード正規化 ─────────────────────────────────────────
@@ -1081,7 +1081,7 @@ function _buildLabelHTML(ld, qrSrc) {
 
 
 // ── 種親ラベル（62mm × 25mm）─────────────────────────────────────
-// build: 20260415a - 手書きデザインに刷新
+// build: 20260415b - 手書きデザインに刷新
 function _buildParentLabelHTML(ld, _unused, qrSrc) {
   var qr = (typeof _unused === 'string' && _unused.startsWith('data:')) ? _unused : qrSrc;
 
@@ -1096,7 +1096,7 @@ function _buildParentLabelHTML(ld, _unused, qrSrc) {
   var badgeFz  = idCode.length <= 1 ? '32px' : idCode.length <= 2 ? '24px' : '16px';
 
   // 羽化日・後食日：未設定時は手書き用スペース
-  var BLANK_DATE = '&nbsp;&nbsp;&nbsp;/&nbsp;&nbsp;&nbsp;/';
+  var BLANK_DATE = '<span style="font-family:monospace;color:#aaa">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;/&nbsp;&nbsp;/</span>';
   var ecDisp   = ecStr   ? ecStr   : BLANK_DATE;
   var feedDisp = feedStr ? feedStr : BLANK_DATE;
 
