@@ -364,7 +364,8 @@ function _indCardHTML(ind) {
   const subHtml = subParts.join('<span style="font-size:.65rem;color:var(--border,rgba(255,255,255,.15));padding:0 2px">/</span>');
 
   return '<div class="card" style="padding:12px 14px;cursor:pointer;display:flex;align-items:center;gap:0;margin-bottom:8px"'
-    + ' onclick="routeTo('ind-detail',{indId:'' + ind.ind_id + ''})">'
+    + " onclick=\"routeTo('ind-detail',{indId:'" + ind.ind_id + "'})\">"
+    + ''
 
     // ①列: ライン + 性別
     + '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;'
@@ -392,6 +393,20 @@ function _indCardHTML(ind) {
     + '</div>';
 }
 
+// QRスキャン
+Pages._indQrScan = function () {
+  const input = prompt('個体ID（IND-xxxxx）または表示ID（HM2025-A1-001）:');
+  if (!input) return;
+  const trimmed = input.trim();
+  if (trimmed.startsWith('IND-')) {
+    routeTo('ind-detail', { indId: trimmed });
+    return;
+  }
+  if (trimmed.startsWith('IND:')) {
+    routeTo('ind-detail', { indId: trimmed.replace('IND:', '') });
+    return;
+  }
+  const inds  = Store.getDB('individuals') || [];
   const found = inds.find(i =>
     i.display_id === trimmed ||
     i.display_id?.toLowerCase() === trimmed.toLowerCase()
@@ -402,6 +417,7 @@ function _indCardHTML(ind) {
     UI.toast('個体が見つかりません: ' + trimmed, 'error');
   }
 };
+
 
 Pages._indStatusModal = function () {
   const statuses = [
