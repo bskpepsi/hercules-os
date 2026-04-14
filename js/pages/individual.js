@@ -2,60 +2,41 @@
 // individual.js
 // 役割: 個体の一覧・詳細・新規登録・編集・ステータス変更を担う。
 //       個体台帳の中心画面。ロット・成長記録・ラベルへの導線も持つ。
-// build: 20260413l
+// build: 20260414a
 //
+// 20260414a 修正:
+//   - 個体一覧カードのステージバッジを短縮表示（成虫（活動開始）→活動中 等）
+//     長いバッジ名によるカードレイアウト崩れを修正
 // 20260413l 修正:
 //   - 基本情報の区分表示をlocalStorageから読む（GAS同期で消えるバグ修正）
-// 20260413k 修正:
-//   - 基本情報セクションに「区分」（size_category）表示を追加
-//
-// 修正履歴:
-//   - ステージ新6区分に統一（L1L2/L3/前蛹/蛹/成虫（未後食）/成虫（活動開始））
-//   - ライン絞り込みフィルタを追加
-//   - ステータスフィルタを「全状態/飼育中/販売候補/出品中/販売済み/死亡」に整理
-//   - IND- プレフィックスを display_id から除去して表示（normalize.js 優先）
-//   - age.days undefined 問題修正（Store.calcAge を常に使う）
-//   - sold 個体に「予約」ボタンを出さない
-//   - 詳細のステータスボタン群を status に応じて条件分岐
-//   - 元ロット表示を display_id 優先に（P0-5 済み）
-//   - 種親昇格表示を display_name 優先に（P0-5 済み）
 // ════════════════════════════════════════════════════════════════
 
 'use strict';
 
-console.log('[HerculesOS] individual.js v20260413j loaded');
+console.log('[HerculesOS] individual.js v20260414a loaded');
 
 const Pages = window.Pages || {};
 
 // ────────────────────────────────────────────────────────────────
 // _safeDisplayId — IND- プレフィックスを除去して表示
-//   auto-individualize 時に display_id が「IND-HM2026-...」に
-//   なるケースがある。一覧では display_id の IND- を除去する。
 // ────────────────────────────────────────────────────────────────
 function _safeDisplayId(ind) {
   const id = ind.display_id || '';
-  // 「IND-HM...」形式 → プレフィックスを除去して表示
   if (/^IND-HM/i.test(id)) {
     return id.replace(/^IND-/i, '');
   }
-  // 純粋な内部ID（「IND-」+英数8文字以上、HMなし）→ 表示しない
   if (/^IND-[0-9a-f]{8,}$/i.test(id)) {
     return '—';
   }
-  // 通常の表示ID（HM2026-... 等）はそのまま
   return id || '—';
 }
 
 // ────────────────────────────────────────────────────────────────
 // _safeAgeDays — calcAge の戻り値から日数文字列を安全に取り出す
-//   Store.calcAge → { days: "150日", totalDays: 150, ... }
-//   GAS _age     → { totalDays: 150, detail: { days: "150日" }, ... }
 // ────────────────────────────────────────────────────────────────
 function _safeAgeDays(hatchDate, cachedAge) {
-  // 常に Store.calcAge を優先（最新・正確）
   const a = Store.calcAge(hatchDate);
-  if (a) return a.days;              // "150日"
-  // GAS形式の _age がある場合
+  if (a) return a.days;
   if (cachedAge) {
     if (cachedAge.days) return cachedAge.days;
     if (cachedAge.detail && cachedAge.detail.days) return cachedAge.detail.days;
@@ -71,7 +52,6 @@ Pages.individualList = function () {
   const main   = document.getElementById('main');
   const params = Store.getParams() || {};
 
-  // ライン詳細から来た場合は固定フィルタ（ライン限定モード）
   const fixedLineId   = params.line_id || '';
   const fixedLine     = fixedLineId ? Store.getLine(fixedLineId) : null;
   const isLineLimited = !!fixedLineId;
@@ -98,7 +78,6 @@ Pages.individualList = function () {
 
   function _getFilteredList() {
     let list = Store.filterIndividuals(filters);
-    // ライン絞り込み（非限定モードでも絞り込める）
     if (!isLineLimited && filters.line_filter) {
       list = list.filter(i => i.line_id === filters.line_filter);
     }
@@ -119,7 +98,6 @@ Pages.individualList = function () {
       ? { back: true, action: { fn: "routeTo('ind-new',{lineId:'" + fixedLineId + "'})", icon: '＋' } }
       : { action: { fn: "routeTo('ind-new')", icon: '＋' } };
 
-    // ライン絞り込みバー（ライン限定モードでない場合のみ表示）
     const lineFilterBar = !isLineLimited && lines.length > 0
       ? `<div class="filter-bar" id="line-filter" style="overflow-x:auto;white-space:nowrap">
            <button class="pill ${!filters.line_filter ? 'active' : ''}" data-val="">全ライン</button>
@@ -168,7 +146,6 @@ Pages.individualList = function () {
       _applyFilters();
     });
 
-    // ライン絞り込み
     if (!isLineLimited) {
       const lf = document.getElementById('line-filter');
       if (lf) lf.addEventListener('click', e => {
@@ -179,7 +156,6 @@ Pages.individualList = function () {
       });
     }
 
-    // ステージフィルタ
     document.getElementById('stage-filter').addEventListener('click', e => {
       const p = e.target.closest('.pill');
       if (!p) return;
@@ -187,7 +163,6 @@ Pages.individualList = function () {
       render();
     });
 
-    // 性別フィルタ
     document.getElementById('sex-filter').addEventListener('click', e => {
       const p = e.target.closest('.pill');
       if (!p) return;
@@ -195,19 +170,16 @@ Pages.individualList = function () {
       render();
     });
 
-    // ステータスフィルタ
     document.getElementById('status-filter').addEventListener('click', e => {
       const p = e.target.closest('.pill');
       if (!p) return;
       const val = p.dataset.val;
       filters.statusFilter = val === filters.statusFilter ? '' : val;
-      // val → filters.status マッピング（ステータスフィルタ直接指定）
       filters.status = val || '';
       render();
     });
   }
 
-  // ステータスモーダルからスコープ内 filters を更新
   window.__indSetStatus = function(code) {
     filters.status      = code;
     filters.statusFilter = '';
@@ -217,7 +189,6 @@ Pages.individualList = function () {
   render();
 };
 
-// ステータスラベル取得
 function _statusLabel(code) {
   const map = {
     '': '全て',
@@ -230,9 +201,6 @@ function _statusLabel(code) {
   return map[code] || '全て';
 }
 
-// ────────────────────────────────────────────────────────────────
-// フィルタ Pill 生成
-// ────────────────────────────────────────────────────────────────
 function _stageFilters(active) {
   const stages = [
     { val:'',         label:'全て'          },
@@ -273,42 +241,40 @@ function _sexFilters(active) {
 }
 
 // ────────────────────────────────────────────────────────────────
-// _indCardHTML — 個体一覧カード
-//   normalize.js の renderIndCard / normalizeIndForView が使える場合は
-//   それ経由でレンダリング。なければ独自実装にフォールバック。
-// ────────────────────────────────────────────────────────────────
-// ────────────────────────────────────────────────────────────────
-// _toDisplayStageLabel — ステージコード（新旧問わず）→ 新6区分の表示ラベル
+// _toDisplayStageLabel — ステージコード → 表示ラベル（詳細画面用・フルラベル）
 // ────────────────────────────────────────────────────────────────
 function _toDisplayStageLabel(code) {
   if (!code) return '';
   const map = {
-    // 新6区分（そのまま）
-    L1L2:      'L1L2',
-    L3:        'L3',
-    PREPUPA:   '前蛹',
-    PUPA:      '蛹',
-    ADULT_PRE: '成虫（未後食）',
-    ADULT:     '成虫（活動開始）',
-    // 旧 L 系細分 → L1L2
-    L1:        'L1L2',
-    L2_EARLY:  'L1L2',
-    L2_LATE:   'L1L2',
-    // 旧 L3 系細分 → L3
-    L3_EARLY:  'L3',
-    L3_MID:    'L3',
-    L3_LATE:   'L3',
-    // 旧 T 系 → 対応新区分
-    EGG:  'L1L2',
-    T0:   'L1L2',
-    T1:   'L1L2',
-    T2A:  'L3',
-    T2B:  'L3',
-    T3:   'L3',
+    L1L2:'L1L2', L3:'L3', PREPUPA:'前蛹', PUPA:'蛹',
+    ADULT_PRE:'成虫（未後食）', ADULT:'成虫（活動開始）',
+    L1:'L1L2', L2_EARLY:'L1L2', L2_LATE:'L1L2',
+    L3_EARLY:'L3', L3_MID:'L3', L3_LATE:'L3',
+    EGG:'L1L2', T0:'L1L2', T1:'L1L2', T2A:'L3', T2B:'L3', T3:'L3',
   };
   return map[code] || code;
 }
 
+// ────────────────────────────────────────────────────────────────
+// _toDisplayStageLabelShort — 一覧カード用短縮ラベル
+// 「成虫（活動開始）」→「活動中」のように短縮してカード崩れを防ぐ
+// ────────────────────────────────────────────────────────────────
+function _toDisplayStageLabelShort(code) {
+  if (!code) return '';
+  const map = {
+    L1L2:'L1L2', L3:'L3', PREPUPA:'前蛹', PUPA:'蛹',
+    ADULT_PRE:'未後食',   // 成虫（未後食）→ 未後食
+    ADULT:'活動中',       // 成虫（活動開始）→ 活動中
+    L1:'L1L2', L2_EARLY:'L1L2', L2_LATE:'L1L2',
+    L3_EARLY:'L3', L3_MID:'L3', L3_LATE:'L3',
+    EGG:'L1L2', T0:'L1L2', T1:'L1L2', T2A:'L3', T2B:'L3', T3:'L3',
+  };
+  return map[code] || _toDisplayStageLabel(code);
+}
+
+// ────────────────────────────────────────────────────────────────
+// _toDisplayStageBadge — 詳細画面用バッジ（フルラベル）
+// ────────────────────────────────────────────────────────────────
 function _toDisplayStageBadge(code) {
   const label = _toDisplayStageLabel(code);
   if (!label) return '';
@@ -325,14 +291,31 @@ function _toDisplayStageBadge(code) {
 }
 
 // ────────────────────────────────────────────────────────────────
+// _toDisplayStageBadgeShort — 一覧カード用バッジ（短縮ラベル）
+// ────────────────────────────────────────────────────────────────
+function _toDisplayStageBadgeShort(code) {
+  const label      = _toDisplayStageLabelShort(code);
+  const labelFull  = _toDisplayStageLabel(code);
+  if (!label) return '';
+  const colorMap = {
+    'L1L2':   '#4caf50',
+    'L3':     '#2196f3',
+    '前蛹':    '#e65100',
+    '蛹':      '#bf360c',
+    '未後食':  '#9c27b0',
+    '活動中':  '#c8a84b',
+  };
+  const c = colorMap[label] || '#888';
+  // title属性にフルラベルを設定（タップ長押しで確認可能）
+  return '<span class="badge" title="' + labelFull + '" style="background:' + c + '22;color:' + c + ';border:1px solid ' + c + '55;white-space:nowrap">' + label + '</span>';
+}
+
+// ────────────────────────────────────────────────────────────────
 // _indCardHTML — 個体一覧カード
-//   normalize.js の event delegation (data-ind-id) は app.js にハンドラがないため
-//   使用しない。直接 onclick で遷移する実装を常に使用する。
 // ────────────────────────────────────────────────────────────────
 function _indCardHTML(ind) {
-  // 直接 onclick 実装（常にこちらを使用）
   const ageObj   = ind.hatch_date ? Store.calcAge(ind.hatch_date) : null;
-  const ageDaysStr = ageObj ? ageObj.days : null;   // "150日" 形式
+  const ageDaysStr = ageObj ? ageObj.days : null;
   const stageGuess = ageObj ? ageObj.stageGuess : '';
 
   const w  = ind.latest_weight_g ? ind.latest_weight_g + 'g' : null;
@@ -367,7 +350,6 @@ function _indCardHTML(ind) {
   const sexColor = ind.sex === '♂' ? 'var(--male,#5ba8e8)' : ind.sex === '♀' ? 'var(--female,#e87fa0)' : 'var(--text3)';
   const dispId   = _safeDisplayId(ind);
 
-  // 日齢行: ageDaysStr が null なら孵化日未設定メッセージのみ
   let ageHtml = '';
   if (ageDaysStr) {
     ageHtml = '日齢' + ageDaysStr + (stageGuess ? ' · ' + stageGuess : '');
@@ -375,12 +357,13 @@ function _indCardHTML(ind) {
     ageHtml = '<span style="color:var(--amber)">孵化日未設定</span>';
   }
 
+  // ★ 短縮バッジを使用（カード崩れ防止）
   return '<div class="ind-card" onclick="routeTo(\'ind-detail\',{indId:\'' + ind.ind_id + '\'})" style="padding:10px 12px">'
-    + '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">'
-    +   '<span style="font-weight:700;color:' + sexColor + ';font-size:.95rem">' + (ind.sex || '?') + '</span>'
-    +   '<span style="font-family:var(--font-mono);font-weight:700;font-size:.9rem;flex:1">' + dispId + '</span>'
-    +   (icons ? '<span style="font-size:.82rem">' + icons + '</span>' : '')
-    +   _toDisplayStageBadge(ind.current_stage)
+    + '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:nowrap;overflow:hidden">'
+    +   '<span style="font-weight:700;color:' + sexColor + ';font-size:.95rem;flex-shrink:0">' + (ind.sex || '?') + '</span>'
+    +   '<span style="font-family:var(--font-mono);font-weight:700;font-size:.9rem;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + dispId + '</span>'
+    +   (icons ? '<span style="font-size:.82rem;flex-shrink:0">' + icons + '</span>' : '')
+    +   '<span style="flex-shrink:0">' + _toDisplayStageBadgeShort(ind.current_stage) + '</span>'
     + '</div>'
     + '<div style="font-size:.76rem;color:var(--text2);margin-bottom:3px">'
     +   lineLbl + (locality ? ' / ' + locality : '')
@@ -420,7 +403,6 @@ Pages._indQrScan = function () {
 };
 
 Pages._indStatusModal = function () {
-  // pill と選択肢を一致させる: 全状態 / 飼育中 / 販売候補 / 出品中 / 販売済み / 死亡
   const statuses = [
     { code:'',        label:'全状態' },
     { code:'alive',   label:'飼育中' },
@@ -464,14 +446,13 @@ Pages.individualDetail = async function (indId) {
     ind = res.individual;
     Store.patchDBItem('individuals', 'ind_id', indId, ind);
     if (ind._growthRecords) Store.setGrowthRecords(indId, ind._growthRecords);
-    // sold 状態なら販売履歴を取得して販売情報（金額・経路・購入者）を表示
     if (ind.status === 'sold') {
       try {
         const saleRes = await API.sale.list({ ind_id: indId });
         const hists = (saleRes.hists || []).filter(h => h.ind_id === indId || h.target_id === indId);
         hists.sort((a, b) => String(b.sold_at || '').localeCompare(String(a.sold_at || '')));
         if (hists.length > 0) ind._saleHist = hists[0];
-      } catch(_) { /* 販売履歴取得失敗は無視 */ }
+      } catch(_) {}
     }
     _renderDetail(ind, main);
   } catch (e) {
@@ -488,7 +469,7 @@ function _renderDetail(ind, main) {
   const mother   = Store.getParent(ind.mother_par_id);
   const bld      = Store.getBloodline(ind.bloodline_id);
   const records  = Store.getGrowthRecords(ind.ind_id) || ind._growthRecords || [];
-  const _fromNew = !!(Store.getParams()._fromNew);  // 登録直後バナー表示フラグ
+  const _fromNew = !!(Store.getParams()._fromNew);
   const originLot      = ind.origin_lot_id ? Store.getLot(ind.origin_lot_id) : null;
   const promotedParent = ind.promoted_par_id ? Store.getParent(ind.promoted_par_id) : null;
   const line    = Store.getLine(ind.line_id);
@@ -500,13 +481,6 @@ function _renderDetail(ind, main) {
     (String(ind.g200_flag||'').toUpperCase()==='TRUE'||ind.g200_flag===1||ind.g200_flag===true) ? '<span title="200g候補">💪</span>'  : '',
   ].filter(Boolean).join(' ');
 
-  // ── ステータスに応じたアクションボタン群 ─────────────────────
-  // 本番5ステータスの遷移ルール:
-  //   alive    → for_sale / dead
-  //   for_sale → listed / alive（戻す）/ dead
-  //   listed   → sold / for_sale（戻す）/ dead
-  //   sold     → 誤入力訂正: alive / for_sale に戻せる
-  //   dead     → 誤入力訂正: alive に戻せる
   let statusButtons = '';
   const flagBtn = `<button class="btn btn-ghost btn-sm" style="margin-left:auto"
     onclick="Pages._indFlagMenu('${ind.ind_id}','${ind.guinness_flag}','${ind.parent_flag}','${ind.g200_flag}')">🏷 フラグ</button>`;
@@ -514,14 +488,12 @@ function _renderDetail(ind, main) {
 
   const _ALIVE_SET = new Set(['alive','larva','prepupa','pupa','adult','seed_candidate','seed_reserved']);
   if (_ALIVE_SET.has(ind.status) || !ind.status) {
-    // 飼育中 → 販売候補 / 死亡
     statusButtons = `<div style="display:flex;gap:8px">
       ${deadBtn}
       <button class="btn btn-ghost btn-sm" onclick="Pages._indMarkForSale('${ind.ind_id}')">🛒 販売候補</button>
       ${flagBtn}
     </div>`;
   } else if (ind.status === 'for_sale') {
-    // 販売候補 → 出品 / 飼育中に戻す / 死亡
     statusButtons = `<div style="display:flex;gap:8px;flex-wrap:wrap">
       ${deadBtn}
       <button class="btn btn-ghost btn-sm" onclick="Pages._indMarkListed('${ind.ind_id}')">📢 出品</button>
@@ -529,7 +501,6 @@ function _renderDetail(ind, main) {
       ${flagBtn}
     </div>`;
   } else if (ind.status === 'listed') {
-    // 出品中 → 販売済み / 候補に戻す / 死亡
     statusButtons = `<div style="display:flex;gap:8px;flex-wrap:wrap">
       ${deadBtn}
       <button class="btn btn-ghost btn-sm" onclick="Pages._indMarkSold('${ind.ind_id}')">💰 販売済みにする</button>
@@ -537,7 +508,6 @@ function _renderDetail(ind, main) {
       ${flagBtn}
     </div>`;
   } else if (ind.status === 'sold') {
-    // 販売済み → 誤入力訂正のみ（販売履歴は残る）
     statusButtons = `<div style="display:flex;gap:8px;flex-wrap:wrap">
       <button class="btn btn-ghost btn-sm" style="font-size:.75rem;opacity:.7"
         onclick="Pages._indRestoreFromSold('${ind.ind_id}','alive')">↩ 飼育中に戻す（誤入力訂正）</button>
@@ -546,7 +516,6 @@ function _renderDetail(ind, main) {
       ${flagBtn}
     </div>`;
   } else if (ind.status === 'dead') {
-    // 死亡 → 誤入力訂正のみ
     statusButtons = `<div style="display:flex;gap:8px;flex-wrap:wrap">
       <button class="btn btn-ghost btn-sm" style="font-size:.75rem;opacity:.7"
         onclick="Pages._indRestoreFromDead('${ind.ind_id}')">↩ 飼育中に戻す（誤入力訂正）</button>
@@ -560,7 +529,6 @@ function _renderDetail(ind, main) {
     ${UI.header(dispId, { back: true })}
     <div class="page-body">
 
-      <!-- ヘッダーカード -->
       <div class="card card-gold">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
           <span style="font-size:1.8rem;font-weight:700;color:${ind.sex==='♂'?'var(--male,#5ba8e8)':ind.sex==='♀'?'var(--female,#f06292)':'var(--text3)'}">${ind.sex || '?'}</span>
@@ -585,7 +553,6 @@ function _renderDetail(ind, main) {
         </div>` : '<div style="color:var(--amber);font-size:.8rem">⚠️ 孵化日未設定（設定すると日齢が表示されます）</div>'}
       </div>
 
-      <!-- クイックアクション -->
       <div style="display:flex;gap:8px">
         <button class="btn btn-primary" style="flex:2"
           onclick="routeTo('growth-rec',{targetType:'IND',targetId:'${ind.ind_id}',displayId:'${ind.display_id||ind.ind_id}'})"
@@ -613,7 +580,6 @@ function _renderDetail(ind, main) {
       </div>` : ''}
       </div>
 
-      <!-- 基本情報 -->
       <div class="accordion" id="acc-basic">
         <div class="acc-hdr" onclick="_toggleAcc('acc-basic')">
           基本情報 <span class="acc-arrow">▼</span>
@@ -632,7 +598,6 @@ function _renderDetail(ind, main) {
         </div>
       </div>
 
-      <!-- 形態・成長データ -->
       ${(ind.head_width_mm || ind.prepupa_weight_g || ind.pupa_length_mm || ind.adult_size_mm || ind.horn_length_mm) ? `
       <div class="accordion" id="acc-morph">
         <div class="acc-hdr" onclick="_toggleAcc('acc-morph')">
@@ -649,14 +614,12 @@ function _renderDetail(ind, main) {
         </div>
       </div>` : ''}
 
-      <!-- 血統・種親 -->
       <div class="accordion" id="acc-blood">
         <div class="acc-hdr" onclick="_toggleAcc('acc-blood')">
           血統・種親 <span class="acc-arrow">▼</span>
         </div>
         <div class="acc-body">
           ${(() => {
-            // ── 親ブロック共通ヘルパー ──────────────────────────────
             function _parBlock(par, parId, sex) {
               if (!par && !parId) return '';
               const mc = sex === '♂' ? 'var(--male,#5ba8e8)' : 'var(--female,#e87fa0)';
@@ -664,14 +627,12 @@ function _renderDetail(ind, main) {
               const bd = sex === '♂' ? 'rgba(91,168,232,.2)' : 'rgba(232,127,160,.2)';
               const tcBg = sex === '♂' ? 'rgba(91,168,232,.12)' : 'rgba(232,127,160,.12)';
               const tcBd = sex === '♂' ? 'rgba(91,168,232,.3)' : 'rgba(232,127,160,.3)';
-
               if (!par) {
                 return '<div style="padding:8px 10px;background:' + bg + ';border-radius:8px;border:1px solid ' + bd + ';margin-bottom:6px">'
                   + '<span style="font-size:.75rem;color:' + mc + ';font-weight:700">' + sex + '</span>'
                   + ' <span style="font-size:.8rem;color:var(--text3)">情報なし</span>'
                   + '</div>';
               }
-
               const name    = par.parent_display_id || par.display_name || '—';
               const rawText = sex === '♂' ? (par.paternal_raw || par.maternal_raw || '') : (par.maternal_raw || par.paternal_raw || '');
               const tagSrc  = sex === '♂' ? (par.paternal_tags || par.bloodline_tags || '[]') : (par.maternal_tags || par.bloodline_tags || '[]');
@@ -679,7 +640,6 @@ function _renderDetail(ind, main) {
               const tagHtml = tags.slice(0, 5).map(t =>
                 '<span style="font-size:.68rem;padding:1px 6px;border-radius:20px;background:' + tcBg + ';color:' + mc + ';border:1px solid ' + tcBd + '">' + t + '</span>'
               ).join(' ');
-
               return '<div style="padding:8px 10px;background:' + bg + ';border-radius:8px;border:1px solid ' + bd + ';margin-bottom:6px">'
                 + '<div style="display:flex;align-items:baseline;gap:6px;margin-bottom:' + (rawText||tags.length?'4':'0') + 'px">'
                 +   '<span style="font-size:.75rem;color:' + mc + ';font-weight:700;flex-shrink:0">' + sex + '</span>'
@@ -691,11 +651,8 @@ function _renderDetail(ind, main) {
                 + (tags.length ? '<div style="display:flex;flex-wrap:wrap;gap:3px">' + tagHtml + '</div>' : '')
                 + '</div>';
             }
-
             const fBlock = _parBlock(father, ind.father_par_id, '♂');
             const mBlock = _parBlock(mother, ind.mother_par_id, '♀');
-
-            // ライン・元ロット（親情報と分離して最後に表示）
             const lineRow = line
               ? '<div style="font-size:.78rem;color:var(--text3);margin-top:6px">'
                 + 'ライン: <span style="cursor:pointer;color:var(--blue)" onclick="routeTo(' + "'" + 'line-detail' + "'" + ',{lineId:' + "'" + line.line_id + "'" + '})">'
@@ -708,14 +665,12 @@ function _renderDetail(ind, main) {
                 + ' <span onclick="routeTo(' + "'" + 'ind-list' + "'" + ',{lotId:' + "'" + ind.origin_lot_id + "'" + '})" style="cursor:pointer;color:var(--text3);font-size:.72rem">同腹一覧 ›</span>'
                 + '</div>';
             })() : '';
-
             return (fBlock || mBlock ? fBlock + mBlock : '<div style="font-size:.82rem;color:var(--text3);padding:4px 0">親情報なし</div>')
               + (lineRow || lotRow ? '<div style="padding-top:4px;border-top:1px solid var(--border);margin-top:6px">' + lineRow + lotRow + '</div>' : '');
           })()}
         </div>
       </div>
 
-      <!-- 体重推移 -->
       <div class="accordion" id="acc-growth">
         <div class="acc-hdr open" onclick="_toggleAcc('acc-growth')">
           体重推移（${records.filter(r=>r.weight_g).length}件）<span class="acc-arrow">▼</span>
@@ -725,13 +680,11 @@ function _renderDetail(ind, main) {
         </div>
       </div>
 
-      <!-- 内部メモ -->
       ${ind.note_private ? `<div class="card">
         <div class="card-title">🔒 内部メモ</div>
         <div style="font-size:.85rem;color:var(--text2)">${ind.note_private}</div>
       </div>` : ''}
 
-      <!-- 重要日付 — 発育管理 -->
       <div class="accordion" id="acc-dates">
         <div class="acc-hdr" onclick="_toggleAcc('acc-dates')">
           発育日程 <span class="acc-arrow">▼</span>
@@ -741,8 +694,6 @@ function _renderDetail(ind, main) {
             日付を入力・変更するには「✏️ 編集」ボタンから形態・成長データ欄を使ってください。
           </div>
           ${(() => {
-            // 蛹室確認日: artificial_cell_date を流用（カラム名が一致しているか将来確認）
-            // COL_DEF: prepupa_date / pupa_check_date / artificial_cell_date / eclosion_date
             const _today = new Date(); _today.setHours(0,0,0,0);
             function _parseDate(d) {
               if (!d) return null;
@@ -750,14 +701,8 @@ function _renderDetail(ind, main) {
               if (p.length < 3) return null;
               return new Date(+p[0], +p[1]-1, +p[2]);
             }
-            function _diffDays(from, to) {
-              return Math.round((to - from) / 86400000);
-            }
+            function _diffDays(from, to) { return Math.round((to - from) / 86400000); }
 
-            // ── 蛹室確認日 → 人工蛹室移行目安（+18日）────────────────────────
-            // 表示条件: artificial_cell_date あり かつ prepupa_date 未入力
-            // 消滅条件: prepupa_date を入力したら消える
-            //           （前蛹確認日 = 人工蛹室移動日 の運用）
             let pupaChamberHint = '';
             if (ind.artificial_cell_date && !ind.prepupa_date) {
               const chamD = _parseDate(ind.artificial_cell_date);
@@ -765,15 +710,9 @@ function _renderDetail(ind, main) {
                 const moveD = new Date(chamD); moveD.setDate(moveD.getDate() + 18);
                 const diff = _diffDays(_today, moveD);
                 if (diff < 0) {
-                  // 超過 → 警告（オレンジ〜赤）
                   const color = Math.abs(diff) >= 5 ? 'var(--red,#e05050)' : 'var(--amber)';
-                  pupaChamberHint =
-                    '<span style="font-size:.72rem;color:' + color + ';margin-left:6px">'
-                    + '⚠️ 移行目安を' + Math.abs(diff) + '日超過'
-                    + '</span>'
-                    + '<div style="font-size:.7rem;color:var(--text3);margin-top:2px;margin-left:4px">'
-                    + '前蛹確認日を入力すると、この警告は消えます'
-                    + '</div>';
+                  pupaChamberHint = '<span style="font-size:.72rem;color:' + color + ';margin-left:6px">⚠️ 移行目安を' + Math.abs(diff) + '日超過</span>'
+                    + '<div style="font-size:.7rem;color:var(--text3);margin-top:2px;margin-left:4px">前蛹確認日を入力すると、この警告は消えます</div>';
                 } else if (diff === 0) {
                   pupaChamberHint = '<span style="font-size:.72rem;color:var(--amber);margin-left:6px">今日が移行目安日（♂のみ）</span>';
                 } else {
@@ -782,8 +721,6 @@ function _renderDetail(ind, main) {
               }
             }
 
-            // ── 前蛹確認日 → 蛹化目安（+14〜28日）────────────────────────────
-            // 前蛹から蛹まで約2〜4週間
             let prepupaHint = '';
             if (ind.prepupa_date && !ind.pupa_check_date) {
               const preD = _parseDate(ind.prepupa_date);
@@ -797,13 +734,9 @@ function _renderDetail(ind, main) {
                 } else if (dMax > 0) {
                   prepupaHint = '<span style="font-size:.72rem;color:var(--amber);margin-left:6px">蛹化時期の可能性あり</span>';
                 }
-                // dMax < 0 なら超過してもヒントなし（蛹確認日未入力は別途追う必要なし）
               }
             }
 
-            // ── 蛹確認日 → 羽化目安（+50〜70日）/ 超過警告 ───────────────────
-            // 表示条件: pupa_check_date あり かつ eclosion_date 未入力
-            // 消滅条件: eclosion_date を入力したら消える
             let eclosionHint = '';
             if (ind.pupa_check_date && !ind.eclosion_date) {
               const pupaD = _parseDate(ind.pupa_check_date);
@@ -812,31 +745,15 @@ function _renderDetail(ind, main) {
                 const maxD = new Date(pupaD); maxD.setDate(maxD.getDate() + 70);
                 const diffMin = _diffDays(_today, minD);
                 const diffMax = _diffDays(_today, maxD);
-                // 目安フォーマット: YYYY/MM/DD 形式
                 const fmt = (d) => d.getFullYear() + '/' + String(d.getMonth()+1).padStart(2,'0') + '/' + String(d.getDate()).padStart(2,'0');
                 if (diffMin > 0) {
-                  // まだ目安期間前 → 通常表示
-                  eclosionHint =
-                    '<span style="font-size:.72rem;color:var(--text3);margin-left:6px">'
-                    + '羽化目安: ' + fmt(minD) + '〜' + fmt(maxD)
-                    + ' （あと' + diffMin + '〜' + diffMax + '日）'
-                    + '</span>';
+                  eclosionHint = '<span style="font-size:.72rem;color:var(--text3);margin-left:6px">羽化目安: ' + fmt(minD) + '〜' + fmt(maxD) + ' （あと' + diffMin + '〜' + diffMax + '日）</span>';
                 } else if (diffMax >= 0) {
-                  // 目安期間内 → 通常表示（少し強調）
-                  eclosionHint =
-                    '<span style="font-size:.72rem;color:var(--green);margin-left:6px">'
-                    + '🦋 羽化時期です（目安: ' + fmt(maxD) + 'まで）'
-                    + '</span>';
+                  eclosionHint = '<span style="font-size:.72rem;color:var(--green);margin-left:6px">🦋 羽化時期です（目安: ' + fmt(maxD) + 'まで）</span>';
                 } else {
-                  // 目安超過 → 警告
                   const over = Math.abs(diffMax);
-                  eclosionHint =
-                    '<span style="font-size:.72rem;color:var(--red,#e05050);margin-left:6px">'
-                    + '⚠️ 羽化目安を' + over + '日超過'
-                    + '</span>'
-                    + '<div style="font-size:.7rem;color:var(--text3);margin-top:2px;margin-left:4px">'
-                    + '羽化日を入力すると、この表示は消えます'
-                    + '</div>';
+                  eclosionHint = '<span style="font-size:.72rem;color:var(--red,#e05050);margin-left:6px">⚠️ 羽化目安を' + over + '日超過</span>'
+                    + '<div style="font-size:.7rem;color:var(--text3);margin-top:2px;margin-left:4px">羽化日を入力すると、この表示は消えます</div>';
                 }
               }
             }
@@ -848,18 +765,12 @@ function _renderDetail(ind, main) {
               ind.eclosion_date ? `${_infoRow('羽化日', ind.eclosion_date)}` : '',
             ].filter(Boolean).join('');
 
-            const hasDates = ind.prepupa_date || ind.pupa_check_date ||
-                             ind.artificial_cell_date || ind.eclosion_date;
-
-            return '<div class="info-list">' +
-              (hasDates ? rows : '<div style="font-size:.82rem;color:var(--text3);padding:4px 0">日付未記録</div>') +
-              '</div>';
+            const hasDates = ind.prepupa_date || ind.pupa_check_date || ind.artificial_cell_date || ind.eclosion_date;
+            return '<div class="info-list">' + (hasDates ? rows : '<div style="font-size:.82rem;color:var(--text3);padding:4px 0">日付未記録</div>') + '</div>';
           })()}
-
         </div>
       </div>
 
-      <!-- 不全情報 -->
       ${String(ind.is_defective) === 'true' ? `
       <div class="card" style="border-color:rgba(231,76,60,.4);background:rgba(231,76,60,.05)">
         <div class="card-title" style="color:var(--red)">⚠️ 不全記録</div>
@@ -870,7 +781,6 @@ function _renderDetail(ind, main) {
         </div>
       </div>` : ''}
 
-      <!-- 販売情報 -->
       ${ind.status === 'sold' ? (() => {
         const sh = ind._saleHist || {};
         const priceStr = sh.actual_price ? '¥' + Number(sh.actual_price).toLocaleString() : '—';
@@ -888,18 +798,14 @@ function _renderDetail(ind, main) {
         </div>
       </div>`; })() : ''}
 
-      <!-- 最大体重 -->
       ${ind.max_weight_g ? `
       <div style="text-align:center;padding:6px;font-size:.8rem;color:var(--text3)">
         最大体重記録: <strong>${ind.max_weight_g}g</strong>
       </div>` : ''}
 
-      <!-- 種親昇格 -->
       ${(() => {
-        // current_stage: ADULT / ADULT_PRE / adult (旧) / pupa (蛹→成虫前後)
         const _stageStr = String(ind.current_stage || '').toUpperCase();
         const _isAdult  = _stageStr === 'ADULT' || _stageStr === 'ADULT_PRE';
-        // parent_flag: GASから 'TRUE'/'FALSE'/'1'/'0'/true/false で来る可能性
         const _pfStr    = String(ind.parent_flag || '').toUpperCase();
         const _hasFlag  = _pfStr === 'TRUE' || _pfStr === '1';
         const _canPromote = !ind.promoted_par_id && (_isAdult || ind.eclosion_date || _hasFlag);
@@ -932,7 +838,6 @@ function _renderDetail(ind, main) {
         </div>
       </div>` : ''}
 
-      <!-- ステータスボタン（status に応じて条件分岐済み） -->
       ${statusButtons}
 
     </div>`;
@@ -940,8 +845,6 @@ function _renderDetail(ind, main) {
   if (records.filter(r => r.weight_g).length >= 2) {
     setTimeout(() => _drawWeightChart(ind.ind_id, records), 100);
   }
-
-
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -956,7 +859,6 @@ Pages._indMarkDead = async function (id) {
   } catch (e) {}
 };
 
-// 販売候補にする（alive → for_sale）
 Pages._indMarkForSale = async function (id) {
   try {
     await apiCall(() => API.individual.changeStatus(id, 'for_sale'), '販売候補にしました');
@@ -965,7 +867,6 @@ Pages._indMarkForSale = async function (id) {
   } catch (e) {}
 };
 
-// 出品中にする（for_sale → listed）
 Pages._indMarkListed = async function (id) {
   try {
     await apiCall(() => API.individual.changeStatus(id, 'listed'), '出品中にしました');
@@ -974,7 +875,6 @@ Pages._indMarkListed = async function (id) {
   } catch (e) {}
 };
 
-// 飼育中に戻す（for_sale → alive）
 Pages._indMarkAlive = async function (id) {
   try {
     await apiCall(() => API.individual.changeStatus(id, 'alive'), '飼育中に戻しました');
@@ -983,8 +883,6 @@ Pages._indMarkAlive = async function (id) {
   } catch (e) {}
 };
 
-// 誤入力訂正: sold → alive または sold → for_sale
-// 販売履歴（SALE_HIST）は残す。statusのみ戻す。
 Pages._indRestoreFromSold = async function (id, targetStatus) {
   const label = targetStatus === 'alive' ? '飼育中' : '販売候補';
   if (!UI.confirm(`「${label}」に戻しますか？\n販売履歴はそのまま残ります。`)) return;
@@ -998,7 +896,6 @@ Pages._indRestoreFromSold = async function (id, targetStatus) {
   } catch (e) {}
 };
 
-// 誤入力訂正: dead → alive
 Pages._indRestoreFromDead = async function (id) {
   if (!UI.confirm('「飼育中」に戻しますか？\n（誤入力訂正用）')) return;
   try {
@@ -1011,7 +908,6 @@ Pages._indRestoreFromDead = async function (id) {
   } catch (e) {}
 };
 
-// 販売済みにする（listed → sold）— 販売モーダルを開いて API.individual.sell() へ
 Pages._indMarkSold = function (id) {
   const ind = Store.getIndividual(id);
   if (!ind) { UI.toast('個体情報が見つかりません', 'error'); return; }
@@ -1064,12 +960,7 @@ Pages._indSellExec = async function (id) {
   } catch (e) {}
 };
 
-
-
-// ── 発育日付 入力モーダル ────────────────────────────────────────
-// 蛹室確認日 / 前蛹確認日 / 蛹確認日 / 羽化日 の4つをまとめて編集
 Pages._indDateModal = function (indId) {
-  // indId が undefined/'${ind.ind_id}' 等の場合のフォールバック
   if (!indId || String(indId).includes('{') || String(indId).includes('$')) {
     const p = Store.getParams();
     indId = p.indId || p.id || '';
@@ -1166,7 +1057,6 @@ Pages._indFlagSave = async function (id) {
   } catch(e) {}
 };
 
-// ── 種親昇格モーダル ─────────────────────────────────────────────
 Pages._indPromoteModal = function (indId) {
   const ind = Store.getIndividual(indId);
   if (!ind) { UI.toast('個体情報が見つかりません', 'error'); return; }
@@ -1187,12 +1077,9 @@ Pages._indPromoteModal = function (indId) {
           <span style="color:var(--text3)">羽化日</span><span style="font-weight:600">${eclosion}</span>
         </div>
       </div>
-
       <div style="font-size:.78rem;color:var(--text3);margin-bottom:4px">種親IDは自動採番されます（${ind.sex === '♂' ? 'M年-英字' : 'F年-連番'}）</div>
-
       ${UI.field('後食開始日（任意）', `<input type="date" id="prm-feeding" class="input" value="">`)}
       ${UI.field('表示名（任意・空白なら自動）', `<input type="text" id="prm-name" class="input" placeholder="例: M26-A（空白=自動採番の値）">`)}
-
       <div class="modal-footer">
         <button class="btn btn-ghost" style="flex:1" type="button" onclick="_closeModal()">キャンセル</button>
         <button class="btn btn-gold" style="flex:2" type="button"
@@ -1223,48 +1110,23 @@ Pages._indPromoteExec = async function (indId) {
   } catch(e) {}
 };
 
-// ── 種親昇格取りやめ ─────────────────────────────────────────────
 Pages._indRevokePromotion = async function (indId) {
   const ind = Store.getIndividual(indId);
   if (!ind || !ind.promoted_par_id) return;
   const par = Store.getParent(ind.promoted_par_id);
-  const parDisp = par
-    ? (par.parent_display_id || par.display_name || '種親')
-    : '種親';
+  const parDisp = par ? (par.parent_display_id || par.display_name || '種親') : '種親';
 
-  if (!UI.confirm(
-    `「${parDisp}」への種親昇格を取りやめます。
-` +
-    `種親レコードを削除し、個体の昇格済みフラグをクリアします。
-
-` +
-    `続けますか？`
-  )) return;
+  if (!UI.confirm(`「${parDisp}」への種親昇格を取りやめます。\n種親レコードを削除し、個体の昇格済みフラグをクリアします。\n\n続けますか？`)) return;
 
   try {
-    // ① GAS: 種親昇格取りやめ（種親を deleted、個体の promoted_par_id をクリア）
     await apiCall(
-      () => API.parent.revokePromotion({
-        par_id: ind.promoted_par_id,
-        ind_id: indId,
-      }),
+      () => API.parent.revokePromotion({ par_id: ind.promoted_par_id, ind_id: indId }),
       '種親昇格を取りやめました'
     );
-
-    // ② ローカルキャッシュを更新
-    Store.patchDBItem('individuals', 'ind_id', indId, {
-      promoted_par_id: '',
-      parent_flag:     false,
-    });
-    // 種親を一覧から除外（deleted扱い）
+    Store.patchDBItem('individuals', 'ind_id', indId, { promoted_par_id: '', parent_flag: false });
     const parents = Store.getDB('parents') || [];
     const pIdx = parents.findIndex(p => p.par_id === ind.promoted_par_id);
-    if (pIdx >= 0) {
-      parents[pIdx].status = 'deleted';
-      Store.setDB('parents', parents);
-    }
-
-    // ③ 再同期して個体詳細へ戻る
+    if (pIdx >= 0) { parents[pIdx].status = 'deleted'; Store.setDB('parents', parents); }
     await syncAll(true);
     routeTo('ind-detail', { indId });
   } catch (e) {}
@@ -1277,7 +1139,6 @@ Pages.individualNew = function (params = {}) {
   const main    = document.getElementById('main');
   const isEdit  = !!params.editId;
   const ind     = isEdit ? Store.getIndividual(params.editId) : null;
-  // キャンセル用にグローバルへ保存
   window.__indNewEditId = isEdit ? params.editId : '';
   const lines   = Store.getDB('lines')      || [];
   const parents = Store.getDB('parents')    || [];
@@ -1385,7 +1246,6 @@ Pages._indSave = async function (editId) {
   if (!form) return;
   const data = UI.collectForm(form);
 
-  // 全日付フィールドを '/' 区切りに統一
   ['hatch_date','individual_date','artificial_cell_date',
    'prepupa_date','pupa_check_date','eclosion_date'].forEach(k => {
     if (data[k]) data[k] = data[k].replace(/-/g, '/');
@@ -1403,7 +1263,6 @@ Pages._indSave = async function (editId) {
     } else {
       const res = await apiCall(() => API.individual.create(data), '登録しました 🐛');
       await syncAll(true);
-      // 登録直後: 詳細画面へ（ラベルショートカット付き）
       routeTo('ind-detail', { indId: res.ind_id, _fromNew: true });
     }
   } catch (e) {}
@@ -1415,12 +1274,8 @@ Pages._indSave = async function (editId) {
 
 function _defectTypeLabel(type) {
   const map = {
-    pupa_fail:     '蛹化失敗',
-    eclosion_fail: '羽化失敗',
-    horn_deform:   '角変形',
-    elytra_open:   '上翅開き',
-    size_defect:   'サイズ不全',
-    unknown:       '不明',
+    pupa_fail:'蛹化失敗', eclosion_fail:'羽化失敗', horn_deform:'角変形',
+    elytra_open:'上翅開き', size_defect:'サイズ不全', unknown:'不明',
   };
   return map[type] || type || '—';
 }
@@ -1433,8 +1288,8 @@ function _infoRow(key, val) {
 }
 
 function _weightChartBlock(indId, records) {
-  const wts     = records.filter(r => r.weight_g && +r.weight_g > 0);
-  const table   = UI.weightTable(records);
+  const wts   = records.filter(r => r.weight_g && +r.weight_g > 0);
+  const table = UI.weightTable(records);
   const chartId = `chart-${indId}`;
   return `${wts.length >= 2
     ? `<canvas id="${chartId}" style="max-height:180px;margin-bottom:12px"></canvas>` : ''}
@@ -1451,13 +1306,13 @@ function _drawWeightChart(indId, records) {
     data: {
       labels: wts.map(r => r.record_date),
       datasets: [{
-        data:               wts.map(r => +r.weight_g),
-        borderColor:        '#4caf78',
-        backgroundColor:    'rgba(76,175,120,0.1)',
-        pointBackgroundColor:'#4caf78',
-        pointRadius:        4,
-        tension:            0.3,
-        fill:               true,
+        data: wts.map(r => +r.weight_g),
+        borderColor: '#4caf78',
+        backgroundColor: 'rgba(76,175,120,0.1)',
+        pointBackgroundColor: '#4caf78',
+        pointRadius: 4,
+        tension: 0.3,
+        fill: true,
       }]
     },
     options: {
@@ -1465,13 +1320,12 @@ function _drawWeightChart(indId, records) {
       plugins: { legend: { display: false } },
       scales: {
         x: { ticks: { color: '#6a7c6a', maxTicksLimit: 5, font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.06)' } },
-        y: { ticks: { color: '#6a7c6a', font: { size: 10 } },                   grid: { color: 'rgba(255,255,255,0.06)' } },
+        y: { ticks: { color: '#6a7c6a', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.06)' } },
       }
     }
   });
 }
 
-// アコーディオン開閉
 window._toggleAcc = function (id) {
   const el = document.getElementById(id);
   if (!el) return;
@@ -1479,7 +1333,6 @@ window._toggleAcc = function (id) {
   el.querySelector('.acc-body').classList.toggle('open');
 };
 
-// モーダル
 function _showModal(title, body) {
   let ov = document.getElementById('_modal');
   if (!ov) {
@@ -1501,6 +1354,5 @@ function _closeModal() {
 }
 
 window._closeModal = _closeModal;
-
 
 // ────────────────────────────────────────────────────────────────
