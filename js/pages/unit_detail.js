@@ -1,5 +1,5 @@
 // ════════════════════════════════════════════════════════════════
-// unit_detail.js — 飼育ユニット（BU）詳細画面  build: 20260414a
+// unit_detail.js — 飼育ユニット（BU）詳細画面  build: 20260414b
 // 変更点: Pages._udLabelGen にフォールバック追加（_udLabelParams未設定時でも動作）
 // ════════════════════════════════════════════════════════════════
 'use strict';
@@ -283,46 +283,17 @@ function _renderUnitDetail(unit, main) {
     </div>`;
 }
 
-// ── ラベル発行（displayIdを引数で受け取り、_udLabelParamsがなくても動作）────
-Pages._udLabelGen = function (displayId) {
-  // window._udLabelParams が設定済みならそれを使用（通常パス）
-  if (window._udLabelParams) {
-    Store.setParams(window._udLabelParams);
-    routeTo('label-gen', window._udLabelParams);
+// ── ラベル発行（Store.setParamsを使わずrouteToのみで遷移）────────
+Pages._udLabelGen = function () {
+  const p = window._udLabelParams;
+  if (!p) {
+    console.error('[UD] _udLabelGen: _udLabelParams not set');
     return;
   }
-  // フォールバック: displayId から直接パラムを組み立て
-  if (!displayId) {
-    console.error('[UD] _udLabelGen: displayId missing');
-    return;
+  // Store.setParams が存在する場合のみ呼ぶ（存在しなくてもrouteToで動作）
+  if (typeof Store.setParams === 'function') {
+    Store.setParams(p);
   }
-  const unit = (Store.getUnitByDisplayId && Store.getUnitByDisplayId(displayId))
-    || (Store.getDB('breeding_units') || []).find(u => u.display_id === displayId);
-  if (!unit) {
-    console.error('[UD] _udLabelGen: unit not found for', displayId);
-    return;
-  }
-  const line = Store.getLine(unit.line_id) || {};
-  const members = _udParseMembers(unit);
-  const p = {
-    targetType: 'UNIT',
-    displayId:  unit.display_id,
-    labelType:  't1_unit',
-    forSale:    !!unit.for_sale,
-    backRoute:  'unit-detail',
-    backParam:  { unitDisplayId: unit.display_id },
-    unitDraft: {
-      display_id:  unit.display_id,
-      line_id:     unit.line_id,
-      line_code:   line.line_code || line.display_id || '',
-      head_count:  unit.head_count || 2,
-      for_sale:    !!unit.for_sale,
-      stage_phase: unit.stage_phase || 'T1',
-      mat_type:    unit.mat_type || 'T1',
-      members:     members,
-    },
-  };
-  Store.setParams(p);
   routeTo('label-gen', p);
 };
 
