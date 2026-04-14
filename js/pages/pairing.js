@@ -337,19 +337,17 @@ function _renderPairDetail(pair, eggRecords, main) {
         <div class="card-title">セット情報</div>
         <div class="info-list">
           ${_prow('<span style="color:var(--male)">♂親</span>', f ? (() => {
-            const fBld = f.bloodline_id ? (Store.getDB('bloodlines')||[]).find(b=>b.bloodline_id===f.bloodline_id) : null;
-            const fBldStr = fBld ? (fBld.abbreviation||fBld.bloodline_name||'') : '';
+            // ★ parent_display_id（M25-A形式）を優先して表示
+            const fLabel = f.parent_display_id || f.display_name || '';
             return `<span style="cursor:pointer;color:var(--male)" onclick="routeTo('parent-detail',{parId:'${f.par_id}'})">
-              ${f.display_name}${f.size_mm?' <strong>'+f.size_mm+'mm</strong>':''}
-              ${fBldStr?'<span style="color:var(--text3);font-size:.78rem"> / '+fBldStr+'</span>':''}
+              <strong>${fLabel}</strong>${f.size_mm?'<span style="color:var(--text2)">（'+f.size_mm+'mm）</span>':''}
             </span>`;
           })() : (pair.father_par_id||'—'))}
           ${_prow('<span style="color:var(--female)">♀親</span>', m ? (() => {
-            const mBld = m.bloodline_id ? (Store.getDB('bloodlines')||[]).find(b=>b.bloodline_id===m.bloodline_id) : null;
-            const mBldStr = mBld ? (mBld.abbreviation||mBld.bloodline_name||'') : '';
+            // ★ parent_display_id（F25-02形式）を優先して表示
+            const mLabel = m.parent_display_id || m.display_name || '';
             return `<span style="cursor:pointer;color:var(--female)" onclick="routeTo('parent-detail',{parId:'${m.par_id}'})">
-              ${m.display_name}${m.size_mm?' <strong>'+m.size_mm+'mm</strong>':''}
-              ${mBldStr?'<span style="color:var(--text3);font-size:.78rem"> / '+mBldStr+'</span>':''}
+              <strong>${mLabel}</strong>${m.size_mm?'<span style="color:var(--text2)">（'+m.size_mm+'mm）</span>':''}
             </span>`;
           })() : (pair.mother_par_id||'—'))}
           ${_prow('ペアリング日', pair.pairing_start || '—')}
