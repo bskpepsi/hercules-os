@@ -243,23 +243,36 @@ Pages.pairingDetail = async function (setId) {
   if (cached) _renderPairDetail(cached, null, main);
   else        main.innerHTML = UI.header('産卵セット', { back: true }) + UI.spinner();
 
+  // ★ ライン情報を取得するヘルパー（Store優先、なければAPI）
+  async function _fetchLineCode(lineId) {
+    if (!lineId) return '';
+    const cachedLine = Store.getLine(lineId);
+    if (cachedLine) return cachedLine.line_code || '';
+    try {
+      const lineRes = await API.line.get({ line_id: lineId });
+      if (lineRes && lineRes.line) return lineRes.line.line_code || '';
+    } catch (_) {}
+    return '';
+  }
+
   try {
-    // getPairingWithEggs で1回のAPI呼び出しでセット情報＋採卵履歴を同時取得
     const res = await API.pairing.getWithEggs({ set_id: setId });
     if (Store.getPage() !== 'pairing-detail') return;
-    _renderPairDetail(res.pairing, res.egg_records || [], main);
+    const pair = res.pairing;
+    pair._lineCode = await _fetchLineCode(pair.line_id);
+    _renderPairDetail(pair, res.egg_records || [], main);
   } catch (e) {
-    // getPairingWithEggs 未デプロイ時のフォールバック（旧2回呼び出し）
     try {
       const pairRes = await API.pairing.get(setId);
       if (Store.getPage() !== 'pairing-detail') return;
       const pair = pairRes.pairing;
+      pair._lineCode = await _fetchLineCode(pair.line_id);
       _renderPairDetail(pair, [], main);
       try {
         const eggRes = await API.pairing.getEggRecords({ set_id: setId });
         if (Store.getPage() !== 'pairing-detail') return;
         _renderPairDetail(pair, eggRes.egg_records || [], main);
-      } catch (_) { /* 採卵履歴が取れなくても続行 */ }
+      } catch (_) {}
     } catch (e2) {
       if (!cached) main.innerHTML = UI.header('エラー', { back: true }) +
         `<div class="page-body">${UI.empty('取得失敗: ' + e2.message)}</div>`;
@@ -291,9 +304,9 @@ function _renderPairDetail(pair, eggRecords, main) {
   // 採卵履歴
   const eggHtml = _eggHistoryHtml(eggRecords, pair);
 
-  // ラインコードをヘッダーに表示（例: A1 / SET-202507-01）
-  const _ln = Store.getLine(pair.line_id);
-  const _lineCode = _ln ? (_ln.line_code || '') : '';
+  // ★ ラインコードをヘッダーに表示（例: A1 / SET-202507-01）
+  // pair._lineCode は pairingDetail で API取得済み
+  const _lineCode = pair._lineCode || '';
   const _headerTitle = _lineCode ? _lineCode + ' / ' + pair.display_id : pair.display_id;
 
   main.innerHTML = `
