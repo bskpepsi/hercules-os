@@ -291,8 +291,13 @@ function _renderPairDetail(pair, eggRecords, main) {
   // 採卵履歴
   const eggHtml = _eggHistoryHtml(eggRecords, pair);
 
+  // ラインコードをヘッダーに表示（例: A1 / SET-202507-01）
+  const _ln = Store.getLine(pair.line_id);
+  const _lineCode = _ln ? (_ln.line_code || '') : '';
+  const _headerTitle = _lineCode ? _lineCode + ' / ' + pair.display_id : pair.display_id;
+
   main.innerHTML = `
-    ${UI.header(pair.display_id, { back: true, action: { fn: `Pages._pairMenu('${pair.set_id}')`, icon: '…' } })}
+    ${UI.header(_headerTitle, { back: true, action: { fn: `Pages._pairMenu('${pair.set_id}')`, icon: '…' } })}
     <div class="page-body">
 
       ${reminderBanner}
@@ -1004,11 +1009,13 @@ Pages._pairSave = async function (editId) {
     if (editId) {
       data.set_id = editId;
       await apiCall(() => API.pairing.update(data), '更新しました');
-      await syncAll(true);
+      // ★ syncAllを待たずに遷移（バックグラウンド同期でタイムラグ解消）
+      syncAll(true).catch(e => console.warn('syncAll失敗:', e));
       routeTo('pairing-detail', { pairingId: editId });
     } else {
       const res = await apiCall(() => API.pairing.create(data), '産卵セットを登録しました');
-      await syncAll(true);
+      // ★ syncAllを待たずに遷移（バックグラウンド同期でタイムラグ解消）
+      syncAll(true).catch(e => console.warn('syncAll失敗:', e));
       // ライン自動生成の通知
       if (res.auto_line) {
         UI.toast('ライン ' + res.auto_line.display_id + ' を自動作成しました', 'success');
