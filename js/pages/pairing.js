@@ -317,7 +317,24 @@ function _renderPairDetail(pair, eggRecords, main) {
 
       <!-- KPI -->
       <div class="card card-gold">
-        <div style="font-size:.95rem;font-weight:700;margin-bottom:10px">${pair.set_name || pair.display_id}</div>
+        <!-- ライン情報バナー -->
+        ${_lineCode ? `
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+          <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;
+            background:rgba(184,142,60,.15);border:1.5px solid rgba(184,142,60,.4);
+            border-radius:10px;padding:6px 14px;flex-shrink:0;min-width:52px">
+            <div style="font-family:var(--font-mono);font-size:1.5rem;font-weight:800;
+              color:var(--gold);line-height:1">${_lineCode}</div>
+            <div style="font-size:.62rem;color:var(--text3);margin-top:2px">ライン</div>
+          </div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:.72rem;color:var(--text3);margin-bottom:2px">産卵セット</div>
+            <div style="font-family:var(--font-mono);font-size:.88rem;font-weight:700;
+              color:var(--text1)">${pair.display_id}</div>
+            ${pair.set_name ? `<div style="font-size:.75rem;color:var(--text2);margin-top:2px">${pair.set_name}</div>` : ''}
+          </div>
+        </div>
+        ` : `<div style="font-size:.95rem;font-weight:700;margin-bottom:10px">${pair.set_name || pair.display_id}</div>`}
         <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);gap:6px">
           <div class="kpi-card">
             <div class="kpi-value" style="font-size:1.2rem">${totalEggs}</div>
