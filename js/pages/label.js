@@ -96,7 +96,7 @@ function _detailPageKey(targetType, targetId) {
 // ── ラベルサイズ判定 ─────────────────────────────────────────────
 function _labelDimensions(labelType, targetType) {
   if (labelType === 'multi_lot' || labelType === 'egg_lot') {
-    return { wMm:62, hMm:40, wPx:234, hPx:151, scale:3, label:'62×40mm' };
+    return { wMm:62, hMm:35, wPx:234, hPx:132, scale:3, label:'62×35mm' };
   }
   var isLarge =
     labelType === 'ind_fixed' ||
@@ -1208,12 +1208,12 @@ function _buildSetLabelHTML(ld, _unused, qrSrc) {
       + 'display:flex;align-items:center;justify-content:center">QR</div>';
 
   return '<!DOCTYPE html>\n<html><head><meta charset="utf-8">\n<style>\n'
-    + '  @page { size: 62mm 40mm; margin: 0; }\n'
+    + '  @page { size: 62mm 35mm; margin: 0; }\n'
     + '  * { margin:0; padding:0; box-sizing:border-box; }\n'
-    + '  body { width:62mm; height:40mm; font-family:sans-serif; background:#fff; color:#000; overflow:hidden; }\n'
+    + '  body { width:62mm; height:35mm; font-family:sans-serif; background:#fff; color:#000; overflow:hidden; }\n'
     + '  @media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }\n'
     + '</style></head><body>\n'
-    + '<div style="width:62mm;height:40mm;display:flex;flex-direction:column">\n'
+    + '<div style="width:62mm;height:35mm;display:flex;flex-direction:column">\n'
 
     // ── ヘッダー帯 ──
     + '  <div style="background:#000;color:#fff;font-size:7.5px;font-weight:700;'
@@ -1225,7 +1225,7 @@ function _buildSetLabelHTML(ld, _unused, qrSrc) {
 
     //   左列: ラインバッジ（上）＋QR（下）
     + '    <div style="flex-shrink:0;width:15mm;display:flex;flex-direction:column;'
-    + 'align-items:center;justify-content:space-evenly;padding:1.2mm 0.5mm;border-right:1.5px solid #000">\n'
+    + 'align-items:center;justify-content:space-evenly;padding:0.8mm 0.5mm;border-right:1.5px solid #000">\n'
     + (lineCode
       ? '      <div style="border:2.5px solid #000;border-radius:3px;font-size:' + badgeFz + ';font-weight:900;'
         + 'width:11mm;height:11mm;display:flex;align-items:center;justify-content:center;'
@@ -1238,7 +1238,7 @@ function _buildSetLabelHTML(ld, _unused, qrSrc) {
     + '    <div style="flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden">\n'
 
     //     右上段: SETコード＋ペアリング日
-    + '      <div style="padding:0.8mm 1.5mm 0.5mm;border-bottom:1.5px solid #000;flex-shrink:0">\n'
+    + '      <div style="padding:0.5mm 1.5mm 0.3mm;border-bottom:1.5px solid #000;flex-shrink:0">\n'
     + '        <div style="font-family:monospace;font-size:8px;font-weight:800;line-height:1.2;'
     + 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + rawId + '</div>\n'
     + (ld.pairing_start
@@ -1247,7 +1247,7 @@ function _buildSetLabelHTML(ld, _unused, qrSrc) {
     + '      </div>\n'
 
     //     右中段: ♂親
-    + '      <div style="padding:0.7mm 1.5mm;border-bottom:1px solid #ddd;flex:1;'
+    + '      <div style="padding:0.4mm 1.5mm;border-bottom:1px solid #ddd;flex:1;'
     + 'display:flex;flex-direction:column;justify-content:center">\n'
     + '        <div style="display:flex;align-items:baseline;gap:2px">\n'
     + '          <span style="font-size:9px;font-weight:900;color:#1a6bb5;flex-shrink:0">♂</span>\n'
@@ -1261,7 +1261,7 @@ function _buildSetLabelHTML(ld, _unused, qrSrc) {
     + '      </div>\n'
 
     //     右下段: ♀親
-    + '      <div style="padding:0.7mm 1.5mm;flex:1;display:flex;flex-direction:column;justify-content:center">\n'
+    + '      <div style="padding:0.4mm 1.5mm;flex:1;display:flex;flex-direction:column;justify-content:center">\n'
     + '        <div style="display:flex;align-items:baseline;gap:2px">\n'
     + '          <span style="font-size:9px;font-weight:900;color:#b51a5a;flex-shrink:0">♀</span>\n'
     + '          <span style="font-size:8px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
