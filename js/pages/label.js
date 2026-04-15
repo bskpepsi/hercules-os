@@ -18,7 +18,7 @@
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-window._LABEL_BUILD = '20260415f';
+window._LABEL_BUILD = '20260415g';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 // ── ステージコード正規化 ─────────────────────────────────────────
@@ -1117,7 +1117,7 @@ function _buildParentLabelHTML(ld, _unused, qrSrc) {
 
   // 日付セルのスタイル: 実データは右揃え・濃色、空白は中央・薄色
   var dateCellStyleFilled = 'font-size:8px;font-weight:700;border-bottom:1.5px solid #555;'
-    + 'flex:1;min-width:0;padding-bottom:1px;text-align:right;overflow:hidden;white-space:nowrap;letter-spacing:0';
+    + 'flex:1;min-width:0;padding-bottom:1px;text-align:center;overflow:hidden;white-space:nowrap;letter-spacing:0';
   var dateCellStyleBlank  = 'font-size:8px;font-weight:400;border-bottom:1.5px solid #aaa;'
     + 'flex:1;min-width:0;padding-bottom:1px;text-align:center;overflow:hidden;white-space:nowrap;color:#aaa;letter-spacing:1px';
 
