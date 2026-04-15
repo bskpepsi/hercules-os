@@ -110,7 +110,7 @@ function _labelDimensions(labelType, targetType) {
   if (labelType === 'parent' || targetType === 'PAR') {
     return { wMm:62, hMm:25, wPx:234, hPx:94, scale:3, label:'62×25mm' };
   }
-  return { wMm:62, hMm:40, wPx:234, hPx:151, scale:3, label:'62×40mm' };
+  return { wMm:62, hMm:40, wPx:234, hPx:151, scale:3, label:'62×35mm' };
 }
 
 // ── PNG生成（html2canvas経由） ────────────────────────────────────
@@ -1225,7 +1225,7 @@ function _buildSetLabelHTML(ld, _unused, qrSrc) {
 
     //   左列: ラインバッジ（上）＋QR（下）
     + '    <div style="flex-shrink:0;width:15mm;display:flex;flex-direction:column;'
-    + 'align-items:center;justify-content:space-evenly;padding:0.8mm 0.5mm;border-right:1.5px solid #000">\n'
+    + 'align-items:center;justify-content:space-evenly;padding:0.4mm 0.5mm;border-right:1.5px solid #000">\n'
     + (lineCode
       ? '      <div style="border:2.5px solid #000;border-radius:3px;font-size:' + badgeFz + ';font-weight:900;'
         + 'width:11mm;height:11mm;display:flex;align-items:center;justify-content:center;'
@@ -1247,7 +1247,7 @@ function _buildSetLabelHTML(ld, _unused, qrSrc) {
     + '      </div>\n'
 
     //     右中段: ♂親
-    + '      <div style="padding:0.4mm 1.5mm;border-bottom:1px solid #ddd;flex:1;'
+    + '      <div style="padding:0.2mm 1.5mm;border-bottom:1px solid #ddd;flex:1;'
     + 'display:flex;flex-direction:column;justify-content:center">\n'
     + '        <div style="display:flex;align-items:baseline;gap:2px">\n'
     + '          <span style="font-size:9px;font-weight:900;color:#1a6bb5;flex-shrink:0">♂</span>\n'
@@ -1255,22 +1255,22 @@ function _buildSetLabelHTML(ld, _unused, qrSrc) {
     + fInfo + fSize + '</span>\n'
     + '        </div>\n'
     + (fBlood
-      ? '        <div style="font-size:6.5px;color:#333;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:1px">'
+      ? '        <div style="font-size:6.5px;color:#333;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
         + fBlood + '</div>\n'
-      : '        <div style="font-size:6.5px;color:#bbb;margin-top:1px">—</div>\n')
+      : '        <div style="font-size:6.5px;color:#bbb">—</div>\n')
     + '      </div>\n'
 
     //     右下段: ♀親
-    + '      <div style="padding:0.4mm 1.5mm;flex:1;display:flex;flex-direction:column;justify-content:center">\n'
+    + '      <div style="padding:0.2mm 1.5mm;flex:1;display:flex;flex-direction:column;justify-content:center">\n'
     + '        <div style="display:flex;align-items:baseline;gap:2px">\n'
     + '          <span style="font-size:9px;font-weight:900;color:#b51a5a;flex-shrink:0">♀</span>\n'
     + '          <span style="font-size:8px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
     + mInfo + mSize + '</span>\n'
     + '        </div>\n'
     + (mBlood
-      ? '        <div style="font-size:6.5px;color:#333;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:1px">'
+      ? '        <div style="font-size:6.5px;color:#333;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
         + mBlood + '</div>\n'
-      : '        <div style="font-size:6.5px;color:#bbb;margin-top:1px">—</div>\n')
+      : '        <div style="font-size:6.5px;color:#bbb">—</div>\n')
     + '      </div>\n'
 
     + '    </div>\n'
