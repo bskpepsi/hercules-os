@@ -1,6 +1,6 @@
 // FILE: js/pages/manage.js
-// build: 20260413bj
-// 変更点: 管理画面の「分析・ランキング」セクションに「🧬 血統×成長 相関分析」ボタンを追加
+// build: 20260416c
+// 変更点: 管理画面クイック登録に「✨ ヤフオク出品文AIジェネレーター」ボタンを追加
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
@@ -128,6 +128,10 @@ Pages.manage = function () {
           <button class="btn btn-ghost" onclick="routeTo('egg-lot-bulk')"
             style="grid-column:span 2;border-color:rgba(155,89,182,.4);color:#c39bd3;font-weight:700">
             🥚 卵ロット一括作成
+          </button>
+          <button class="btn btn-ghost" onclick="routeTo('sale-listing')"
+            style="grid-column:span 2;border-color:rgba(76,175,120,.4);color:var(--green);font-weight:700">
+            ✨ ヤフオク出品文AIジェネレーター（Gemini 無料）
           </button>
         </div>
       </div>
@@ -511,7 +515,6 @@ Pages._lineExpandCharts = function(lineId) {
     return;
   }
   Pages.growthChartsForLine(lineId, 'line-chart-body-' + lineId);
-  // ボタンを非表示にする
   var section = document.getElementById('line-chart-section-' + lineId);
   if (section) {
     var btn = section.querySelector('button');
