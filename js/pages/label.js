@@ -11,14 +11,13 @@
 //   html2canvas が有効 → PNG生成 → img プレビュー → PNG保存 / 共有
 //   html2canvas なし   → iframe フォールバック
 //
-// build: 20260415d
-// 変更点: 産卵セットラベルを手書き案デザインに刷新
-//   左列上: ラインコードバッジ / 左列下: QR
-//   右列: SETコード+ペアリング日 / ♂親+血統 / ♀親+血統
+// build: 20260415e
+// 変更点: 種親ラベルの羽化日・後食日が右にはみ出る問題を修正
+//   width:20mm 固定 → flex:1 でコンテナ幅に追従
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-window._LABEL_BUILD = '20260415d';
+window._LABEL_BUILD = '20260415e';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 // ── ステージコード正規化 ─────────────────────────────────────────
@@ -763,7 +762,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
 
   (async function _lblRender() {
     try {
-      console.log('[LABEL] qr build start - build:20260415d');
+      console.log('[LABEL] qr build start - build:20260415e');
       console.log('[LABEL] qr target type:', targetType, '| targetId:', targetId);
       console.log('[LABEL] qr rect:', JSON.stringify(QR_RECT_MM));
       console.log('[LABEL] qr target text:', qrText);
@@ -1082,6 +1081,8 @@ function _buildLabelHTML(ld, qrSrc) {
 
 
 // ── 種親ラベル（62mm × 25mm）─────────────────────────────────────
+// ★ fix 20260415e: 羽化日・後食日の日付が右にはみ出る問題を修正
+//   width:20mm 固定 → flex:1;min-width:0 でコンテナ幅に追従
 function _buildParentLabelHTML(ld, _unused, qrSrc) {
   var qr = (typeof _unused === 'string' && _unused.startsWith('data:')) ? _unused : qrSrc;
 
@@ -1129,16 +1130,17 @@ function _buildParentLabelHTML(ld, _unused, qrSrc) {
 
     + '    <div style="width:1px;background:#ccc;align-self:stretch;margin:0;flex-shrink:0"></div>\n'
 
-    + '    <div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:1.5mm;padding-left:1mm">\n'
-    + '      <div style="font-family:monospace;font-size:10px;font-weight:900;letter-spacing:.2px;white-space:nowrap">' + titleStr + '</div>\n'
-    + '      <div style="display:flex;align-items:baseline;gap:2mm">\n'
-    + '        <span style="font-size:7px;font-weight:700;min-width:7mm;color:#555;white-space:nowrap">羽化日</span>\n'
-    + '        <span style="font-size:9.5px;font-weight:700;border-bottom:1px solid #888;display:inline-block;width:20mm;padding-bottom:1px;text-align:right">'
+    // ★ 修正: 右側エリアを overflow:hidden で包み、日付 span を flex:1;min-width:0 に変更
+    + '    <div style="flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:1.5mm;padding-left:1mm;overflow:hidden">\n'
+    + '      <div style="font-family:monospace;font-size:9px;font-weight:900;letter-spacing:.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + titleStr + '</div>\n'
+    + '      <div style="display:flex;align-items:baseline;gap:1.5mm">\n'
+    + '        <span style="font-size:7px;font-weight:700;min-width:6mm;color:#555;white-space:nowrap;flex-shrink:0">羽化日</span>\n'
+    + '        <span style="font-size:9px;font-weight:700;border-bottom:1px solid #888;flex:1;min-width:0;padding-bottom:1px;text-align:right;overflow:hidden;white-space:nowrap">'
     + ecDisp + '</span>\n'
     + '      </div>\n'
-    + '      <div style="display:flex;align-items:baseline;gap:2mm">\n'
-    + '        <span style="font-size:7px;font-weight:700;min-width:7mm;color:#555;white-space:nowrap">後食日</span>\n'
-    + '        <span style="font-size:9.5px;font-weight:700;border-bottom:1px solid #888;display:inline-block;width:20mm;padding-bottom:1px;text-align:right">'
+    + '      <div style="display:flex;align-items:baseline;gap:1.5mm">\n'
+    + '        <span style="font-size:7px;font-weight:700;min-width:6mm;color:#555;white-space:nowrap;flex-shrink:0">後食日</span>\n'
+    + '        <span style="font-size:9px;font-weight:700;border-bottom:1px solid #888;flex:1;min-width:0;padding-bottom:1px;text-align:right;overflow:hidden;white-space:nowrap">'
     + feedDisp + '</span>\n'
     + '      </div>\n'
     + '    </div>\n'
