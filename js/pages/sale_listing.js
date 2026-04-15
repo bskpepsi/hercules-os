@@ -4,8 +4,8 @@
 // HerculesOSのStore（ロット・個体・種親・ライン）から情報を自動取得し
 // Google Gemini 2.0 Flash API（無料枠）でプロ品質の出品文を生成する
 //
-// build: 20260416d
-// 変更点: Geminiモデルを gemini-2.0-flash → gemini-1.5-flash に変更（新規ユーザー対応）
+// build: 20260416e
+// 変更点: Geminiモデルを gemini-2.5-flash に更新（無料枠対応・最新モデル）
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
@@ -273,7 +273,7 @@ DESCRIPTION:
 
   // ── Gemini API呼び出し ───────────────────────────────────────
   async function _callGemini(prompt, apiKey) {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
     const res = await fetch(url, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
