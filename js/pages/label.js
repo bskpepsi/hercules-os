@@ -811,8 +811,11 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         console.warn('[LABEL] png build failed:', pngErr.message);
       }
 
-      // 種親ラベルはHTMLにQRを直接埋め込み済みのためコンポジット不要
-      var _skipComposite = (window._currentLabel && window._currentLabel.labelType === 'parent');
+      // 種親・産卵セットラベルはHTMLにQRを直接埋め込み済みのためコンポジット不要
+      var _skipComposite = (window._currentLabel && (
+        window._currentLabel.labelType === 'parent' ||
+        window._currentLabel.labelType === 'set'
+      ));
       if (pngDataUrl && qrSrc && !_skipComposite) {
         var pngHasQr = await _checkPngHasQr(pngDataUrl, dims);
         console.log('[LABEL] qr composite mode:', pngHasQr ? 'on (verify+composite)' : 'on (needs composite)');
