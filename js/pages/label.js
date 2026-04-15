@@ -11,12 +11,14 @@
 //   html2canvas が有効 → PNG生成 → img プレビュー → PNG保存 / 共有
 //   html2canvas なし   → iframe フォールバック
 //
-// build: 20260415c
-// 変更点: QR位置修正 / ユニットID1行化 / ユニット日付を月/日形式に / 個別飼育体重g二重表示修正
+// build: 20260415d
+// 変更点: 産卵セットラベルを手書き案デザインに刷新
+//   左列上: ラインコードバッジ / 左列下: QR
+//   右列: SETコード+ペアリング日 / ♂親+血統 / ♀親+血統
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-window._LABEL_BUILD = '20260415c';
+window._LABEL_BUILD = '20260415d';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 // ── ステージコード正規化 ─────────────────────────────────────────
@@ -620,6 +622,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         _isDraft:     true,
       };
     } else {
+      // SET
       console.log('[LABEL] branch SET - targetId:', targetId);
       const set = (Store.getDB('pairings')||[]).find(p => p.set_id===targetId) || {};
       const _setLine = set.line_id ? (Store.getLine(set.line_id) || {}) : {};
@@ -638,8 +641,8 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         mother_info:   _setMother.parent_display_id || _setMother.display_name || set.mother_display_name || (set.mother_par_id ? '（ID:'+set.mother_par_id+'）' : '---'),
         father_size:   _setFather.size_mm ? String(_setFather.size_mm).replace(/mm$/,'') + 'mm' : (set.father_size_mm ? set.father_size_mm + 'mm' : ''),
         mother_size:   _setMother.size_mm ? String(_setMother.size_mm).replace(/mm$/,'') + 'mm' : (set.mother_size_mm ? set.mother_size_mm + 'mm' : ''),
-        father_blood:  (function(){ var r=_setFather.paternal_raw||''; try{var a=JSON.parse(r);if(Array.isArray(a))return a.filter(Boolean).join(' ');}catch(_){} return r; })(),
-        mother_blood:  (function(){ var r=_setMother.paternal_raw||''; try{var a=JSON.parse(r);if(Array.isArray(a))return a.filter(Boolean).join(' ');}catch(_){} return r; })(),
+        father_blood:  (function(){ var r=_setFather.bloodline_raw||_setFather.paternal_raw||''; try{var a=JSON.parse(r);if(Array.isArray(a))return a.filter(Boolean).join(' ');}catch(_){} return r; })(),
+        mother_blood:  (function(){ var r=_setMother.bloodline_raw||_setMother.paternal_raw||''; try{var a=JSON.parse(r);if(Array.isArray(a))return a.filter(Boolean).join(' ');}catch(_){} return r; })(),
         pairing_start: set.pairing_start || '',
         label_type:    'set',
       };
@@ -760,7 +763,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
 
   (async function _lblRender() {
     try {
-      console.log('[LABEL] qr build start - build:20260414a');
+      console.log('[LABEL] qr build start - build:20260415d');
       console.log('[LABEL] qr target type:', targetType, '| targetId:', targetId);
       console.log('[LABEL] qr rect:', JSON.stringify(QR_RECT_MM));
       console.log('[LABEL] qr target text:', qrText);
@@ -854,12 +857,8 @@ function _chkThermal(label, checked) {
     + (checked ? '■' : '□') + label + '</span>';
 }
 
-
 // ── 性別表示ヘルパー ──────────────────────────────────────────────
-// ラベル右上に「♂ ・ ♀」を印刷。性別確定済みの場合は◯を付ける。
-// sex: '' | '♂' | '♀'
 function _sexDisplay(sex) {
-  // 確定済み: 記号を丸ボックスで囲む / 未確定: そのまま表示
   function _circled(sym, active) {
     if (active) {
       return '<span style="display:inline-flex;align-items:center;justify-content:center;'
@@ -986,7 +985,6 @@ function _buildLabelHTML(ld, qrSrc) {
       + ld.count + '頭</span>'
     : '';
 
-  // ▼ 性別表示: 性別未確定でも「♂ ・ ♀」を印刷、確定済みは「◯♂ ・ ♀」
   var sexHtml = !isLot ? _sexDisplay(ld.sex || '') : '';
 
   var hatchHtml = (!isLot && ld.hatch_date)
@@ -1081,12 +1079,10 @@ function _buildLabelHTML(ld, qrSrc) {
 
 
 // ── 種親ラベル（62mm × 25mm）─────────────────────────────────────
-// build: 20260415c - 手書きデザインに刷新
 function _buildParentLabelHTML(ld, _unused, qrSrc) {
   var qr = (typeof _unused === 'string' && _unused.startsWith('data:')) ? _unused : qrSrc;
 
   var rawId    = ld.display_id || '';
-  // IDの末尾コード（例: M25-A → A）
   var idParts  = rawId.split('-');
   var idCode   = idParts.length >= 2 ? idParts[idParts.length - 1] : rawId;
   var sizeStr  = ld.size_mm ? String(ld.size_mm).replace(/mm$/, '') + 'mm' : '';
@@ -1095,22 +1091,17 @@ function _buildParentLabelHTML(ld, _unused, qrSrc) {
   var sexColor = ld.sex === '♂' ? '#1a6bb5' : ld.sex === '♀' ? '#b51a5a' : '#000';
   var badgeFz  = idCode.length <= 1 ? '32px' : idCode.length <= 2 ? '24px' : '16px';
 
-  // 羽化日・後食日：未設定時は手書き用スペース
   var BLANK_DATE = '/ /';
   var ecDisp   = ecStr   ? ecStr   : BLANK_DATE;
   var feedDisp = feedStr ? feedStr : BLANK_DATE;
 
-  // ♂親・♀親 血統原文＋サイズ
-  // paternal_size / maternal_size は既に 'XXXmm' 形式で入っている
   var patStr  = ld.paternal_raw  || '';
   var patSize = ld.paternal_size ? ' (' + ld.paternal_size + ')' : '';
   var matStr  = ld.maternal_raw  || '';
   var matSize = ld.maternal_size ? ' (' + ld.maternal_size + ')' : '';
 
-  // ID表示（例: M25-A → "M25-A (164mm)"）
   var titleStr = rawId + (sizeStr ? '  (' + sizeStr + ')' : '');
 
-  // QRをborder/paddingなしのimgで直接出力
   var qrImgTag = qr
     ? '<img src="' + qr + '" style="width:38px;height:38px;display:block;line-height:0">'
     : '<div style="width:38px;height:38px;border:1px dashed #ccc;font-size:5px;display:flex;align-items:center;justify-content:center">QR</div>';
@@ -1123,10 +1114,8 @@ function _buildParentLabelHTML(ld, _unused, qrSrc) {
     + '</style></head><body>\n'
     + '<div style="width:62mm;height:25mm;display:flex;flex-direction:column;padding:1mm 2mm 0mm">\n'
 
-    // 上段: 左ブロック（QR・♂/♀・Aバッジ横並び） + 縦区切り + 右ブロック
     + '  <div style="display:flex;flex-direction:row;align-items:center;gap:2mm;flex-shrink:0">\n'
 
-    // 左ブロック: QR → ♂/♀ → Aバッジ を横一列
     + '    <div style="display:flex;flex-direction:row;align-items:center;gap:1.5mm;flex-shrink:0">\n'
     + '      <div style="flex-shrink:0;line-height:0">' + qrImgTag + '</div>\n'
     + '      <div style="font-size:26px;font-weight:900;line-height:1;color:' + sexColor + ';flex-shrink:0">' + (ld.sex||'') + '</div>\n'
@@ -1135,10 +1124,8 @@ function _buildParentLabelHTML(ld, _unused, qrSrc) {
     + '        ' + idCode + '\n      </div>\n'
     + '    </div>\n'
 
-    // 縦区切り線
     + '    <div style="width:1px;background:#ccc;align-self:stretch;margin:0;flex-shrink:0"></div>\n'
 
-    // 右ブロック: ID・羽化日・後食日（縦中央揃え）
     + '    <div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:1.5mm;padding-left:1mm">\n'
     + '      <div style="font-family:monospace;font-size:10px;font-weight:900;letter-spacing:.2px;white-space:nowrap">' + titleStr + '</div>\n'
     + '      <div style="display:flex;align-items:baseline;gap:2mm">\n'
@@ -1154,10 +1141,8 @@ function _buildParentLabelHTML(ld, _unused, qrSrc) {
     + '    </div>\n'
     + '  </div>\n'
 
-    // 区切り線
     + '  <div style="border-top:1px solid #aaa;margin:1mm 0 0.8mm"></div>\n'
 
-    // 下段: ♂親・♀親 血統（折り返し・サイズ括弧書き）
     + '  <div style="display:flex;flex-direction:column;gap:0.8mm">\n'
     + '    <div style="display:flex;align-items:flex-start;gap:1.5mm">\n'
     + '      <span style="font-size:7px;font-weight:900;color:#1a6bb5;min-width:5mm;flex-shrink:0;line-height:1.5">♂親</span>\n'
@@ -1174,26 +1159,50 @@ function _buildParentLabelHTML(ld, _unused, qrSrc) {
     + '</div>\n</body></html>';
 }
 
-// ── 産卵セットラベル（62mm × 40mm）──────────────────────────────
+
+// ── 産卵セットラベル（62mm × 40mm）── ★手書き案デザイン ──────────
+// レイアウト:
+//   左列上: ラインコード（A1）バッジ
+//   左列下: QRコード
+//   右上段: SETコード＋ペアリング日
+//   右中段: ♂ 種親コード (サイズ) + 血統原文
+//   右下段: ♀ 種親コード (サイズ) + 血統原文
 function _buildSetLabelHTML(ld, _unused, qrSrc) {
   var qr = (typeof _unused === 'string' && _unused.startsWith('data:')) ? _unused : qrSrc;
 
   var rawId  = ld.display_id || '';
   var _rawLC = ld.line_code  || '';
-  function _sc(s) {
+
+  // lineCode抽出: "HM2025-A1" → "A1"、"A1" → "A1"
+  function _extractLineCode(s) {
     if (!s || /^SET-/i.test(s)) return '';
+    // "HM2025-A1" 形式
+    var m = s.match(/^[A-Za-z]{1,4}\d{4}-([A-Za-z][0-9]+)$/);
+    if (m) return m[1];
+    // すでに "A1" 形式
+    if (/^[A-Za-z][0-9]+$/.test(s)) return s;
+    // その他（末尾を取る）
     var p = s.split('-').filter(Boolean);
-    if (p.length >= 3) return p[1];
-    return p[0] ? p[0].replace(/^[A-Za-z]{1,3}[0-9]{4}/,'') : '';
+    return p.length >= 2 ? p[p.length - 1] : s;
   }
-  var lineCode = _sc(_rawLC) || '';
-  var badgeFz  = lineCode.length <= 1 ? '26px' : lineCode.length <= 2 ? '20px' : '14px';
-  var fInfo    = ld.father_info  || '—';
-  var mInfo    = ld.mother_info  || '—';
-  var fSize    = ld.father_size  ? ' (' + ld.father_size  + ')' : '';
-  var mSize    = ld.mother_size  ? ' (' + ld.mother_size  + ')' : '';
-  var fBlood   = ld.father_blood ? ld.father_blood.slice(0, 22) : '';
-  var mBlood   = ld.mother_blood ? ld.mother_blood.slice(0, 22) : '';
+
+  var lineCode = _extractLineCode(_rawLC);
+  var badgeFz  = lineCode.length <= 1 ? '28px'
+               : lineCode.length <= 2 ? '22px'
+               : '14px';
+
+  var fInfo  = ld.father_info  || '—';
+  var mInfo  = ld.mother_info  || '—';
+  var fSize  = ld.father_size  ? ' (' + ld.father_size  + ')' : '';
+  var mSize  = ld.mother_size  ? ' (' + ld.mother_size  + ')' : '';
+  var fBlood = ld.father_blood ? ld.father_blood.slice(0, 26) : '';
+  var mBlood = ld.mother_blood ? ld.mother_blood.slice(0, 26) : '';
+
+  // QR画像タグ（小さめ・border なし）
+  var qrImgTag = qr
+    ? '<img src="' + qr + '" style="width:36px;height:36px;display:block;line-height:0">'
+    : '<div style="width:36px;height:36px;border:1px dashed #ccc;font-size:5px;'
+      + 'display:flex;align-items:center;justify-content:center">QR</div>';
 
   return '<!DOCTYPE html>\n<html><head><meta charset="utf-8">\n<style>\n'
     + '  @page { size: 62mm 40mm; margin: 0; }\n'
@@ -1203,49 +1212,62 @@ function _buildSetLabelHTML(ld, _unused, qrSrc) {
     + '</style></head><body>\n'
     + '<div style="width:62mm;height:40mm;display:flex;flex-direction:column">\n'
 
+    // ── ヘッダー帯 ──
     + '  <div style="background:#000;color:#fff;font-size:7.5px;font-weight:700;'
     + 'padding:0 2mm;height:4.5mm;display:flex;align-items:center;flex-shrink:0;letter-spacing:.5px">'
     + '産卵セット | HerculesOS</div>\n'
 
+    // ── ボディ: 左列 + 右列 ──
     + '  <div style="display:flex;flex:1;overflow:hidden">\n'
 
-    + '    <div style="flex-shrink:0;padding:1.5mm 1mm 1mm 1.5mm;border-right:1.5px solid #000;">'
-    + _qrBox(qr, 40) + '</div>\n'
+    //   左列: ラインバッジ（上）＋QR（下）
+    + '    <div style="flex-shrink:0;width:15mm;display:flex;flex-direction:column;'
+    + 'align-items:center;justify-content:space-evenly;padding:1.2mm 0.5mm;border-right:1.5px solid #000">\n'
+    + (lineCode
+      ? '      <div style="border:2.5px solid #000;border-radius:3px;font-size:' + badgeFz + ';font-weight:900;'
+        + 'width:11mm;height:11mm;display:flex;align-items:center;justify-content:center;'
+        + 'letter-spacing:-0.5px;line-height:1">' + lineCode + '</div>\n'
+      : '      <div style="width:11mm;height:11mm;border:1px dashed #ccc;border-radius:3px"></div>\n')
+    + '      <div style="line-height:0">' + qrImgTag + '</div>\n'
+    + '    </div>\n'
 
+    //   右列
     + '    <div style="flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden">\n'
 
-    + '      <div style="padding:0.8mm 1.5mm 0.6mm;border-bottom:1.5px solid #000;flex-shrink:0;'
-    + 'display:flex;align-items:center;justify-content:space-between">\n'
-    + '        <div>\n'
-    + '          <div style="font-family:monospace;font-size:8.5px;font-weight:800;line-height:1.2">' + rawId + '</div>\n'
+    //     右上段: SETコード＋ペアリング日
+    + '      <div style="padding:0.8mm 1.5mm 0.5mm;border-bottom:1.5px solid #000;flex-shrink:0">\n'
+    + '        <div style="font-family:monospace;font-size:8px;font-weight:800;line-height:1.2;'
+    + 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + rawId + '</div>\n'
     + (ld.pairing_start
-      ? '          <div style="font-size:6.5px;color:#444;font-weight:600">ペアリング: ' + ld.pairing_start + '</div>\n'
-      : '')
-    + '        </div>\n'
-    + (lineCode
-      ? '        <div style="border:2px solid #000;border-radius:3px;font-size:' + badgeFz + ';font-weight:900;'
-        + 'width:7.5mm;height:7.5mm;display:flex;align-items:center;justify-content:center;margin-left:1mm;flex-shrink:0">'
-        + lineCode + '</div>\n'
+      ? '        <div style="font-size:6.5px;color:#444;font-weight:600">ペアリング: ' + ld.pairing_start + '</div>\n'
       : '')
     + '      </div>\n'
 
-    + '      <div style="padding:0.8mm 1.5mm;border-bottom:1px solid #ddd;flex:1;'
+    //     右中段: ♂親
+    + '      <div style="padding:0.7mm 1.5mm;border-bottom:1px solid #ddd;flex:1;'
     + 'display:flex;flex-direction:column;justify-content:center">\n'
-    + '        <div style="display:flex;align-items:baseline;gap:3px">\n'
+    + '        <div style="display:flex;align-items:baseline;gap:2px">\n'
     + '          <span style="font-size:9px;font-weight:900;color:#1a6bb5;flex-shrink:0">♂</span>\n'
-    + '          <span style="font-size:8.5px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
+    + '          <span style="font-size:8px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
     + fInfo + fSize + '</span>\n'
     + '        </div>\n'
-    + (fBlood ? '        <div style="font-size:6.5px;color:#555;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + fBlood + '</div>\n' : '')
+    + (fBlood
+      ? '        <div style="font-size:6.5px;color:#333;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:1px">'
+        + fBlood + '</div>\n'
+      : '        <div style="font-size:6.5px;color:#bbb;margin-top:1px">—</div>\n')
     + '      </div>\n'
 
-    + '      <div style="padding:0.8mm 1.5mm;flex:1;display:flex;flex-direction:column;justify-content:center">\n'
-    + '        <div style="display:flex;align-items:baseline;gap:3px">\n'
+    //     右下段: ♀親
+    + '      <div style="padding:0.7mm 1.5mm;flex:1;display:flex;flex-direction:column;justify-content:center">\n'
+    + '        <div style="display:flex;align-items:baseline;gap:2px">\n'
     + '          <span style="font-size:9px;font-weight:900;color:#b51a5a;flex-shrink:0">♀</span>\n'
-    + '          <span style="font-size:8.5px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
+    + '          <span style="font-size:8px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
     + mInfo + mSize + '</span>\n'
     + '        </div>\n'
-    + (mBlood ? '        <div style="font-size:6.5px;color:#555;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + mBlood + '</div>\n' : '')
+    + (mBlood
+      ? '        <div style="font-size:6.5px;color:#333;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:1px">'
+        + mBlood + '</div>\n'
+      : '        <div style="font-size:6.5px;color:#bbb;margin-top:1px">—</div>\n')
     + '      </div>\n'
 
     + '    </div>\n'
@@ -1265,7 +1287,7 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
   var lineCode = ld.line_code || '';
   var originLS = ld.origin_lots_str || '';
   var _t1DateRaw = (ld.t1_date || '').replace(/\\/g, '/');
-  var _t1DatePart = _t1DateRaw.split(' ')[0]; // 時間を除去
+  var _t1DatePart = _t1DateRaw.split(' ')[0];
   var _t1DateM = _t1DatePart.match(/(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})/);
   var _t1DateM2 = !_t1DateM ? _t1DatePart.match(/^(\d{1,2})[\/-](\d{1,2})$/) : null;
   var t1Date = _t1DateM ? (parseInt(_t1DateM[2],10) + '/' + parseInt(_t1DateM[3],10))
@@ -1295,7 +1317,6 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
   var m1w  = m1 && m1.weight_g ? String(m1.weight_g) : '';
   var m0sex = m0 ? (m0.sex || '') : '';
   var m1sex = m1 ? (m1.sex || '') : '';
-  // ユニット性別表示「①◯♂ ②♀」形式
   function _unitMemberSex(idx, sex) {
     var sym = sex === '♂' ? '&#9794;' : sex === '♀' ? '&#9792;' : (idx===0?'&#9794;':'&#9792;');
     if (sex) {
@@ -1373,7 +1394,6 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
     + '  <div style="display:flex;padding:1mm 1.5mm 0;gap:0;flex-shrink:0">\n'
     + '    <div style="flex-shrink:0;margin-right:1.5mm">' + _qrBox(qr, 44) + '</div>\n'
     + '    <div style="flex:1;min-width:0;padding-left:1.5mm;border-left:2px solid #000">\n'
-
 
     + '      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;flex-wrap:nowrap">\n'
     + '        <div style="display:flex;align-items:center;white-space:nowrap;overflow:hidden">'
@@ -1527,7 +1547,7 @@ Pages._lblBrotherPrint = function() {
 // 後方互換
 Pages._lblPrintHTML = Pages._lblBrotherPrint;
 Pages._lblPrint     = Pages._lblBrotherPrint;
-Pages._lblDownload = Pages._lblDownloadPNG;
+Pages._lblDownload  = Pages._lblDownloadPNG;
 
 // Brother Print Service Plugin セットアップ案内
 Pages._lblPrintSetupGuide = function() {
