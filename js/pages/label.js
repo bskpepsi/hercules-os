@@ -11,13 +11,14 @@
 //   html2canvas が有効 → PNG生成 → img プレビュー → PNG保存 / 共有
 //   html2canvas なし   → iframe フォールバック
 //
-// build: 20260415e
-// 変更点: 種親ラベルの羽化日・後食日が右にはみ出る問題を修正
-//   width:20mm 固定 → flex:1 でコンテナ幅に追従
+// build: 20260415f
+// 変更点: 種親ラベルの羽化日・後食日はみ出しを根本修正
+//   日付フォント8pxに縮小、gap削減、右側コンテナにoverflow:hidden
+//   空白時は全角スペース区切りの「　　/　　/　　」で手書きしやすい間隔を確保
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-window._LABEL_BUILD = '20260415e';
+window._LABEL_BUILD = '20260415f';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 // ── ステージコード正規化 ─────────────────────────────────────────
@@ -1081,8 +1082,9 @@ function _buildLabelHTML(ld, qrSrc) {
 
 
 // ── 種親ラベル（62mm × 25mm）─────────────────────────────────────
-// ★ fix 20260415e: 羽化日・後食日の日付が右にはみ出る問題を修正
-//   width:20mm 固定 → flex:1;min-width:0 でコンテナ幅に追従
+// ★ fix 20260415f: 羽化日・後食日のはみ出しを根本修正
+//   日付エリアを独立した固定幅divに変更し、フォントサイズを縮小
+//   空白時は「  /  /  」で手書きしやすい間隔を確保
 function _buildParentLabelHTML(ld, _unused, qrSrc) {
   var qr = (typeof _unused === 'string' && _unused.startsWith('data:')) ? _unused : qrSrc;
 
@@ -1095,9 +1097,12 @@ function _buildParentLabelHTML(ld, _unused, qrSrc) {
   var sexColor = ld.sex === '♂' ? '#1a6bb5' : ld.sex === '♀' ? '#b51a5a' : '#000';
   var badgeFz  = idCode.length <= 1 ? '32px' : idCode.length <= 2 ? '24px' : '16px';
 
-  var BLANK_DATE = '/ /';
-  var ecDisp   = ecStr   ? ecStr   : BLANK_DATE;
-  var feedDisp = feedStr ? feedStr : BLANK_DATE;
+  // 空白時は手書きしやすい「  /  /  」形式（全角スペースで間隔確保）
+  var BLANK_DATE = '\u3000\u3000/\u3000\u3000/\u3000\u3000';
+  var ecDisp   = ecStr   ? ecStr.replace(/-/g, '/') : BLANK_DATE;
+  var feedDisp = feedStr ? feedStr.replace(/-/g, '/') : BLANK_DATE;
+  var ecIsBlank   = !ecStr;
+  var feedIsBlank = !feedStr;
 
   var patStr  = ld.paternal_raw  || '';
   var patSize = ld.paternal_size ? ' (' + ld.paternal_size + ')' : '';
@@ -1110,6 +1115,12 @@ function _buildParentLabelHTML(ld, _unused, qrSrc) {
     ? '<img src="' + qr + '" style="width:38px;height:38px;display:block;line-height:0">'
     : '<div style="width:38px;height:38px;border:1px dashed #ccc;font-size:5px;display:flex;align-items:center;justify-content:center">QR</div>';
 
+  // 日付セルのスタイル: 実データは右揃え・濃色、空白は中央・薄色
+  var dateCellStyleFilled = 'font-size:8px;font-weight:700;border-bottom:1.5px solid #555;'
+    + 'flex:1;min-width:0;padding-bottom:1px;text-align:right;overflow:hidden;white-space:nowrap;letter-spacing:0';
+  var dateCellStyleBlank  = 'font-size:8px;font-weight:400;border-bottom:1.5px solid #aaa;'
+    + 'flex:1;min-width:0;padding-bottom:1px;text-align:center;overflow:hidden;white-space:nowrap;color:#aaa;letter-spacing:1px';
+
   return '<!DOCTYPE html>\n<html><head><meta charset="utf-8">\n<style>\n'
     + '  @page { size: 62mm 25mm; margin: 0; }\n'
     + '  * { margin:0; padding:0; box-sizing:border-box; }\n'
@@ -1118,7 +1129,7 @@ function _buildParentLabelHTML(ld, _unused, qrSrc) {
     + '</style></head><body>\n'
     + '<div style="width:62mm;height:25mm;display:flex;flex-direction:column;padding:1mm 2mm 0mm">\n'
 
-    + '  <div style="display:flex;flex-direction:row;align-items:center;gap:2mm;flex-shrink:0">\n'
+    + '  <div style="display:flex;flex-direction:row;align-items:center;gap:2mm;flex-shrink:0;overflow:hidden">\n'
 
     + '    <div style="display:flex;flex-direction:row;align-items:center;gap:1.5mm;flex-shrink:0">\n'
     + '      <div style="flex-shrink:0;line-height:0">' + qrImgTag + '</div>\n'
@@ -1130,17 +1141,17 @@ function _buildParentLabelHTML(ld, _unused, qrSrc) {
 
     + '    <div style="width:1px;background:#ccc;align-self:stretch;margin:0;flex-shrink:0"></div>\n'
 
-    // ★ 修正: 右側エリアを overflow:hidden で包み、日付 span を flex:1;min-width:0 に変更
+    // ★ 右側エリア: overflow:hidden + 日付は flex:1 で残り幅に収まる
     + '    <div style="flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:1.5mm;padding-left:1mm;overflow:hidden">\n'
-    + '      <div style="font-family:monospace;font-size:9px;font-weight:900;letter-spacing:.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + titleStr + '</div>\n'
-    + '      <div style="display:flex;align-items:baseline;gap:1.5mm">\n'
-    + '        <span style="font-size:7px;font-weight:700;min-width:6mm;color:#555;white-space:nowrap;flex-shrink:0">羽化日</span>\n'
-    + '        <span style="font-size:9px;font-weight:700;border-bottom:1px solid #888;flex:1;min-width:0;padding-bottom:1px;text-align:right;overflow:hidden;white-space:nowrap">'
+    + '      <div style="font-family:monospace;font-size:8.5px;font-weight:900;letter-spacing:.1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + titleStr + '</div>\n'
+    + '      <div style="display:flex;align-items:baseline;gap:1mm">\n'
+    + '        <span style="font-size:7px;font-weight:700;width:6mm;flex-shrink:0;color:#555;white-space:nowrap">羽化日</span>\n'
+    + '        <span style="' + (ecIsBlank ? dateCellStyleBlank : dateCellStyleFilled) + '">'
     + ecDisp + '</span>\n'
     + '      </div>\n'
-    + '      <div style="display:flex;align-items:baseline;gap:1.5mm">\n'
-    + '        <span style="font-size:7px;font-weight:700;min-width:6mm;color:#555;white-space:nowrap;flex-shrink:0">後食日</span>\n'
-    + '        <span style="font-size:9px;font-weight:700;border-bottom:1px solid #888;flex:1;min-width:0;padding-bottom:1px;text-align:right;overflow:hidden;white-space:nowrap">'
+    + '      <div style="display:flex;align-items:baseline;gap:1mm">\n'
+    + '        <span style="font-size:7px;font-weight:700;width:6mm;flex-shrink:0;color:#555;white-space:nowrap">後食日</span>\n'
+    + '        <span style="' + (feedIsBlank ? dateCellStyleBlank : dateCellStyleFilled) + '">'
     + feedDisp + '</span>\n'
     + '      </div>\n'
     + '    </div>\n'
