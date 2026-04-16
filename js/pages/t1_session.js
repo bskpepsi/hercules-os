@@ -1084,7 +1084,8 @@ Pages._t1PrintSingle = function (idx) {
       lot_display_id:ind.lot_display_id,
     },
   };
-  window._t1LabelBackup = { backRoute: 't1-session', singleIdx: idx };
+  // ★ Android でparamsが消える対策: formalIndをwindowに保存
+  window._t1LabelBackup = Object.assign({ backRoute: 't1-session', singleIdx: idx }, labelParams);
   console.log('[T1] single label params (formalId:', formalId, ')', labelParams);
   routeTo('label-gen', labelParams);
 };

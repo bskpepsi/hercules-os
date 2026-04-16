@@ -240,6 +240,32 @@ async function _buildLabelPNG(htmlStr, dims) {
 // ════════════════════════════════════════════════════════════════
 Pages.labelGen = function (params = {}) {
   const main = document.getElementById('main');
+
+  // ★ Android/iOS でページ遷移時にparamsが消える問題の対策
+  // window._t1LabelBackup からformalInd/unitDraftを復元
+  if (Object.keys(params).length <= 1 && window._t1LabelBackup) {
+    const _bk = window._t1LabelBackup;
+    if (_bk.formalInd && (!params.formalInd)) {
+      params = Object.assign({}, params, {
+        targetType: 'IND_FORMAL',
+        labelType:  'ind_fixed',
+        backRoute:  _bk.backRoute || 't1-session',
+        singleIdx:  _bk.singleIdx !== undefined ? _bk.singleIdx : -1,
+        formalInd:  _bk.formalInd,
+      });
+      console.log('[LABEL] restored params from _t1LabelBackup (formalInd)');
+    } else if (_bk.labeledDisplayId && (!params.displayId)) {
+      params = Object.assign({}, params, {
+        targetType:       'UNIT',
+        labelType:        't1_unit',
+        backRoute:        _bk.backRoute || 't1-session',
+        labeledDisplayId: _bk.labeledDisplayId,
+        displayId:        _bk.labeledDisplayId,
+      });
+      console.log('[LABEL] restored params from _t1LabelBackup (unit)');
+    }
+  }
+
   let targetType       = (params.targetType || 'IND').toUpperCase();
   let targetId         = params.targetId   || '';
   let labelType        = params.labelType  || _defaultLabelType(targetType);
@@ -476,7 +502,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
 
   if (targetType === 'UNIT'      && !_genDisplayId) { console.warn('[LABEL] early return: UNIT no displayId'); return; }
   if (targetType === 'IND_DRAFT' && !_genIndDraft)  { console.warn('[LABEL] early return: IND_DRAFT no draftInd'); return; }
-  const _genFormalInd = (targetType === 'IND_FORMAL') ? ((window._lblFormalCtx && window._lblFormalCtx.formalInd) || _formalInd || null) : null;
+  const _genFormalInd = (targetType === 'IND_FORMAL') ? (_formalInd || (window._lblFormalCtx && window._lblFormalCtx.formalInd) || (window._t1LabelBackup && window._t1LabelBackup.formalInd) || null) : null;
   if (targetType === 'IND_FORMAL' && !_genFormalInd)  { console.warn('[LABEL] early return: IND_FORMAL no formalInd'); return; }
   if (targetType !== 'UNIT' && targetType !== 'IND_DRAFT' && targetType !== 'IND_FORMAL' && !targetId) {
     console.warn('[LABEL] early return: no targetId for', targetType); return;
