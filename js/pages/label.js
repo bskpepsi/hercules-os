@@ -661,6 +661,18 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
       console.log('[LABEL] branch IND_FORMAL');
       const fi   = _genFormalInd || {};
       const line = fi.line_id ? (Store.getLine(fi.line_id)||{}) : {};
+      // recordsを組み立て: formalIndから渡されたrecordsを使い、なければt1_dateと体重から生成
+      let _formalRecords = fi.records || [];
+      if (_formalRecords.length === 0 && fi.weight_g) {
+        const _t1d = fi.t1_date || (fi.session_date
+          ? fi.session_date.replace(/-/g, '/')
+          : new Date().toISOString().split('T')[0].replace(/-/g, '/'));
+        _formalRecords = [{
+          record_date:   _t1d,
+          weight_g:      fi.weight_g,
+          exchange_type: 'FULL',
+        }];
+      }
       ld = {
         qr_text:      fi.display_id ? `IND:${fi.display_id}` : 'IND:FORMAL',
         display_id:   fi.display_id || `${fi.lot_display_id||''}#${fi.lot_item_no||'?'}`,
@@ -672,7 +684,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         mat_molt:     false,
         size_category:fi.size_category || '',
         note_private: `T1個別飼育 ${fi.lot_display_id||''} #${fi.lot_item_no||''}`,
-        records:      [],
+        records:      _formalRecords,
         label_type:   'ind_fixed',
       };
     } else {

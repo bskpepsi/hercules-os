@@ -1066,6 +1066,15 @@ Pages._t1PrintSingle = function (idx) {
       lot_id:        ind.lot_id,
       lot_item_no:   ind.lot_item_no,
       lot_display_id:ind.lot_display_id,
+      t1_date:       (function() {
+        var sd = s.session_date || new Date().toISOString().split('T')[0];
+        var d = new Date(sd); return isNaN(d) ? '' : (d.getMonth()+1) + '/' + d.getDate();
+      })(),
+      records: [{
+        record_date:   (s.session_date || new Date().toISOString().split('T')[0]).replace(/-/g, '/'),
+        weight_g:      ind.weight_g,
+        exchange_type: 'FULL',
+      }],
     },
   } : {
     targetType:  'IND_DRAFT',
@@ -1222,7 +1231,7 @@ Pages._t1SessionSave = async function () {
     window._t1Session = null;
     localStorage.removeItem('_t1SessionData');
     UI.toast('T1移行を完了しました ✅', 'success');
-    routeTo('lot-detail', { lotId: s.lots[0].lot_id });
+    routeTo('lot-list', {});  // T1完了後はlot-listへ（ロットはt1_done状態のため）
   } catch (e) {
     s.saving = false;
     _renderT1Session(s);
@@ -1270,8 +1279,13 @@ function _buildSavePayload(s) {
       ageDays = Math.floor((new Date() - hd) / 86400000);
     }
     return {
-      target_type:      'LOT',
-      target_id:        ind.lot_id,
+      target_type:      ind.assigned_to === 'unit' ? 'UNIT_DISPLAY'
+                      : ind.assigned_to === 'single' ? 'IND_DISPLAY'
+                      : 'LOT',
+      target_id:        ind.assigned_to === 'unit'   ? unitDisplayId
+                      : ind.assigned_to === 'single' ? (ind.display_id || ind.lot_id)
+                      : ind.lot_id,
+      lot_id_ref:       ind.lot_id,
       lot_item_no:      ind.lot_item_no,
       record_date:      today,
       weight_g:         isDead ? null : ind.weight_g,
