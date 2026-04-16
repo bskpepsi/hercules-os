@@ -502,7 +502,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
 
   if (targetType === 'UNIT'      && !_genDisplayId) { console.warn('[LABEL] early return: UNIT no displayId'); return; }
   if (targetType === 'IND_DRAFT' && !_genIndDraft)  { console.warn('[LABEL] early return: IND_DRAFT no draftInd'); return; }
-  const _genFormalInd = (targetType === 'IND_FORMAL') ? (_formalInd || (window._lblFormalCtx && window._lblFormalCtx.formalInd) || (window._t1LabelBackup && window._t1LabelBackup.formalInd) || null) : null;
+  const _genFormalInd = (targetType === 'IND_FORMAL') ? ((window._lblFormalCtx && window._lblFormalCtx.formalInd) || (window._t1LabelBackup && window._t1LabelBackup.formalInd) || null) : null;
   if (targetType === 'IND_FORMAL' && !_genFormalInd)  { console.warn('[LABEL] early return: IND_FORMAL no formalInd'); return; }
   if (targetType !== 'UNIT' && targetType !== 'IND_DRAFT' && targetType !== 'IND_FORMAL' && !targetId) {
     console.warn('[LABEL] early return: no targetId for', targetType); return;
