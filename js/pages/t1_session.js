@@ -1200,8 +1200,9 @@ Pages._t1SessionSave = async function () {
       res.individuals.forEach(function(ind) { Store.addDBItem('individuals', ind); });
     }
     s.lots.forEach(l => Store.patchDBItem('lots', 'lot_id', l.lot_id, {
-      t1_done: true,
+      t1_done:    true,
       t1_done_at: new Date().toISOString().split('T')[0].replace(/-/g, '/'),
+      status:     't1_done',  // ロット一覧のフィルターから除外するためstatusも更新
     }));
     try {
       for (const _tLot of s.lots) {
