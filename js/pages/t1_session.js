@@ -1,7 +1,12 @@
 // ────────────────────────────────────────────────────────────────
 // ════════════════════════════════════════════════════════════════
 // t1_session.js — T1移行編成セッション画面
-// build: 20260413aj
+// build: 20260416a
+//
+// 20260416a 修正:
+//   - ← 戻るボタン: qr-scanではなくlot-detailに戻るよう修正
+//   - T0→T1は常に全交換のため exchange_type デフォルトを FULL に統一
+//     （_buildSavePayload の exchange_type: 'FULL' は既存通り）
 //
 // 20260413n 修正:
 //   - セッション開始時に個別飼育用正式IDも予約（ind_display_ids）
@@ -30,8 +35,6 @@ window._t1Session = window._t1Session || null;
 // セッション開始エントリーポイント
 // scan.js の T1移行モードから呼ばれる
 // ────────────────────────────────────────────────────────────────
-// T1セッション開始: 案A = まず画面遷移→画面内でreserveDisplayIds
-// QR認識後の待ち時間をなくし、即t1-session画面へ遷移する
 Pages.t1SessionStart = async function (lotId) {
   const _ts0 = performance.now();
   console.log('[T1] t1SessionStart called for lotId:', lotId);
@@ -48,7 +51,6 @@ Pages.t1SessionStart = async function (lotId) {
   if (_savedRaw) {
     try {
       const _saved = JSON.parse(_savedRaw);
-      // 同じロットを含むセッションか確認
       const _savedLots = (_saved.lots || []).map(function(l){ return l.lot_id; });
       if (_saved.sessionId && (_savedLots.includes(lotId) || _savedLots.length > 0)) {
         const _savedLotNames = (_saved.lots || []).map(function(l){ return l.display_id; }).join(', ');
@@ -61,12 +63,10 @@ Pages.t1SessionStart = async function (lotId) {
           + 'OK=続きから再開 / キャンセル=破棄して新規開始';
         const _resume = confirm(_msg);
         if (_resume) {
-          // 続きから再開
           window._t1Session = _saved;
           routeTo('t1-session');
           return;
         } else {
-          // 新規開始: localStorage をクリア
           localStorage.removeItem('_t1SessionData');
         }
       }
@@ -80,7 +80,7 @@ Pages.t1SessionStart = async function (lotId) {
   window._t1Session._loading = true;
   _saveSessionToStorage();
   console.log('[T1] navigate first (before reserveDisplayIds)', (performance.now()-_ts0).toFixed(1), 'ms');
-  routeTo('t1-session');  // ← ここで即遷移。以下はバックグラウンドで実行
+  routeTo('t1-session');
 
   // ── reserveDisplayIds をバックグラウンドで実行 ────────────────
   try {
@@ -88,11 +88,10 @@ Pages.t1SessionStart = async function (lotId) {
     const _ts1 = performance.now();
     const res = await API.t1.reserveDisplayIds({
       line_id:   lot.line_id,
-      count:     lot.count,          // ユニット用（ロット頭数分）
-      ind_count: lot.count,          // 個別用（最大ロット頭数分を予約）
+      count:     lot.count,
+      ind_count: lot.count,
     });
     console.log('[T1] reserveDisplayIds done', (performance.now()-_ts1).toFixed(1), 'ms / ids:', res.display_ids?.length, '/ ind_ids:', res.ind_display_ids?.length);
-    // セッションに display_id を注入して再描画
     if (window._t1Session && window._t1Session.lineId === lot.line_id) {
       window._t1Session.displayIdPool      = res.display_ids     || [];
       window._t1Session.displayIdIndex     = 0;
@@ -100,7 +99,6 @@ Pages.t1SessionStart = async function (lotId) {
       window._t1Session.indDisplayIdIndex  = 0;
       window._t1Session._loading           = false;
       _saveSessionToStorage();
-      // 現在 t1-session 画面が開いていれば再描画
       if (Store.getPage() === 't1-session') {
         _renderT1Session(window._t1Session);
       }
@@ -125,14 +123,15 @@ function _buildSession(lot, displayIds) {
     sessionId:          Date.now().toString(36),
     lineId:             lot.line_id,
     lots:               [_buildLotEntry(lot)],
-    units:              [],       // 確定済みユニット
-    singles:            [],       // 個別飼育（正式ID付与済み）
-    saleIndividuals:    [],       // 販売候補（個体）
+    units:              [],
+    singles:            [],
+    saleIndividuals:    [],
     displayIdPool:      displayIds,
     displayIdIndex:     0,
-    indDisplayIdPool:   [],  // 個別飼育用正式IDプール（reserveDisplayIds で注入）
+    indDisplayIdPool:   [],
     indDisplayIdIndex:  0,
     saving:             false,
+    session_date:       new Date().toISOString().split('T')[0],  // T1移行日（変更可）
   };
 }
 
@@ -144,11 +143,11 @@ function _buildLotEntry(lot) {
       lot_item_no:   i,
       lot_id:        lot.lot_id,
       lot_display_id:lot.display_id || lot.lot_id,
-      size_category: null,   // 大/中/小
-      weight_g:      null,   // 整数
-      status:        'normal', // 'normal' | 'dead'
+      size_category: null,
+      weight_g:      null,
+      status:        'normal',
       memo:          '',
-      assigned_to:   null,   // null | 'unit' | 'single' | 'dead' | 'sale'
+      assigned_to:   null,
     });
   }
   return {
@@ -170,7 +169,6 @@ function _nextDisplayId(session) {
 
 function _nextIndDisplayId(session) {
   if (!session.indDisplayIdPool || session.indDisplayIdIndex >= session.indDisplayIdPool.length) {
-    // プール枯渇時は仮IDで代替（GAS保存時に上書きされる）
     console.warn('[T1] indDisplayIdPool 枯渇 - 仮IDを使用');
     return null;
   }
@@ -178,7 +176,7 @@ function _nextIndDisplayId(session) {
 }
 
 // ────────────────────────────────────────────────────────────────
-// localStorage 永続化（label-gen 往復・Androidブラウザ遷移時も保持）
+// localStorage 永続化
 // ────────────────────────────────────────────────────────────────
 function _saveSessionToStorage() {
   try {
@@ -196,7 +194,6 @@ function _restoreSessionFromStorage() {
 // メイン画面描画
 // ────────────────────────────────────────────────────────────────
 Pages.t1Session = function (params = {}) {
-  // label-gen から戻ってきた場合: 印刷済みフラグ更新
   const labeledId  = params.labeledDisplayId;
   const singleIdx  = params.singleIdx !== undefined ? parseInt(params.singleIdx, 10) : -1;
   if (!window._t1Session) _restoreSessionFromStorage();
@@ -219,7 +216,6 @@ function _renderT1Session(s) {
   const main = document.getElementById('main');
   if (!main) return;
 
-  // ローディング中バナー（reserveDisplayIds 待ち）
   if (s._loading) {
     const headerPart = UI.header('T1移行編成セッション', { back: true, backFn: "Pages._t1SessionBack()" });
     main.innerHTML = `${headerPart}
@@ -237,8 +233,7 @@ function _renderT1Session(s) {
       </div>`;
     return;
   }
-  console.log('[T1] first usable render start');
-  // エラー状態
+
   if (s._loadError) {
     main.innerHTML = UI.header('T1移行 — エラー', { back: true }) +
       `<div class="page-body"><div class="card" style="border-color:rgba(224,80,80,.4)">
@@ -254,7 +249,6 @@ function _renderT1Session(s) {
   const line     = Store.getLine(s.lineId);
   const lineDisp = line ? (line.line_code || line.display_id) : s.lineId;
 
-  // 孵化日帯
   const hatchDates = s.lots.map(l => l.hatch_date).filter(Boolean).sort();
   const hatchRange = hatchDates.length
     ? (hatchDates[0] === hatchDates[hatchDates.length-1]
@@ -267,45 +261,42 @@ function _renderT1Session(s) {
     ${UI.header('T1移行編成セッション', { back: true, backFn: "Pages._t1SessionBack()" })}
     <div class="page-body has-quick-bar" style="padding-bottom:80px">
 
-      <!-- ② セッション概要バー -->
-      <div style="background:var(--surface2);border-radius:10px;padding:10px 14px;
-        display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:.78rem">
-        <span style="font-weight:700;color:var(--gold)">${lineDisp}</span>
-        <span style="color:var(--text3)">孵化日: ${hatchRange}</span>
-        <span style="color:var(--text3)">ロット${s.lots.length}件</span>
-        <span style="color:var(--blue)">計${stats.total}頭</span>
-        <span style="color:${stats.unprocessed > 0 ? 'var(--red,#e05050)' : 'var(--green)'}">
-          未処理${stats.unprocessed}頭
-        </span>
+      <div style="background:var(--surface2);border-radius:10px;padding:10px 14px;font-size:.78rem">
+        <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px">
+          <span style="font-weight:700;color:var(--gold)">${lineDisp}</span>
+          <span style="color:var(--text3)">孵化日: ${hatchRange}</span>
+          <span style="color:var(--text3)">ロット${s.lots.length}件</span>
+          <span style="color:var(--blue)">計${stats.total}頭</span>
+          <span style="color:${stats.unprocessed > 0 ? 'var(--red,#e05050)' : 'var(--green)'}">
+            未処理${stats.unprocessed}頭
+          </span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:.75rem;font-weight:700;color:var(--text2);white-space:nowrap">📅 T1移行日</span>
+          <input type="date" id="t1-session-date"
+            value="${s.session_date || new Date().toISOString().split('T')[0]}"
+            style="flex:1;padding:6px 8px;border-radius:8px;border:1px solid var(--border);
+              background:var(--bg2);font-size:.85rem;font-weight:700;color:var(--text1)"
+            onchange="Pages._t1SetSessionDate(this.value)">
+        </div>
       </div>
 
-      <!-- ③ 参加ロット + 個体入力 -->
       ${s.lots.map((lot, li) => _renderLotSection(lot, li, s)).join('')}
 
-      <!-- 別ロット追加 -->
       <button class="btn btn-ghost btn-full" style="margin-top:6px;border-style:dashed"
         onclick="Pages._t1AddLotScan()">
         ＋ 別ロットを追加スキャン 📷
       </button>
 
-      <!-- ④ 未処理個体パネル -->
       <div id="t1-unproc-panel">${_renderUnprocessedPanel(s)}</div>
-
-      <!-- ⑤ ユニット作成エリア -->
       <div id="t1-unit-create-area">${_renderUnitCreateArea(s)}</div>
 
-      <!-- ⑥ 確定済みユニット一覧 -->
       ${_renderConfirmedUnits(s)}
-
-      <!-- ⑦ 個別飼育 / 販売候補エリア -->
       ${_renderSinglesAndSales(s)}
-
-      <!-- ⑧ 全体サマリ -->
       ${_renderSummary(s, stats)}
 
     </div>
 
-    <!-- ⑨ 固定フッター -->
     <div class="quick-action-bar">
       <button class="btn btn-ghost btn-xl" style="flex:1"
         onclick="Pages._t1SessionCancel()">キャンセル</button>
@@ -325,12 +316,9 @@ function _renderT1Session(s) {
 function _renderLotSection(lot, lotIdx, s) {
   const doneCount = lot.individuals.filter(i => _isInputComplete(i)).length;
   const allDone   = doneCount === lot.count;
-
   const rows = lot.individuals.map(ind => _renderIndividualRow(ind, lotIdx)).join('');
-
   const assigned = lot.individuals.filter(i => i.assigned_to !== null).length;
   const dead     = lot.individuals.filter(i => i.assigned_to === 'dead').length;
-  const unproc   = lot.individuals.filter(i => i.assigned_to === null && i.size_category !== null).length;
 
   return `
   <div class="card" style="margin-top:8px">
@@ -346,13 +334,11 @@ function _renderLotSection(lot, lotIdx, s) {
     </div>
 
     <div id="lot-body-${lotIdx}">
-      <!-- 列ヘッダー -->
       <div style="display:grid;grid-template-columns:28px 90px 70px 90px 1fr;gap:4px;
         font-size:.62rem;color:var(--text3);padding:0 0 4px;border-bottom:1px solid var(--border)">
         <div>#</div><div>区分</div><div>体重</div><div>状態</div><div>メモ</div>
       </div>
       ${rows}
-      <!-- ロット別残数 -->
       <div style="font-size:.7rem;color:var(--text3);margin-top:6px;padding-top:6px;border-top:1px solid var(--border)">
         処理済み: ${assigned}頭 / 未処理: ${lot.count - assigned}頭 / 死亡: ${dead}頭
       </div>
@@ -361,9 +347,9 @@ function _renderLotSection(lot, lotIdx, s) {
 }
 
 function _renderIndividualRow(ind, lotIdx) {
-  const isDead    = ind.status === 'dead';
+  const isDead     = ind.status === 'dead';
   const isComplete = _isInputComplete(ind);
-  const assigned  = ind.assigned_to;
+  const assigned   = ind.assigned_to;
 
   const bgColor = isDead ? 'rgba(224,80,80,.06)' :
                   isComplete ? 'rgba(76,175,120,.04)' : 'transparent';
@@ -430,7 +416,6 @@ function _renderIndividualRow(ind, lotIdx) {
 function _renderUnprocessedPanel(s) {
   const unproc = _getUnprocessed(s);
   if (unproc.length === 0) {
-    // 全入力前はパネル自体を非表示
     const anyComplete = s.lots.some(l => l.individuals.some(i => _isInputComplete(i)));
     if (!anyComplete) return '';
     return `<div class="card" style="margin-top:8px;padding:14px;text-align:center;font-size:.85rem;color:var(--green)">
@@ -438,7 +423,6 @@ function _renderUnprocessedPanel(s) {
     </div>`;
   }
 
-  // 補助提案
   const suggestions = _calcSuggestions(unproc);
 
   const rows = unproc.map(ind => {
@@ -737,6 +721,25 @@ function _findInd(s, lotId, itemNo) {
 // ユーザーアクションハンドラ
 // ────────────────────────────────────────────────────────────────
 
+Pages._t1SetSessionDate = function (val) {
+  if (window._t1Session) {
+    window._t1Session.session_date = val;
+    _saveSessionToStorage();
+    // ラベルの日付にも反映（t1_dateを再計算）
+    const d = new Date(val);
+    if (!isNaN(d)) {
+      const mmdd = String(d.getMonth()+1) + '/' + String(d.getDate());
+      // 既存ユニットのt1_dateを更新（ラベル再発行時に反映）
+      if (window._t1Session.units) {
+        window._t1Session.units.forEach(function(u) {
+          if (u.unitDraft) u.unitDraft.t1_date = mmdd;
+        });
+      }
+      _saveSessionToStorage();
+    }
+  }
+};
+
 Pages._t1ToggleLot = function (id) {
   const el = document.getElementById(id);
   if (el) el.style.display = el.style.display === 'none' ? '' : 'none';
@@ -748,7 +751,6 @@ Pages._t1SetSize = function (lotId, itemNo, size) {
   ind.size_category = ind.size_category === size ? null : size;
   _saveSessionToStorage();
 
-  // ★ 区分ボタンのスタイルだけ即時更新（キーボードを閉じない）
   const rowEl = document.getElementById('t1-ind-row-' + lotId + '-' + itemNo);
   if (rowEl) {
     ['大','中','小'].forEach(function(s) {
@@ -761,37 +763,27 @@ Pages._t1SetSize = function (lotId, itemNo, size) {
     });
   }
 
-  // ★ 未処理パネル・ユニット作成エリア・サマリを部分更新
-  // フォーカス中の入力欄（体重・メモ）は再描画しない
   _refreshPanels();
 };
 
-// _t1SetWeight kept as alias for any external calls, but weight updates are now commit-on-blur
 Pages._t1SetWeight = function (lotId, itemNo, val) {
   Pages._t1CommitWeight(lotId, itemNo, val);
 };
 
-// 体重確定（blur/Enter時のみ呼ばれる。入力中は再描画しない）
 Pages._t1CommitWeight = function (lotId, itemNo, val) {
   const ind = _findInd(window._t1Session, lotId, itemNo);
   if (!ind) return;
   const n = parseInt(val, 10);
   const newWeight = (!val || isNaN(n) || n <= 0) ? null : Math.min(999, n);
-  if (ind.weight_g === newWeight) return;  // 変化なしなら再描画しない
+  if (ind.weight_g === newWeight) return;
   ind.weight_g = newWeight;
   _saveSessionToStorage();
-  // ★ blur後（入力完了後）はフォーカスが離れているので _refreshPanels を安全に呼べる
-  // キーボードは既に閉じているため全パネル更新してOK
   _refreshPanels();
 };
 
-// サマリ・バッジだけを軽量更新（入力欄は触らない）
 function _updateSummaryOnly() {
   const s = window._t1Session;
   if (!s) return;
-  // 未処理パネルだけ更新
-  const unproc = document.querySelector('[id^="ebl-unproc"], .unproc-panel');
-  // サマリ部分のみ再生成して置き換え
   const summaryEl = document.getElementById('t1-summary-area');
   if (summaryEl) {
     const stats = _calcStats(s);
@@ -799,7 +791,6 @@ function _updateSummaryOnly() {
     const lineDisp = line ? (line.line_code || line.display_id) : s.lineId;
     summaryEl.innerHTML = _renderSummary(s, stats).replace(/^<div[^>]*>/, '').replace(/<\/div>$/, '');
   }
-  // バッジエリアは _partialRefresh で軽く更新
   _partialRefresh();
 }
 
@@ -843,7 +834,6 @@ Pages._t1SelectPair = function (size) {
   const unproc = _getUnprocessed(s);
   const pair   = unproc.filter(i => i.size_category === size).slice(0, 2);
   if (pair.length < 2) return;
-  // まず全選択解除
   s.lots.forEach(l => l.individuals.forEach(i => { i._selected = false; }));
   pair.forEach(p => {
     const ind = _findInd(s, p.lot_id, p.lot_item_no);
@@ -882,7 +872,6 @@ Pages._t1ConfirmUnit = function () {
   const sizeCategories = [...new Set(members.map(m => m.size_category))];
   const sizeCat = sizeCategories.length === 1 ? sizeCategories[0] : '混成';
 
-  // 割り当て確定
   members.forEach((m, i) => {
     const ind = _findInd(s, m.lot_id, m.lot_item_no);
     if (ind) {
@@ -895,7 +884,6 @@ Pages._t1ConfirmUnit = function () {
   s.units.push({ display_id: displayId, members, size_category: sizeCat, for_sale: false, labeled: false });
   _saveSessionToStorage();
 
-  // ラベル発行プロンプト
   _renderT1Session(s);
   _showLabelPrompt(displayId, false);
 };
@@ -925,7 +913,6 @@ Pages._t1PrintUnit = function (unitIdx) {
   const u = s.units[unitIdx];
   if (!u) return;
   _saveSessionToStorage();
-  // unitDraft: Store未保存でもラベル描画できるよう最小データを渡す
   const line = Store.getLine(s.lineId);
   const labelParams = {
     targetType:       'UNIT',
@@ -944,10 +931,14 @@ Pages._t1PrintUnit = function (unitIdx) {
       stage_phase:   'T1',
       mat_type:      'T1',
       members:       u.members || [],
-      t1_date:       new Date().toISOString().slice(5, 10),  // MM-DD 形式
+      t1_date:       (function() {
+        var sd = s.session_date || new Date().toISOString().split('T')[0];
+        var d  = new Date(sd);
+        return isNaN(d) ? new Date().toISOString().slice(5,10)
+          : String(d.getMonth()+1) + '/' + String(d.getDate());
+      })(),
     },
   };
-  // ★ backRoute を window に保存
   window._t1LabelBackup = { backRoute: 't1-session', labeledDisplayId: u.display_id };
   console.log('[T1] label route params', labelParams);
   routeTo('label-gen', labelParams);
@@ -999,7 +990,6 @@ Pages._t1AssignSingle = function (lotId, itemNo) {
   ind.assigned_to = 'single';
   ind._selected   = false;
   const lot = s.lots.find(l => l.lot_id === lotId);
-  // ★ 個別割り当て時に正式IDを付与
   const formalId = _nextIndDisplayId(s);
   s.singles.push({
     lot_id:         lotId,
@@ -1007,7 +997,7 @@ Pages._t1AssignSingle = function (lotId, itemNo) {
     lot_display_id: lot ? lot.display_id : lotId,
     size_category:  ind.size_category,
     weight_g:       ind.weight_g,
-    display_id:     formalId,  // 正式ID（nullの場合はGAS保存時に採番）
+    display_id:     formalId,
   });
   _saveSessionToStorage();
   _renderT1Session(s);
@@ -1059,10 +1049,8 @@ Pages._t1PrintSingle = function (idx) {
   _saveSessionToStorage();
   const line = Store.getLine(s.lineId);
 
-  // 正式IDがある場合は通常INDラベル、ない場合はDRAFTフォールバック
   const formalId = ind.display_id || null;
   const labelParams = formalId ? {
-    // ★ 正式ID確定ラベル（IND_FORMAL）
     targetType:  'IND_FORMAL',
     labelType:   'ind_fixed',
     backRoute:   't1-session',
@@ -1080,7 +1068,6 @@ Pages._t1PrintSingle = function (idx) {
       lot_display_id:ind.lot_display_id,
     },
   } : {
-    // フォールバック（IDプール枯渇時）
     targetType:  'IND_DRAFT',
     labelType:   'ind_fixed',
     backRoute:   't1-session',
@@ -1097,7 +1084,6 @@ Pages._t1PrintSingle = function (idx) {
       lot_display_id:ind.lot_display_id,
     },
   };
-  // ★ backRoute/singleIdx を window に保存（URLパラメータ経由で消えても復元できるよう）
   window._t1LabelBackup = { backRoute: 't1-session', singleIdx: idx };
   console.log('[T1] single label params (formalId:', formalId, ')', labelParams);
   routeTo('label-gen', labelParams);
@@ -1127,7 +1113,6 @@ Pages._t1TryAddLot = function (lotId) {
   const lot = Store.getLot(lotId);
   if (!lot) { UI.toast('ロットが見つかりません', 'error'); return false; }
 
-  // 条件チェック
   if (s.lots.some(l => l.lot_id === lotId))
     { UI.toast('すでに追加済みのロットです', 'error'); return false; }
   if (lot.line_id !== s.lineId)
@@ -1138,7 +1123,6 @@ Pages._t1TryAddLot = function (lotId) {
   if (phase && phase !== 'T0' && phase !== 'L1L2')
     { UI.toast('T0ロット以外は追加できません', 'error'); return false; }
 
-  // 孵化日帯チェック（警告のみ）
   const baseDates = s.lots.map(l => l.hatch_date).filter(Boolean);
   if (baseDates.length > 0 && lot.hatch_date) {
     const baseDateMs = new Date(baseDates[0].replace(/\//g, '-')).getTime();
@@ -1156,11 +1140,19 @@ Pages._t1TryAddLot = function (lotId) {
 };
 
 // ────────────────────────────────────────────────────────────────
-// 保存 / キャンセル
+// 保存 / キャンセル / 戻る
 // ────────────────────────────────────────────────────────────────
+
+// ★ 修正: ← 戻るボタン — qr-scanではなく元のロット詳細に戻る
 Pages._t1SessionBack = function () {
   if (confirm('セッションを一時中断しますか？（セッション内容は保存されます）')) {
-    routeTo('qr-scan', { mode: 't1' });
+    const _s = window._t1Session;
+    const _firstLotId = _s && _s.lots && _s.lots[0] ? _s.lots[0].lot_id : null;
+    if (_firstLotId) {
+      routeTo('lot-detail', { lotId: _firstLotId });
+    } else {
+      routeTo('qr-scan', { mode: 't1' });
+    }
   }
 };
 
@@ -1181,7 +1173,6 @@ Pages._t1SessionSave = async function () {
     UI.toast('全個体を処理してから保存してください', 'error'); return;
   }
 
-  // 確認モーダル
   const unitCount   = s.units.filter(u => !u.for_sale).length;
   const saleUCount  = s.units.filter(u => u.for_sale).length;
   const msg = `T1移行を確定します（取り消せません）\n\n`
@@ -1201,40 +1192,31 @@ Pages._t1SessionSave = async function () {
   try {
     const payload = _buildSavePayload(s);
     const res     = await API.t1.createSession(payload);
-    // breeding_units を Store に追加（GASから返ってきた完全なオブジェクト）
     if (res && res.units && Array.isArray(res.units)) {
       res.units.forEach(function(u) { Store.addDBItem('breeding_units', u); });
     }
-    // 作成された individuals を Store に追加
     if (res && res.individuals && Array.isArray(res.individuals)) {
       res.individuals.forEach(function(ind) { Store.addDBItem('individuals', ind); });
     }
-    // ロットを t1_done 状態にパッチ
     s.lots.forEach(l => Store.patchDBItem('lots', 'lot_id', l.lot_id, {
       t1_done: true,
       t1_done_at: new Date().toISOString().split('T')[0].replace(/-/g, '/'),
     }));
-    // ── 腐卵逆算: ロット元の頭数 − T1生存確認頭数 = 追加腐卵数 ──────────
-    // 各ロットについて親産卵セットがあれば、腐卵数をシステムに反映する
     try {
       for (const _tLot of s.lots) {
         const _origCount   = parseInt(_tLot.count, 10) || 0;
         const _survivedCnt = _tLot.individuals.filter(i => i.status !== 'dead').length;
         const _additionalRotten = Math.max(0, _origCount - _survivedCnt);
         if (_additionalRotten > 0 && _tLot.pairing_id) {
-          // 産卵セットのT1腐卵として記録（GASのaddEggがある場合はそちらで処理）
-          // なければローカルStoreのpairingsにメモとして反映
           const _pairIdx = (Store.getDB('pairings')||[]).findIndex(p=>p.set_id===_tLot.pairing_id);
           if (_pairIdx !== -1) {
             console.log('[T1] 腐卵逆算 lot:', _tLot.display_id,
               '元頭数:', _origCount, '生存:', _survivedCnt, '追加腐卵:', _additionalRotten);
           }
-          // payloadに含めてGAS側で処理（t1Sessionのres.rotten_updatesとして返ってくる想定）
         }
       }
     } catch (_e) { console.warn('[T1] 腐卵逆算エラー（無視）:', _e.message); }
 
-    // クリア
     window._t1Session = null;
     localStorage.removeItem('_t1SessionData');
     UI.toast('T1移行を完了しました ✅', 'success');
@@ -1247,8 +1229,8 @@ Pages._t1SessionSave = async function () {
 };
 
 function _buildSavePayload(s) {
-  const today = new Date().toISOString().split('T')[0].replace(/-/g, '/');
-  // 各ロットの腐卵逆算情報をpayloadに追加
+  // session_date が指定されていればそれを使用（T1移行日を遡って入力する場合）
+  const today = (s.session_date || new Date().toISOString().split('T')[0]).replace(/-/g, '/');
   const rottenUpdates = s.lots
     .filter(l => l.pairing_id)
     .map(l => {
@@ -1268,10 +1250,8 @@ function _buildSavePayload(s) {
     lot_hatch_date: l.hatch_date,
   })));
 
-  // growth_records 用: 全個体（死亡含む）
   const growthEntries = allInds.map(ind => {
     const isDead = ind.status === 'dead';
-    // unit_slot_no と unit_display_id を解決
     let unitDisplayId = null;
     let unitSlotNo    = null;
     if (ind.assigned_to === 'unit') {
@@ -1282,7 +1262,6 @@ function _buildSavePayload(s) {
         unitSlotNo = m ? m.unit_slot_no : null;
       }
     }
-    // 日齢計算
     let ageDays = null;
     if (ind.lot_hatch_date) {
       const hd = new Date(ind.lot_hatch_date.replace(/\//g, '-'));
@@ -1321,7 +1300,7 @@ function _buildSavePayload(s) {
       members:       u.members,
     })),
     singles:          s.singles.map(function(sg) {
-      return Object.assign({}, sg);  // display_id が含まれている
+      return Object.assign({}, sg);
     }),
     sale_individuals: s.saleIndividuals.map(function(sg) {
       return Object.assign({}, sg);
@@ -1333,40 +1312,32 @@ function _buildSavePayload(s) {
 }
 
 // ────────────────────────────────────────────────────────────────
-// 軽量リフレッシュ（体重入力中にフルre-renderしない）
+// 軽量リフレッシュ
 // ────────────────────────────────────────────────────────────────
 let _partialRefreshTimer = null;
 function _partialRefresh() {
-  // 体重入力中は全再描画しない（キーボードが閉じるバグ防止）
   clearTimeout(_partialRefreshTimer);
 }
 
-// ★ パネル部分更新（区分変更時に使用）
-// 体重・メモ入力欄のフォーカスを保持しつつ、
-// 未処理パネル・ユニット作成エリア・サマリを再描画する
 function _refreshPanels() {
   const s = window._t1Session;
   if (!s) return;
 
-  // フォーカス中の要素を記録（体重・メモ入力欄）
   const focused = document.activeElement;
   const focusedId = focused && (focused.tagName === 'INPUT' || focused.tagName === 'TEXTAREA')
     ? focused.id || null : null;
   const focusedVal = focusedId ? focused.value : null;
 
-  // 未処理パネルを差し替え
   const unprocEl = document.getElementById('t1-unproc-panel');
   if (unprocEl) {
     unprocEl.outerHTML = '<div id="t1-unproc-panel">' + _renderUnprocessedPanel(s) + '</div>';
   }
 
-  // ユニット作成エリアを差し替え
   const unitCreateEl = document.getElementById('t1-unit-create-area');
   if (unitCreateEl) {
     unitCreateEl.innerHTML = _renderUnitCreateArea(s);
   }
 
-  // サマリ更新
   const summaryEl = document.getElementById('t1-summary-area');
   if (summaryEl) {
     const stats = _calcStats(s);
@@ -1374,7 +1345,6 @@ function _refreshPanels() {
     summaryEl.innerHTML = _renderSummary(s, stats).replace(/^<div[^>]*>/, '').replace(/<\/div>$/, '');
   }
 
-  // フォーカスを復元
   if (focusedId) {
     const el = document.getElementById(focusedId);
     if (el) {
@@ -1391,6 +1361,3 @@ window.PAGES = window.PAGES || {};
 window.PAGES['t1-session'] = function () {
   Pages.t1Session(Store.getParams());
 };
-
-
-// ────────────────────────────────────────────────────────────────
