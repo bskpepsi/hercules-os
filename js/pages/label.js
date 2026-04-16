@@ -361,7 +361,7 @@ Pages.labelGen = function (params = {}) {
         ` : ''}
 
         <div class="card" id="lbl-preview-card">
-          ${(targetId || (_isUnitMode && _unitDisplayId) || _isIndDraftMode)
+          ${(targetId || (_isUnitMode && _unitDisplayId) || _isIndDraftMode || _isFormalMode)
             ? `<div class="card-title">プレビュー <span style="font-size:.72rem;color:var(--text3);font-weight:400">${dims.label}</span></div>
                <div id="lbl-html-preview" style="margin-bottom:12px;min-height:120px;
                  display:flex;align-items:center;justify-content:center;
