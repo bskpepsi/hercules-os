@@ -1,15 +1,19 @@
 // ════════════════════════════════════════════════════════════════
 // unit_detail.js — 飼育ユニット（BU）詳細画面
-// build: 20260417a-fix2
+// build: 20260417a-fix3
 // 変更点:
+//   - [fix3] UI.select の id未付与バグ対応
+//           document.getElementById('ud-mat/ud-cont') が null を返し
+//           空文字が送信されていたのを、select要素直書きで id を明示して修正
+//   - [fix3] 容器サイズ選択肢を業務仕様通り 1.8L/2.7L/4.8L/その他 の4択に（3.5L削除）
 //   - [fix2] _udSaveBasic の構文エラー修正（try-catch閉じた後の孤立コード削除）
-//           これにより孵化日保存エラー・詳細画面真っ暗問題を解消
+//   - [fix2] 描画エラー時のセーフティネット追加（画面真っ暗対策）
 //   - [fix1] 孵化日に生のDate文字列が表示される問題を修正（_udFormatDate追加）
 //   - [fix1] メンバー行の未判別性別「?」を非表示に修正
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-console.log('[HerculesOS] unit_detail.js v20260417a-fix2 loaded');
+console.log('[HerculesOS] unit_detail.js v20260417a-fix3 loaded');
 
 // ── Bug 4 修正: 孵化日フォーマット関数 ─────────────────────────
 function _udFormatDate(d) {
@@ -361,21 +365,37 @@ Pages._udEditBasic = function (displayId) {
   const unit = Store.getUnitByDisplayId && Store.getUnitByDisplayId(displayId);
   if (!unit) { UI.toast('ユニットが見つかりません', 'error'); return; }
 
+  // [fix3] UI.select は id 属性を付けないため、select要素を直接記述してid属性を明示する
+  // 以前は document.getElementById('ud-mat') が null になり、空文字が送信されていた
+  const matOptions = [
+    { code:'T1', label:'T1マット' },
+    { code:'T2', label:'T2マット' },
+    { code:'T3', label:'T3マット' },
+    { code:'MD', label:'MDマット' },
+  ];
+  const contOptions = [
+    { code:'1.8L', label:'1.8L' },
+    { code:'2.7L', label:'2.7L' },
+    { code:'4.8L', label:'4.8L（パンケ）' },
+    { code:'その他', label:'その他' },
+  ];
+  const curMat  = unit.mat_type || '';
+  const curCont = unit.container_size || '';
+  const matSelect  = '<select id="ud-mat" name="ud-mat" class="input">'
+    + '<option value="">選択...</option>'
+    + matOptions.map(o => `<option value="${o.code}" ${o.code === curMat ? 'selected' : ''}>${o.label}</option>`).join('')
+    + '</select>';
+  const contSelect = '<select id="ud-cont" name="ud-cont" class="input">'
+    + '<option value="">選択...</option>'
+    + contOptions.map(o => `<option value="${o.code}" ${o.code === curCont ? 'selected' : ''}>${o.label}</option>`).join('')
+    + '</select>';
+
   UI.modal(`
     <div class="modal-title">基本情報を編集</div>
     <div class="form-section" style="margin-top:8px">
       ${UI.field('孵化日',   '<input type="date" id="ud-hatch" class="input" value="' + (unit.hatch_date||'').replace(/\//g,'-') + '">')}
-      ${UI.field('マット種別', UI.select('ud-mat', [
-        { code:'T1', label:'T1マット' },
-        { code:'T2', label:'T2マット' },
-        { code:'T3', label:'T3マット' },
-        { code:'MD', label:'MDマット' },
-      ], unit.mat_type || ''))}
-      ${UI.field('容器サイズ', UI.select('ud-cont', [
-        { code:'2.7L', label:'2.7L' },
-        { code:'4.8L', label:'4.8L（パンケ）' },
-        { code:'3.5L', label:'3.5L' },
-      ], unit.container_size || ''))}
+      ${UI.field('マット種別', matSelect)}
+      ${UI.field('容器サイズ', contSelect)}
       ${UI.field('メモ', '<input type="text" id="ud-note" class="input" value="' + (unit.note||'') + '">')}
     </div>
     <div class="modal-footer">
