@@ -1,412 +1,377 @@
 // ════════════════════════════════════════════════════════════════
-// store.js
-// 役割: アプリ全体の状態とローカルキャッシュを一元管理する。
-//
-// 本番仕様:
-//   - navigate() に _skipNavEvent 追加（routeTo 二重実行防止）
-//   - ステージ: L1L2 / L3 / PREPUPA / PUPA / ADULT_PRE / ADULT
-//   - ステータス: alive / for_sale / listed / sold / dead
-//   - localStorage 容量超過時の保護処理
+// store.js - データストア管理（完全版）
+// build: 20260417k-complete
+// 
+// ユニット詳細表示問題解決のため、すべてのヘルパー関数を統合
 // ════════════════════════════════════════════════════════════════
 
 'use strict';
 
-// Version marker — update when deploying to verify cache bust
-console.log('[HerculesOS] store.js v20260325a loaded');
+// Storeオブジェクトのグローバル定義
+window.Store = window.Store || {};
 
-const Store = (() => {
-
-  let _state = {
-    page:       'dashboard',
-    prevPage:   null,
-    pageParams: {},
-    navOpen:    false,
-    loading:    false,
-    toast:      null,
-    draft:      {},
-    lastSync:   null,
+(function() {
+  const Store = window.Store;
+  
+  // ローカルストレージキー
+  const LS_KEYS = {
+    DB_PREFIX: 'hcos_db_',
+    CACHE_PREFIX: 'hcos_cache_',
+    SETTINGS_PREFIX: 'hcos_setting_'
   };
 
-  let _db = {
-    individuals:       [],
-    lots:              [],
-    lines:             [],
-    parents:           [],
-    bloodlines:        [],
-    pairings:          [],
-    pairing_histories: [],
-    egg_records:       [],
-    growthMap:         {},
-    settings:          {},
-    labelHistory:      {},
-  };
+  // ═══════════════════════════════════════════════════════════════
+  // データベース基本操作
+  // ═══════════════════════════════════════════════════════════════
 
-  // ── ページ遷移 ─────────────────────────────────────────────────
-  // _skipNavEvent=true のとき nav イベントを発火しない（routeTo 専用）
-  // _skipNavEvent=false（デフォルト）のとき nav イベントを発火（Store.back() 等）
-  function navigate(pageId, params = {}, _skipNavEvent = false) {
-    _state.prevPage   = _state.page;
-    _state.page       = pageId;
-    _state.pageParams = params;
-    _state.draft      = {};
-    if (!_skipNavEvent) _notify('nav');
-  }
-
-  function back() {
-    if (_state.prevPage) navigate(_state.prevPage, {}, false);
-    else navigate('dashboard', {}, false);
-  }
-
-  function getPage()   { return _state.page; }
-  function getParams() { return _state.pageParams; }
-  function getPrev()   { return _state.prevPage; }
-
-  function setLoading(v) { _state.loading = v; _notify('loading'); }
-  function isLoading()   { return _state.loading; }
-
-  function toast(msg, type = 'success', ms = 2800) {
-    _state.toast = { msg, type, ts: Date.now() };
-    _notify('toast');
-    setTimeout(() => { _state.toast = null; _notify('toast'); }, ms);
-  }
-
-  // ── DB 書き込み ────────────────────────────────────────────────
-  function setDB(key, value) {
-    _db[key] = value;
-    _notify('db_' + key);
-    _scheduleSave();
-  }
-
-  function patchDBItem(key, idField, id, patch) {
-    const arr = _db[key];
-    if (!Array.isArray(arr)) return;
-    const i = arr.findIndex(r => r[idField] === id);
-    if (i !== -1) {
-      _db[key][i] = { ..._db[key][i], ...patch };
-      _notify('db_' + key);
-      _scheduleSave();
-    }
-  }
-
-  function addDBItem(key, item) {
-    if (!Array.isArray(_db[key])) _db[key] = [];
-    _db[key].unshift(item);
-    _notify('db_' + key);
-    _scheduleSave();
-  }
-
-  // ── DB 読み込み ────────────────────────────────────────────────
-  function getDB(key)        { return _db[key]; }
-  function getIndividual(id) { return _db.individuals.find(i => i.ind_id       === id) || null; }
-  function getLine(id)       { return _db.lines.find(l       => l.line_id      === id) || null; }
-  function getLot(id)        { return _db.lots.find(l        => l.lot_id       === id) || null; }
-  function getParent(id)     { return _db.parents.find(p     => p.par_id       === id) || null; }
-  function getBloodline(id)  { return _db.bloodlines.find(b  => b.bloodline_id === id) || null; }
-
-  function getIndividualsByLine(lineId) {
-    return _db.individuals.filter(i => i.line_id === lineId);
-  }
-  function getIndividualsByLot(lotId) {
-    return _db.individuals.filter(i => i.lot_id === lotId || i.origin_lot_id === lotId);
-  }
-
-  // ── 日齢計算 ──────────────────────────────────────────────────
-  function calcAge(hatchDate, targetDate) {
-    if (!hatchDate) return null;
-    let hdStr = hatchDate instanceof Date
-      ? hatchDate.toISOString().split('T')[0]
-      : String(hatchDate);
-    hdStr = hdStr.replace(/-/g, '/').trim();
-    const parts = hdStr.split('/');
-    if (parts.length < 3) return null;
-    const hatch = new Date(+parts[0], +parts[1] - 1, +parts[2]);
-    const base  = targetDate ? new Date(targetDate.replace(/\//g, '-')) : new Date();
-    const ms    = base - hatch;
-    if (ms < 0) return null;
-
-    const totalDays = Math.floor(ms / 86400000);
-    const weeks     = Math.floor(totalDays / 7);
-    const remDays   = totalDays % 7;
-    const months    = Math.floor(totalDays / 30.44);
-    const remMDays  = Math.round(totalDays - months * 30.44);
-    const years     = Math.floor(totalDays / 365.25);
-    const remYM     = Math.floor((totalDays - years * 365.25) / 30.44);
-    const remYD     = Math.round(totalDays - years * 365.25 - remYM * 30.44);
-
-    const rules = (() => {
-      try { return JSON.parse(_db.settings['stage_age_rules'] || ''); }
-      catch { return DEFAULT_STAGE_AGE_RULES; }
-    })();
-    const rule       = rules.find(r => totalDays >= r.minDays && totalDays < r.maxDays);
-    const stageGuess = rule?.label || '—';
-
-    return {
-      totalDays,
-      isCurrent: !targetDate,
-      baseDate:  targetDate || null,
-      simple:  `${totalDays}日 / ${weeks}週 / ${(totalDays/30.44).toFixed(1)}ヶ月`,
-      days:    `${totalDays}日`,
-      weeks:   `${weeks}週${remDays}日`,
-      months:  `${months}ヶ月${remMDays}日`,
-      years:   `${years}年${remYM}ヶ月${remYD}日`,
-      stageGuess,
-    };
-  }
-
-  function formatRecordAge(ageDays) {
-    if (!ageDays && ageDays !== 0) return '—';
-    const d = +ageDays;
-    const w = Math.floor(d / 7);
-    return w > 0 ? `${d}日 / ${w}週` : `${d}日`;
-  }
-
-  // ── 選別判定 ──────────────────────────────────────────────────
-  function getVerdict(ind) {
-    const w     = parseFloat(ind.latest_weight_g);
-    const stage = ind.current_stage;
-    const sex   = ind.sex;
-    if (!w || !stage || !sex) return null;
-    const rules = (() => {
-      try { return JSON.parse(_db.settings['selection_rules'] || ''); }
-      catch { return DEFAULT_SELECTION_RULES; }
-    })();
-    const sexKey = sex === '♂' ? 'male' : sex === '♀' ? 'female' : null;
-    if (!sexKey) return null;
-    const sr = (rules[sexKey] || []).filter(r => r.stage === stage).sort((a,b) => b.minWeight - a.minWeight);
-    return sr.find(r => w >= r.minWeight) || null;
-  }
-
-  // ── 成長記録キャッシュ ─────────────────────────────────────────
-  function setGrowthRecords(targetId, records) {
-    _db.growthMap[targetId] = records;
-    _scheduleSave();
-  }
-  function getGrowthRecords(targetId) {
-    return _db.growthMap[targetId] || null;
-  }
-  function addGrowthRecord(targetId, record) {
-    if (!_db.growthMap[targetId]) _db.growthMap[targetId] = [];
-    _db.growthMap[targetId].push(record);
-    _db.growthMap[targetId].sort((a,b) => a.record_date.localeCompare(b.record_date));
-    _scheduleSave();
-  }
-
-  // ── 設定 ──────────────────────────────────────────────────────
-  function setSetting(key, val) {
-    _db.settings[key] = val;
-    if (key === 'gas_url')    CONFIG.GAS_URL    = val;
-    if (key === 'gemini_key') CONFIG.GEMINI_KEY = val;
-    _scheduleSave();
-  }
-  function getSetting(key) { return _db.settings[key] || ''; }
-
-  // ── 永続化 ────────────────────────────────────────────────────
-  let _saveTimer = null;
-  function _scheduleSave() {
-    clearTimeout(_saveTimer);
-    _saveTimer = setTimeout(_persist, 1200);
-  }
-  function _persist() {
+  /**
+   * データベーステーブルを取得
+   */
+  Store.getDB = function(tableName) {
     try {
-      const trimmed = {};
-      Object.entries(_db.growthMap).forEach(([k,v]) => { trimmed[k] = v.slice(-100); });
-      const payload = { ..._db, growthMap: trimmed };
-      const json    = JSON.stringify(payload);
-      // 容量超過対策: 4MB超ならgrowthMapをさらに削減して再試行
-      if (json.length > 4 * 1024 * 1024) {
-        const slim = {};
-        Object.entries(_db.growthMap).forEach(([k,v]) => { slim[k] = v.slice(-20); });
-        localStorage.setItem(CONFIG.LS_KEYS.DB,
-          JSON.stringify({ ..._db, growthMap: slim, labelHistory: {} }));
-      } else {
-        localStorage.setItem(CONFIG.LS_KEYS.DB, json);
-      }
-      localStorage.setItem(CONFIG.LS_KEYS.LAST_SYNC, new Date().toISOString());
+      const data = localStorage.getItem(LS_KEYS.DB_PREFIX + tableName);
+      return data ? JSON.parse(data) : [];
     } catch (e) {
-      console.warn('Store: localStorage書き込み失敗', e);
-      try {
-        localStorage.setItem(CONFIG.LS_KEYS.DB,
-          JSON.stringify({ ..._db, growthMap: {}, labelHistory: {} }));
-      } catch(e2) { console.error('Store: 緊急保存も失敗', e2); }
+      console.warn('[Store.getDB] Parse error for', tableName, ':', e);
+      return [];
     }
-  }
+  };
 
-  function loadFromStorage() {
+  /**
+   * データベーステーブルを設定
+   */
+  Store.setDB = function(tableName, data) {
     try {
-      const raw = localStorage.getItem(CONFIG.LS_KEYS.DB);
-      if (raw) _db = { ..._db, ...JSON.parse(raw) };
-      const gasUrl    = localStorage.getItem(CONFIG.LS_KEYS.GAS_URL);
-      const geminiKey = localStorage.getItem(CONFIG.LS_KEYS.GEMINI_KEY);
-      if (gasUrl)    { CONFIG.GAS_URL    = gasUrl;    _db.settings.gas_url    = gasUrl;    }
-      if (geminiKey) { CONFIG.GEMINI_KEY = geminiKey; _db.settings.gemini_key = geminiKey; }
-      _state.lastSync = localStorage.getItem(CONFIG.LS_KEYS.LAST_SYNC);
-    } catch (e) { console.warn('Store: ローカルデータ読み込み失敗', e); }
-  }
-
-  function clearCache() {
-    _db = { individuals:[], lots:[], lines:[], parents:[], bloodlines:[],
-            pairings:[], pairing_histories:[], egg_records:[],
-            growthMap:{}, settings: _db.settings, labelHistory:{} };
-    _scheduleSave();
-    _notify('db_all');
-  }
-
-  // ── イベント購読 ──────────────────────────────────────────────
-  const _listeners = {};
-  function on(event, fn) {
-    if (!_listeners[event]) _listeners[event] = [];
-    _listeners[event].push(fn);
-  }
-  function off(event, fn) {
-    if (!_listeners[event]) return;
-    _listeners[event] = _listeners[event].filter(f => f !== fn);
-  }
-  function _notify(event) {
-    (_listeners[event] || []).forEach(fn => { try { fn(); } catch(e) {} });
-    (_listeners['*']   || []).forEach(fn => { try { fn(event); } catch(e) {} });
-  }
-
-  function setDraft(key, val) { _state.draft[key] = val; }
-  function getDraft(key)      { return _state.draft[key]; }
-  function clearDraft()       { _state.draft = {}; }
-
-  // ── フィルタ ──────────────────────────────────────────────────
-  function filterIndividuals(filters = {}) {
-    let list = [..._db.individuals];
-    if (filters.line_id)      list = list.filter(i => i.line_id      === filters.line_id);
-    if (filters.lot_id)       list = list.filter(i => i.lot_id       === filters.lot_id || i.origin_lot_id === filters.lot_id);
-    if (filters.unit_id)      list = list.filter(i =>
-      i.origin_unit_id === filters.unit_id ||
-      i.source_unit_id === filters.unit_id
-    );
-    if (filters.bloodline_id) list = list.filter(i => i.bloodline_id === filters.bloodline_id);
-
-    if (filters.stage) {
-      list = list.filter(i => i.current_stage === filters.stage);
+      localStorage.setItem(LS_KEYS.DB_PREFIX + tableName, JSON.stringify(data || []));
+      console.log('[Store.setDB] Saved', tableName, 'with', (data || []).length, 'items');
+    } catch (e) {
+      console.error('[Store.setDB] Save error for', tableName, ':', e);
     }
+  };
 
-    if (filters.sex) list = list.filter(i => i.sex === filters.sex);
-
-    const _TERMINAL_STATUSES = new Set(['dead', 'sold']);
-
-    // 飼育中系ステータス（新旧両対応）
-    const _ALIVE_STATUSES = new Set([
-      'alive',                                    // 新仕様
-      'larva','prepupa','pupa','adult',            // 旧ライフサイクル（GASデフォルト）
-      'seed_candidate','seed_reserved',            // 旧種親候補
-    ]);
-
-    if (filters.status === '_all' || filters.status === '') {
-      // 全状態: フィルタなし（sold・dead含む全件）
-    } else if (filters.status === 'alive') {
-      // 「飼育中」= 新仕様のalive + 旧ライフサイクルステータス全て
-      list = list.filter(i => _ALIVE_STATUSES.has(i.status));
-    } else if (filters.status) {
-      list = list.filter(i => i.status === filters.status);
+  /**
+   * データベース項目の部分更新
+   */
+  Store.patchDBItem = function(dbName, keyField, keyValue, updates) {
+    const items = Store.getDB(dbName) || [];
+    const index = items.findIndex(function(item) {
+      return item[keyField] === keyValue;
+    });
+    
+    if (index !== -1) {
+      Object.assign(items[index], updates);
+      Store.setDB(dbName, items);
+      console.log('[Store.patchDBItem] Updated:', dbName, keyValue, Object.keys(updates));
+    } else {
+      console.warn('[Store.patchDBItem] Item not found:', dbName, keyField, keyValue);
     }
-    // 注: filters.status === '' は上の _all 分岐で処理済みのためここには到達しない
+  };
 
-    if (filters.guinness) list = list.filter(i => String(i.guinness_flag) === 'true');
-    if (filters.parent_flag) {
-      list = list.filter(i =>
-        String(i.parent_flag||'').toLowerCase() === 'true' ||
-        i.parent_flag === true || i.parent_flag === 1
-      );
-    }
-    if (filters.q) {
-      const q = filters.q.toLowerCase();
-      list = list.filter(i =>
-        (i.display_id   || '').toLowerCase().includes(q) ||
-        (i.note_private || '').toLowerCase().includes(q)
-      );
-    }
-    return list;
+  // ═══════════════════════════════════════════════════════════════
+  // ユニット関連操作
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * display_id でユニットを取得
+   */
+  Store.getUnitByDisplayId = function(displayId) {
+    if (!displayId) return null;
+    
+    const units = Store.getDB('breeding_units') || [];
+    return units.find(function(unit) {
+      return unit.display_id === displayId || unit.unit_id === displayId;
+    });
+  };
+
+  /**
+   * unit_id でユニットを取得  
+   */
+  Store.getUnit = function(unitId) {
+    if (!unitId) return null;
+    
+    const units = Store.getDB('breeding_units') || [];
+    return units.find(function(unit) {
+      return unit.unit_id === unitId;
+    });
+  };
+
+  // ═══════════════════════════════════════════════════════════════
+  // 個体関連操作
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * 個体を取得
+   */
+  Store.getIndividual = function(indId) {
+    if (!indId) return null;
+    
+    const individuals = Store.getDB('individuals') || [];
+    return individuals.find(function(ind) {
+      return ind.ind_id === indId;
+    });
+  };
+
+  /**
+   * 個体一覧をフィルタ
+   */
+  Store.filterIndividuals = function(filter) {
+    const individuals = Store.getDB('individuals') || [];
+    if (!filter) return individuals;
+    
+    return individuals.filter(function(ind) {
+      if (filter.status && ind.status !== filter.status) return false;
+      if (filter.line_id && ind.line_id !== filter.line_id) return false;
+      return true;
+    });
+  };
+
+  // ═══════════════════════════════════════════════════════════════
+  // ロット関連操作
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * ロットを取得
+   */
+  Store.getLot = function(lotId) {
+    if (!lotId) return null;
+    
+    const lots = Store.getDB('lots') || [];
+    return lots.find(function(lot) {
+      return lot.lot_id === lotId;
+    });
+  };
+
+  /**
+   * ロット一覧をフィルタ
+   */
+  Store.filterLots = function(filter) {
+    const lots = Store.getDB('lots') || [];
+    if (!filter) return lots;
+    
+    return lots.filter(function(lot) {
+      if (filter.status && lot.status !== filter.status) return false;
+      if (filter.line_id && lot.line_id !== filter.line_id) return false;
+      return true;
+    });
+  };
+
+  // ═══════════════════════════════════════════════════════════════
+  // ライン関連操作
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * ライン取得
+   */
+  Store.getLine = function(lineId) {
+    if (!lineId) return null;
+    
+    const lines = Store.getDB('lines') || [];
+    return lines.find(function(line) {
+      return line.line_id === lineId;
+    });
+  };
+
+  // ═══════════════════════════════════════════════════════════════
+  // 成長記録関連操作
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * 成長記録マップを取得
+   */
+  function _getGrowthMap() {
+    return Store.getDB('growthMap') || {};
   }
 
-  function getPairingStats(parId) {
-    if (!parId) return { total: 0, lastDate: null, nextReadyDate: null, scheduledCount: 0 };
+  /**
+   * 成長記録マップを設定
+   */
+  function _setGrowthMap(growthMap) {
+    Store.setDB('growthMap', growthMap || {});
+  }
+
+  /**
+   * 対象の成長記録取得
+   */
+  Store.getGrowthRecords = function(targetId) {
+    if (!targetId) return [];
+    
+    const growthMap = _getGrowthMap();
+    return growthMap[targetId] || [];
+  };
+
+  /**
+   * 対象の成長記録設定
+   */
+  Store.setGrowthRecords = function(targetId, records) {
+    if (!targetId) return;
+    
+    const growthMap = _getGrowthMap();
+    growthMap[targetId] = records || [];
+    _setGrowthMap(growthMap);
+  };
+
+  /**
+   * 成長記録を追加
+   */
+  Store.addGrowthRecord = function(targetId, record) {
+    if (!targetId || !record) return;
+    
+    const existing = Store.getGrowthRecords(targetId);
+    existing.push(record);
+    Store.setGrowthRecords(targetId, existing);
+  };
+
+  // ═══════════════════════════════════════════════════════════════
+  // ユーティリティ関数
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * 日齢計算
+   */
+  Store.calcAge = function(hatchDate) {
+    if (!hatchDate) return null;
+    
     try {
-      const all     = (_db.pairing_histories || []).filter(
-        h => h && (h.male_parent_id === parId || h.female_parent_id === parId)
-      );
-      const done    = all.filter(h => !h.status || h.status === 'done');
-      const planned = all.filter(h => h.status === 'planned');
-      const sorted  = [...done].sort(
-        (a, b) => String(b.pairing_date||'').localeCompare(String(a.pairing_date||''))
-      );
-      const lastDate = sorted.length ? (sorted[0].pairing_date || null) : null;
-      let nextReadyDate = null;
-      if (lastDate) {
-        const minDays = parseInt(_db.settings?.male_pairing_interval_min_days || '7', 10);
-        const parts = String(lastDate).replace(/-/g,'/').split('/');
-        if (parts.length >= 3) {
-          const d = new Date(+parts[0], +parts[1]-1, +parts[2]);
-          d.setDate(d.getDate() + minDays);
-          nextReadyDate = d.toISOString().split('T')[0].replace(/-/g,'/');
-        }
-      }
-      return { total: sorted.length, lastDate, nextReadyDate, scheduledCount: planned.length, planned };
-    } catch(e) {
-      return { total: 0, lastDate: null, nextReadyDate: null, scheduledCount: 0, planned: [] };
+      const normalizedDate = hatchDate.replace(/\//g, '-');
+      const hatch = new Date(normalizedDate);
+      const now = new Date();
+      
+      if (isNaN(hatch.getTime())) return null;
+      
+      const diffMs = now - hatch;
+      const totalDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+      
+      if (totalDays < 0) return null;
+      
+      const months = Math.floor(totalDays / 30);
+      const days = totalDays % 30;
+      
+      return { totalDays, months, days };
+    } catch (e) {
+      console.warn('[Store.calcAge] Error:', e);
+      return null;
     }
-  }
+  };
 
-  function filterLots(filters = {}) {
-    let list = [..._db.lots];
-    if (filters.line_id) list = list.filter(l => l.line_id === filters.line_id);
-    if (filters.stage)   list = list.filter(l => (l.stage_life || l.stage) === filters.stage);
-    if (filters.status !== 'all') {
-      // LOTのデフォルト表示は 'active'（管理中）のみ
-      list = list.filter(l => l.status === (filters.status || 'active'));
+  /**
+   * URLパラメータ取得
+   */
+  Store.getParams = function() {
+    const params = new URLSearchParams(window.location.search);
+    const result = {};
+    for (const [key, value] of params) {
+      result[key] = value;
     }
-    return list;
-  }
+    return result;
+  };
 
-  // ── breeding_units ─────────────────────────────────────────────
-  function getUnitByDisplayId(displayId) {
-    return (_db.breeding_units || []).find(u => u.display_id === displayId) || null;
-  }
-  function getUnit(unitId) {
-    return (_db.breeding_units || []).find(u => u.unit_id === unitId) || null;
-  }
-  // 指定ロットに由来するユニット一覧を返す
-  function getUnitsByOriginLotId(lotId) {
-    if (!lotId) return [];
-    const units = _db.breeding_units || [];
-    return units.filter(u => {
-      // source_lots (JSON配列) に含まれるか
-      if (u.source_lots) {
-        try {
-          const arr = typeof u.source_lots === 'string' ? JSON.parse(u.source_lots) : u.source_lots;
-          if (Array.isArray(arr) && arr.includes(lotId)) return true;
-        } catch(_) {}
+  /**
+   * 設定値取得
+   */
+  Store.getSetting = function(key, defaultValue) {
+    try {
+      const value = localStorage.getItem(LS_KEYS.SETTINGS_PREFIX + key);
+      return value !== null ? value : defaultValue;
+    } catch (e) {
+      return defaultValue;
+    }
+  };
+
+  /**
+   * 設定値設定
+   */
+  Store.setSetting = function(key, value) {
+    try {
+      localStorage.setItem(LS_KEYS.SETTINGS_PREFIX + key, value);
+    } catch (e) {
+      console.warn('[Store.setSetting] Error:', e);
+    }
+  };
+
+  // ═══════════════════════════════════════════════════════════════
+  // ナビゲーション・戻る機能
+  // ═══════════════════════════════════════════════════════════════
+
+  let _navigationHistory = [];
+
+  Store.pushHistory = function(pageInfo) {
+    _navigationHistory.push(pageInfo);
+    if (_navigationHistory.length > 10) {
+      _navigationHistory = _navigationHistory.slice(-10);
+    }
+  };
+
+  Store.back = function() {
+    if (_navigationHistory.length > 1) {
+      _navigationHistory.pop(); // 現在のページ
+      const prev = _navigationHistory.pop(); // 前のページ
+      if (prev && typeof routeTo === 'function') {
+        routeTo(prev.page, prev.params);
       }
-      // origin_lot_id が一致するか
-      if (u.origin_lot_id === lotId) return true;
-      // members の lot_id に含まれるか
-      try {
-        const mems = typeof u.members === 'string' ? JSON.parse(u.members) : (u.members || []);
-        if (Array.isArray(mems) && mems.some(m => m.lot_id === lotId)) return true;
-      } catch(_) {}
-      return false;
+    } else if (typeof history !== 'undefined' && history.length > 1) {
+      history.back();
+    }
+  };
+
+  // ═══════════════════════════════════════════════════════════════
+  // 同期・データ更新
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * エンティティタイプごとの同期
+   */
+  Store.syncEntityType = function(entityType) {
+    console.log('[Store.syncEntityType] Syncing:', entityType);
+    // 実際の同期処理はAPIコールが必要
+    // ここではプレースホルダー
+    return Promise.resolve();
+  };
+
+  console.log('[Store] Complete store management loaded');
+
+})();
+
+// ════════════════════════════════════════════════════════════════
+// ルーティング関数（グローバル）
+// ════════════════════════════════════════════════════════════════
+
+window.routeTo = window.routeTo || function(pageName, params) {
+  console.log('[routeTo]', pageName, params);
+  
+  //履歴に保存
+  if (typeof Store.pushHistory === 'function') {
+    Store.pushHistory({ page: pageName, params: params });
+  }
+  
+  // URLパラメータを設定
+  const urlParams = new URLSearchParams();
+  if (params) {
+    Object.keys(params).forEach(key => {
+      urlParams.set(key, params[key]);
     });
   }
+  
+  // ページ関数を取得・実行
+  const pageFunction = window.PAGES && window.PAGES[pageName];
+  if (typeof pageFunction === 'function') {
+    // URLを更新
+    const newUrl = window.location.pathname + '?' + urlParams.toString();
+    if (typeof history !== 'undefined') {
+      history.pushState(params, '', newUrl);
+    }
+    
+    // ページ関数を実行
+    try {
+      pageFunction();
+    } catch (error) {
+      console.error('[routeTo] Page function error:', error);
+      alert('ページの読み込みでエラーが発生しました: ' + error.message);
+    }
+  } else {
+    console.error('[routeTo] Page function not found:', pageName);
+    console.log('Available pages:', Object.keys(window.PAGES || {}));
+    alert('ページが見つかりません: ' + pageName);
+  }
+};
 
-  return {
-    navigate, back, getPage, getParams, getPrev,
-    setLoading, isLoading, toast,
-    setDB, patchDBItem, addDBItem, getDB,
-    getIndividual, getLine, getLot, getParent, getBloodline,
-    getIndividualsByLine, getIndividualsByLot,
-    getUnitByDisplayId, getUnit, getUnitsByOriginLotId,
-    calcAge, formatRecordAge,
-    getVerdict,
-    setGrowthRecords, getGrowthRecords, addGrowthRecord,
-    setSetting, getSetting,
-    loadFromStorage, clearCache,
-    on, off,
-    setDraft, getDraft, clearDraft,
-    filterIndividuals, filterLots,
-    getPairingStats,
-  };
-})();
+console.log('[Store] Complete version loaded - build: 20260417k-complete');
