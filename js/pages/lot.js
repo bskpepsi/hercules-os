@@ -114,7 +114,13 @@ Pages.lotList = function () {
       `<div style="font-size:.75rem;color:var(--text3);margin-bottom:6px">${units.length}件</div>` +
       `<div id="unit-list-body">` +
       (units.length ? units.map(u => {
-        const lc = (() => { const l=lines.find(x=>x.line_id===u.line_id); return l?(l.line_code||l.display_id||u.line_id):u.line_id; })();
+        const lc = (() => {
+          const l = lines.find(x => x.line_id === u.line_id);
+          if (l) return l.line_code || l.display_id || '';
+          // フォールバック: display_id "HM2025-A1-U06" → "A1" を抽出
+          const dm = (u.display_id || '').match(/^[A-Za-z0-9]+-([A-Za-z][0-9]+)-[A-Za-z]/);
+          return dm ? dm[1] : '';
+        })();
         const ph = u.stage_phase||'—';
         const sc = u.size_category||'—';
         const hc = u.head_count||2;
@@ -159,9 +165,13 @@ Pages.lotList = function () {
             if (!sl.length) return '';
             const names = sl.map(lid => {
               const lot = Store.getLot && Store.getLot(lid);
-              return lot ? (lot.display_id || lid).replace(/^HM\d+-/,'') : lid;
-            });
-            return '由来: ' + names.join('/');
+              if (!lot) return null; // 解決できない内部IDは非表示
+              const d = lot.display_id || '';
+              // "HM2025-A1-L02" → "A1-L02" に短縮
+              const m = d.match(/^[A-Za-z0-9]+-([A-Za-z][0-9]+-L\d+)/);
+              return m ? m[1] : d;
+            }).filter(Boolean);
+            return names.length ? '由来: ' + names.join('/') : '';
           } catch(_e){ return ''; }
         })();
 
