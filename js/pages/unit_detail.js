@@ -32,11 +32,13 @@ function _udFormatOriginLots(unit) {
   if (srcLots.length === 0) return '—';
   const displayIds = srcLots.map(lid => {
     const lot = Store.getLot && Store.getLot(lid);
-    const did = lot ? (lot.display_id || lid) : lid;
-    const m = did.match(/[A-Z0-9]+-L\d+/);
-    return m ? m[0] : did;
-  });
-  return displayIds.join(' / ');
+    if (!lot) return null; // 解決できない内部IDは非表示
+    const did = lot.display_id || '';
+    // "HM2025-A1-L01" → "A1-L01" に短縮
+    const m = did.match(/^[A-Za-z0-9]+-([A-Za-z][0-9]+-L\d+)/);
+    return m ? m[1] : did;
+  }).filter(Boolean);
+  return displayIds.length ? displayIds.join(' / ') : '—';
 }
 
 function _udParseMembers(unit) {
@@ -132,7 +134,12 @@ function _udRenderGrowthRecords(records) {
 
 function _renderUnitDetail(unit, main) {
   const line      = Store.getLine(unit.line_id);
-  const lineCode  = line ? (line.line_code || line.display_id) : (unit.line_id || '—');
+  const lineCode  = (() => {
+    if (line) return line.line_code || line.display_id || '';
+    // フォールバック: "HM2025-A1-U06" → "A1" を抽出
+    const dm = (unit.display_id || '').match(/^[A-Za-z0-9]+-([A-Za-z][0-9]+)-[A-Za-z]/);
+    return dm ? dm[1] : (unit.line_id || '—');
+  })();
   const originStr = _udFormatOriginLots(unit);
   const members   = _udParseMembers(unit);
   const memberInds = _udFindMemberInds(unit);

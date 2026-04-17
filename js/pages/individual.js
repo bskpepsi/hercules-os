@@ -2,8 +2,11 @@
 // individual.js
 // 役割: 個体の一覧・詳細・新規登録・編集・ステータス変更を担う。
 //       個体台帳の中心画面。ロット・成長記録・ラベルへの導線も持つ。
-// build: 20260414b
+// build: 20260414b-fix1
 //
+// 20260414b-fix1 修正:
+//   - 個体一覧カードのライン未表示を修正
+//     （line_id がキャッシュで解決できない場合に display_id からフォールバック抽出）
 // 20260414a 修正:
 //   - 個体一覧カードのステージバッジを短縮表示（成虫（活動開始）→活動中 等）
 //     長いバッジ名によるカードレイアウト崩れを修正
@@ -13,7 +16,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] individual.js v20260414b loaded');
+console.log('[HerculesOS] individual.js v20260414b-fix1 loaded');
 
 const Pages = window.Pages || {};
 
@@ -257,14 +260,13 @@ function _toDisplayStageLabel(code) {
 
 // ────────────────────────────────────────────────────────────────
 // _toDisplayStageLabelShort — 一覧カード用短縮ラベル
-// 「成虫（活動開始）」→「活動中」のように短縮してカード崩れを防ぐ
 // ────────────────────────────────────────────────────────────────
 function _toDisplayStageLabelShort(code) {
   if (!code) return '';
   const map = {
     L1L2:'L1L2', L3:'L3', PREPUPA:'前蛹', PUPA:'蛹',
-    ADULT_PRE:'未後食',   // 成虫（未後食）→ 未後食
-    ADULT:'活動中',       // 成虫（活動開始）→ 活動中
+    ADULT_PRE:'未後食',
+    ADULT:'活動中',
     L1:'L1L2', L2_EARLY:'L1L2', L2_LATE:'L1L2',
     L3_EARLY:'L3', L3_MID:'L3', L3_LATE:'L3',
     EGG:'L1L2', T0:'L1L2', T1:'L1L2', T2A:'L3', T2B:'L3', T3:'L3',
@@ -306,12 +308,11 @@ function _toDisplayStageBadgeShort(code) {
     '活動中':  '#c8a84b',
   };
   const c = colorMap[label] || '#888';
-  // title属性にフルラベルを設定（タップ長押しで確認可能）
   return '<span class="badge" title="' + labelFull + '" style="background:' + c + '22;color:' + c + ';border:1px solid ' + c + '55;white-space:nowrap">' + label + '</span>';
 }
 
 // ────────────────────────────────────────────────────────────────
-// _indCardHTML — 個体一覧カード（ロット・ユニット一覧と統一レイアウト）
+// _indCardHTML — 個体一覧カード
 // ────────────────────────────────────────────────────────────────
 function _indCardHTML(ind) {
   const ageObj     = ind.hatch_date ? Store.calcAge(ind.hatch_date) : null;
@@ -320,8 +321,14 @@ function _indCardHTML(ind) {
   const w  = ind.latest_weight_g ? ind.latest_weight_g + 'g' : null;
   const sz = ind.adult_size_mm   ? ind.adult_size_mm + 'mm'  : null;
 
+  // ── Bug fix: line_id で見つからない場合は display_id から抽出 ──
   const line    = ind.line_id ? Store.getLine(ind.line_id) : null;
-  const lineStr = line ? (line.line_code || line.display_id || '') : '';
+  const lineStr = (() => {
+    if (line) return line.line_code || line.display_id || '';
+    // フォールバック: "HM2025-A1-001" → "A1" を抽出
+    const dm = (ind.display_id || '').match(/^[A-Za-z0-9]+-([A-Za-z][0-9]+)-\d+/);
+    return dm ? dm[1] : '';
+  })();
 
   const stColor = {
     alive:'var(--green)', larva:'var(--green)', prepupa:'var(--green)',
@@ -347,7 +354,6 @@ function _indCardHTML(ind) {
   const sexColor = ind.sex === '♂' ? 'var(--male,#5ba8e8)' : ind.sex === '♀' ? 'var(--female,#e87fa0)' : 'var(--text3)';
   const dispId   = _safeDisplayId(ind);
 
-  // サブ情報: ステージ / 日齢 / 体重 / 成虫サイズ（産地は非表示）
   const stageLbl = _toDisplayStageLabelShort(ind.current_stage);
   const stageColorMap = {
     'L1L2':'var(--green)', 'L3':'var(--blue)', '前蛹':'#e65100',
@@ -365,7 +371,6 @@ function _indCardHTML(ind) {
 
   return '<div class="card" style="padding:12px 14px;cursor:pointer;display:flex;align-items:center;gap:0;margin-bottom:8px"'
     + " onclick=\"routeTo('ind-detail',{indId:'" + ind.ind_id + "'})\">"
-    + ''
 
     // ①列: ライン + 性別
     + '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;'
@@ -1371,5 +1376,3 @@ function _closeModal() {
 }
 
 window._closeModal = _closeModal;
-
-// ────────────────────────────────────────────────────────────────
