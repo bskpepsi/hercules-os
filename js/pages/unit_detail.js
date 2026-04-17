@@ -1,11 +1,15 @@
 // ════════════════════════════════════════════════════════════════
 // unit_detail.js — 飼育ユニット（BU）詳細画面
-// build: 20260414c-fix1
+// build: 20260417a-fix2
 // 変更点:
-//   - Bug 4: 孵化日に生のDate文字列が表示される問題を修正（_udFormatDate追加）
-//   - Bug 5: メンバー行の未判別性別「?」を非表示に修正
+//   - [fix2] _udSaveBasic の構文エラー修正（try-catch閉じた後の孤立コード削除）
+//           これにより孵化日保存エラー・詳細画面真っ暗問題を解消
+//   - [fix1] 孵化日に生のDate文字列が表示される問題を修正（_udFormatDate追加）
+//   - [fix1] メンバー行の未判別性別「?」を非表示に修正
 // ════════════════════════════════════════════════════════════════
 'use strict';
+
+console.log('[HerculesOS] unit_detail.js v20260417a-fix2 loaded');
 
 // ── Bug 4 修正: 孵化日フォーマット関数 ─────────────────────────
 function _udFormatDate(d) {
@@ -79,6 +83,9 @@ Pages.unitDetail = function (params = {}) {
   const main = document.getElementById('main');
   if (!main) return;
 
+  // ── 診断ログ（fix2+） ──
+  console.log('[UD] unitDetail called params=', params);
+
   const unitDisplayId = params.unitDisplayId || params.displayId || params.display_id || '';
   const unitId        = params.unitId        || params.unit_id   || '';
 
@@ -93,6 +100,7 @@ Pages.unitDetail = function (params = {}) {
   }
 
   if (!unit) {
+    console.warn('[UD] unit not found', { unitDisplayId, unitId });
     main.innerHTML = `
       ${UI.header('ユニット詳細', { back: true })}
       <div class="page-body">
@@ -105,7 +113,32 @@ Pages.unitDetail = function (params = {}) {
     return;
   }
 
-  _renderUnitDetail(unit, main);
+  // ── 描画エラー時のセーフティネット（fix2+） ──
+  // 真っ暗になる代わりにエラーメッセージを表示する
+  try {
+    _renderUnitDetail(unit, main);
+  } catch (e) {
+    console.error('[UD] render error:', e);
+    const msg = (e && (e.message || e.toString())) || '不明なエラー';
+    const stack = (e && e.stack) || '';
+    main.innerHTML = `
+      ${UI.header('ユニット詳細', { back: true })}
+      <div class="page-body">
+        <div class="card" style="padding:16px;border:2px solid #e05050">
+          <div style="color:#e05050;font-weight:700;font-size:1rem;margin-bottom:8px">⚠️ 描画エラーが発生しました</div>
+          <div style="font-size:.85rem;color:var(--text1);margin-bottom:8px">${msg.replace(/[<>]/g, '')}</div>
+          <div style="font-size:.7rem;color:var(--text3);margin-bottom:12px">
+            ユニット: ${(unit.display_id || unit.unit_id || '?').replace(/[<>]/g, '')}<br>
+            hatch_date: ${String(unit.hatch_date||'(null)').replace(/[<>]/g, '').slice(0,50)}<br>
+            status: ${unit.status || '(null)'}
+          </div>
+          <details style="font-size:.7rem;color:var(--text3)">
+            <summary>スタックトレース</summary>
+            <pre style="overflow:auto;max-height:200px;background:var(--surface2);padding:8px;border-radius:6px;font-size:.65rem">${stack.replace(/[<>]/g, '')}</pre>
+          </details>
+        </div>
+      </div>`;
+  }
 };
 
 // ────────────────────────────────────────────────────────────────
@@ -383,11 +416,6 @@ Pages._udSaveBasic = async function (unitId, displayId) {
     if (typeof Store.patchDBItem === 'function') {
       Store.patchDBItem('breeding_units', 'unit_id', unitId, updates);
     }
-  } finally {
-    UI.loading(false);
-  }
-    UI.toast('保存失敗（ローカルのみ更新）: ' + (e.message || ''), 'error');
-    Pages.unitDetail({ unitDisplayId: displayId });
   } finally {
     UI.loading(false);
   }
