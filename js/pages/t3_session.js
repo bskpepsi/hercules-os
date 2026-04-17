@@ -1,9 +1,14 @@
 // FILE: js/pages/t3_session.js
-// build: 20260413bj-fix1
+// build: 20260417a-fix2
 // 変更点:
-//   - t3SessionStart: unit.line_id が空の場合に display_id から line_code を抽出してフォールバック解決
-//   - _renderT3Session: lineDisp に同じフォールバック追加
+//   - [fix2] window.Pages → Pages に統一（6箇所）
+//           window.Pages が undefined のため TypeError を起こしていたのを修正
+//           このエラーが app.js:Pages is not defined 連鎖の元凶だった
+//   - [fix1] t3SessionStart: unit.line_id が空の場合に display_id から line_code を抽出してフォールバック解決
+//   - [fix1] _renderT3Session: lineDisp に同じフォールバック追加
 'use strict';
+
+console.log('[HerculesOS] t3_session.js v20260417a-fix2 loaded');
 
 window._t3Session = window._t3Session || null;
 
@@ -700,7 +705,7 @@ function _registerBacilusReminder(unitId, displayId, exchangeDate) {
   console.log('[T3] バチルスリマインド登録:', displayId, '→', remindDate);
 }
 
-window.Pages._bacilusMarkDone = function(reminderId) {
+Pages._bacilusMarkDone = function(reminderId) {
   var reminders = _getBacilusReminders();
   var today = new Date().toISOString().split('T')[0].replace(/-/g, '/');
   reminders = reminders.map(function(r){
@@ -711,7 +716,7 @@ window.Pages._bacilusMarkDone = function(reminderId) {
   if (typeof Pages._refreshBacilusReminders === 'function') Pages._refreshBacilusReminders();
 };
 
-window.Pages._bacilusSnooze = function(reminderId) {
+Pages._bacilusSnooze = function(reminderId) {
   var reminders = _getBacilusReminders();
   var snoozeDate = new Date(); snoozeDate.setDate(snoozeDate.getDate() + 3);
   var sd = snoozeDate.getFullYear() + '/'
@@ -773,18 +778,18 @@ window._renderBacilusReminderBanner = function() {
     + '</div>';
 };
 
-window.Pages._bacilusDoneIdx = function(idx) {
+Pages._bacilusDoneIdx = function(idx) {
   var due = window._getBacilusDueReminders();
   var r   = due[idx];
-  if (r) window.Pages._bacilusMarkDone(r.id);
+  if (r) Pages._bacilusMarkDone(r.id);
 };
-window.Pages._bacilusSnoozeIdx = function(idx) {
+Pages._bacilusSnoozeIdx = function(idx) {
   var due = window._getBacilusDueReminders();
   var r   = due[idx];
-  if (r) window.Pages._bacilusSnooze(r.id);
+  if (r) Pages._bacilusSnooze(r.id);
 };
 
-window.Pages._refreshBacilusReminders = function() {
+Pages._refreshBacilusReminders = function() {
   var area = document.getElementById('bacilus-remind-area');
   if (!area) return;
   var newHtml = window._renderBacilusReminderBanner();
