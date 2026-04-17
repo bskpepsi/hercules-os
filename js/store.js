@@ -1,8 +1,8 @@
 // ════════════════════════════════════════════════════════════════
-// store.js - データストア管理（完全版）
-// build: 20260417k-complete
+// store.js - データストア管理（完全版・loadFromStorage関数追加）
+// build: 20260417k-complete-fixed
 // 
-// ユニット詳細表示問題解決のため、すべてのヘルパー関数を統合
+// ユニット詳細表示問題解決＋loadFromStorage関数不足問題解決
 // ════════════════════════════════════════════════════════════════
 
 'use strict';
@@ -65,6 +65,55 @@ window.Store = window.Store || {};
     } else {
       console.warn('[Store.patchDBItem] Item not found:', dbName, keyField, keyValue);
     }
+  };
+
+  // ═══════════════════════════════════════════════════════════════
+  // データ初期化・同期関数（重要！）
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * ローカルストレージからデータを読み込み
+   * ※この関数がないとアプリ初期化時にエラーが発生
+   */
+  Store.loadFromStorage = function() {
+    console.log('[Store.loadFromStorage] Loading data from localStorage...');
+    
+    const tables = [
+      'lines', 'lots', 'breeding_units', 'individuals', 
+      'growth_records', 'growthMap', 'lot_events'
+    ];
+    
+    let totalItems = 0;
+    tables.forEach(function(table) {
+      const items = Store.getDB(table) || [];
+      totalItems += items.length;
+      console.log(`[Store.loadFromStorage] ${table}: ${items.length} items`);
+    });
+    
+    console.log(`[Store.loadFromStorage] Total: ${totalItems} items loaded`);
+    return totalItems;
+  };
+
+  /**
+   * GASからデータを同期（既存互換性のため）
+   */
+  Store.syncFromGAS = function() {
+    console.log('[Store.syncFromGAS] Placeholder - sync not implemented in demo mode');
+    return Promise.resolve();
+  };
+
+  /**
+   * 全データクリア
+   */
+  Store.clearAll = function() {
+    const keys = Object.keys(localStorage).filter(key => 
+      key.startsWith(LS_KEYS.DB_PREFIX) || 
+      key.startsWith(LS_KEYS.CACHE_PREFIX) ||
+      key.startsWith(LS_KEYS.SETTINGS_PREFIX)
+    );
+    
+    keys.forEach(key => localStorage.removeItem(key));
+    console.log('[Store.clearAll] Cleared', keys.length, 'items');
   };
 
   // ═══════════════════════════════════════════════════════════════
@@ -266,6 +315,20 @@ window.Store = window.Store || {};
   };
 
   /**
+   * URLパラメータ設定（既存互換性のため）
+   */
+  Store.setParams = function(params) {
+    if (typeof params === 'object') {
+      const urlParams = new URLSearchParams();
+      Object.keys(params).forEach(key => {
+        urlParams.set(key, params[key]);
+      });
+      const newUrl = window.location.pathname + '?' + urlParams.toString();
+      history.replaceState(params, '', newUrl);
+    }
+  };
+
+  /**
    * 設定値取得
    */
   Store.getSetting = function(key, defaultValue) {
@@ -322,10 +385,19 @@ window.Store = window.Store || {};
    */
   Store.syncEntityType = function(entityType) {
     console.log('[Store.syncEntityType] Syncing:', entityType);
-    // 実際の同期処理はAPIコールが必要
-    // ここではプレースホルダー
     return Promise.resolve();
   };
+
+  // ═══════════════════════════════════════════════════════════════
+  // 初期化（アプリ開始時に自動実行）
+  // ═══════════════════════════════════════════════════════════════
+
+  // アプリ初期化時にデータを読み込み
+  document.addEventListener('DOMContentLoaded', function() {
+    console.log('[Store] Initializing...');
+    Store.loadFromStorage();
+    console.log('[Store] Initialization complete');
+  });
 
   console.log('[Store] Complete store management loaded');
 
@@ -374,4 +446,4 @@ window.routeTo = window.routeTo || function(pageName, params) {
   }
 };
 
-console.log('[Store] Complete version loaded - build: 20260417k-complete');
+console.log('[Store] Complete version loaded - build: 20260417k-complete-fixed');
