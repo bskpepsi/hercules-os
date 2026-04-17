@@ -1,10 +1,10 @@
 // ════════════════════════════════════════════════════════════════
 // unit_detail.js — 飼育ユニット（BU）詳細画面
-// build: 20260417a-fix3
+// build: 20260417a-fix4
 // 変更点:
-//   - [fix3] UI.select の id未付与バグ対応
-//           document.getElementById('ud-mat/ud-cont') が null を返し
-//           空文字が送信されていたのを、select要素直書きで id を明示して修正
+//   - [fix4] 編集モーダルの値取得をDOM参照から window._udEditState 経由に変更
+//           onchangeで状態オブジェクトに保存、保存時はそこから読む
+//           → id属性やUI.select実装に依存せず確実に動作する
 //   - [fix3] 容器サイズ選択肢を業務仕様通り 1.8L/2.7L/4.8L/その他 の4択に（3.5L削除）
 //   - [fix2] _udSaveBasic の構文エラー修正（try-catch閉じた後の孤立コード削除）
 //   - [fix2] 描画エラー時のセーフティネット追加（画面真っ暗対策）
@@ -13,7 +13,7 @@
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-console.log('[HerculesOS] unit_detail.js v20260417a-fix3 loaded');
+console.log('[HerculesOS] unit_detail.js v20260417a-fix4 loaded');
 
 // ── Bug 4 修正: 孵化日フォーマット関数 ─────────────────────────
 function _udFormatDate(d) {
@@ -365,8 +365,18 @@ Pages._udEditBasic = function (displayId) {
   const unit = Store.getUnitByDisplayId && Store.getUnitByDisplayId(displayId);
   if (!unit) { UI.toast('ユニットが見つかりません', 'error'); return; }
 
-  // [fix3] UI.select は id 属性を付けないため、select要素を直接記述してid属性を明示する
-  // 以前は document.getElementById('ud-mat') が null になり、空文字が送信されていた
+  // [fix4] id依存からオブジェクト経由に変更
+  // UI.selectがid属性を付けない仕様のため、getElementById('ud-mat')がnullになっていた
+  // モーダル内のonchange/oninputでwindow._udEditStateに値を保存し、保存時はそこから読む
+  window._udEditState = {
+    unit_id:        unit.unit_id,
+    display_id:     displayId,
+    hatch_date:     (unit.hatch_date || '').replace(/\//g, '-'),
+    mat_type:       unit.mat_type || '',
+    container_size: unit.container_size || '',
+    note:           unit.note || '',
+  };
+
   const matOptions = [
     { code:'T1', label:'T1マット' },
     { code:'T2', label:'T2マット' },
@@ -381,58 +391,75 @@ Pages._udEditBasic = function (displayId) {
   ];
   const curMat  = unit.mat_type || '';
   const curCont = unit.container_size || '';
-  const matSelect  = '<select id="ud-mat" name="ud-mat" class="input">'
+
+  // 全入力要素にid属性を明示し、かつonchangeで window._udEditState に確実に保存
+  const hatchInput = '<input type="date" id="ud-hatch" class="input"'
+    + ' value="' + (unit.hatch_date||'').replace(/\//g,'-') + '"'
+    + ' onchange="window._udEditState.hatch_date=this.value">';
+
+  const matSelect = '<select id="ud-mat" class="input"'
+    + ' onchange="window._udEditState.mat_type=this.value">'
     + '<option value="">選択...</option>'
     + matOptions.map(o => `<option value="${o.code}" ${o.code === curMat ? 'selected' : ''}>${o.label}</option>`).join('')
     + '</select>';
-  const contSelect = '<select id="ud-cont" name="ud-cont" class="input">'
+
+  const contSelect = '<select id="ud-cont" class="input"'
+    + ' onchange="window._udEditState.container_size=this.value">'
     + '<option value="">選択...</option>'
     + contOptions.map(o => `<option value="${o.code}" ${o.code === curCont ? 'selected' : ''}>${o.label}</option>`).join('')
     + '</select>';
 
+  const noteInput = '<input type="text" id="ud-note" class="input"'
+    + ' value="' + (unit.note||'').replace(/"/g, '&quot;') + '"'
+    + ' oninput="window._udEditState.note=this.value">';
+
   UI.modal(`
     <div class="modal-title">基本情報を編集</div>
     <div class="form-section" style="margin-top:8px">
-      ${UI.field('孵化日',   '<input type="date" id="ud-hatch" class="input" value="' + (unit.hatch_date||'').replace(/\//g,'-') + '">')}
+      ${UI.field('孵化日',   hatchInput)}
       ${UI.field('マット種別', matSelect)}
       ${UI.field('容器サイズ', contSelect)}
-      ${UI.field('メモ', '<input type="text" id="ud-note" class="input" value="' + (unit.note||'') + '">')}
+      ${UI.field('メモ', noteInput)}
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" style="flex:1" onclick="UI.closeModal()">キャンセル</button>
-      <button class="btn btn-primary" style="flex:2" onclick="Pages._udSaveBasic('${unit.unit_id}','${displayId}')">保存</button>
+      <button class="btn btn-primary" style="flex:2" onclick="Pages._udSaveBasic()">保存</button>
     </div>
   `);
 };
 
-Pages._udSaveBasic = async function (unitId, displayId) {
-  const hatch = (document.getElementById('ud-hatch')?.value || '').replace(/-/g, '/');
-  const mat   = document.getElementById('ud-mat')?.value   || '';
-  const cont  = document.getElementById('ud-cont')?.value  || '';
-  const note  = document.getElementById('ud-note')?.value  || '';
+Pages._udSaveBasic = async function () {
+  // [fix4] window._udEditState から値を取得（DOM参照しない）
+  const state = window._udEditState || {};
+  const unitId    = state.unit_id;
+  const displayId = state.display_id;
+  if (!unitId) { UI.toast('編集対象が不明です', 'error'); return; }
+
+  const updates = {
+    unit_id:        unitId,
+    hatch_date:     (state.hatch_date || '').replace(/-/g, '/'),
+    mat_type:       state.mat_type || '',
+    container_size: state.container_size || '',
+    note:           state.note || '',
+  };
+
+  console.log('[UD][fix4] save updates=', updates);
   UI.closeModal();
-  const updates = { unit_id: unitId, hatch_date: hatch, mat_type: mat, container_size: cont, note };
+
   try {
     UI.loading(true);
-    
-    // API.unit.update を使用（api.js で定義済み）
     await API.unit.update(updates);
-    
+
     // Storeを更新
     if (typeof Store.patchDBItem === 'function') {
       Store.patchDBItem('breeding_units', 'unit_id', unitId, updates);
     }
-    
+
     UI.toast('✅ 基本情報を更新しました', 'success', 2000);
-    
-    // 画面を再描画
     Pages.unitDetail({ unitDisplayId: displayId });
-    
   } catch(e) {
     console.error('[UNIT_DETAIL] save error:', e);
     UI.toast('❌ 保存失敗: ' + (e.message || '通信エラー'), 'error', 4000);
-    
-    // エラー時もStoreを更新（オフライン対応）
     if (typeof Store.patchDBItem === 'function') {
       Store.patchDBItem('breeding_units', 'unit_id', unitId, updates);
     }
