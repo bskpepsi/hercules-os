@@ -1,122 +1,243 @@
 // ════════════════════════════════════════════════════════════════
-// unit_detail.js — ユニット詳細画面（完全版）
-// build: 20260417k-complete
-// 
-// デバッグ機能統合・BU成長記録修正・編集保存修正を含む完全版
+// unit_detail.js — 飼育ユニット（BU）詳細画面
+// build: 20260414c-fix1
+// 変更点:
+//   - Bug 4: 孵化日に生のDate文字列が表示される問題を修正（_udFormatDate追加）
+//   - Bug 5: メンバー行の未判別性別「?」を非表示に修正
 // ════════════════════════════════════════════════════════════════
-
 'use strict';
 
+// ── Bug 4 修正: 孵化日フォーマット関数 ─────────────────────────
+function _udFormatDate(d) {
+  if (!d) return '—';
+  var s = String(d);
+  // 既に YYYY/MM/DD または YYYY-MM-DD 形式
+  if (/^\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}$/.test(s)) return s.replace(/-/g, '/');
+  // "Sat Jan 31 2026 ..." などの Date.toString() 形式をパース
+  var dt = new Date(s);
+  if (!isNaN(dt.getTime())) {
+    return dt.getFullYear() + '/'
+      + String(dt.getMonth() + 1).padStart(2, '0') + '/'
+      + String(dt.getDate()).padStart(2, '0');
+  }
+  return s;
+}
+
+function _udFormatOriginLots(unit) {
+  let srcLots = [];
+  if (unit.source_lots) {
+    try { srcLots = typeof unit.source_lots === 'string' ? JSON.parse(unit.source_lots) : (unit.source_lots || []); } catch(_) {}
+  }
+  if (srcLots.length === 0 && unit.origin_lot_id) srcLots = [unit.origin_lot_id];
+  if (srcLots.length === 0) return '—';
+  const displayIds = srcLots.map(lid => {
+    const lot = Store.getLot && Store.getLot(lid);
+    if (!lot) return null; // 解決できない内部IDは非表示
+    const did = lot.display_id || '';
+    // "HM2025-A1-L01" → "A1-L01" に短縮
+    const m = did.match(/^[A-Za-z0-9]+-([A-Za-z][0-9]+-L\d+)/);
+    return m ? m[1] : did;
+  }).filter(Boolean);
+  return displayIds.length ? displayIds.join(' / ') : '—';
+}
+
+function _udParseMembers(unit) {
+  const raw = unit.members;
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === 'string' && raw.trim()) {
+    try { return JSON.parse(raw); } catch(_) {}
+  }
+  return [];
+}
+
+// 個体一覧からこのユニット由来の個体を検索
+function _udFindMemberInds(unit) {
+  const allInds = Store.getDB('individuals') || [];
+  const byUnit = allInds.filter(i =>
+    i.origin_unit_id === unit.unit_id ||
+    i.source_unit_id === unit.unit_id ||
+    i.source_unit_display_id === unit.display_id
+  );
+  if (byUnit.length > 0) return byUnit;
+
+  const members = _udParseMembers(unit);
+  if (members.length === 0) return [];
+  const matched = [];
+  members.forEach(m => {
+    if (!m.lot_id) return;
+    const found = allInds.find(i =>
+      i.lot_id === m.lot_id &&
+      String(i.lot_item_no || '') === String(m.lot_item_no || '')
+    );
+    if (found) matched.push(found);
+  });
+  return matched;
+}
+
+// ════════════════════════════════════════════════════════════════
 Pages.unitDetail = function (params = {}) {
-  console.log('[UNIT_DETAIL] Loading with params:', params);
-  
   const main = document.getElementById('main');
-  
-  let unitDisplayId = params.unitDisplayId || params.displayId || '';
-  
-  if (!unitDisplayId) {
-    console.error('[UNIT_DETAIL] No unitDisplayId provided');
-    main.innerHTML = `
-      ${UI.header('ユニット詳細', { back: true })}
-      <div class="page-body">
-        <div class="card">
-          <div style="text-align:center;color:var(--red);padding:40px 20px">
-            ⚠️ ユニットIDが指定されていません<br>
-            <button class="btn btn-primary" onclick="routeTo('lot-unit-list')">一覧に戻る</button>
-          </div>
-        </div>
-      </div>`;
-    return;
+  if (!main) return;
+
+  const unitDisplayId = params.unitDisplayId || params.displayId || params.display_id || '';
+  const unitId        = params.unitId        || params.unit_id   || '';
+
+  let unit = unitDisplayId
+    ? (Store.getUnitByDisplayId && Store.getUnitByDisplayId(unitDisplayId))
+    : null;
+  if (!unit && unitId) {
+    unit = (Store.getDB('breeding_units') || []).find(u => u.unit_id === unitId);
+  }
+  if (!unit && unitDisplayId) {
+    unit = (Store.getDB('breeding_units') || []).find(u => u.display_id === unitDisplayId);
   }
 
-  // ユニット情報を取得（デバッグ情報付き）
-  function _getUnitInfo() {
-    console.log('[UNIT_DETAIL] Getting unit info for:', unitDisplayId);
-    
-    // Store関数の存在確認
-    if (typeof Store.getUnitByDisplayId !== 'function') {
-      console.error('[UNIT_DETAIL] Store.getUnitByDisplayId is not a function');
-      console.log('[UNIT_DETAIL] Available Store functions:', Object.keys(Store || {}));
-      return null;
-    }
-    
-    const unit = Store.getUnitByDisplayId(unitDisplayId);
-    console.log('[UNIT_DETAIL] Unit found:', !!unit);
-    if (unit) {
-      console.log('[UNIT_DETAIL] Unit details:', {
-        unit_id: unit.unit_id,
-        display_id: unit.display_id,
-        line_id: unit.line_id,
-        status: unit.status
-      });
-    }
-    
-    return unit;
-  }
-
-  const unit = _getUnitInfo();
-  
   if (!unit) {
-    console.error('[UNIT_DETAIL] Unit not found:', unitDisplayId);
     main.innerHTML = `
       ${UI.header('ユニット詳細', { back: true })}
       <div class="page-body">
-        <div class="card">
-          <div style="text-align:center;color:var(--red);padding:40px 20px">
-            ⚠️ ユニットが見つかりません<br>
-            <span style="font-size:.8rem;color:var(--text3)">ID: ${unitDisplayId}</span><br><br>
-            <button class="btn btn-primary" onclick="routeTo('lot-unit-list')">一覧に戻る</button>
-          </div>
+        <div class="card" style="text-align:center;padding:20px">
+          <div style="font-size:1.5rem;margin-bottom:8px">🔍</div>
+          <div>ユニットが見つかりません</div>
+          <div style="font-size:.75rem;margin-top:4px;color:var(--text3)">${unitDisplayId || unitId || '(ID未指定)'}</div>
         </div>
       </div>`;
     return;
   }
 
-  function _udRender(unit) {
-    const line = unit.line_id ? Store.getLine(unit.line_id) : null;
-    
-    // ライン情報のフォールバック処理
-    const lineDisp = (() => {
-      if (line) return line.line_code || line.display_id || '';
-      // display_id からライン情報を抽出 (例: "HM2025-A1-U06" → "A1")
-      const match = (unit.display_id || '').match(/^[A-Za-z0-9]+-([A-Za-z][0-9]+)-/);
-      return match ? match[1] : (unit.line_id || '—');
-    })();
+  _renderUnitDetail(unit, main);
+};
 
-    const age = unit.hatch_date ? Store.calcAge(unit.hatch_date) : null;
-    const records = Store.getGrowthRecords ? Store.getGrowthRecords(unit.unit_id) : [];
-    const latestRec = records.find(r => r.weight_g && +r.weight_g > 0);
+// ────────────────────────────────────────────────────────────────
+function _udRenderGrowthRecords(records) {
+  if (!records || records.length === 0) return '';
+  return [...records]
+    .sort((a,b) => String(b.record_date).localeCompare(String(a.record_date)))
+    .slice(0, 10)
+    .map(r => {
+      const dateShort = String(r.record_date||'').slice(5);
+      const wStr = r.weight_g ? r.weight_g + 'g' : '—';
+      const slotBadge = r.unit_slot_no
+        ? `<span style="font-size:.65rem;padding:1px 5px;background:rgba(91,168,232,.15);color:var(--blue);border-radius:4px">${r.unit_slot_no}頭目</span>`
+        : '';
+      const evBadge = r.event_type
+        ? `<span style="font-size:.65rem;padding:1px 5px;background:rgba(224,144,64,.15);color:var(--amber);border-radius:4px">${r.event_type}</span>`
+        : '';
+      return '<div style="display:flex;gap:6px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border2);font-size:.78rem">'
+        + `<span style="color:var(--text3);min-width:60px">${dateShort}</span>`
+        + `<span style="font-weight:700">${wStr}</span>`
+        + slotBadge + evBadge
+        + `<span style="color:var(--text3);font-size:.7rem">${r.mat_type||''}</span>`
+        + '</div>';
+    }).join('');
+}
 
-    // メンバー情報の解析
-    let members = [];
-    let headCount = 2;
-    try {
-      const raw = unit.members;
-      if (Array.isArray(raw)) {
-        members = raw;
-      } else if (typeof raw === 'string' && raw.trim()) {
-        members = JSON.parse(raw);
-      }
-      headCount = Math.max(parseInt(unit.head_count, 10) || 2, members.length, 1);
-    } catch(e) {
-      console.warn('[UNIT_DETAIL] member parsing failed:', e);
-    }
+function _renderUnitDetail(unit, main) {
+  const line      = Store.getLine(unit.line_id);
+  const lineCode  = (() => {
+    if (line) return line.line_code || line.display_id || '';
+    // フォールバック: "HM2025-A1-U06" → "A1" を抽出
+    const dm = (unit.display_id || '').match(/^[A-Za-z0-9]+-([A-Za-z][0-9]+)-[A-Za-z]/);
+    return dm ? dm[1] : (unit.line_id || '—');
+  })();
+  const originStr = _udFormatOriginLots(unit);
+  const members   = _udParseMembers(unit);
+  const memberInds = _udFindMemberInds(unit);
+  const records   = (Store.getGrowthRecords && Store.getGrowthRecords(unit.unit_id)) || [];
+  const latestRec = records.length > 0
+    ? [...records].sort((a,b) => String(b.record_date).localeCompare(String(a.record_date)))[0]
+    : null;
 
-    main.innerHTML = `
-      ${UI.header('🏠 ' + unit.display_id, { 
-        back: true, 
-        backFn: "routeTo('lot-unit-list')" 
-      })}
-      <div class="page-body">
+  const isIndividualized = unit.status === 'individualized';
+  const statusColor = unit.status === 'active' ? 'var(--green)'
+    : isIndividualized ? 'var(--blue)'
+    : unit.status === 'reserved' ? 'var(--amber)' : 'var(--text3)';
+  const statusLabel = unit.status === 'active' ? '飼育中'
+    : isIndividualized ? '個別化済'
+    : unit.status === 'reserved' ? '予約中' : (unit.status || '—');
 
-      <!-- ステータスバー -->
-      <div style="background:var(--surface2);border-radius:10px;padding:12px 14px;margin-bottom:10px">
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
-          <span style="background:rgba(76,175,120,.15);color:var(--green);padding:4px 8px;border-radius:6px;font-size:.72rem;font-weight:700">${unit.status === 'active' ? '飼育中' : unit.status}</span>
-          <span style="background:rgba(91,168,232,.15);color:var(--blue);padding:4px 8px;border-radius:6px;font-size:.72rem;font-weight:700">${unit.stage_phase || 'T1'}</span>
-          <span style="color:var(--text3);font-size:.8rem">${lineDisp} • ${headCount}頭</span>
+  const saleBadge = unit.for_sale
+    ? `<span style="background:#e05050;color:#fff;font-size:.65rem;font-weight:700;padding:2px 7px;border-radius:4px;margin-left:6px">販売候補</span>`
+    : '';
+
+  const memberSection = isIndividualized && memberInds.length > 0
+    ? `<div class="card" style="margin-bottom:10px">
+        <div class="card-title">個体化済メンバー（${memberInds.length}頭）</div>
+        <div style="font-size:.75rem;color:var(--text3);margin-bottom:8px">
+          個別化されました。各個体の詳細は下記から確認できます。
         </div>
-        ${unit.hatch_date ? `<div style="font-size:.72rem;color:var(--text3)">孵化: ${unit.hatch_date}${age ? ` (${age.totalDays}日齢)` : ''}</div>` : ''}
+        ${memberInds.map((mi, i) => {
+          const sex = mi.sex || '不明';
+          const sexColor = sex === '♂' ? '#3366cc' : sex === '♀' ? '#cc3366' : 'var(--text3)';
+          const stage = mi.current_stage || mi.stage || '—';
+          const wt = mi.latest_weight_g || mi.weight_g || '';
+          return `<div style="padding:10px 0;border-bottom:1px solid var(--border2);cursor:pointer"
+            onclick="routeTo('ind-detail',{indId:'${mi.ind_id}'})">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font-weight:700;color:var(--gold);font-family:var(--font-mono)">${mi.display_id||mi.ind_id}</span>
+              <span style="color:${sexColor};font-weight:700">${sex}</span>
+              <span style="font-size:.75rem;padding:1px 6px;background:rgba(91,168,232,.1);color:var(--blue);border-radius:4px">${stage}</span>
+              ${wt ? `<span style="margin-left:auto;font-weight:700">${wt}g</span>` : ''}
+              <span style="color:var(--text3);font-size:1rem">›</span>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>`
+    : members.length > 0
+      ? `<div class="card" style="margin-bottom:10px">
+          <div class="card-title">メンバー構成（${members.length}頭）</div>
+          ${members.map((m, i) => _renderUdMemberRow(m, i, records)).join('')}
+        </div>`
+      : `<div class="card" style="margin-bottom:10px">
+          <div class="card-title">メンバー構成</div>
+          <div style="color:var(--text3);font-size:.8rem;padding:8px 0">
+            ${isIndividualized
+              ? 'このユニットは個別化済みです。個体台帳から各個体を確認できます。'
+              : 'メンバー情報がありません（T2/T3移行後に反映されます）'}
+          </div>
+        </div>`;
+
+  window._udLabelParams = {
+    targetType: 'UNIT',
+    displayId:  unit.display_id,
+    labelType:  't1_unit',
+    forSale:    !!unit.for_sale,
+    backRoute:  'unit-detail',
+    backParam:  { unitDisplayId: unit.display_id },
+    unitDraft: {
+      display_id:    unit.display_id,
+      line_id:       unit.line_id,
+      line_code:     line ? (line.line_code || line.display_id || '') : '',
+      head_count:    unit.head_count || 2,
+      for_sale:      !!unit.for_sale,
+      stage_phase:   unit.stage_phase || 'T1',
+      mat_type:      unit.mat_type || 'T1',
+      size_category: unit.size_category || '',
+      hatch_date:    unit.hatch_date || '',
+      source_lots:   unit.source_lots || '',
+      origin_lot_id: unit.origin_lot_id || '',
+      t1_date:       unit.t1_date || unit.created_at || '',
+      members:       members,
+    },
+  };
+
+  main.innerHTML = `
+    ${UI.header('ユニット詳細', { back: true })}
+    <div class="page-body">
+
+      <!-- ヘッダーバナー -->
+      <div style="background:var(--surface2);border-radius:12px;padding:14px;margin-bottom:10px">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+          <span style="font-weight:700;color:var(--gold);font-family:var(--font-mono);font-size:1rem">${unit.display_id}</span>
+          <span style="padding:2px 8px;border-radius:5px;font-size:.72rem;font-weight:700;border:1px solid ${statusColor};color:${statusColor}">${statusLabel}</span>
+          ${saleBadge}
+        </div>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;font-size:.78rem;color:var(--text2)">
+          <span>📋 ライン: <b>${lineCode}</b></span>
+          <span>🔢 ${unit.head_count || 2}頭</span>
+          <span style="background:rgba(91,168,232,.15);color:var(--blue);padding:1px 7px;border-radius:4px;font-weight:700">${unit.stage_phase || '—'}</span>
+        </div>
+        <div style="font-size:.72rem;color:var(--text3);margin-top:6px">由来ロット: ${originStr}</div>
       </div>
 
       <!-- 基本情報 -->
@@ -135,12 +256,17 @@ Pages.unitDetail = function (params = {}) {
             ['作成日',     unit.created_at ? String(unit.created_at).split(' ')[0] : '—'],
           ].map(([k,v]) => `
             <tr style="border-bottom:1px solid var(--border2)">
-              <td style="padding:8px 4px;color:var(--text3);width:30%">${k}</td>
-              <td style="padding:8px 4px;font-weight:600">${v}</td>
+              <td style="padding:6px 4px;color:var(--text3);width:90px">${k}</td>
+              <td style="padding:6px 4px;color:var(--text1)">${v}</td>
             </tr>`).join('')}
         </table>
+        ${unit.note ? `<div style="margin-top:8px;font-size:.78rem;color:var(--text2);background:var(--surface2);border-radius:8px;padding:8px">📝 ${unit.note}</div>` : ''}
       </div>
 
+      <!-- メンバー構成 -->
+      ${memberSection}
+
+      <!-- 成長記録 -->
       ${records.length > 0 ? `
       <div class="card" style="margin-bottom:10px">
         <div class="card-title">成長記録（${records.length}件）</div>
@@ -182,46 +308,15 @@ Pages.unitDetail = function (params = {}) {
       </div>
 
     </div>`;
-  }
-
-  // 初期レンダリング
-  _udRender(unit);
-  console.log('[UNIT_DETAIL] Rendering complete for unit:', unitDisplayId);
-};
-
-// ── 成長記録表示 ─────────────────────────────────────────────────
-function _udRenderGrowthRecords(records) {
-  if (!records || records.length === 0) {
-    return '<div style="text-align:center;color:var(--text3);padding:20px">成長記録がありません</div>';
-  }
-
-  // 最新5件のみ表示、スロット別に分類
-  const recent = records.slice(-5).reverse();
-  
-  return '<div style="font-size:.75rem">' + recent.map(function(r) {
-    const slotText = r.unit_slot_no ? `[${r.unit_slot_no}頭目] ` : '';
-    const weightText = r.weight_g ? r.weight_g + 'g' : '—';
-    const ageText = r.age_days ? r.age_days + '日齢' : '';
-    
-    return `
-      <div style="display:flex;gap:8px;padding:6px 0;border-bottom:1px solid var(--border2)">
-        <span style="color:var(--text3);min-width:70px">${r.record_date || '—'}</span>
-        <span style="color:var(--gold);font-weight:700;min-width:60px">${slotText}${weightText}</span>
-        <span style="color:var(--text3);font-size:.7rem">${ageText}</span>
-        <span style="flex:1;color:var(--text3);font-size:.7rem">${r.note_private || ''}</span>
-      </div>`;
-  }).join('') + '</div>';
 }
 
-// ── 日付フォーマット ──────────────────────────────────────────────
-function _udFormatDate(dateStr) {
-  if (!dateStr) return '（未入力）';
-  return String(dateStr).replace(/-/g, '/');
-}
-
-// ── ラベル生成 ───────────────────────────────────────────────────
-Pages._udLabelGen = function (displayId) {
-  const p = { targetType: 'BU', displayId: displayId };
+// ── ラベル発行 ────────────────────────────────────────────────────
+Pages._udLabelGen = function () {
+  const p = window._udLabelParams;
+  if (!p) {
+    console.error('[UD] _udLabelGen: _udLabelParams not set');
+    return;
+  }
   if (typeof Store.setParams === 'function') {
     Store.setParams(p);
   }
@@ -245,26 +340,25 @@ Pages._udEditBasic = function (displayId) {
       ], unit.mat_type || ''))}
       ${UI.field('容器サイズ', UI.select('ud-cont', [
         { code:'2.7L', label:'2.7L' },
-        { code:'4.8L', label:'4.8L' },
-        { code:'10L',  label:'10L' },
+        { code:'4.8L', label:'4.8L（パンケ）' },
+        { code:'3.5L', label:'3.5L' },
       ], unit.container_size || ''))}
-      ${UI.field('メモ', '<input type="text" id="ud-note" class="input" value="' + (unit.note||'') + '" placeholder="任意のメモ">')}
+      ${UI.field('メモ', '<input type="text" id="ud-note" class="input" value="' + (unit.note||'') + '">')}
     </div>
     <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="UI.closeModal()">キャンセル</button>
-      <button class="btn btn-primary" onclick="Pages._udSaveEdit('${unit.unit_id}','${displayId}')">保存</button>
+      <button class="btn btn-ghost" style="flex:1" onclick="UI.closeModal()">キャンセル</button>
+      <button class="btn btn-primary" style="flex:2" onclick="Pages._udSaveBasic('${unit.unit_id}','${displayId}')">保存</button>
     </div>
   `);
 };
 
-Pages._udSaveEdit = async function (unitId, displayId) {
+Pages._udSaveBasic = async function (unitId, displayId) {
   const hatch = (document.getElementById('ud-hatch')?.value || '').replace(/-/g, '/');
   const mat   = document.getElementById('ud-mat')?.value   || '';
   const cont  = document.getElementById('ud-cont')?.value  || '';
   const note  = document.getElementById('ud-note')?.value  || '';
   UI.closeModal();
   const updates = { unit_id: unitId, hatch_date: hatch, mat_type: mat, container_size: cont, note };
-  
   try {
     UI.loading(true);
     
@@ -292,7 +386,37 @@ Pages._udSaveEdit = async function (unitId, displayId) {
   } finally {
     UI.loading(false);
   }
+    UI.toast('保存失敗（ローカルのみ更新）: ' + (e.message || ''), 'error');
+    Pages.unitDetail({ unitDisplayId: displayId });
+  } finally {
+    UI.loading(false);
+  }
 };
+
+// ── メンバー行 ───────────────────────────────────────────────────
+// Bug 5 修正: ♂/♀ のみ表示、未判別は非表示
+function _renderUdMemberRow(m, idx, records) {
+  const slotLabel = idx === 0 ? '1頭目' : idx === 1 ? '2頭目' : `${idx+1}頭目`;
+  const slotRecs  = records.filter(r => parseInt(r.unit_slot_no, 10) === m.unit_slot_no);
+  const latestW   = slotRecs.length > 0
+    ? slotRecs.sort((a,b) => String(b.record_date).localeCompare(String(a.record_date)))[0].weight_g
+    : (m.weight_g || null);
+  const sexColor = m.sex === '♂' ? '#3366cc' : m.sex === '♀' ? '#cc3366' : 'var(--text3)';
+
+  return `
+  <div style="padding:10px 0;border-bottom:1px solid var(--border2)">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+      <span style="font-weight:800;font-size:.9rem;color:var(--text1)">${slotLabel}</span>
+      ${(m.sex && m.sex !== '不明') ? `<span style="font-size:.8rem;font-weight:700;color:${sexColor}">${m.sex}</span>` : ''}
+      ${m.size_category ? `<span style="font-size:.75rem;padding:1px 6px;border-radius:4px;background:rgba(76,175,120,.12);color:var(--green)">${m.size_category}</span>` : ''}
+      ${latestW ? `<span style="font-size:.8rem;font-weight:700;margin-left:auto">${latestW}g</span>` : ''}
+    </div>
+    <div style="font-size:.7rem;color:var(--text3)">
+      元ロット: ${m.lot_display_id || m.lot_id || '—'}${m.lot_item_no ? ' #' + m.lot_item_no : ''}
+      ${m.memo ? ' | ' + m.memo : ''}
+    </div>
+  </div>`;
+}
 
 // ── T2/T3移行ショートカット ─────────────────────────────────────
 Pages._udStartT2 = function (displayId) {
@@ -304,7 +428,6 @@ Pages._udStartT3 = function (displayId) {
 
 // ── BU成長記録 → 継続読取りモード ──────────────────────────────
 Pages._udGrowthRecord = function (unitId, displayId) {
-  console.log('[UNIT_DETAIL] Navigating to continuous-scan:', { unitId, displayId });
   // ユニットの成長記録は継続読取りモードで2頭分を記録
   routeTo('continuous-scan', { 
     targetType: 'UNIT',
@@ -314,77 +437,8 @@ Pages._udGrowthRecord = function (unitId, displayId) {
   });
 };
 
-// ═══════════════════════════════════════════════════════════════
-// デバッグ機能（統合済み）
-// ═══════════════════════════════════════════════════════════════
-
-// デバッグ用関数（ブラウザコンソールから実行可能）
-window.debugUnitDetail = function() {
-  console.log('=== ユニット詳細表示デバッグ開始 ===');
-  
-  // 1. PAGES オブジェクトの確認
-  console.log('1. PAGES object:', window.PAGES);
-  console.log('   unit-detail page function:', window.PAGES && window.PAGES['unit-detail']);
-  
-  // 2. Store オブジェクトの確認
-  console.log('2. Store object:', typeof Store);
-  console.log('   Store.getUnitByDisplayId:', typeof Store.getUnitByDisplayId);
-  console.log('   Store.getParams:', typeof Store.getParams);
-  
-  // 3. breeding_units データの確認
-  const units = Store.getDB ? Store.getDB('breeding_units') : null;
-  console.log('3. Breeding units data:', units);
-  console.log('   Units count:', units ? units.length : 'N/A');
-  if (units && units.length > 0) {
-    console.log('   Sample unit:', units[0]);
-  }
-  
-  // 4. URLパラメータの確認
-  const params = new URLSearchParams(window.location.search);
-  console.log('4. URL params:', Object.fromEntries(params));
-  
-  // 5. routeTo 関数の確認
-  console.log('5. routeTo function:', typeof routeTo);
-  
-  console.log('=== デバッグ終了 ===');
-};
-
-// テスト用ナビゲーション関数
-window.testUnitDetailNavigation = function(displayId) {
-  console.log('Testing navigation to unit detail:', displayId);
-  
-  try {
-    const unit = Store.getUnitByDisplayId(displayId);
-    console.log('Unit found:', unit);
-    
-    if (!unit) {
-      console.error('Unit not found for displayId:', displayId);
-      return;
-    }
-    
-    const pageFunction = window.PAGES && window.PAGES['unit-detail'];
-    if (typeof pageFunction === 'function') {
-      console.log('Calling unit-detail page function...');
-      
-      const newUrl = `${window.location.pathname}?unitDisplayId=${displayId}`;
-      history.pushState({ unitDisplayId: displayId }, '', newUrl);
-      
-      pageFunction();
-      console.log('Page function executed successfully');
-    } else {
-      console.error('unit-detail page function not found');
-    }
-    
-  } catch (error) {
-    console.error('Error during navigation test:', error);
-  }
-};
-
 // ページ登録
 window.PAGES = window.PAGES || {};
 window.PAGES['unit-detail'] = function () {
   Pages.unitDetail(Store.getParams());
 };
-
-console.log('[UNIT_DETAIL] Complete version loaded with debug functions');
-console.log('[UNIT_DETAIL] Debug commands available: debugUnitDetail(), testUnitDetailNavigation("HM2025-A1-U06")');
