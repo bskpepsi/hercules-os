@@ -272,7 +272,7 @@ function _renderUnitDetail(unit, main) {
         <div class="card-title">成長記録（${records.length}件）</div>
         ${_udRenderGrowthRecords(records)}
         <button class="btn btn-ghost btn-sm" style="margin-top:8px;width:100%"
-          onclick="routeTo('growth-rec',{targetType:'BU',targetId:'${unit.unit_id}',displayId:'${unit.display_id}'})">
+          onclick="Pages._udGrowthRecord('${unit.unit_id}','${unit.display_id}')">
           📷 成長記録を追加
         </button>
       </div>` : ''}
@@ -301,7 +301,7 @@ function _renderUnitDetail(unit, main) {
             🏷️ ラベル発行
           </button>
           <button class="btn btn-ghost" style="font-size:.8rem"
-            onclick="routeTo('growth-rec',{targetType:'BU',targetId:'${unit.unit_id}',displayId:'${unit.display_id}'})">
+            onclick="Pages._udGrowthRecord('${unit.unit_id}','${unit.display_id}')">
             📷 成長記録
           </button>
         </div>
@@ -361,22 +361,31 @@ Pages._udSaveBasic = async function (unitId, displayId) {
   const updates = { unit_id: unitId, hatch_date: hatch, mat_type: mat, container_size: cont, note };
   try {
     UI.loading(true);
-    if (typeof API !== 'undefined' && API.unit && typeof API.unit.update === 'function') {
-      await API.unit.update(updates);
-    } else if (typeof API !== 'undefined' && API.breedingUnit && typeof API.breedingUnit.update === 'function') {
-      await API.breedingUnit.update(updates);
-    } else if (typeof apiCall === 'function' && typeof API !== 'undefined') {
-      await apiCall(() => API.post({ action: 'updateBreedingUnit', ...updates }), null);
-    }
+    
+    // API.unit.update を使用（api.js で定義済み）
+    await API.unit.update(updates);
+    
+    // Storeを更新
     if (typeof Store.patchDBItem === 'function') {
       Store.patchDBItem('breeding_units', 'unit_id', unitId, updates);
     }
-    UI.toast('基本情報を更新しました', 'success');
+    
+    UI.toast('✅ 基本情報を更新しました', 'success', 2000);
+    
+    // 画面を再描画
     Pages.unitDetail({ unitDisplayId: displayId });
+    
   } catch(e) {
+    console.error('[UNIT_DETAIL] save error:', e);
+    UI.toast('❌ 保存失敗: ' + (e.message || '通信エラー'), 'error', 4000);
+    
+    // エラー時もStoreを更新（オフライン対応）
     if (typeof Store.patchDBItem === 'function') {
       Store.patchDBItem('breeding_units', 'unit_id', unitId, updates);
     }
+  } finally {
+    UI.loading(false);
+  }
     UI.toast('保存失敗（ローカルのみ更新）: ' + (e.message || ''), 'error');
     Pages.unitDetail({ unitDisplayId: displayId });
   } finally {
@@ -415,6 +424,17 @@ Pages._udStartT2 = function (displayId) {
 };
 Pages._udStartT3 = function (displayId) {
   Pages.t3SessionStart && Pages.t3SessionStart(displayId);
+};
+
+// ── BU成長記録 → 継続読取りモード ──────────────────────────────
+Pages._udGrowthRecord = function (unitId, displayId) {
+  // ユニットの成長記録は継続読取りモードで2頭分を記録
+  routeTo('continuous-scan', { 
+    targetType: 'UNIT',
+    targetId: unitId,
+    displayId: displayId,
+    mode: 'growth'
+  });
 };
 
 // ページ登録

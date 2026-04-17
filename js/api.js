@@ -4,12 +4,15 @@
 //       フロントの他のコードはこのファイルのメソッドのみを通してGASと通信する。
 //       成功時は data を返し、失敗時は Error をスローする。
 //       リトライ・タイムアウト・エラー整形もここで行う。
-// build: 20260413bc
+// build: 20260417k-fix1
+// 変更点：
+//   - unit（飼育ユニット）API追加：create, list, get, update, delete
+//   - ユニット詳細の孵化日・容器・マット更新をサポート
 // ════════════════════════════════════════════════════════════════
 
 'use strict';
 
-window.__API_BUILD = '20260413bc';
+window.__API_BUILD = '20260417k-fix1';
 console.log('[API] ===== api.js LOADED BUILD=' + window.__API_BUILD + ' =====');
 var API = (() => {
   console.log('[API] IIFE start - BUILD:', window.__API_BUILD);
@@ -152,6 +155,15 @@ var API = (() => {
     // 論理削除: new_status='dead'|'sold'|'reserved', reason=任意
     changeStatus:    (id, newStatus, reason) =>
       call('deleteIndividual', { ind_id: id, new_status: newStatus, reason }),
+  };
+
+  // ── 飼育ユニット（BU）─────────────────────────────────────────
+  const unit = {
+    create:  (d) => call('createBreedingUnit',  d),
+    list:    (f) => call('getBreedingUnits',    f || {}),
+    get:     (id)=> call('getBreedingUnit',     { unit_id: id }),
+    update:  (d) => call('updateBreedingUnit',  d),
+    delete:  (d) => call('deleteBreedingUnit',  d),
   };
 
   // ── 成長記録 ──────────────────────────────────────────────────
@@ -329,10 +341,10 @@ var API = (() => {
   const t3 = {
     createSession: (d) => call('createT3Session', d),
   };
-  console.log('[API] t1/t2/t3 ready');
+  console.log('[API] unit/t1/t2/t3 ready');
 
 console.log('[API] return object ready');
-return { system, line, lot, individual, growth, parent, bloodline, pairing, label, drive, gemini, backup, scan, phase2, integrity, t1, t2, t3, sale };
+return { system, line, lot, individual, unit, growth, parent, bloodline, pairing, label, drive, gemini, backup, scan, phase2, integrity, t1, t2, t3, sale };
 })();
 window.API = API; // グローバル確保（const はwindowに乗らない環境対策）
 console.log('[API] window.API assigned', !!window.API);
