@@ -1,11 +1,11 @@
 // FILE: js/pages/lot.js
-// ────────────────────────────────────────────────────────────────
 // ════════════════════════════════════════════════════════════════
 // lot.js — Phase4-1 UI統一版
 // ロット一覧・詳細・分割・個体化を担う
 // カードUIを3列（コード | 頭数+ステージ | ›）に統一
-// build: 20260414a
-// 変更点: ロットにマットフィルタ追加 / ユニットにマット・ラインフィルタ追加
+// build: 20260414a-fix1
+// 変更点:
+//   - Bug 5: ユニット一覧のメンバー表示で未判別性別の「?」を非表示に修正
 // ════════════════════════════════════════════════════════════════
 
 'use strict';
@@ -35,24 +35,16 @@ Pages.lotList = function () {
   const fixedLine   = fixedLineId ? Store.getLine(fixedLineId) : null;
   const isLineLimited = !!fixedLineId;
 
-  // ── タブ管理（ロット / ユニット）──────────────────────────
-  let _activeTab = params._tab || 'lot';  // 'lot' | 'unit'
-
-  // ── キーワード検索 ─────────────────────────────────────────
+  let _activeTab = params._tab || 'lot';
   let _keyword = '';
-
-  // ── ロットフィルタ ─────────────────────────────────────────
   let filters = { status: 'active', stage: '', line_id: fixedLineId, mat_type: '' };
   let _lotStatusMode = 'active';
-
-  // ── ユニットフィルタ ───────────────────────────────────────
-  let _unitPhase  = '';   // '' | 'T1' | 'T2' | 'T3'
+  let _unitPhase  = '';
   let _unitStatus = 'active';
-  let _unitMat    = '';   // '' | 'T0' | 'T1' | 'T2' | 'T3' | 'MD'
-  let _unitLine   = fixedLineId;  // ラインフィルタ
+  let _unitMat    = '';
+  let _unitLine   = fixedLineId;
 
   function render() {
-    // タブ切り替えで描画分岐
     if (_activeTab === 'unit') { renderUnit(); return; }
     renderLot();
   }
@@ -83,7 +75,6 @@ Pages.lotList = function () {
     main.innerHTML =
       UI.header(title, isLineLimited ? {back:true} : {action:{fn:"routeTo('lot-new')",icon:'＋'}}) +
       `<div class="page-body">` +
-      // タブ
       `<div class="filter-bar" style="margin-bottom:8px">
         <button class="pill" onclick="Pages._lotUnitTabSwitch('lot')">🥚 ロット (${(()=>{
           const ac=Store.filterLots({status:'active',line_id:fixedLineId});
@@ -92,7 +83,6 @@ Pages.lotList = function () {
         })()})</button>
         <button class="pill active" onclick="Pages._lotUnitTabSwitch('unit')">📦 ユニット (${allUnits.filter(u=>(u.status||'active')==='active').length})</button>
       </div>` +
-      // キーワード検索
       `<div style="margin-bottom:8px;position:relative">
         <input type="text" placeholder="🔍 ID・ステージで検索..." value="${_keyword}"
           id="unit-kw-input"
@@ -100,26 +90,22 @@ Pages.lotList = function () {
             background:var(--bg2);font-size:.88rem;color:var(--text1);box-sizing:border-box"
           oninput="Pages._lotUnitKw(this.value)">
       </div>` +
-      // フェーズフィルタ
       `<div class="filter-bar" style="margin-bottom:6px" id="unit-phase-filter">
         ${['','T1','T2','T3'].map(p =>
           `<button class="pill ${_unitPhase===p?'active':''}" data-phase="${p}">${p||'全て'}</button>`
         ).join('')}
       </div>` +
-      // マットフィルタ
       `<div class="filter-bar" style="margin-bottom:6px" id="unit-mat-filter">
         ${['','T0','T1','T2','T3','MD'].map(m =>
           `<button class="pill ${_unitMat===m?'active':''}" data-umat="${m}">${m||'M:全て'}</button>`
         ).join('')}
       </div>` +
-      // ラインフィルタ（ライン固定でない場合のみ表示）
       (!isLineLimited ? `<div class="filter-bar" style="margin-bottom:6px" id="unit-line-filter">
         <button class="pill ${!_unitLine?'active':''}" data-uline="">ライン全て</button>
         ${lines.slice(0,8).map(l =>
           `<button class="pill ${_unitLine===l.line_id?'active':''}" data-uline="${l.line_id}">${l.line_code||l.display_id}</button>`
         ).join('')}
       </div>` : '') +
-      // ステータスフィルタ
       `<div class="filter-bar" style="margin-bottom:8px" id="unit-status-filter">
         ${[{v:'active',l:'飼育中'},{v:'',l:'全状態'},{v:'individualized',l:'個別化済'}].map(s =>
           `<button class="pill ${_unitStatus===s.v?'active':''}" data-ustatus="${s.v}">${s.l}</button>`
@@ -139,11 +125,7 @@ Pages.lotList = function () {
           : ph==='T2' ? 'var(--blue)'
           : ph==='T3' ? 'var(--amber)'
           : 'var(--text3)';
-        let srcLots = '';
-        try {
-          const sl = u.source_lots ? JSON.parse(u.source_lots) : [];
-          if (sl.length) srcLots = `<div style="font-size:.65rem;color:var(--text3)">由来: ${sl.map(lid=>{const lot=Store.getLot&&Store.getLot(lid);return lot?(lot.display_id||lid):lid;}).join('/')}</div>`;
-        } catch(_e){}
+
         // members を解析して①②の情報を組み立て
         let membersArr = [];
         try {
@@ -153,12 +135,8 @@ Pages.lotList = function () {
         } catch(_e) {}
 
         // 性別アイコン
-        const sexIcon = (sex) => sex === '♂' ? '<span style="color:#3366cc;font-weight:700">♂</span>'
-          : sex === '♀' ? '<span style="color:#cc3366;font-weight:700">♀</span>'
-          : '<span style="color:var(--text3)">?</span>';
-
-        // 各頭の縦2行リスト（① ♂ 大 85g 形式）
         const sexColor = (sx) => sx === '♂' ? '#3366cc' : sx === '♀' ? '#cc3366' : 'var(--text3)';
+
         const memberLines = membersArr.slice(0, 2).map((m, mi) => {
           const mw  = m.weight_g   ? m.weight_g + 'g' : '—';
           const msc = m.size_category || '—';
@@ -171,12 +149,10 @@ Pages.lotList = function () {
           </div>`;
         }).join('');
 
-        // members なし時は size_category と head_count
         const memberBlock = membersArr.length > 0
           ? memberLines
           : `<div style="font-size:.76rem;color:var(--text2)">${hc}頭 / 区分:${sc}</div>`;
 
-        // 由来ロット（短縮）
         const srcLotsText = (() => {
           try {
             const sl = u.source_lots ? JSON.parse(u.source_lots) : [];
@@ -265,9 +241,7 @@ Pages.lotList = function () {
   // ロット一覧タブ（既存機能 + キーワード検索）
   // ══════════════════════════════════════════════════════════
   function renderLot() {
-    // _lotStatusMode に応じた lot 取得
     let lots = [];
-    // filterLots にはステージを渡さず、後で丸めてから比較する
     const _baseFilter = { line_id: filters.line_id };
     if (_lotStatusMode === 'all') {
       lots = Store.filterLots({ ..._baseFilter, status: 'all' });
@@ -276,13 +250,11 @@ Pages.lotList = function () {
       const li = Store.filterLots({ ..._baseFilter, status: 'listed' });
       lots = [...fs, ...li];
     } else {
-      // デフォルト: active + for_sale + listed を表示（販売候補・出品中が一覧から消えない）
       const ac = Store.filterLots({ ..._baseFilter, status: 'active' });
       const fs = Store.filterLots({ ..._baseFilter, status: 'for_sale' });
       const li = Store.filterLots({ ..._baseFilter, status: 'listed' });
       lots = [...ac, ...fs, ...li];
     }
-    // ステージフィルタ: 丸めたラベルで比較
     if (filters.stage) {
       const targetLabel = _lotDisplayStageLabel(filters.stage);
       lots = lots.filter(l => {
@@ -290,11 +262,9 @@ Pages.lotList = function () {
         return _lotDisplayStageLabel(s) === targetLabel;
       });
     }
-    // マットフィルタ
     if (filters.mat_type) {
       lots = lots.filter(l => (l.mat_type || '') === filters.mat_type);
     }
-    // ★ キーワード検索
     if (_keyword) {
       const kw = _keyword.toLowerCase();
       lots = lots.filter(l =>
@@ -311,7 +281,6 @@ Pages.lotList = function () {
       ? { back: true, action: { fn: "routeTo('lot-new',{lineId:'" + fixedLineId + "'})", icon: '＋' } }
       : { action: { fn: "routeTo('lot-new')", icon: '＋' } };
 
-    // 合計頭数
     const totalCount = lots.reduce((s, l) => s + (+l.count || 0), 0);
     const allUnits = Store.getDB('breeding_units') || [];
     const activeUnitCount = allUnits.filter(u=>(u.status||'active')==='active').length;
@@ -319,12 +288,10 @@ Pages.lotList = function () {
     main.innerHTML = `
       ${UI.header(title, headerOpts)}
       <div class="page-body">
-        <!-- タブ -->
         <div class="filter-bar" style="margin-bottom:8px">
           <button class="pill active" onclick="Pages._lotUnitTabSwitch('lot')">🥚 ロット (${lots.length})</button>
           <button class="pill" onclick="Pages._lotUnitTabSwitch('unit')">📦 ユニット (${activeUnitCount})</button>
         </div>
-        <!-- キーワード検索 -->
         <div style="margin-bottom:8px">
           <input type="text" placeholder="🔍 ロットID・ラインで検索..." id="lot-kw-input"
             value="${_keyword}"
@@ -380,7 +347,6 @@ Pages.lotList = function () {
     }
   }
 
-  // ── タブ切り替え・キーワード ──────────────────────────────────
   Pages._lotUnitTabSwitch = function(tab) {
     _activeTab = tab;
     _keyword = '';
@@ -388,7 +354,6 @@ Pages.lotList = function () {
   };
   Pages._lotUnitKw = function(val) {
     _keyword = val;
-    // デバウンス
     clearTimeout(Pages._lotUnitKwTimer);
     Pages._lotUnitKwTimer = setTimeout(function() { render(); }, 250);
   };
@@ -416,7 +381,6 @@ function _lotStageFilters(active) {
 // ════════════════════════════════════════════════════════════════
 function _lotCardHTML(lot) {
   try {
-    // ── ライン表示: display_id から直接抽出 ──────────────────
     var lineCode = '';
     var _lm = String(lot.display_id || '').match(/[A-Za-z]{1,4}\d{4}-([A-Za-z][0-9]+)-/i);
     if (_lm) lineCode = _lm[1].toUpperCase();
@@ -425,7 +389,6 @@ function _lotCardHTML(lot) {
       lineCode = _ln ? (_ln.line_code || _ln.display_id || '') : '';
     }
 
-    // ── ステージ ──────────────────────────────────────────────
     var stageCode = lot.stage_life || lot.stage || '';
     var stageLbl  = stageCode ? _lotDisplayStageLabel(stageCode) : '';
     var sColor    = stageCode ? stageColor(stageCode) : 'var(--text3)';
@@ -438,14 +401,12 @@ function _lotCardHTML(lot) {
     var isMolt  = lot.mat_molt === true || lot.mat_molt === 'true';
     var matLbl  = rawMat === 'T2' && isMolt ? 'T2(M)' : rawMat;
 
-    // ── 各種情報 ─────────────────────────────────────────────
     var count      = parseInt(lot.count, 10) || 0;
     var container  = lot.container_size || (latestRec && latestRec.container) || '';
     var weightG    = latestRec && latestRec.weight_g ? latestRec.weight_g + 'g' : '';
     var ageObj     = lot.hatch_date ? Store.calcAge(lot.hatch_date) : null;
     var ageDays    = (ageObj && ageObj.days != null) ? ageObj.days + '日' : '';
 
-    // ── サブ情報: ステージ / マット / 容器 / 体重 / 日齢 ────────
     var parts = [];
     if (stageLbl) parts.push('<span style="font-weight:700;color:' + sColor + '">' + stageLbl + '</span>');
     if (matLbl)   parts.push('<span>' + matLbl + '</span>');
@@ -467,7 +428,6 @@ function _lotCardHTML(lot) {
       + '<div style="color:var(--text3);font-size:1.1rem;flex-shrink:0">›</div>'
       + '</div>';
   } catch(e) {
-    // 例外時も最低限のカードを返す（真っ白画面禁止）
     return '<div class="card" style="padding:12px 14px;cursor:pointer;margin-bottom:8px"'
       + ' onclick="routeTo(\'lot-detail\',{lotId:\'' + (lot.lot_id||'') + '\'})">'
       + '<div style="font-size:.85rem">' + (lot.display_id || lot.lot_id || '') + '</div>'
@@ -502,7 +462,6 @@ Pages.lotDetail = async function (lotId) {
     return;
   }
 
-  // ローカルキャッシュから即時表示
   let lot = Store.getLot(lotId);
   if (lot) {
     try { _renderLotDetail(lot, main); } catch(e) {
@@ -513,7 +472,6 @@ Pages.lotDetail = async function (lotId) {
     main.innerHTML = UI.header('ロット詳細', { back: true }) + UI.spinner();
   }
 
-  // GASから最新データ取得
   try {
     const res = await API.lot.get(lotId);
     if (Store.getPage() !== 'lot-detail') return;
@@ -903,7 +861,6 @@ Pages._execSplit = async function (lotId, maxCount) {
   } catch (e) {}
 };
 
-// ステージ変更
 Pages._lotEditStage = function (lotId, currentStage) {
   _showModal('ステージ変更', `
     <div class="form-section">
@@ -934,7 +891,6 @@ Pages._lotStageUpdate = async function (lotId) {
   } catch (e) {}
 };
 
-// マット変更
 Pages._lotEditMat = function (lotId) {
   const lot = Store.getLot(lotId) || {};
   const today = new Date().toISOString().split('T')[0];
@@ -1024,7 +980,6 @@ Pages._lotExtend = async function (lotId, days) {
   } catch (e) {}
 };
 
-// ロット新規登録
 Pages.lotNew = function (params = {}) {
   const main  = document.getElementById('main');
   const lines = Store.getDB('lines') || [];
@@ -1076,9 +1031,7 @@ Pages._lotSave = async function () {
   if (!data.line_id) { UI.toast('ラインを選択してください', 'error'); return; }
   if (data.hatch_date) data.hatch_date = data.hatch_date.replace(/-/g, '/');
   data.count = +data.count || 1;
-  if (data.stage_life && !data.stage) {
-    data.stage = data.stage_life;
-  }
+  if (data.stage_life && !data.stage) { data.stage = data.stage_life; }
   data.mat_molt = !!data.mat_molt;
   try {
     const res = await apiCall(() => API.lot.create(data), 'ロットを登録しました');
@@ -1087,7 +1040,6 @@ Pages._lotSave = async function () {
   } catch (e) {}
 };
 
-// ── クイックアクション ────────────────────────────────────────────
 function _lotQuickActions(lotId) {
   const _ql = Store.getLot(lotId);
   const _t1done = _ql && _ql.t1_done;
@@ -1112,7 +1064,6 @@ function _lotQuickActions(lotId) {
   UI.actionSheet(items);
 }
 
-// ── ロット情報編集 ────────────────────────────────────────────────
 Pages._lotEdit = function (lotId) {
   const lot   = Store.getLot(lotId);
   if (!lot) { UI.toast('ロットが見つかりません', 'error'); return; }
@@ -1156,8 +1107,7 @@ Pages._lotEditSave = async function (lotId) {
   const mat       = document.getElementById('le-mat')?.value || '';
   const note      = document.getElementById('le-note')?.value || '';
   if (lineId && !lineId.startsWith('LINE-')) {
-    UI.toast('ライン選択が不正です。内部IDが必要です', 'error');
-    return;
+    UI.toast('ライン選択が不正です。内部IDが必要です', 'error'); return;
   }
   const payload = { lot_id: lotId, hatch_date: hatch, count, container_size: container, mat_type: mat, note };
   if (lineId) payload.line_id = lineId;
@@ -1177,7 +1127,6 @@ Pages._lotEditSave = async function (lotId) {
   }
 };
 
-// 孵化日設定
 Pages._lotSetHatchDate = function (lotId) {
   UI.modal(`
     <div class="modal-title">📅 孵化日を設定</div>
@@ -1209,7 +1158,6 @@ Pages._lotHatchSave = async function (lotId) {
   }
 };
 
-// ヘルパー
 function _infoRow(key, val) {
   return `<div class="info-row">
     <span class="info-key">${key}</span>
@@ -1831,10 +1779,7 @@ Pages._lotPartSaleSave = async function (lotId, totalCount) {
 Pages._lotPartForSaleModal = function (lotId) {
   const lot   = Store.getLot(lotId);
   const count = lot ? (parseInt(lot.count, 10) || 1) : 1;
-  if (count <= 1) {
-    Pages._lotSetSaleStatus(lotId, 'for_sale');
-    return;
-  }
+  if (count <= 1) { Pages._lotSetSaleStatus(lotId, 'for_sale'); return; }
   window.__lotPartFsId    = lotId;
   window.__lotPartFsTotal = count;
   _showModal('一部を販売候補にする',
@@ -1857,36 +1802,26 @@ Pages._lotPartForSaleSave = async function () {
   const saleCount = parseInt(cntEl ? cntEl.value : '1', 10);
   if (!saleCount || saleCount < 1) { UI.toast('頭数を入力してください', 'error'); return; }
   if (saleCount >= total) {
-    _closeModal();
-    Pages._lotSetSaleStatus(lotId, 'for_sale');
-    return;
+    _closeModal(); Pages._lotSetSaleStatus(lotId, 'for_sale'); return;
   }
   const remainCount = total - saleCount;
   _closeModal();
   try {
     UI.loading(true);
-    const res = await API.lot.split({
-      lot_id:       lotId,
-      split_counts: [saleCount, remainCount],
-    });
-    const newLots       = res.new_lots       || [];
-    const autoInds      = res.auto_individuals || [];
-
+    const res = await API.lot.split({ lot_id: lotId, split_counts: [saleCount, remainCount] });
+    const newLots  = res.new_lots       || [];
+    const autoInds = res.auto_individuals || [];
     if (saleCount === 1 && autoInds.length >= 1) {
       const indId = autoInds[0].ind_id;
       await API.individual.changeStatus(indId, 'for_sale');
     } else if (newLots.length >= 1) {
       await API.lot.update({ lot_id: newLots[0].lot_id, status: 'for_sale' });
     }
-
     await syncAll(true);
     UI.toast(saleCount + '頭を販売候補に分割しました（残' + remainCount + '頭は管理中）', 'success');
     const remainLot = newLots.length >= 2 ? newLots[1] : null;
-    if (remainLot) {
-      routeTo('lot-detail', { lotId: remainLot.lot_id });
-    } else {
-      routeTo('lot-list');
-    }
+    if (remainLot) { routeTo('lot-detail', { lotId: remainLot.lot_id }); }
+    else { routeTo('lot-list'); }
   } catch(e) {
     UI.toast('分割失敗: ' + e.message, 'error');
   } finally {
@@ -1915,8 +1850,3 @@ window.PAGES['lot-list']   = () => Pages.lotList();
 window.PAGES['lot-detail'] = () => Pages.lotDetail(Store.getParams().lotId || Store.getParams().id);
 window.PAGES['lot-new']    = () => Pages.lotNew(Store.getParams());
 window.PAGES['lot-bulk']   = () => Pages.lotBulk(Store.getParams());
-
-
-
-// ────────────────────────────────────────────────────────────────
-// FILE: js/pages/growth.js

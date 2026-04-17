@@ -1,27 +1,13 @@
 // FILE: js/pages/label.js
-// ────────────────────────────────────────────────────────────────
-// ════════════════════════════════════════════════════════════════
-// label.js v5 — PNG画像出力ベース（Brother QL-820NWB 62mm連続ロール対応）
-//
-// サイズ:
-//   個体 / ロット / T1ユニット (IND, LOT, UNIT, IND_DRAFT): 62mm × 70mm
-//   産卵セット / 種親                 (SET, PAR)          : 62mm × 40mm
-//
-// 出力経路:
-//   html2canvas が有効 → PNG生成 → img プレビュー → PNG保存 / 共有
-//   html2canvas なし   → iframe フォールバック
-//
-// build: 20260415d
-// 変更点: 産卵セットラベルを手書き案デザインに刷新
-//   左列上: ラインコードバッジ / 左列下: QR
-//   右列: SETコード+ペアリング日 / ♂親+血統 / ♀親+血統
-// ════════════════════════════════════════════════════════════════
+// build: 20260415d-fix1
+// 修正:
+//   - Bug 1: ユニットラベルの性別未判別時を ♂・♀ 表示に修正
+//   - Bug 3: _backRoute が存在する場合に「詳細に戻る」ボタンを追加
 'use strict';
 
-window._LABEL_BUILD = '20260415d';
+window._LABEL_BUILD = '20260415d-fix1';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
-// ── ステージコード正規化 ─────────────────────────────────────────
 function _normStageForLabel(code) {
   if (!code) return '';
   const MAP = {
@@ -34,11 +20,9 @@ function _normStageForLabel(code) {
   return MAP[code] || code;
 }
 
-// ── ステージ チェックボックス表示用ヘルパー ──────────────────────
 function _stageCheckboxRow(stageCode) {
   var norm = _normStageForLabel(stageCode || '');
   if (norm && norm.startsWith('成虫')) norm = '成虫';
-
   var stages = ['L1L2', 'L3', '前蛹', '蛹', '成虫'];
   var out = stages.map(function(s) {
     return (norm === s ? '■' : '□') + s;
@@ -47,8 +31,7 @@ function _stageCheckboxRow(stageCode) {
   return out;
 }
 
-// ── QR位置定義（HTML・PNG両方が参照する単一矩形） ────────────────
-var QR_RECT_MM = { xMm: 3.0,  yMm: 7.7,  sizeMm: 11.67 };
+var QR_RECT_MM = { xMm: 3.0, yMm: 7.7, sizeMm: 11.67 };
 
 function _qrPxForDims(dims) {
   var pxPerMm = (dims && dims.wPx && dims.wMm) ? dims.wPx / dims.wMm : (234 / 62);
@@ -60,20 +43,18 @@ function _qrPxForDims(dims) {
   };
 }
 
-// ラベル種別定義
 const LABEL_TYPE_DEFS = [
-  { code: 'egg_lot',   label: '① 卵管理',        target: 'LOT',  desc: '採卵後・採卵日印字・孵化日手書き欄付き 62×40mm' },
-  { code: 'multi_lot', label: '② 複数頭飼育',    target: 'LOT',  desc: 'ロット管理用・採卵日/孵化日欄付き 62×40mm' },
-  { code: 'ind_fixed', label: '③ 個別飼育',      target: 'IND',  desc: '個体管理用（記録表付き）62×70mm' },
-  { code: 't1_unit',   label: '⑥ T1ユニット',   target: 'UNIT', desc: 'T1移行後の2頭飼育（記録表付き）62×70mm' },
-  { code: 'set',       label: '④ 産卵セット',    target: 'SET',  desc: '産卵セット情報 62×40mm' },
-  { code: 'parent',    label: '⑤ 種親',          target: 'PAR',  desc: '種親QR・血統タグ 62×25mm' },
+  { code: 'egg_lot',   label: '① 卵管理',      target: 'LOT',  desc: '採卵後・採卵日印字・孵化日手書き欄付き 62×40mm' },
+  { code: 'multi_lot', label: '② 複数頭飼育',  target: 'LOT',  desc: 'ロット管理用・採卵日/孵化日欄付き 62×40mm' },
+  { code: 'ind_fixed', label: '③ 個別飼育',    target: 'IND',  desc: '個体管理用（記録表付き）62×70mm' },
+  { code: 't1_unit',   label: '⑥ T1ユニット', target: 'UNIT', desc: 'T1移行後の2頭飼育（記録表付き）62×70mm' },
+  { code: 'set',       label: '④ 産卵セット',  target: 'SET',  desc: '産卵セット情報 62×40mm' },
+  { code: 'parent',    label: '⑤ 種親',        target: 'PAR',  desc: '種親QR・血統タグ 62×25mm' },
 ];
 
 window._currentLabel  = { displayId:'', fileName:'', html:'', pngDataUrl:'', dims:null };
 window._lastLabelType = {};
 
-// ── デフォルトラベル種別 ──────────────────────────────────────────
 function _defaultLabelType(targetType) {
   if (window._lastLabelType[targetType]) return window._lastLabelType[targetType];
   if (targetType === 'LOT')  return 'multi_lot';
@@ -83,7 +64,6 @@ function _defaultLabelType(targetType) {
   return 'ind_fixed';
 }
 
-// ── 遷移元の詳細ページキー ───────────────────────────────────────
 function _detailPageKey(targetType, targetId) {
   if (targetType === 'IND')  return { page: 'ind-detail',     params: { indId: targetId } };
   if (targetType === 'LOT')  return { page: 'lot-detail',     params: { lotId: targetId } };
@@ -93,7 +73,6 @@ function _detailPageKey(targetType, targetId) {
   return null;
 }
 
-// ── ラベルサイズ判定 ─────────────────────────────────────────────
 function _labelDimensions(labelType, targetType) {
   if (labelType === 'multi_lot' || labelType === 'egg_lot') {
     return { wMm:62, hMm:40, wPx:234, hPx:151, scale:3, label:'62×40mm' };
@@ -114,7 +93,6 @@ function _labelDimensions(labelType, targetType) {
   return { wMm:62, hMm:35, wPx:234, hPx:132, scale:3, label:'62×35mm' };
 }
 
-// ── PNG生成（html2canvas経由） ────────────────────────────────────
 async function _checkPngHasQr(pngDataUrl, dims) {
   return new Promise(function(resolve) {
     var img = new Image();
@@ -151,15 +129,12 @@ async function _compositeQrOntoPng(pngDataUrl, qrSrc, dims) {
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(baseImg, 0, 0);
-
         var qrPx = _qrPxForDims(dims);
         console.log('[LABEL] qr composite rect:', qrPx);
-
         ctx.clearRect(qrPx.x, qrPx.y, qrPx.size, qrPx.size);
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(qrPx.x, qrPx.y, qrPx.size, qrPx.size);
         ctx.drawImage(qrImg, qrPx.x, qrPx.y, qrPx.size, qrPx.size);
-
         var verData = ctx.getImageData(qrPx.x, qrPx.y, qrPx.size, qrPx.size).data;
         var verBlack = 0;
         for (var vi = 0; vi < verData.length; vi += 4) {
@@ -181,57 +156,38 @@ async function _buildLabelPNG(htmlStr, dims) {
     console.warn('[LABEL] html2canvas not loaded – falling back to iframe preview');
     return null;
   }
-
   const styleMatch = htmlStr.match(/<style>([\s\S]*?)<\/style>/i);
   const bodyMatch  = htmlStr.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
   const rawStyle   = styleMatch ? styleMatch[1].replace(/@page\s*\{[^}]*\}/g, '') : '';
   const bodyHtml   = bodyMatch  ? bodyMatch[1] : htmlStr;
-
   const host = document.createElement('div');
   host.style.cssText = [
-    'position:fixed',
-    'left:-99999px',
-    'top:0',
-    `width:${dims.wPx}px`,
-    `height:${dims.hPx}px`,
-    'overflow:hidden',
-    'background:#fff',
-    'box-sizing:border-box',
+    'position:fixed', 'left:-99999px', 'top:0',
+    `width:${dims.wPx}px`, `height:${dims.hPx}px`,
+    'overflow:hidden', 'background:#fff', 'box-sizing:border-box',
   ].join(';');
   host.innerHTML = `<style>${rawStyle}</style>${bodyHtml}`;
   document.body.appendChild(host);
-
   const _hostImgs = Array.from(host.querySelectorAll('img'));
   if (_hostImgs.length > 0) {
     await Promise.all(_hostImgs.map(function(img) {
       if (img.complete && img.naturalWidth > 0) return Promise.resolve();
       return new Promise(function(resolve) {
-        img.onload = resolve;
-        img.onerror = resolve;
-        setTimeout(resolve, 2000);
+        img.onload = resolve; img.onerror = resolve; setTimeout(resolve, 2000);
       });
     }));
   }
   await new Promise(function(r) { requestAnimationFrame(function() { requestAnimationFrame(r); }); });
-
   let canvas;
   try {
     canvas = await html2canvas(host, {
-      scale:           dims.scale,
-      width:           dims.wPx,
-      height:          dims.hPx,
-      useCORS:         true,
-      allowTaint:      true,
-      logging:         false,
-      backgroundColor: '#ffffff',
-      windowWidth:     dims.wPx,
-      windowHeight:    dims.hPx,
-      imageTimeout:    5000,
+      scale: dims.scale, width: dims.wPx, height: dims.hPx,
+      useCORS: true, allowTaint: true, logging: false,
+      backgroundColor: '#ffffff', windowWidth: dims.wPx, windowHeight: dims.hPx, imageTimeout: 5000,
     });
   } finally {
     try { document.body.removeChild(host); } catch(_) {}
   }
-
   return canvas.toDataURL('image/png');
 }
 
@@ -241,26 +197,22 @@ async function _buildLabelPNG(htmlStr, dims) {
 Pages.labelGen = function (params = {}) {
   const main = document.getElementById('main');
 
-  // ★ Android/iOS でページ遷移時にparamsが消える問題の対策
-  // window._t1LabelBackup からformalInd/unitDraftを復元
   if (Object.keys(params).length <= 1 && window._t1LabelBackup) {
     const _bk = window._t1LabelBackup;
     if (_bk.formalInd && (!params.formalInd)) {
       params = Object.assign({}, params, {
-        targetType: 'IND_FORMAL',
-        labelType:  'ind_fixed',
-        backRoute:  _bk.backRoute || 't1-session',
-        singleIdx:  _bk.singleIdx !== undefined ? _bk.singleIdx : -1,
-        formalInd:  _bk.formalInd,
+        targetType: 'IND_FORMAL', labelType: 'ind_fixed',
+        backRoute: _bk.backRoute || 't1-session',
+        singleIdx: _bk.singleIdx !== undefined ? _bk.singleIdx : -1,
+        formalInd: _bk.formalInd,
       });
       console.log('[LABEL] restored params from _t1LabelBackup (formalInd)');
     } else if (_bk.labeledDisplayId && (!params.displayId)) {
       params = Object.assign({}, params, {
-        targetType:       'UNIT',
-        labelType:        't1_unit',
-        backRoute:        _bk.backRoute || 't1-session',
+        targetType: 'UNIT', labelType: 't1_unit',
+        backRoute: _bk.backRoute || 't1-session',
         labeledDisplayId: _bk.labeledDisplayId,
-        displayId:        _bk.labeledDisplayId,
+        displayId: _bk.labeledDisplayId,
       });
       console.log('[LABEL] restored params from _t1LabelBackup (unit)');
     }
@@ -274,7 +226,6 @@ Pages.labelGen = function (params = {}) {
   const _unitDisplayId = params.displayId || targetId || '';
   const _unitForSale   = !!params.forSale;
   const _unitDraft     = params.unitDraft  || null;
-
   const _isIndDraftMode = targetType === 'IND_DRAFT';
   const _draftInd       = params.draftInd  || null;
   const _singleIdx      = params.singleIdx !== undefined ? params.singleIdx : -1;
@@ -283,19 +234,13 @@ Pages.labelGen = function (params = {}) {
 
   if (_isUnitMode) {
     window._lblUnitCtx = { displayId: _unitDisplayId, forSale: _unitForSale, draft: _unitDraft };
-  } else {
-    window._lblUnitCtx = null;
-  }
+  } else { window._lblUnitCtx = null; }
   if (_isIndDraftMode) {
     window._lblIndDraftCtx = { draftInd: _draftInd, singleIdx: _singleIdx, backRoute: params.backRoute };
-  } else {
-    window._lblIndDraftCtx = null;
-  }
+  } else { window._lblIndDraftCtx = null; }
   if (_isFormalMode) {
     window._lblFormalCtx = { formalInd: _formalInd, singleIdx: _singleIdx, backRoute: params.backRoute };
-  } else {
-    window._lblFormalCtx = null;
-  }
+  } else { window._lblFormalCtx = null; }
 
   console.log('[LABEL] page render start');
   console.log('[LABEL] params', { targetType, targetId, labelType, _isUnitMode, _unitDisplayId, hasDraft: !!_unitDraft });
@@ -393,8 +338,7 @@ Pages.labelGen = function (params = {}) {
                  display:flex;align-items:center;justify-content:center;
                  border:1px solid var(--border2);border-radius:4px;overflow:hidden;background:#fff">
                  <div style="color:var(--text3);font-size:.8rem;text-align:center;padding:16px">
-                   <div class="spinner" style="margin:0 auto 8px"></div>
-                   PNG生成中...
+                   <div class="spinner" style="margin:0 auto 8px"></div>PNG生成中...
                  </div>
                </div>
                <div id="lbl-qr-hidden" style="position:absolute;left:-9999px;top:-9999px;width:96px;height:96px;overflow:hidden"></div>`
@@ -441,6 +385,10 @@ Pages.labelGen = function (params = {}) {
             <button class="btn btn-ghost btn-full" style="margin-top:2px;font-size:.82rem"
               onclick="routeTo('${origin.page}',${JSON.stringify(origin.params)})">
               ← ${targetType==='IND'?'個体':targetType==='LOT'?'ロット':targetType==='PAR'?'種親':'詳細'}に戻る
+            </button>` : _backRoute ? `
+            <button class="btn btn-ghost btn-full" style="margin-top:2px;font-size:.82rem"
+              onclick="routeTo('${_backRoute}',${JSON.stringify(_backParam)})">
+              ← 詳細に戻る
             </button>` : ''}
             <div style="font-size:.7rem;color:var(--text3);margin-top:10px;line-height:1.6;
               padding-top:8px;border-top:1px solid var(--border)">
@@ -473,16 +421,11 @@ Pages.labelGen = function (params = {}) {
   }
 
   Pages._lblSetType = (t) => {
-    targetType = t.toUpperCase();
-    targetId   = '';
-    labelType  = _defaultLabelType(targetType);
-    render();
+    targetType = t.toUpperCase(); targetId = ''; labelType = _defaultLabelType(targetType); render();
   };
   Pages._lblSetTarget    = (id) => { targetId = id; render(); };
   Pages._lblSetLabelType = (t)  => {
-    labelType = t;
-    window._lastLabelType[targetType] = t;
-    render();
+    labelType = t; window._lastLabelType[targetType] = t; render();
   };
   render();
 };
@@ -510,13 +453,11 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
 
   const preview = document.getElementById('lbl-html-preview');
   if (!preview) { console.error('[LABEL] lbl-html-preview not in DOM'); return; }
-  console.log('[LABEL] preview mount found ✅');
 
   let ld;
   try {
     console.log('[LABEL] generate start', targetType, targetId);
     if (targetType === 'IND') {
-      console.log('[LABEL] branch IND');
       const ind     = Store.getIndividual(targetId) || {};
       const line    = Store.getLine(ind.line_id)    || {};
       const records = Store.getGrowthRecords(targetId) || [];
@@ -537,7 +478,6 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         label_type:   labelType || 'ind_fixed',
       };
     } else if (targetType === 'LOT') {
-      console.log('[LABEL] branch LOT - targetId:', targetId);
       const lot     = Store.getLot(targetId)     || {};
       const line    = Store.getLine(lot.line_id) || {};
       const records = Store.getGrowthRecords(targetId) || [];
@@ -560,7 +500,6 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         label_type:   labelType || autoType,
       };
     } else if (targetType === 'PAR') {
-      console.log('[LABEL] branch PAR');
       const par   = (Store.getDB('parents') || []).find(p => p.par_id === targetId) || {};
       const pTags = (() => { try { return JSON.parse(par.paternal_tags||'[]')||[]; } catch(e){ return []; } })();
       const mTags = (() => { try { return JSON.parse(par.maternal_tags||'[]')||[]; } catch(e){ return []; } })();
@@ -601,7 +540,6 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         || (Store.getDB('breeding_units')||[]).find(u => u.display_id===_genDisplayId || u.unit_id===targetId)
         || null;
       const unit = storeUnit || _genUnitDraft || {};
-      console.log('[LABEL] unit resolved - fromStore:', !!storeUnit, '/ fromDraft:', !storeUnit&&!!_genUnitDraft);
       const lineId = unit.line_id || '';
       const line   = lineId ? (Store.getLine(lineId)||{}) : {};
       let _originLotsStr = '';
@@ -620,7 +558,6 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
           _originLotsStr = '由来: ' + short.join(' / ');
         }
       } catch(_e) {}
-
       ld = {
         qr_text:       `BU:${_genDisplayId}`,
         display_id:    _genDisplayId,
@@ -639,7 +576,6 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         t1_date:       unit.t1_date     || unit.created_at || '',
       };
     } else if (targetType === 'IND_DRAFT') {
-      console.log('[LABEL] branch IND_DRAFT');
       const di   = _genIndDraft || {};
       const line = di.line_id ? (Store.getLine(di.line_id)||{}) : {};
       ld = {
@@ -658,20 +594,14 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         _isDraft:     true,
       };
     } else if (targetType === 'IND_FORMAL') {
-      console.log('[LABEL] branch IND_FORMAL');
       const fi   = _genFormalInd || {};
       const line = fi.line_id ? (Store.getLine(fi.line_id)||{}) : {};
-      // recordsを組み立て: formalIndから渡されたrecordsを使い、なければt1_dateと体重から生成
       let _formalRecords = fi.records || [];
       if (_formalRecords.length === 0 && fi.weight_g) {
         const _t1d = fi.t1_date || (fi.session_date
           ? fi.session_date.replace(/-/g, '/')
           : new Date().toISOString().split('T')[0].replace(/-/g, '/'));
-        _formalRecords = [{
-          record_date:   _t1d,
-          weight_g:      fi.weight_g,
-          exchange_type: 'FULL',
-        }];
+        _formalRecords = [{ record_date: _t1d, weight_g: fi.weight_g, exchange_type: 'FULL' }];
       }
       ld = {
         qr_text:      fi.display_id ? `IND:${fi.display_id}` : 'IND:FORMAL',
@@ -689,7 +619,6 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
       };
     } else {
       // SET
-      console.log('[LABEL] branch SET - targetId:', targetId);
       const set = (Store.getDB('pairings')||[]).find(p => p.set_id===targetId) || {};
       const _setLine = set.line_id ? (Store.getLine(set.line_id) || {}) : {};
       const _pars   = Store.getDB('parents') || [];
@@ -722,43 +651,30 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
     return;
   }
 
-  // ── QR生成 ──────────────────────────────────────────────────
   const qrText = ld.qr_text || (targetType + ':' + targetId);
-  console.log('[LABEL] qr build start - text:', qrText);
 
   function _getQrDataUrl(text) {
-    console.log('[LABEL] qr build start');
-    console.log('[LABEL] qr target text:', text);
     return new Promise(function(resolve) {
       var container = document.createElement('div');
       container.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:120px;height:120px';
       document.body.appendChild(container);
-
       try {
         new QRCode(container, {
-          text: text,
-          width: 120, height: 120,
-          colorDark: '#000000', colorLight: '#ffffff',
-          correctLevel: QRCode.CorrectLevel.M,
+          text: text, width: 120, height: 120,
+          colorDark: '#000000', colorLight: '#ffffff', correctLevel: QRCode.CorrectLevel.M,
         });
-        console.log('[LABEL] qr render success (QRCode created)');
       } catch(e) {
         console.error('[LABEL] qr build failed (constructor):', e.message);
-        document.body.removeChild(container);
-        resolve(''); return;
+        document.body.removeChild(container); resolve(''); return;
       }
-
-      var attempts = 0;
-      var maxAttempts = 40;
+      var attempts = 0, maxAttempts = 40;
       var poll = setInterval(function() {
         attempts++;
         var canvas = container.querySelector('canvas');
         var img    = container.querySelector('img');
         var dataUrl = '';
-
         if (canvas && canvas.width > 0) {
           try {
-            console.log('[LABEL] qr canvas found - size:', canvas.width, 'x', canvas.height);
             var d = canvas.toDataURL('image/png');
             if (d && d.length > 200) {
               var ctx2 = canvas.getContext('2d');
@@ -766,62 +682,30 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
               if (imgData) {
                 var blackCount = 0;
                 for (var pi = 0; pi < imgData.data.length; pi += 4) {
-                  if (imgData.data[pi+3] > 16 && imgData.data[pi] < 64 && imgData.data[pi+1] < 64 && imgData.data[pi+2] < 64) {
-                    blackCount++;
-                  }
+                  if (imgData.data[pi+3] > 16 && imgData.data[pi] < 64 && imgData.data[pi+1] < 64 && imgData.data[pi+2] < 64) blackCount++;
                 }
-                console.log('[LABEL] qr black pixel count (alpha-aware):', blackCount);
-                if (blackCount > 50) {
-                  dataUrl = d;
-                  console.log('[LABEL] qr accepted - black pixels:', blackCount);
-                } else {
-                  console.warn('[LABEL] qr rejected as blank - black pixels only:', blackCount);
-                }
-              } else {
-                if (d.length > 1000) { dataUrl = d; }
-              }
+                if (blackCount > 50) dataUrl = d;
+              } else { if (d.length > 1000) dataUrl = d; }
             }
-          } catch(e) { console.warn('[LABEL] canvas.toDataURL error:', e.message); }
+          } catch(e) {}
         }
         if (!dataUrl && img && img.src && img.src.startsWith('data:') && img.src.length > 500) {
           try {
-            var tmpC2 = document.createElement('canvas');
-            tmpC2.width = 60; tmpC2.height = 60;
-            var tmpCtx2 = tmpC2.getContext('2d');
-            var tmpImg2 = new Image();
-            tmpImg2.src = img.src;
+            var tmpC2 = document.createElement('canvas'); tmpC2.width = 60; tmpC2.height = 60;
+            var tmpCtx2 = tmpC2.getContext('2d'); var tmpImg2 = new Image(); tmpImg2.src = img.src;
             tmpCtx2.drawImage(tmpImg2, 0, 0, 60, 60);
-            var tmpData2 = tmpCtx2.getImageData(0, 0, 60, 60);
-            var tmpBlack2 = 0;
+            var tmpData2 = tmpCtx2.getImageData(0, 0, 60, 60); var tmpBlack2 = 0;
             for (var tpi = 0; tpi < tmpData2.data.length; tpi += 4) {
-              var a2 = tmpData2.data[tpi+3];
-              var r2 = tmpData2.data[tpi];
-              var g2 = tmpData2.data[tpi+1];
-              var b2 = tmpData2.data[tpi+2];
-              if (a2 > 16 && r2 < 64 && g2 < 64 && b2 < 64) tmpBlack2++;
+              if (tmpData2.data[tpi+3] > 16 && tmpData2.data[tpi] < 64 && tmpData2.data[tpi+1] < 64 && tmpData2.data[tpi+2] < 64) tmpBlack2++;
             }
-            console.log('[LABEL] qr img.src black pixel count (alpha-aware):', tmpBlack2);
-            if (tmpBlack2 > 50) {
-              dataUrl = img.src;
-              console.log('[LABEL] qr accepted via img.src - black pixels:', tmpBlack2);
-            } else {
-              console.warn('[LABEL] qr img.src rejected as blank - black pixels:', tmpBlack2);
-            }
-          } catch(_imgErr) { console.warn('[LABEL] img.src canvas check failed:', _imgErr.message); }
+            if (tmpBlack2 > 50) dataUrl = img.src;
+          } catch(_imgErr) {}
         }
-
         if (dataUrl) {
-          console.log('[LABEL] qr dataUrl length:', dataUrl.length, 'via', canvas ? 'canvas' : 'img', 'attempts:', attempts);
-          clearInterval(poll);
-          document.body.removeChild(container);
-          resolve(dataUrl); return;
+          clearInterval(poll); document.body.removeChild(container); resolve(dataUrl); return;
         }
-
         if (attempts >= maxAttempts) {
-          clearInterval(poll);
-          console.error('[LABEL] qr build failed (timeout). canvas:', !!canvas, 'img:', !!img);
-          document.body.removeChild(container);
-          resolve('');
+          clearInterval(poll); document.body.removeChild(container); resolve('');
         }
       }, 50);
     });
@@ -829,18 +713,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
 
   (async function _lblRender() {
     try {
-      console.log('[LABEL] qr build start - build:20260415d');
-      console.log('[LABEL] qr target type:', targetType, '| targetId:', targetId);
-      console.log('[LABEL] qr rect:', JSON.stringify(QR_RECT_MM));
-      console.log('[LABEL] qr target text:', qrText);
       var qrSrc = await _getQrDataUrl(qrText);
-      console.log('[LABEL] qr dataUrl created - length:', qrSrc ? qrSrc.length : 0);
-      if (qrSrc) {
-        console.log('[LABEL] qr final src prefix:', qrSrc.slice(0, 30));
-      } else {
-        console.error('[LABEL] qr build failed - qrSrc empty');
-      }
-
       var html = _buildLabelHTML(ld, qrSrc);
       var dims = _labelDimensions(ld.label_type, targetType);
 
@@ -856,13 +729,11 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
 
       var _previewNow = document.getElementById('lbl-html-preview');
       if (!_previewNow) { console.error('[LABEL] lbl-html-preview missing'); return; }
-      console.log('[LABEL] preview mount found');
 
       var ifrW = Math.round(dims.wPx * 1.5);
       var ifrH = Math.round(dims.hPx * 1.5);
       _previewNow.innerHTML = '<iframe srcdoc="' + html.replace(/"/g,'&quot;')
         + '" style="width:' + ifrW + 'px;height:' + ifrH + 'px;border:none;display:block" scrolling="no"></iframe>';
-      console.log('[LABEL] raw preview injected');
 
       var bar = document.getElementById('lbl-action-bar');
       if (bar) { bar.style.display = 'block'; bar.scrollIntoView({ behavior:'smooth', block:'nearest' }); }
@@ -870,63 +741,36 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
       await new Promise(function(r){ setTimeout(r, 500); });
 
       var pngDataUrl = null;
-      try {
-        pngDataUrl = await _buildLabelPNG(html, dims);
-        if (pngDataUrl) console.log('[LABEL] png build done - length:', pngDataUrl.length);
-      } catch(pngErr) {
-        console.warn('[LABEL] png build failed:', pngErr.message);
-      }
+      try { pngDataUrl = await _buildLabelPNG(html, dims); } catch(pngErr) {}
 
-      // 種親・産卵セットラベルはHTMLにQRを直接埋め込み済みのためコンポジット不要
       var _skipComposite = (window._currentLabel && (
-        window._currentLabel.labelType === 'parent' ||
-        window._currentLabel.labelType === 'set'
+        window._currentLabel.labelType === 'parent' || window._currentLabel.labelType === 'set'
       ));
       if (pngDataUrl && qrSrc && !_skipComposite) {
-        var pngHasQr = await _checkPngHasQr(pngDataUrl, dims);
-        console.log('[LABEL] qr composite mode:', pngHasQr ? 'on (verify+composite)' : 'on (needs composite)');
-        try {
-          pngDataUrl = await _compositeQrOntoPng(pngDataUrl, qrSrc, dims);
-          console.log('[LABEL] qr composited onto PNG - final length:', pngDataUrl.length);
-        } catch(compErr) {
-          console.warn('[LABEL] qr composite failed:', compErr.message);
-        }
-      } else if (pngDataUrl && _skipComposite) {
-        console.log('[LABEL] qr composite mode: skipped (parent label - QR already in HTML)');
-      } else if (pngDataUrl && !qrSrc) {
-        console.log('[LABEL] qr composite mode: skipped (no qrSrc)');
+        try { pngDataUrl = await _compositeQrOntoPng(pngDataUrl, qrSrc, dims); } catch(compErr) {}
       }
 
       if (pngDataUrl) {
         window._currentLabel.pngDataUrl = pngDataUrl;
         _previewNow.innerHTML = '<img src="' + pngDataUrl
           + '" style="max-width:100%;height:auto;border-radius:4px;display:block" alt="ラベルプレビュー">';
-        console.log('[LABEL] preview render done (PNG with QR composite)');
-      } else {
-        console.log('[LABEL] preview render done (iframe - PNG failed)');
       }
-
     } catch(err) {
       console.error('[LABEL] label render failed:', err.message, err.stack);
       var errMount = document.getElementById('lbl-html-preview');
-      if (errMount) {
-        errMount.innerHTML = '<div style="color:var(--red,#e05050);padding:16px;font-size:.8rem;text-align:center">⚠️ ラベル描画エラー<br><small>' + err.message + '</small></div>';
-      }
+      if (errMount) errMount.innerHTML = '<div style="color:var(--red,#e05050);padding:16px;font-size:.8rem;text-align:center">⚠️ ラベル描画エラー<br><small>' + err.message + '</small></div>';
     }
   })();
 };
 
-
 // ════════════════════════════════════════════════════════════════
 // HTMLラベル構築
 // ════════════════════════════════════════════════════════════════
-
 function _chkThermal(label, checked) {
   return '<span style="margin-right:5px;font-weight:700;color:#000">'
     + (checked ? '■' : '□') + label + '</span>';
 }
 
-// ── 性別表示ヘルパー ──────────────────────────────────────────────
 function _sexDisplay(sex) {
   function _circled(sym, active) {
     if (active) {
@@ -940,8 +784,7 @@ function _sexDisplay(sex) {
   var mHtml = _circled('&#9794;', sex === '♂');
   var fHtml = _circled('&#9792;', sex === '♀');
   return '<span style="font-size:13px;font-weight:700;color:#000">'
-    + mHtml + '&nbsp;&#183;&nbsp;' + fHtml
-    + '</span>';
+    + mHtml + '&nbsp;&#183;&nbsp;' + fHtml + '</span>';
 }
 
 function _qrBox(qrSrc, sizePx) {
@@ -949,8 +792,7 @@ function _qrBox(qrSrc, sizePx) {
   if (!qrSrc) {
     return '<div style="width:' + sz + 'px;height:' + sz + 'px;border:2px solid #000;'
       + 'display:flex;align-items:center;justify-content:center;'
-      + 'font-size:7px;font-weight:700;color:#000;text-align:center;line-height:1.3">'
-      + 'QR<br>ERR</div>';
+      + 'font-size:7px;font-weight:700;color:#000;text-align:center;line-height:1.3">QR<br>ERR</div>';
   }
   return '<div style="background:#fff;padding:4px;display:inline-block;line-height:0;border:2px solid #000">'
     + '<img src="' + qrSrc + '" style="width:' + sz + 'px;height:' + sz + 'px;display:block"></div>';
@@ -969,8 +811,7 @@ function _buildLabelHTML(ld, qrSrc) {
   var sexCats = (ld.size_category||'').split(',').map(function(s){ return s.trim(); });
   var headerLabel = lt === 'ind_fixed' ? '個別飼育'
     : (lt === 'multi_lot' || lt === 'egg_lot') ? 'ロット'
-    : lt === 't1_unit' ? 'ユニット'
-    : '個別飼育';
+    : lt === 't1_unit' ? 'ユニット' : '個別飼育';
 
   var rawId     = ld.display_id || '';
   var idParts   = rawId.split('-');
@@ -982,10 +823,7 @@ function _buildLabelHTML(ld, qrSrc) {
     lotSuffix = idParts.slice(2).join('-');
   }
   var prefix = lineBadge && rawId.includes(lineBadge)
-    ? rawId.slice(0, rawId.indexOf(lineBadge)).replace(/-$/, '')
-    : '';
-
-  console.log('[LABEL] header badge render: line=' + lineBadge + ' suffix=' + lotSuffix + ' prefix=' + prefix);
+    ? rawId.slice(0, rawId.indexOf(lineBadge)).replace(/-$/, '') : '';
 
   var matType   = ld.mat_type || '';
   var showMx    = (matType === 'T2' || matType === 'T3');
@@ -1006,66 +844,39 @@ function _buildLabelHTML(ld, qrSrc) {
 
   var rowsHtml = '';
   for (var i = 0; i < 4; i++) {
-    var lRec  = leftCol[i];
-    var rRec  = rightCol[i];
+    var lRec = leftCol[i], rRec = rightCol[i];
     var lDate = lRec ? String(lRec.record_date||'').slice(5) : '';
     var lWt   = lRec ? (lRec.weight_g ? String(lRec.weight_g) : '') : '';
     var rDate = rRec ? String(rRec.record_date||'').slice(5) : '';
     var rWt   = rRec ? (rRec.weight_g ? String(rRec.weight_g) : '') : '';
     var lExch = '', rExch = '';
-    if (lRec) {
-      var le = lRec.exchange_type || '';
-      lExch = ((le==='FULL'||le==='全')?'■':'□')+'全<br>'+((le==='ADD'||le==='追')?'■':'□')+'追';
-    }
-    if (rRec) {
-      var re2 = rRec.exchange_type || '';
-      rExch = ((re2==='FULL'||re2==='全')?'■':'□')+'全<br>'+((re2==='ADD'||re2==='追')?'■':'□')+'追';
-    }
+    if (lRec) { var le = lRec.exchange_type||''; lExch = ((le==='FULL'||le==='全')?'■':'□')+'全<br>'+((le==='ADD'||le==='追')?'■':'□')+'追'; }
+    if (rRec) { var re2 = rRec.exchange_type||''; rExch = ((re2==='FULL'||re2==='全')?'■':'□')+'全<br>'+((re2==='ADD'||re2==='追')?'■':'□')+'追'; }
     rowsHtml += '<tr>'
       + '<td style="' + tdU + '">' + (lDate || '&nbsp;') + '</td>'
-      + '<td style="' + tdU + ';position:relative">'
-        + (lWt || '&nbsp;')
-        + '<span style="position:absolute;bottom:1px;right:2px;font-size:5px;font-weight:700;color:#000">g</span>'
-        + '</td>'
+      + '<td style="' + tdU + ';position:relative">' + (lWt || '&nbsp;')
+        + '<span style="position:absolute;bottom:1px;right:2px;font-size:5px;font-weight:700;color:#000">g</span></td>'
       + '<td style="' + tdU + '">' + (lExch || '□全<br>□追') + '</td>'
       + '<td style="width:1.5px;background:#000;padding:0"></td>'
       + '<td style="' + tdU + '">' + (rDate || '&nbsp;') + '</td>'
-      + '<td style="' + tdU + ';position:relative">'
-        + (rWt || '&nbsp;')
-        + '<span style="position:absolute;bottom:1px;right:2px;font-size:5px;font-weight:700;color:#000">g</span>'
-        + '</td>'
+      + '<td style="' + tdU + ';position:relative">' + (rWt || '&nbsp;')
+        + '<span style="position:absolute;bottom:1px;right:2px;font-size:5px;font-weight:700;color:#000">g</span></td>'
       + '<td style="' + tdU + '">' + (rExch || '□全<br>□追') + '</td>'
       + '</tr>';
   }
 
-  var bLg = 'display:inline-block;border:1.5px solid #000;border-radius:3px;'
-    + 'padding:0 4px;font-size:12px;font-weight:700;color:#000;margin-right:2px;line-height:1.5';
-
-  var lineBadgeHtml = lineBadge
-    ? '<span style="' + bLg + '">' + lineBadge + '</span>'
-    : '';
-  var lotSuffixHtml = lotSuffix
-    ? '<span style="' + bLg + '">' + lotSuffix + '</span>'
-    : '';
-
+  var bLg = 'display:inline-block;border:1.5px solid #000;border-radius:3px;padding:0 4px;font-size:12px;font-weight:700;color:#000;margin-right:2px;line-height:1.5';
+  var lineBadgeHtml = lineBadge ? '<span style="' + bLg + '">' + lineBadge + '</span>' : '';
+  var lotSuffixHtml = lotSuffix ? '<span style="' + bLg + '">' + lotSuffix + '</span>' : '';
   var countBadge = (isLot && ld.count)
-    ? '<span style="display:inline-block;border:2px solid #000;border-radius:3px;'
-      + 'padding:0 3px;font-size:13px;font-weight:700;color:#000;line-height:1.4">'
-      + ld.count + '頭</span>'
-    : '';
-
+    ? '<span style="display:inline-block;border:2px solid #000;border-radius:3px;padding:0 3px;font-size:13px;font-weight:700;color:#000;line-height:1.4">' + ld.count + '頭</span>' : '';
   var sexHtml = !isLot ? _sexDisplay(ld.sex || '') : '';
-
   var hatchHtml = (!isLot && ld.hatch_date)
-    ? '<div style="font-size:6.5px;font-weight:700;color:#000">孵: ' + ld.hatch_date + '</div>'
-    : '';
-
+    ? '<div style="font-size:6.5px;font-weight:700;color:#000">孵: ' + ld.hatch_date + '</div>' : '';
   var mxHtml = showMx
-    ? '<div style="font-size:7px;font-weight:700;color:#000;line-height:1.7">'
-      + 'Mx:' + chk('ON', mxIsOn) + chk('OFF', !mxIsOn) + '</div>'
-    : '';
+    ? '<div style="font-size:7px;font-weight:700;color:#000;line-height:1.7">Mx:' + chk('ON', mxIsOn) + chk('OFF', !mxIsOn) + '</div>' : '';
 
-  var _bodyH  = isLot ? '40mm' : '70mm';
+  var _bodyH = isLot ? '40mm' : '70mm';
   var _pageSz = isLot ? '62mm 40mm' : '62mm 70mm';
 
   return '<!DOCTYPE html>\n<html><head><meta charset="utf-8">\n<style>\n'
@@ -1075,82 +886,53 @@ function _buildLabelHTML(ld, qrSrc) {
     + '  @media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }\n'
     + '</style></head><body>\n'
     + '<div style="width:62mm;height:' + _bodyH + ';display:flex;flex-direction:column">\n'
-
     + (isLot
       ? '  <div style="position:relative;background:#000;color:#fff;font-size:9px;font-weight:700;padding:0.8mm 2mm;height:5mm;display:flex;align-items:center;flex-shrink:0;overflow:hidden">'
         + '<span style="position:absolute;top:0;left:0;right:0;bottom:0;background:repeating-linear-gradient(45deg,transparent 0,transparent 4px,rgba(255,255,255,0.28) 4px,rgba(255,255,255,0.28) 6px);pointer-events:none"></span>'
-        + '<span style="position:relative;z-index:1">' + headerLabel + ' | HerculesOS</span>'
-        + '</div>\n'
+        + '<span style="position:relative;z-index:1">' + headerLabel + ' | HerculesOS</span></div>\n'
       : '  <div style="background:#000;color:#fff;font-size:9px;font-weight:700;padding:0.8mm 2mm;height:5mm;display:flex;align-items:center;flex-shrink:0">'
-        + headerLabel + ' | HerculesOS</div>\n'
-    )
-
+        + headerLabel + ' | HerculesOS</div>\n')
     + '  <div style="display:flex;padding:1mm 1.5mm 0;gap:0;flex-shrink:0">\n'
     + '    <div style="flex-shrink:0;margin-right:1.5mm">' + _qrBox(qrSrc, 44) + '</div>\n'
     + '    <div style="flex:1;min-width:0;padding-left:1.5mm;border-left:2px solid #000">\n'
-
     + '      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">\n'
     + '        <div>'
     + (prefix ? '<span style="font-size:7px;font-weight:700;color:#000;margin-right:2px">' + prefix + '-</span>' : '')
     + lineBadgeHtml + lotSuffixHtml + '</div>\n'
     + '        <div>' + countBadge + sexHtml + '</div>\n'
     + '      </div>\n'
-
     + '      ' + hatchHtml + '\n'
-
-    + '      <div style="font-size:7px;font-weight:700;color:#000;line-height:1.7">'
-    + '区分:' + chk('大',sexCats.indexOf('大')>=0) + chk('中',sexCats.indexOf('中')>=0) + chk('小',sexCats.indexOf('小')>=0)
-    + '</div>\n'
-
-    + '      <div style="font-size:7px;font-weight:700;color:#000;line-height:1.7">'
-    + 'M:' + ['T0','T1','T2','T3'].map(function(m){ return chk(m,ld.mat_type===m); }).join('')
-    + '</div>\n'
-
-    + '      <div style="font-size:7px;font-weight:700;color:#000;line-height:1.7">'
-    + 'St:' + _stageCheckboxRow(ld.stage_code) + '</div>\n'
-
+    + '      <div style="font-size:7px;font-weight:700;color:#000;line-height:1.7">区分:'
+    + chk('大',sexCats.indexOf('大')>=0) + chk('中',sexCats.indexOf('中')>=0) + chk('小',sexCats.indexOf('小')>=0) + '</div>\n'
+    + '      <div style="font-size:7px;font-weight:700;color:#000;line-height:1.7">M:'
+    + ['T0','T1','T2','T3'].map(function(m){ return chk(m,ld.mat_type===m); }).join('') + '</div>\n'
+    + '      <div style="font-size:7px;font-weight:700;color:#000;line-height:1.7">St:'
+    + _stageCheckboxRow(ld.stage_code) + '</div>\n'
     + '      ' + mxHtml + '\n'
-
-    + '    </div>\n'
-    + '  </div>\n'
-
+    + '    </div>\n  </div>\n'
     + (isLot ? (
       '  <div style="border-top:2px solid #000;margin:1mm 1.5mm 0"></div>\n'
       + '  <div style="padding:1.5mm 2mm;flex:1;display:flex;flex-direction:column;justify-content:space-evenly">\n'
-      + '    <pre style="font-family:monospace;font-size:17px;font-weight:700;color:#000;margin:0 0 4px;line-height:1.5;white-space:pre">'
-      +           '採卵日  ' + (ld.collect_date ? ld.collect_date.replace(/-/g,'/') : '____/__/__') + '</pre>\n'
-      + '    <pre style="font-family:monospace;font-size:17px;font-weight:700;color:#000;margin:0;line-height:1.5;white-space:pre">'
-      +           '孵化日  ' + (ld.hatch_date ? ld.hatch_date.replace(/-/g,'/') : '____/__/__') + '</pre>\n'
+      + '    <pre style="font-family:monospace;font-size:17px;font-weight:700;color:#000;margin:0 0 4px;line-height:1.5;white-space:pre">採卵日  ' + (ld.collect_date ? ld.collect_date.replace(/-/g,'/') : '____/__/__') + '</pre>\n'
+      + '    <pre style="font-family:monospace;font-size:17px;font-weight:700;color:#000;margin:0;line-height:1.5;white-space:pre">孵化日  ' + (ld.hatch_date ? ld.hatch_date.replace(/-/g,'/') : '____/__/__') + '</pre>\n'
       + '  </div>\n'
-          ) : (
+    ) : (
       '  <div style="border-top:1.5px solid #000;margin:0.8mm 1.5mm 0"></div>\n'
       + '  <div style="flex:1;padding:0 1.5mm 0.5mm;overflow:hidden">\n'
       + '    <table style="width:100%;border-collapse:collapse;table-layout:fixed">\n'
       + '      <thead><tr>'
-      + '<th style="' + thS + '">日付</th>'
-      + '<th style="' + thS + '">体重</th>'
-      + '<th style="' + thS + '">交換</th>'
+      + '<th style="' + thS + '">日付</th><th style="' + thS + '">体重</th><th style="' + thS + '">交換</th>'
       + '<th style="width:1.5px;background:#000;padding:0"></th>'
-      + '<th style="' + thS + '">日付</th>'
-      + '<th style="' + thS + '">体重</th>'
-      + '<th style="' + thS + '">交換</th>'
+      + '<th style="' + thS + '">日付</th><th style="' + thS + '">体重</th><th style="' + thS + '">交換</th>'
       + '</tr></thead>\n'
-      + '      <tbody>' + rowsHtml + '</tbody>\n'
-      + '    </table>\n'
-      + '  </div>\n'
+      + '      <tbody>' + rowsHtml + '</tbody>\n    </table>\n  </div>\n'
     ))
-
-    + (noteShort
-      ? '  <div style="padding:0.5mm 2mm 1mm;font-size:7px;font-weight:700;color:#000;overflow:hidden;white-space:nowrap">📝 ' + noteShort + '</div>\n'
-      : '')
+    + (noteShort ? '  <div style="padding:0.5mm 2mm 1mm;font-size:7px;font-weight:700;color:#000;overflow:hidden;white-space:nowrap">📝 ' + noteShort + '</div>\n' : '')
     + '</div>\n</body></html>';
 }
 
-
-// ── 種親ラベル（62mm × 25mm）─────────────────────────────────────
 function _buildParentLabelHTML(ld, _unused, qrSrc) {
   var qr = (typeof _unused === 'string' && _unused.startsWith('data:')) ? _unused : qrSrc;
-
   var rawId    = ld.display_id || '';
   var idParts  = rawId.split('-');
   var idCode   = idParts.length >= 2 ? idParts[idParts.length - 1] : rawId;
@@ -1159,18 +941,14 @@ function _buildParentLabelHTML(ld, _unused, qrSrc) {
   var feedStr  = ld.feeding_date  || '';
   var sexColor = ld.sex === '♂' ? '#1a6bb5' : ld.sex === '♀' ? '#b51a5a' : '#000';
   var badgeFz  = idCode.length <= 1 ? '32px' : idCode.length <= 2 ? '24px' : '16px';
-
   var BLANK_DATE = '/ /';
   var ecDisp   = ecStr   ? ecStr   : BLANK_DATE;
   var feedDisp = feedStr ? feedStr : BLANK_DATE;
-
   var patStr  = ld.paternal_raw  || '';
   var patSize = ld.paternal_size ? ' (' + ld.paternal_size + ')' : '';
   var matStr  = ld.maternal_raw  || '';
   var matSize = ld.maternal_size ? ' (' + ld.maternal_size + ')' : '';
-
   var titleStr = rawId + (sizeStr ? '  (' + sizeStr + ')' : '');
-
   var qrImgTag = qr
     ? '<img src="' + qr + '" style="width:38px;height:38px;display:block;line-height:0">'
     : '<div style="width:38px;height:38px;border:1px dashed #ccc;font-size:5px;display:flex;align-items:center;justify-content:center">QR</div>';
@@ -1182,96 +960,52 @@ function _buildParentLabelHTML(ld, _unused, qrSrc) {
     + '  @media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }\n'
     + '</style></head><body>\n'
     + '<div style="width:62mm;height:25mm;display:flex;flex-direction:column;padding:1mm 2mm 0mm">\n'
-
     + '  <div style="display:flex;flex-direction:row;align-items:center;gap:2mm;flex-shrink:0">\n'
-
     + '    <div style="display:flex;flex-direction:row;align-items:center;gap:1.5mm;flex-shrink:0">\n'
     + '      <div style="flex-shrink:0;line-height:0">' + qrImgTag + '</div>\n'
     + '      <div style="font-size:26px;font-weight:900;line-height:1;color:' + sexColor + ';flex-shrink:0">' + (ld.sex||'') + '</div>\n'
-    + '      <div style="border:2.5px solid #000;border-radius:3px;font-size:' + badgeFz + ';font-weight:900;'
-    + 'line-height:1;width:11mm;height:11mm;display:flex;align-items:center;justify-content:center;flex-shrink:0">\n'
-    + '        ' + idCode + '\n      </div>\n'
+    + '      <div style="border:2.5px solid #000;border-radius:3px;font-size:' + badgeFz + ';font-weight:900;line-height:1;width:11mm;height:11mm;display:flex;align-items:center;justify-content:center;flex-shrink:0">' + idCode + '</div>\n'
     + '    </div>\n'
-
     + '    <div style="width:1px;background:#ccc;align-self:stretch;margin:0;flex-shrink:0"></div>\n'
-
     + '    <div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:1.5mm;padding-left:1mm">\n'
     + '      <div style="font-family:monospace;font-size:10px;font-weight:900;letter-spacing:.2px;white-space:nowrap">' + titleStr + '</div>\n'
-    + '      <div style="display:flex;align-items:baseline;gap:2mm">\n'
-    + '        <span style="font-size:7px;font-weight:700;min-width:7mm;color:#555;white-space:nowrap">羽化日</span>\n'
-    + '        <span style="font-size:9.5px;font-weight:700;border-bottom:1px solid #888;display:inline-block;width:20mm;padding-bottom:1px;text-align:right">'
-    + ecDisp + '</span>\n'
-    + '      </div>\n'
-    + '      <div style="display:flex;align-items:baseline;gap:2mm">\n'
-    + '        <span style="font-size:7px;font-weight:700;min-width:7mm;color:#555;white-space:nowrap">後食日</span>\n'
-    + '        <span style="font-size:9.5px;font-weight:700;border-bottom:1px solid #888;display:inline-block;width:20mm;padding-bottom:1px;text-align:right">'
-    + feedDisp + '</span>\n'
-    + '      </div>\n'
-    + '    </div>\n'
-    + '  </div>\n'
-
+    + '      <div style="display:flex;align-items:baseline;gap:2mm"><span style="font-size:7px;font-weight:700;min-width:7mm;color:#555;white-space:nowrap">羽化日</span>'
+    + '<span style="font-size:9.5px;font-weight:700;border-bottom:1px solid #888;display:inline-block;width:20mm;padding-bottom:1px;text-align:right">' + ecDisp + '</span></div>\n'
+    + '      <div style="display:flex;align-items:baseline;gap:2mm"><span style="font-size:7px;font-weight:700;min-width:7mm;color:#555;white-space:nowrap">後食日</span>'
+    + '<span style="font-size:9.5px;font-weight:700;border-bottom:1px solid #888;display:inline-block;width:20mm;padding-bottom:1px;text-align:right">' + feedDisp + '</span></div>\n'
+    + '    </div>\n  </div>\n'
     + '  <div style="border-top:1px solid #aaa;margin:1mm 0 0.8mm"></div>\n'
-
     + '  <div style="display:flex;flex-direction:column;gap:0.8mm">\n'
-    + '    <div style="display:flex;align-items:flex-start;gap:1.5mm">\n'
-    + '      <span style="font-size:7px;font-weight:900;color:#1a6bb5;min-width:5mm;flex-shrink:0;line-height:1.5">♂親</span>\n'
-    + '      <span style="font-size:6.5px;flex:1;word-break:break-all;line-height:1.45">'
-    + (patStr ? patStr + patSize : '______________________________') + '</span>\n'
-    + '    </div>\n'
-    + '    <div style="display:flex;align-items:flex-start;gap:1.5mm">\n'
-    + '      <span style="font-size:7px;font-weight:900;color:#b51a5a;min-width:5mm;flex-shrink:0;line-height:1.5">♀親</span>\n'
-    + '      <span style="font-size:6.5px;flex:1;word-break:break-all;line-height:1.45">'
-    + (matStr ? matStr + matSize : '______________________________') + '</span>\n'
-    + '    </div>\n'
-    + '  </div>\n'
-
-    + '</div>\n</body></html>';
+    + '    <div style="display:flex;align-items:flex-start;gap:1.5mm"><span style="font-size:7px;font-weight:900;color:#1a6bb5;min-width:5mm;flex-shrink:0;line-height:1.5">♂親</span>'
+    + '<span style="font-size:6.5px;flex:1;word-break:break-all;line-height:1.45">' + (patStr ? patStr + patSize : '______________________________') + '</span></div>\n'
+    + '    <div style="display:flex;align-items:flex-start;gap:1.5mm"><span style="font-size:7px;font-weight:900;color:#b51a5a;min-width:5mm;flex-shrink:0;line-height:1.5">♀親</span>'
+    + '<span style="font-size:6.5px;flex:1;word-break:break-all;line-height:1.45">' + (matStr ? matStr + matSize : '______________________________') + '</span></div>\n'
+    + '  </div>\n</div>\n</body></html>';
 }
 
-
-// ── 産卵セットラベル（62mm × 40mm）── ★手書き案デザイン ──────────
-// レイアウト:
-//   左列上: ラインコード（A1）バッジ
-//   左列下: QRコード
-//   右上段: SETコード＋ペアリング日
-//   右中段: ♂ 種親コード (サイズ) + 血統原文
-//   右下段: ♀ 種親コード (サイズ) + 血統原文
 function _buildSetLabelHTML(ld, _unused, qrSrc) {
   var qr = (typeof _unused === 'string' && _unused.startsWith('data:')) ? _unused : qrSrc;
-
   var rawId  = ld.display_id || '';
   var _rawLC = ld.line_code  || '';
-
-  // lineCode抽出: "HM2025-A1" → "A1"、"A1" → "A1"
   function _extractLineCode(s) {
     if (!s || /^SET-/i.test(s)) return '';
-    // "HM2025-A1" 形式
     var m = s.match(/^[A-Za-z]{1,4}\d{4}-([A-Za-z][0-9]+)$/);
     if (m) return m[1];
-    // すでに "A1" 形式
     if (/^[A-Za-z][0-9]+$/.test(s)) return s;
-    // その他（末尾を取る）
     var p = s.split('-').filter(Boolean);
     return p.length >= 2 ? p[p.length - 1] : s;
   }
-
   var lineCode = _extractLineCode(_rawLC);
-  var badgeFz  = lineCode.length <= 1 ? '28px'
-               : lineCode.length <= 2 ? '22px'
-               : '14px';
-
+  var badgeFz  = lineCode.length <= 1 ? '28px' : lineCode.length <= 2 ? '22px' : '14px';
   var fInfo  = ld.father_info  || '—';
   var mInfo  = ld.mother_info  || '—';
   var fSize  = ld.father_size  ? ' (' + ld.father_size  + ')' : '';
   var mSize  = ld.mother_size  ? ' (' + ld.mother_size  + ')' : '';
   var fBlood = ld.father_blood ? ld.father_blood.slice(0, 26) : '';
   var mBlood = ld.mother_blood ? ld.mother_blood.slice(0, 26) : '';
-
-  // QR画像タグ（小さめ・border なし）
   var qrImgTag = qr
     ? '<img src="' + qr + '" style="width:36px;height:36px;display:block;line-height:0">'
-    : '<div style="width:36px;height:36px;border:1px dashed #ccc;font-size:5px;'
-      + 'display:flex;align-items:center;justify-content:center">QR</div>';
+    : '<div style="width:36px;height:36px;border:1px dashed #ccc;font-size:5px;display:flex;align-items:center;justify-content:center">QR</div>';
 
   return '<!DOCTYPE html>\n<html><head><meta charset="utf-8">\n<style>\n'
     + '  @page { size: 62mm 35mm; margin: 0; }\n'
@@ -1280,72 +1014,34 @@ function _buildSetLabelHTML(ld, _unused, qrSrc) {
     + '  @media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }\n'
     + '</style></head><body>\n'
     + '<div style="width:62mm;height:35mm;display:flex;flex-direction:column">\n'
-
-    // ── ヘッダー帯 ──
-    + '  <div style="background:#000;color:#fff;font-size:7.5px;font-weight:700;'
-    + 'padding:0 2mm;height:4.5mm;display:flex;align-items:center;flex-shrink:0;letter-spacing:.5px">'
-    + '産卵セット | HerculesOS</div>\n'
-
-    // ── ボディ: 左列 + 右列 ──
+    + '  <div style="background:#000;color:#fff;font-size:7.5px;font-weight:700;padding:0 2mm;height:4.5mm;display:flex;align-items:center;flex-shrink:0;letter-spacing:.5px">産卵セット | HerculesOS</div>\n'
     + '  <div style="display:flex;flex:1;overflow:hidden">\n'
-
-    //   左列: ラインバッジ（上）＋QR（下）
-    + '    <div style="flex-shrink:0;width:15mm;display:flex;flex-direction:column;'
-    + 'align-items:center;justify-content:space-evenly;padding:0.4mm 0.5mm;border-right:1.5px solid #000">\n'
+    + '    <div style="flex-shrink:0;width:15mm;display:flex;flex-direction:column;align-items:center;justify-content:space-evenly;padding:0.4mm 0.5mm;border-right:1.5px solid #000">\n'
     + (lineCode
-      ? '      <div style="border:2.5px solid #000;border-radius:3px;font-size:' + badgeFz + ';font-weight:900;'
-        + 'width:11mm;height:11mm;display:flex;align-items:center;justify-content:center;'
-        + 'letter-spacing:-0.5px;line-height:1">' + lineCode + '</div>\n'
+      ? '      <div style="border:2.5px solid #000;border-radius:3px;font-size:' + badgeFz + ';font-weight:900;width:11mm;height:11mm;display:flex;align-items:center;justify-content:center;letter-spacing:-0.5px;line-height:1">' + lineCode + '</div>\n'
       : '      <div style="width:11mm;height:11mm;border:1px dashed #ccc;border-radius:3px"></div>\n')
-    + '      <div style="line-height:0">' + qrImgTag + '</div>\n'
-    + '    </div>\n'
-
-    //   右列
+    + '      <div style="line-height:0">' + qrImgTag + '</div>\n    </div>\n'
     + '    <div style="flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden">\n'
-
-    //     右上段: SETコード＋ペアリング日
     + '      <div style="padding:0.5mm 1.5mm 0.3mm;border-bottom:1.5px solid #000;flex-shrink:0">\n'
-    + '        <div style="font-family:monospace;font-size:8px;font-weight:800;line-height:1.2;'
-    + 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + rawId + '</div>\n'
-    + (ld.pairing_start
-      ? '        <div style="font-size:6.5px;color:#444;font-weight:600">ペアリング: ' + ld.pairing_start + '</div>\n'
-      : '')
+    + '        <div style="font-family:monospace;font-size:8px;font-weight:800;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + rawId + '</div>\n'
+    + (ld.pairing_start ? '        <div style="font-size:6.5px;color:#444;font-weight:600">ペアリング: ' + ld.pairing_start + '</div>\n' : '')
     + '      </div>\n'
-
-    //     右中段: ♂親
-    + '      <div style="padding:0.2mm 1.5mm;border-bottom:1px solid #ddd;flex:1;'
-    + 'display:flex;flex-direction:column;justify-content:center">\n'
-    + '        <div style="display:flex;align-items:baseline;gap:2px">\n'
-    + '          <span style="font-size:9px;font-weight:900;color:#1a6bb5;flex-shrink:0">♂</span>\n'
-    + '          <span style="font-size:8px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
-    + fInfo + fSize + '</span>\n'
-    + '        </div>\n'
-    + (fBlood
-      ? '        <div style="font-size:6.5px;color:#333;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
-        + fBlood + '</div>\n'
-      : '        <div style="font-size:6.5px;color:#bbb">—</div>\n')
+    + '      <div style="padding:0.2mm 1.5mm;border-bottom:1px solid #ddd;flex:1;display:flex;flex-direction:column;justify-content:center">\n'
+    + '        <div style="display:flex;align-items:baseline;gap:2px"><span style="font-size:9px;font-weight:900;color:#1a6bb5;flex-shrink:0">♂</span>'
+    + '<span style="font-size:8px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + fInfo + fSize + '</span></div>\n'
+    + (fBlood ? '        <div style="font-size:6.5px;color:#333;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + fBlood + '</div>\n'
+             : '        <div style="font-size:6.5px;color:#bbb">—</div>\n')
     + '      </div>\n'
-
-    //     右下段: ♀親
     + '      <div style="padding:0.2mm 1.5mm;flex:1;display:flex;flex-direction:column;justify-content:center">\n'
-    + '        <div style="display:flex;align-items:baseline;gap:2px">\n'
-    + '          <span style="font-size:9px;font-weight:900;color:#b51a5a;flex-shrink:0">♀</span>\n'
-    + '          <span style="font-size:8px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
-    + mInfo + mSize + '</span>\n'
-    + '        </div>\n'
-    + (mBlood
-      ? '        <div style="font-size:6.5px;color:#333;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
-        + mBlood + '</div>\n'
-      : '        <div style="font-size:6.5px;color:#bbb">—</div>\n')
-    + '      </div>\n'
-
-    + '    </div>\n'
-    + '  </div>\n'
-    + '</div>\n</body></html>';
+    + '        <div style="display:flex;align-items:baseline;gap:2px"><span style="font-size:9px;font-weight:900;color:#b51a5a;flex-shrink:0">♀</span>'
+    + '<span style="font-size:8px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + mInfo + mSize + '</span></div>\n'
+    + (mBlood ? '        <div style="font-size:6.5px;color:#333;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + mBlood + '</div>\n'
+             : '        <div style="font-size:6.5px;color:#bbb">—</div>\n')
+    + '      </div>\n    </div>\n  </div>\n</div>\n</body></html>';
 }
 
-
 // ── T1飼育ユニットラベル（62mm × 70mm）──────────────────────────
+// Bug 1 修正: 性別未判別時は ♂・♀ を表示
 function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
   var qr       = (typeof _unused === 'string' && _unused.startsWith('data:')) ? _unused : qrSrc;
   var chk      = _chkThermal;
@@ -1363,10 +1059,9 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
              : _t1DateM2 ? (parseInt(_t1DateM2[1],10) + '/' + parseInt(_t1DateM2[2],10))
              : _t1DatePart;
 
-  var rawId     = ld.display_id || '';
-  var idParts   = rawId.split('-');
-  var prefix    = '';
-  var unitSuffix = '';
+  var rawId = ld.display_id || '';
+  var idParts = rawId.split('-');
+  var prefix = '', unitSuffix = '';
   if (lineCode && rawId.indexOf(lineCode) !== -1) {
     var _lcIdx = rawId.indexOf(lineCode);
     prefix = rawId.slice(0, _lcIdx).replace(/-$/, '');
@@ -1378,17 +1073,19 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
     unitSuffix = idParts.length > 1 ? idParts[idParts.length - 1] : rawId;
   }
 
-  console.log('[LABEL_UNIT] display_id:', rawId, '/ line:', lineCode, '/ prefix:', prefix, '/ suffix:', unitSuffix);
-
   var m0 = (ld.members && ld.members[0]) ? ld.members[0] : null;
   var m1 = (ld.members && ld.members[1]) ? ld.members[1] : null;
-  var m0w  = m0 && m0.weight_g ? String(m0.weight_g) : '';
-  var m1w  = m1 && m1.weight_g ? String(m1.weight_g) : '';
+  var m0w   = m0 && m0.weight_g ? String(m0.weight_g) : '';
+  var m1w   = m1 && m1.weight_g ? String(m1.weight_g) : '';
   var m0sex = m0 ? (m0.sex || '') : '';
   var m1sex = m1 ? (m1.sex || '') : '';
+
+  // ── Bug 1 修正: 性別未判別時は ♂・♀ 表示 ──────────────────
+  var _anySexDetermined = (m0sex === '♂' || m0sex === '♀') || (m1sex === '♂' || m1sex === '♀');
+
   function _unitMemberSex(idx, sex) {
     var sym = sex === '♂' ? '&#9794;' : sex === '♀' ? '&#9792;' : (idx===0?'&#9794;':'&#9792;');
-    if (sex) {
+    if (sex === '♂' || sex === '♀') {
       return (idx+1) + '<span style="display:inline-flex;align-items:center;justify-content:center;'
         + 'width:14px;height:14px;border-radius:50%;border:1.2px solid #000;'
         + 'font-size:10px;font-weight:700;color:#000;line-height:1;vertical-align:middle">'
@@ -1396,8 +1093,11 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
     }
     return (idx+1) + '<span style="font-size:10px;font-weight:700;color:#000">' + sym + '</span>';
   }
-  var unitSexHtml = '<span style="font-size:10px;font-weight:700;color:#000">'
-    + _unitMemberSex(0, m0sex) + '&nbsp;' + _unitMemberSex(1, m1sex) + '</span>';
+
+  var unitSexHtml = _anySexDetermined
+    ? '<span style="font-size:10px;font-weight:700;color:#000">'
+      + _unitMemberSex(0, m0sex) + '&nbsp;' + _unitMemberSex(1, m1sex) + '</span>'
+    : '<span style="font-size:11px;font-weight:700;color:#000">&#9794;&#183;&#9792;</span>';
 
   var showMx = (mat === 'T2' || mat === 'T3');
   var mxIsOn = ld.mat_molt === true || ld.mat_molt === 'true';
@@ -1408,44 +1108,30 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
   function _wgtCell(wgt) {
     return '<td style="' + tdU + ';position:relative">'
       + (wgt ? wgt : '&nbsp;')
-      + '<span style="position:absolute;bottom:1px;right:2px;font-size:5px;font-weight:700;color:#000">g</span>'
-      + '</td>';
+      + '<span style="position:absolute;bottom:1px;right:2px;font-size:5px;font-weight:700;color:#000">g</span></td>';
   }
 
   var rowsHtml = '';
   for (var ri = 0; ri < 4; ri++) {
     var isT1Row = (ri === 0);
-    var rowDate = isT1Row ? (t1Date || '') : '';
-    var rowWt0  = isT1Row ? m0w : '';
-    var rowWt1  = isT1Row ? m1w : '';
     rowsHtml += '<tr>'
-      + '<td style="' + tdU + '">' + (rowDate || '&nbsp;') + '</td>'
-      + _wgtCell(rowWt0)
-      + _wgtCell(rowWt1)
+      + '<td style="' + tdU + '">' + (isT1Row && t1Date ? t1Date : '&nbsp;') + '</td>'
+      + _wgtCell(isT1Row ? m0w : '')
+      + _wgtCell(isT1Row ? m1w : '')
       + '<td style="' + tdU + '">' + (isT1Row ? '■全<br>□追' : '□全<br>□追') + '</td>'
       + '</tr>';
   }
 
-  var bLg = 'display:inline-block;border:1.5px solid #000;border-radius:3px;'
-    + 'padding:0 4px;font-size:12px;font-weight:700;color:#000;margin-right:2px;line-height:1.5';
-  var countBadge = '<span style="display:inline-block;border:2px solid #000;border-radius:3px;'
-    + 'padding:0 3px;font-size:13px;font-weight:700;color:#000;line-height:1.4">'
-    + hc + '頭</span>';
-
-  var lineBadgeHtml   = lineCode   ? '<span style="' + bLg + '">' + lineCode   + '</span>' : '';
-  var unitSuffixHtml  = unitSuffix ? '<span style="' + bLg + '">' + unitSuffix + '</span>' : '';
-
+  var bLg = 'display:inline-block;border:1.5px solid #000;border-radius:3px;padding:0 4px;font-size:12px;font-weight:700;color:#000;margin-right:2px;line-height:1.5';
+  var countBadge = '<span style="display:inline-block;border:2px solid #000;border-radius:3px;padding:0 3px;font-size:13px;font-weight:700;color:#000;line-height:1.4">' + hc + '頭</span>';
+  var lineBadgeHtml  = lineCode   ? '<span style="' + bLg + '">' + lineCode   + '</span>' : '';
+  var unitSuffixHtml = unitSuffix ? '<span style="' + bLg + '">' + unitSuffix + '</span>' : '';
   var saleBadge = forSale
-    ? '<span style="border:1.5px solid #000;padding:0 3px;font-size:7px;font-weight:700;color:#000;margin-left:3px">販売</span>'
-    : '';
-
+    ? '<span style="border:1.5px solid #000;padding:0 3px;font-size:7px;font-weight:700;color:#000;margin-left:3px">販売</span>' : '';
   var hatchHtml = ld.hatch_date
-    ? '<div style="font-size:6.5px;font-weight:700;color:#000">孵: ' + ld.hatch_date + '</div>'
-    : '';
-
+    ? '<div style="font-size:6.5px;font-weight:700;color:#000">孵: ' + ld.hatch_date + '</div>' : '';
   var originHtml = originLS
-    ? '<div style="font-size:6px;font-weight:700;color:#000;line-height:1.5">' + originLS + '</div>'
-    : '';
+    ? '<div style="font-size:6px;font-weight:700;color:#000;line-height:1.5">' + originLS + '</div>' : '';
 
   return '<!DOCTYPE html>\n<html><head><meta charset="utf-8">\n<style>\n'
     + '  @page { size: 62mm 70mm; margin: 0; }\n'
@@ -1454,16 +1140,12 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
     + '  @media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }\n'
     + '</style></head><body>\n'
     + '<div style="width:62mm;height:70mm;display:flex;flex-direction:column">\n'
-
     + '  <div style="position:relative;background:#000;color:#fff;font-size:9px;font-weight:700;padding:0.8mm 2mm;height:5mm;display:flex;align-items:center;flex-shrink:0;overflow:hidden">'
     + '<span style="position:absolute;top:0;left:0;right:0;bottom:0;background:repeating-linear-gradient(45deg,transparent 0,transparent 4px,rgba(255,255,255,0.28) 4px,rgba(255,255,255,0.28) 6px);pointer-events:none"></span>'
-    + '<span style="position:relative;z-index:1">ユニット | HerculesOS' + saleBadge + '</span>'
-    + '</div>\n'
-
+    + '<span style="position:relative;z-index:1">ユニット | HerculesOS' + saleBadge + '</span></div>\n'
     + '  <div style="display:flex;padding:1mm 1.5mm 0;gap:0;flex-shrink:0">\n'
     + '    <div style="flex-shrink:0;margin-right:1.5mm">' + _qrBox(qr, 44) + '</div>\n'
     + '    <div style="flex:1;min-width:0;padding-left:1.5mm;border-left:2px solid #000">\n'
-
     + '      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;flex-wrap:nowrap">\n'
     + '        <div style="display:flex;align-items:center;white-space:nowrap;overflow:hidden">'
     + (prefix ? '<span style="font-size:7px;font-weight:700;color:#000;margin-right:1px;flex-shrink:0">' + prefix + '-</span>' : '')
@@ -1471,56 +1153,35 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
     + '        <div style="flex-shrink:0;margin-left:2px;display:flex;flex-direction:column;align-items:center;gap:2px">'
     + countBadge
     + (unitSexHtml ? '<div style="font-size:9px;font-weight:700;color:#000;text-align:center">' + unitSexHtml + '</div>' : '')
-    + '</div>\n'
-    + '      </div>\n'
+    + '</div>\n      </div>\n'
     + '      ' + hatchHtml + '\n'
     + '      ' + originHtml + '\n'
-
-    + '      <div style="font-size:7px;font-weight:700;color:#000;line-height:1.6">'
-    + '区分:' + chk('大', sizeCats.indexOf('大')>=0) + chk('中', sizeCats.indexOf('中')>=0) + chk('小', sizeCats.indexOf('小')>=0)
-    + '</div>\n'
-
-    + '      <div style="font-size:7px;font-weight:700;color:#000;line-height:1.6">'
-    + 'M:' + ['T0','T1','T2','T3'].map(function(m){ return chk(m, mat===m); }).join('')
-    + '</div>\n'
-
-    + '      <div style="font-size:7px;font-weight:700;color:#000;line-height:1.6">'
-    + 'St:' + _stageCheckboxRow(ld.stage_code || 'T1')
-    + '</div>\n'
-
-    + (showMx ? '      <div style="font-size:7px;font-weight:700;color:#000;line-height:1.6">Mx:'
-      + chk('ON', mxIsOn) + chk('OFF', !mxIsOn) + '</div>\n' : '')
-
-    + '    </div>\n'
-    + '  </div>\n'
-
+    + '      <div style="font-size:7px;font-weight:700;color:#000;line-height:1.6">区分:'
+    + chk('大', sizeCats.indexOf('大')>=0) + chk('中', sizeCats.indexOf('中')>=0) + chk('小', sizeCats.indexOf('小')>=0) + '</div>\n'
+    + '      <div style="font-size:7px;font-weight:700;color:#000;line-height:1.6">M:'
+    + ['T0','T1','T2','T3'].map(function(m){ return chk(m, mat===m); }).join('') + '</div>\n'
+    + '      <div style="font-size:7px;font-weight:700;color:#000;line-height:1.6">St:'
+    + _stageCheckboxRow(ld.stage_code || 'T1') + '</div>\n'
+    + (showMx ? '      <div style="font-size:7px;font-weight:700;color:#000;line-height:1.6">Mx:' + chk('ON', mxIsOn) + chk('OFF', !mxIsOn) + '</div>\n' : '')
+    + '    </div>\n  </div>\n'
     + '  <div style="border-top:1.5px solid #000;margin:0.8mm 1.5mm 0"></div>\n'
     + '  <div style="flex:1;padding:0 1.5mm 0.5mm;overflow:hidden">\n'
     + '    <table style="width:100%;border-collapse:collapse;table-layout:fixed">\n'
     + '      <thead><tr>'
-    + '<th style="' + thS + '">日付</th>'
-    + '<th style="' + thS + '">①</th>'
-    + '<th style="' + thS + '">②</th>'
-    + '<th style="' + thS + '">交換</th>'
+    + '<th style="' + thS + '">日付</th><th style="' + thS + '">①</th>'
+    + '<th style="' + thS + '">②</th><th style="' + thS + '">交換</th>'
     + '</tr></thead>\n'
-    + '      <tbody>' + rowsHtml + '</tbody>\n'
-    + '    </table>\n'
-    + '  </div>\n'
-    + '</div>\n</body></html>';
+    + '      <tbody>' + rowsHtml + '</tbody>\n    </table>\n  </div>\n</div>\n</body></html>';
 }
-
 
 // ── ダウンロード / 共有 / 印刷 ────────────────────────────────────
 Pages._lblDownloadPNG = function () {
   const label = window._currentLabel || {};
   const url   = label.pngDataUrl;
   if (!url) { UI.toast('先にラベルを生成してください', 'error'); return; }
-  const a  = document.createElement('a');
-  a.href     = url;
-  a.download = label.fileName || 'label.png';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  const a = document.createElement('a');
+  a.href = url; a.download = label.fileName || 'label.png';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
   UI.toast('PNGを保存しました', 'success');
 };
 
@@ -1544,109 +1205,52 @@ Pages._lblSharePNG = async function () {
 
 Pages._lblBrotherPrint = function() {
   const label = window._currentLabel || {};
-  if (!label.pngDataUrl && !label.html) {
-    UI.toast('先にラベルを生成してください', 'error'); return;
-  }
+  if (!label.pngDataUrl && !label.html) { UI.toast('先にラベルを生成してください', 'error'); return; }
   const dims = label.dims || { wMm:62, hMm:70 };
   const png  = label.pngDataUrl;
-
   if (png) {
-    const wPx = dims.wPx || 234;
-    const hPx = dims.hPx || 265;
-    const printDoc = '<!DOCTYPE html><html><head>'
-      + '<meta charset="utf-8">'
-      + '<meta name="viewport" content="width=' + wPx + '">'
-      + '<style>'
-      + '@page { margin: 0; }'
-      + 'html { margin:0; padding:0; background:#fff; }'
-      + 'body { margin:0; padding:0; background:#fff; width:' + wPx + 'px; }'
-      + 'img {'
-      +   'display:block;'
-      +   'width:' + wPx + 'px;'
-      +   'height:' + hPx + 'px;'
-      +   'margin:0; padding:0;'
-      +   '-webkit-print-color-adjust:exact;'
-      +   'print-color-adjust:exact;'
-      + '}'
-      + '</style></head><body>'
-      + '<img src="' + png + '" width="' + wPx + '" height="' + hPx + '">'
-      + '<script>'
-      +   'window.addEventListener("load", function() {'
-      +     'setTimeout(function() { window.print(); }, 500);'
-      +   '});'
-      + '<' + '/script>'
-      + '</body></html>';
-
+    const wPx = dims.wPx || 234, hPx = dims.hPx || 265;
+    const printDoc = '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=' + wPx + '">'
+      + '<style>@page{margin:0;}html{margin:0;padding:0;background:#fff;}body{margin:0;padding:0;background:#fff;width:' + wPx + 'px;}'
+      + 'img{display:block;width:' + wPx + 'px;height:' + hPx + 'px;margin:0;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact;}'
+      + '</style></head><body><img src="' + png + '" width="' + wPx + '" height="' + hPx + '">'
+      + '<script>window.addEventListener("load",function(){setTimeout(function(){window.print();},500);});<' + '/script></body></html>';
     const blob = new Blob([printDoc], { type:'text/html;charset=utf-8' });
     const url  = URL.createObjectURL(blob);
     const win  = window.open(url, '_blank');
-    if (!win) {
-      UI.toast('ポップアップを許可してください（アドレスバー右端のアイコンをタップ）', 'error', 5000);
-      return;
-    }
+    if (!win) { UI.toast('ポップアップを許可してください（アドレスバー右端のアイコンをタップ）', 'error', 5000); return; }
     setTimeout(function(){ URL.revokeObjectURL(url); }, 15000);
     return;
   }
-
-  // ── HTMLフォールバック（PNG未生成の場合） ─────────────────────
-  const wPx = dims.wPx || 234;
-  const hPx = dims.hPx || 265;
+  const wPx = dims.wPx || 234, hPx = dims.hPx || 265;
   const rawHtml = (label.html || '').replace(/&quot;/g, '"');
-  const printDoc2 = '<!DOCTYPE html><html><head>'
-    + '<meta charset="utf-8">'
-    + '<meta name="viewport" content="width=' + wPx + '">'
-    + '<style>'
-    + '@page { margin:0; }'
-    + 'html,body { margin:0; padding:0; background:#fff; width:' + wPx + 'px; }'
-    + '</style></head><body>'
-    + rawHtml
-    + '<script>window.addEventListener("load",function(){setTimeout(function(){window.print();},600);});<' + '/script>'
-    + '</body></html>';
-
+  const printDoc2 = '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=' + wPx + '">'
+    + '<style>@page{margin:0;}html,body{margin:0;padding:0;background:#fff;width:' + wPx + 'px;}</style></head><body>'
+    + rawHtml + '<script>window.addEventListener("load",function(){setTimeout(function(){window.print();},600);});<' + '/script></body></html>';
   const blob2 = new Blob([printDoc2], { type:'text/html;charset=utf-8' });
   const url2  = URL.createObjectURL(blob2);
   const win2  = window.open(url2, '_blank');
-  if (!win2) {
-    UI.toast('ポップアップを許可してください（アドレスバー右端のアイコンをタップ）', 'error', 5000);
-    return;
-  }
+  if (!win2) { UI.toast('ポップアップを許可してください（アドレスバー右端のアイコンをタップ）', 'error', 5000); return; }
   setTimeout(function(){ URL.revokeObjectURL(url2); }, 15000);
 };
 
-// 後方互換
 Pages._lblPrintHTML = Pages._lblBrotherPrint;
 Pages._lblPrint     = Pages._lblBrotherPrint;
 Pages._lblDownload  = Pages._lblDownloadPNG;
 
-// Brother Print Service Plugin セットアップ案内
 Pages._lblPrintSetupGuide = function() {
   UI.modal(
-    '<div class="modal-title" style="font-size:.92rem;font-weight:700;padding-bottom:8px">🖨️ Brother印刷 初回セットアップ</div>' +
-    '<div style="font-size:.8rem;line-height:1.9;padding:4px 0">' +
-      '<div style="font-weight:700;color:var(--gold);margin-bottom:6px">【1回だけ必要な作業】</div>' +
-      '<div style="margin-bottom:12px">' +
-        '<b>① Google Playでインストール</b><br>' +
-        '<span style="color:var(--text3)">「Brother Print Service Plugin」を検索してインストール</span>' +
-      '</div>' +
-      '<div style="margin-bottom:12px">' +
-        '<b>② Androidの印刷設定を開く</b><br>' +
-        '<span style="color:var(--text3)">設定 → 接続済みデバイス → 印刷 → Brother Print Service → 有効にする</span>' +
-      '</div>' +
-      '<div style="margin-bottom:12px">' +
-        '<b>③ プリンターを追加</b><br>' +
-        '<span style="color:var(--text3)">「プリンターを追加」→ QL-820NWBをWi-Fiで検索・選択</span>' +
-      '</div>' +
-      '<div style="background:rgba(76,175,120,.08);border:1px solid rgba(76,175,120,.25);border-radius:8px;padding:10px 12px;font-size:.76rem">' +
-        '<b style="color:var(--green)">✅ セットアップ完了後の印刷手順</b><br>' +
-        '① HerculesOSで「Brother印刷」ボタンをタップ<br>' +
-        '② 印刷ダイアログが開く → プリンター: QL-820NWBを選択<br>' +
-        '③ 用紙サイズが自動設定される（62×70mm または 62×40mm）<br>' +
-        '④「印刷」→ 完了 🎉' +
-      '</div>' +
-    '</div>' +
-    '<div class="modal-footer">' +
-      '<button class="btn btn-primary btn-full" onclick="UI.closeModal&&UI.closeModal()">OK</button>' +
-    '</div>'
+    '<div class="modal-title" style="font-size:.92rem;font-weight:700;padding-bottom:8px">🖨️ Brother印刷 初回セットアップ</div>'
+    + '<div style="font-size:.8rem;line-height:1.9;padding:4px 0">'
+    + '<div style="font-weight:700;color:var(--gold);margin-bottom:6px">【1回だけ必要な作業】</div>'
+    + '<div style="margin-bottom:12px"><b>① Google Playでインストール</b><br><span style="color:var(--text3)">「Brother Print Service Plugin」を検索してインストール</span></div>'
+    + '<div style="margin-bottom:12px"><b>② Androidの印刷設定を開く</b><br><span style="color:var(--text3)">設定 → 接続済みデバイス → 印刷 → Brother Print Service → 有効にする</span></div>'
+    + '<div style="margin-bottom:12px"><b>③ プリンターを追加</b><br><span style="color:var(--text3)">「プリンターを追加」→ QL-820NWBをWi-Fiで検索・選択</span></div>'
+    + '<div style="background:rgba(76,175,120,.08);border:1px solid rgba(76,175,120,.25);border-radius:8px;padding:10px 12px;font-size:.76rem">'
+    + '<b style="color:var(--green)">✅ セットアップ完了後の印刷手順</b><br>'
+    + '① HerculesOSで「Brother印刷」ボタンをタップ<br>② 印刷ダイアログが開く → プリンター: QL-820NWBを選択<br>'
+    + '③ 用紙サイズが自動設定される（62×70mm または 62×40mm）<br>④「印刷」→ 完了 🎉</div></div>'
+    + '<div class="modal-footer"><button class="btn btn-primary btn-full" onclick="UI.closeModal&&UI.closeModal()">OK</button></div>'
   );
 };
 Pages._lblOpenDrive = function () { UI.toast('Drive保存は非対応です', 'info'); };

@@ -1,8 +1,27 @@
 // ════════════════════════════════════════════════════════════════
-// unit_detail.js — 飼育ユニット（BU）詳細画面  build: 20260414c
-// 変更点: Pages._udLabelGen にフォールバック追加（_udLabelParams未設定時でも動作）
+// unit_detail.js — 飼育ユニット（BU）詳細画面
+// build: 20260414c-fix1
+// 変更点:
+//   - Bug 4: 孵化日に生のDate文字列が表示される問題を修正（_udFormatDate追加）
+//   - Bug 5: メンバー行の未判別性別「?」を非表示に修正
 // ════════════════════════════════════════════════════════════════
 'use strict';
+
+// ── Bug 4 修正: 孵化日フォーマット関数 ─────────────────────────
+function _udFormatDate(d) {
+  if (!d) return '—';
+  var s = String(d);
+  // 既に YYYY/MM/DD または YYYY-MM-DD 形式
+  if (/^\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}$/.test(s)) return s.replace(/-/g, '/');
+  // "Sat Jan 31 2026 ..." などの Date.toString() 形式をパース
+  var dt = new Date(s);
+  if (!isNaN(dt.getTime())) {
+    return dt.getFullYear() + '/'
+      + String(dt.getMonth() + 1).padStart(2, '0') + '/'
+      + String(dt.getDate()).padStart(2, '0');
+  }
+  return s;
+}
 
 function _udFormatOriginLots(unit) {
   let srcLots = [];
@@ -32,7 +51,6 @@ function _udParseMembers(unit) {
 // 個体一覧からこのユニット由来の個体を検索
 function _udFindMemberInds(unit) {
   const allInds = Store.getDB('individuals') || [];
-  // origin_unit_id または source_unit_id でマッチ
   const byUnit = allInds.filter(i =>
     i.origin_unit_id === unit.unit_id ||
     i.source_unit_id === unit.unit_id ||
@@ -40,7 +58,6 @@ function _udFindMemberInds(unit) {
   );
   if (byUnit.length > 0) return byUnit;
 
-  // メンバー配列の lot_id + lot_item_no でマッチ（フォールバック）
   const members = _udParseMembers(unit);
   if (members.length === 0) return [];
   const matched = [];
@@ -136,7 +153,6 @@ function _renderUnitDetail(unit, main) {
     ? `<span style="background:#e05050;color:#fff;font-size:.65rem;font-weight:700;padding:2px 7px;border-radius:4px;margin-left:6px">販売候補</span>`
     : '';
 
-  // 個別化済の場合: メンバー個体へのリンク一覧を表示
   const memberSection = isIndividualized && memberInds.length > 0
     ? `<div class="card" style="margin-bottom:10px">
         <div class="card-title">個体化済メンバー（${memberInds.length}頭）</div>
@@ -174,7 +190,6 @@ function _renderUnitDetail(unit, main) {
           </div>
         </div>`;
 
-  // ラベル発行: JSON.stringifyを使わず安全に渡す
   window._udLabelParams = {
     targetType: 'UNIT',
     displayId:  unit.display_id,
@@ -227,7 +242,7 @@ function _renderUnitDetail(unit, main) {
         </div>
         <table style="width:100%;font-size:.8rem;border-collapse:collapse">
           ${[
-            ['孵化日',     unit.hatch_date    || '—'],
+            ['孵化日',     _udFormatDate(unit.hatch_date)],
             ['マット種別', unit.mat_type      || '—'],
             ['容器サイズ', unit.container_size || '—'],
             ['最終記録日', latestRec ? latestRec.record_date : '—'],
@@ -288,14 +303,13 @@ function _renderUnitDetail(unit, main) {
     </div>`;
 }
 
-// ── ラベル発行（Store.setParamsを使わずrouteToのみで遷移）────────
+// ── ラベル発行 ────────────────────────────────────────────────────
 Pages._udLabelGen = function () {
   const p = window._udLabelParams;
   if (!p) {
     console.error('[UD] _udLabelGen: _udLabelParams not set');
     return;
   }
-  // Store.setParams が存在する場合のみ呼ぶ（存在しなくてもrouteToで動作）
   if (typeof Store.setParams === 'function') {
     Store.setParams(p);
   }
@@ -340,23 +354,19 @@ Pages._udSaveBasic = async function (unitId, displayId) {
   const updates = { unit_id: unitId, hatch_date: hatch, mat_type: mat, container_size: cont, note };
   try {
     UI.loading(true);
-    // GASへ保存
     if (typeof API !== 'undefined' && API.unit && typeof API.unit.update === 'function') {
       await API.unit.update(updates);
     } else if (typeof API !== 'undefined' && API.breedingUnit && typeof API.breedingUnit.update === 'function') {
       await API.breedingUnit.update(updates);
     } else if (typeof apiCall === 'function' && typeof API !== 'undefined') {
-      // フォールバック: apiCallで直接GASを呼ぶ
       await apiCall(() => API.post({ action: 'updateBreedingUnit', ...updates }), null);
     }
-    // ローカルキャッシュ更新
     if (typeof Store.patchDBItem === 'function') {
       Store.patchDBItem('breeding_units', 'unit_id', unitId, updates);
     }
     UI.toast('基本情報を更新しました', 'success');
     Pages.unitDetail({ unitDisplayId: displayId });
   } catch(e) {
-    // GAS失敗時もローカルは更新（オフライン対応）
     if (typeof Store.patchDBItem === 'function') {
       Store.patchDBItem('breeding_units', 'unit_id', unitId, updates);
     }
@@ -368,6 +378,7 @@ Pages._udSaveBasic = async function (unitId, displayId) {
 };
 
 // ── メンバー行 ───────────────────────────────────────────────────
+// Bug 5 修正: ♂/♀ のみ表示、未判別は非表示
 function _renderUdMemberRow(m, idx, records) {
   const slotLabel = idx === 0 ? '1頭目' : idx === 1 ? '2頭目' : `${idx+1}頭目`;
   const slotRecs  = records.filter(r => parseInt(r.unit_slot_no, 10) === m.unit_slot_no);
@@ -380,7 +391,7 @@ function _renderUdMemberRow(m, idx, records) {
   <div style="padding:10px 0;border-bottom:1px solid var(--border2)">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
       <span style="font-weight:800;font-size:.9rem;color:var(--text1)">${slotLabel}</span>
-      ${m.sex && m.sex !== '不明' ? `<span style="font-size:.8rem;font-weight:700;color:${sexColor}">${m.sex}</span>` : ''}
+      ${(m.sex && m.sex !== '不明') ? `<span style="font-size:.8rem;font-weight:700;color:${sexColor}">${m.sex}</span>` : ''}
       ${m.size_category ? `<span style="font-size:.75rem;padding:1px 6px;border-radius:4px;background:rgba(76,175,120,.12);color:var(--green)">${m.size_category}</span>` : ''}
       ${latestW ? `<span style="font-size:.8rem;font-weight:700;margin-left:auto">${latestW}g</span>` : ''}
     </div>
