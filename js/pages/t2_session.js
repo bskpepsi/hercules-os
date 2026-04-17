@@ -1,9 +1,8 @@
 // FILE: js/pages/t2_session.js
-// build: 20260413bi
+// build: 20260413bi-fix1
 // 変更点:
-//   - セッション初期値に mat_type:'T2' を追加
-//   - 交換種別ボタン PARTIAL → ADD に統一
-//   - _buildT2Members の exchange_type を FULL に統一（既存通り）
+//   - t2SessionStart: unit.line_id が空の場合に display_id から line_code を抽出してフォールバック解決
+//   - _renderT2Session: lineDisp に同じフォールバック追加
 'use strict';
 
 window._t2Session = window._t2Session || null;
@@ -26,17 +25,28 @@ Pages.t2SessionStart = async function (unitDisplayId) {
 
   const originLotDisplayIds = _resolveOriginLotDisplayIds(unit);
 
+  // ── line_id フォールバック解決 ───────────────────────────────
+  // unit.line_id が空の場合は display_id から line_code を抽出してキャッシュ検索
+  const _resolvedLineIdT2 = (() => {
+    if (unit.line_id) return unit.line_id;
+    const dm = (unit.display_id || '').match(/^[A-Za-z0-9]+-([A-Za-z][0-9]+)-/);
+    if (!dm) return '';
+    const lines = Store.getDB('lines') || [];
+    const found = lines.find(l => (l.line_code || l.display_id) === dm[1]);
+    return found ? found.line_id : '';
+  })();
+
   window._t2Session = {
     unit_id:    unit.unit_id,
     display_id: unit.display_id,
-    line_id:    unit.line_id,
+    line_id:    _resolvedLineIdT2,
     stage_phase:unit.stage_phase || 'T1',
     hatch_date: unit.hatch_date  || '',
     head_count: unit.head_count  || members.length,
     origin_lots:originLotDisplayIds,
     mx_done:      false,
-    mat_type:     'T2',    // ▼ マット種別初期値 T2
-    exchange_type:'FULL',  // ▼ 交換種別初期値 全交換
+    mat_type:     'T2',
+    exchange_type:'FULL',
     members:      members,
     saving:     false,
     _fromInd:   false,
@@ -67,8 +77,8 @@ Pages.t2SessionStartFromInd = async function (indIdOrDisplayId) {
     status:        'normal',
     mat_molt:      true,
     container:     '2.7L',
-    mat_type:      'T2',   // ▼ T2初期値
-    exchange_type: 'FULL', // ▼ 全交換初期値
+    mat_type:      'T2',
+    exchange_type: 'FULL',
     decision:      null,
     memo:          '',
   }];
@@ -136,8 +146,8 @@ function _buildT2Members(unit) {
       status:        'normal',
       mat_molt:      true,
       container:     '2.7L',
-      mat_type:      'T2',   // ▼ T2移行デフォルト
-      exchange_type: 'FULL', // ▼ 全交換デフォルト
+      mat_type:      'T2',
+      exchange_type: 'FULL',
       decision:      null,
       memo:          '',
     });
@@ -196,8 +206,15 @@ function _renderT2Session(s) {
   const main = document.getElementById('main');
   if (!main) return;
 
-  const line      = Store.getLine(s.line_id);
-  const lineDisp  = line ? (line.line_code || line.display_id) : s.line_id;
+  // ── line_id フォールバック表示 ────────────────────────────────
+  const line      = s.line_id ? Store.getLine(s.line_id) : null;
+  const lineDisp  = (() => {
+    if (line) return line.line_code || line.display_id || '';
+    // フォールバック: "HM2025-A1-U06" → "A1" を抽出
+    const dm = (s.display_id || '').match(/^[A-Za-z0-9]+-([A-Za-z][0-9]+)-/);
+    return dm ? dm[1] : (s.line_id || '—');
+  })();
+
   const originStr = _formatOriginLots(s.origin_lots);
   const nextPhase = _nextStagePhase(s.stage_phase);
   const allInputComplete = s.members.every(m => _isT2MemberComplete(m));
@@ -236,10 +253,7 @@ function _renderT2Session(s) {
         <span style="color:var(--text3)">※ T2移行後の通常交換は「継続読取りモード」を使います。</span>
       </div>
 
-      <!-- ③ ユニット共通設定カード -->
       <div style="margin-top:8px;border-radius:10px;border:1.5px solid var(--border);background:var(--surface1,var(--surface));padding:12px 14px">
-
-        <!-- マット種別 一括 -->
         <div style="font-size:.8rem;font-weight:700;color:var(--text2);margin-bottom:6px">
           🌿 マット種別 — 一括設定
           <span style="font-size:.62rem;font-weight:400;color:var(--text3);margin-left:4px">個体カードで個別変更可</span>
@@ -257,7 +271,6 @@ function _renderT2Session(s) {
           }).join('')}
         </div>
 
-        <!-- 交換種別 一括 -->
         <div style="font-size:.8rem;font-weight:700;color:var(--text2);margin-bottom:6px">
           🔄 交換種別 — 一括設定
           <span style="font-size:.62rem;font-weight:400;color:var(--text3);margin-left:4px">個体カードで個別変更可</span>

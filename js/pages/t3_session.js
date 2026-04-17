@@ -1,11 +1,8 @@
 // FILE: js/pages/t3_session.js
-// build: 20260413bj
-// 変更点(20260413a→bi):
-//   - セッション初期値に mat_type:'T3'・exchange_type:'FULL' を追加
-//   - _buildT3Members にメンバー別 mat_type:'T3'・exchange_type:'FULL'・container:'2.7L'・mat_molt:true を追加
-//   - 共通設定カード（マット種別一括 + 交換種別一括）をUIに追加
-//   - 個体カードにマット・容器・モルト・交換種別欄を追加
-//   - payloadに mat_type・exchange_type・container・mat_molt を含める
+// build: 20260413bj-fix1
+// 変更点:
+//   - t3SessionStart: unit.line_id が空の場合に display_id から line_code を抽出してフォールバック解決
+//   - _renderT3Session: lineDisp に同じフォールバック追加
 'use strict';
 
 window._t3Session = window._t3Session || null;
@@ -27,17 +24,28 @@ Pages.t3SessionStart = async function (unitDisplayId) {
 
   const originLotDisplayIds = _resolveT3OriginLotDisplayIds(unit);
 
+  // ── line_id フォールバック解決 ───────────────────────────────
+  // unit.line_id が空の場合は display_id から line_code を抽出してキャッシュ検索
+  const _resolvedLineIdT3 = (() => {
+    if (unit.line_id) return unit.line_id;
+    const dm = (unit.display_id || '').match(/^[A-Za-z0-9]+-([A-Za-z][0-9]+)-/);
+    if (!dm) return '';
+    const lines = Store.getDB('lines') || [];
+    const found = lines.find(l => (l.line_code || l.display_id) === dm[1]);
+    return found ? found.line_id : '';
+  })();
+
   window._t3Session = {
     unit_id:      unit.unit_id,
     display_id:   unit.display_id,
-    line_id:      unit.line_id,
+    line_id:      _resolvedLineIdT3,
     stage_phase:  unit.stage_phase || 'T2',
     hatch_date:   unit.hatch_date  || '',
     head_count:   unit.head_count  || members.length,
     origin_lots:  originLotDisplayIds,
     mx_done:      false,
-    mat_type:     'T3',    // ▼ マット種別初期値 T3
-    exchange_type:'FULL',  // ▼ 交換種別初期値 全交換
+    mat_type:     'T3',
+    exchange_type:'FULL',
     members:      members,
     saving:       false,
     _fromInd:     false,
@@ -75,10 +83,10 @@ Pages.t3SessionStartFromInd = async function (indIdOrDisplayId) {
     sex:           ind.sex || '不明',
     mx_done:       false,
     status:        'normal',
-    mat_molt:      false, // ▼ モルトパウダー初期値OFF
+    mat_molt:      false,
     container:     '2.7L',
-    mat_type:      'T3',   // ▼ T3初期値
-    exchange_type: 'FULL', // ▼ 全交換初期値
+    mat_type:      'T3',
+    exchange_type: 'FULL',
     decision:      null,
     memo:          '',
   }];
@@ -137,10 +145,10 @@ function _buildT3Members(unit) {
       sex:           src.sex || '不明',
       mx_done:       false,
       status:        'normal',
-      mat_molt:      false, // ▼ モルトパウダー初期値OFF
+      mat_molt:      false,
       container:     '2.7L',
-      mat_type:      'T3',   // ▼ T3移行デフォルト
-      exchange_type: 'FULL', // ▼ 全交換デフォルト
+      mat_type:      'T3',
+      exchange_type: 'FULL',
       decision:      null,
       memo:          '',
     });
@@ -198,8 +206,15 @@ function _renderT3Session(s) {
   const main = document.getElementById('main');
   if (!main) return;
 
-  const line     = Store.getLine(s.line_id);
-  const lineDisp = line ? (line.line_code || line.display_id) : s.line_id;
+  // ── line_id フォールバック表示 ────────────────────────────────
+  const line     = s.line_id ? Store.getLine(s.line_id) : null;
+  const lineDisp = (() => {
+    if (line) return line.line_code || line.display_id || '';
+    // フォールバック: "HM2025-A1-U06" → "A1" を抽出
+    const dm = (s.display_id || '').match(/^[A-Za-z0-9]+-([A-Za-z][0-9]+)-/);
+    return dm ? dm[1] : (s.line_id || '—');
+  })();
+
   const originStr = _formatT3OriginLots(s.origin_lots);
   const allComplete = s.members.every(m => _isT3MemberComplete(m));
   const canSave = allComplete && !s.saving;
@@ -219,7 +234,6 @@ function _renderT3Session(s) {
     ${UI.header('T3（3齢後期）移行セッション', { back: true, backFn: "Pages._t3SessionBack()" })}
     <div class="page-body" style="padding-bottom:84px">
 
-      <!-- ユニット概要 -->
       <div style="background:linear-gradient(135deg,rgba(224,144,64,.12) 0%,rgba(224,144,64,.06) 100%);
         border:1.5px solid rgba(224,144,64,.4);border-radius:10px;padding:12px 14px;font-size:.8rem">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
@@ -233,7 +247,6 @@ function _renderT3Session(s) {
         <div style="font-size:.72rem;color:var(--text3)">由来ロット: ${originStr}</div>
       </div>
 
-      <!-- 重要度バナー -->
       <div style="background:rgba(224,144,64,.07);border:1px solid rgba(224,144,64,.3);border-radius:8px;
         padding:10px 12px;margin-top:8px;font-size:.76rem;color:var(--text2);line-height:1.6">
         <b style="color:var(--amber)">⭐ T3（3齢後期）は最も体重が乗る重要ステージです。</b><br>
@@ -241,10 +254,7 @@ function _renderT3Session(s) {
         <span style="color:var(--text3)">※ 継続の場合も必ずここで確定してください。</span>
       </div>
 
-      <!-- ③ ユニット共通設定カード（T2と同構成、T3初期値） -->
       <div style="margin-top:8px;border-radius:10px;border:1.5px solid var(--border);background:var(--surface1,var(--surface));padding:12px 14px">
-
-        <!-- マット種別 一括 -->
         <div style="font-size:.8rem;font-weight:700;color:var(--text2);margin-bottom:6px">
           🌿 マット種別 — 一括設定
           <span style="font-size:.62rem;font-weight:400;color:var(--text3);margin-left:4px">個体カードで個別変更可</span>
@@ -262,7 +272,6 @@ function _renderT3Session(s) {
           }).join('')}
         </div>
 
-        <!-- 交換種別 一括 -->
         <div style="font-size:.8rem;font-weight:700;color:var(--text2);margin-bottom:6px">
           🔄 交換種別 — 一括設定
           <span style="font-size:.62rem;font-weight:400;color:var(--text3);margin-left:4px">個体カードで個別変更可</span>
@@ -281,11 +290,7 @@ function _renderT3Session(s) {
         </div>
       </div>
 
-
-      <!-- 個体カード -->
       ${s.members.map((m, i) => _renderT3MemberCard(m, i, s)).join('')}
-
-      <!-- サマリ -->
       ${_renderT3Summary(s)}
 
       ${(!allComplete && s.members.some(m => m.decision !== null)) ? `
@@ -304,32 +309,6 @@ function _renderT3Session(s) {
     </div>`;
 
   _saveT3SessionToStorage();
-}
-
-function _renderT3MxSection(s) {
-  const mxOn = !!s.mx_done;
-  return `
-  <div style="margin-top:10px;border-radius:10px;border:1.5px solid var(--border);
-    background:var(--surface1,var(--surface));padding:12px 14px">
-    <div style="font-size:.8rem;font-weight:700;color:var(--text2);margin-bottom:10px">
-      🔄 マット交換 (Mx) — ユニット共通
-    </div>
-    <div style="display:flex;gap:10px">
-      <button type="button" onclick="Pages._t3SetMx(true)"
-        style="flex:1;padding:10px 0;border-radius:8px;font-size:.88rem;font-weight:700;cursor:pointer;
-          border:2px solid ${mxOn ? 'var(--green)' : 'var(--border)'};
-          background:${mxOn ? 'rgba(76,175,120,.15)' : 'var(--bg2)'};color:${mxOn ? 'var(--green)' : 'var(--text2)'}"
-      >✅ Mx実施</button>
-      <button type="button" onclick="Pages._t3SetMx(false)"
-        style="flex:1;padding:10px 0;border-radius:8px;font-size:.88rem;font-weight:700;cursor:pointer;
-          border:2px solid ${!mxOn ? 'var(--amber)' : 'var(--border)'};
-          background:${!mxOn ? 'rgba(224,144,64,.12)' : 'var(--bg2)'};color:${!mxOn ? 'var(--amber)' : 'var(--text2)'}"
-      >⏭ Mx未実施</button>
-    </div>
-    <div style="font-size:.7rem;color:var(--text3);margin-top:7px">
-      ${mxOn ? 'このT3移行時にマット交換を実施します' : 'マット交換は行いません（体重計測のみ）'}
-    </div>
-  </div>`;
 }
 
 function _renderT3MemberCard(m, idx, s) {
@@ -400,7 +379,6 @@ function _renderT3MemberCard(m, idx, s) {
       <span style="font-size:.95rem;font-weight:800;color:var(--text1)">${slotLabel}</span>
       ${completeBadge}
     </div>
-    <!-- 区分 + 体重 -->
     <div style="padding:10px 14px 10px;border-bottom:1px solid var(--border2)">
       ${lotInfo}
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
@@ -420,26 +398,22 @@ function _renderT3MemberCard(m, idx, s) {
         </div>
       </div>
     </div>
-    <!-- 性別 -->
     ${!isDead ? `
     <div style="padding:8px 14px 10px;border-bottom:1px solid var(--border2)">
       <div style="font-size:.72rem;font-weight:700;color:var(--text3);margin-bottom:7px;text-transform:uppercase;letter-spacing:.05em">性別</div>
       <div style="display:flex;gap:6px">${sexBtns}</div>
     </div>` : ''}
-    <!-- 状態 -->
     <div style="padding:10px 14px 10px;border-bottom:1px solid var(--border2)">
       <div style="font-size:.72rem;font-weight:700;color:var(--text3);margin-bottom:7px;text-transform:uppercase;letter-spacing:.05em">状態</div>
       <div style="display:flex;gap:8px">${statusBtns}</div>
       ${isDead ? `<div style="font-size:.72rem;color:var(--red,#e05050);margin-top:7px;opacity:.85">死亡として記録します（体重・判断の入力不要）</div>` : ''}
     </div>
-    <!-- 判断 -->
     ${!isDead ? `
     <div style="padding:10px 14px 10px;border-bottom:1px solid var(--border2)">
       <div style="font-size:.72rem;font-weight:700;color:var(--text3);margin-bottom:7px;text-transform:uppercase;letter-spacing:.05em">判断</div>
       <div style="display:flex;gap:6px">${decisionBtns}</div>
       ${selectedDecision ? `<div style="font-size:.7rem;color:var(--text3);margin-top:6px">${selectedDecision.desc}</div>` : ''}
     </div>` : ''}
-    <!-- 容器・マット・Mx・交換種別 -->
     ${!isDead ? `
     <div style="padding:8px 14px 10px;border-bottom:1px solid var(--border2)">
       <div style="font-size:.72rem;font-weight:700;color:var(--text3);margin-bottom:5px">📦 容器</div>
@@ -489,7 +463,6 @@ function _renderT3MemberCard(m, idx, s) {
         `).join('')}
       </div>
     </div>` : ''}
-    <!-- メモ -->
     <div style="padding:8px 14px 10px">
       <input type="text" placeholder="メモ（任意）" value="${m.memo || ''}"
         style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--border);
@@ -536,7 +509,6 @@ function _isT3MemberComplete(m) {
   return m.weight_g !== null && m.weight_g > 0;
 }
 
-// ── アクションハンドラ ────────────────────────────────────────────
 Pages._t3SetMx = function (done) {
   const s = window._t3Session; if (!s) return; s.mx_done = done; _renderT3Session(s);
 };
@@ -575,7 +547,6 @@ Pages._t3SetSex = function (idx, sex) {
 Pages._t3SetMemo = function (idx, val) {
   const s = window._t3Session; if (s) { s.members[idx].memo = val; _saveT3SessionToStorage(); }
 };
-// ▼ T3新規追加ハンドラ
 Pages._t3SetMatAll = function(v) {
   const s = window._t3Session; if (!s) return;
   s.mat_type = v; s.members.forEach(function(m) { if (m.status !== 'dead') m.mat_type = v; }); _renderT3Session(s);
@@ -600,7 +571,6 @@ Pages._t3SetMemberExchange = function(idx, v) {
   const s = window._t3Session; if (!s) return;
   const m = s.members[idx]; if (m) { m.exchange_type = v; _renderT3Session(s); }
 };
-
 Pages._t3SessionBack = function () {
   if (confirm('セッションを中断しますか？（入力内容は一時保存されます）')) routeTo('qr-scan', { mode: 't3' });
 };
@@ -615,9 +585,6 @@ Pages._t3SessionSave = async function () {
   if (!s || s.saving) return;
 
   console.log('[T3_SAVE] ===== T3 save triggered =====');
-  console.log('[T3_SAVE] window.__API_BUILD:', window.__API_BUILD || '(not set)');
-  console.log('[T3_SAVE] typeof API.t3:', typeof (window.API && window.API.t3));
-  console.log('[T3_SAVE] session:', { unit_id: s.unit_id, display_id: s.display_id, members: s.members.length });
 
   if (!s.members.every(m => _isT3MemberComplete(m))) {
     UI.toast('全頭の判断を完了してください（体重も入力してください）', 'error'); return;
@@ -689,10 +656,7 @@ Pages._t3SessionSave = async function () {
     window._t3Session = null; sessionStorage.removeItem('_t3SessionData');
     UI.toast('T3（3齢後期）移行を完了しました ✅', 'success', 3000);
 
-    // ── 腸内菌リセットリマインドを登録 ──────────────────────────
-    // T3交換日+30日後にバチルスキング添加を促す
     _registerBacilusReminder(s.unit_id, s.display_id, today);
-
     routeTo('qr-scan', { mode: 't3' });
 
   } catch (e) {
@@ -704,7 +668,6 @@ Pages._t3SessionSave = async function () {
 
 // ════════════════════════════════════════════════════════════════
 // 腸内菌リセットリマインド管理
-// LS key: hcos_bacilus_reminders → [{id, unit_id, display_id, exchange_date, remind_date, done}]
 // ════════════════════════════════════════════════════════════════
 
 var _BACILUS_LS = 'hcos_bacilus_reminders';
@@ -718,16 +681,12 @@ function _setBacilusReminders(arr) {
 
 function _registerBacilusReminder(unitId, displayId, exchangeDate) {
   var reminders = _getBacilusReminders();
-  // 同じユニットの未完了リマインドがあれば上書き
   reminders = reminders.filter(function(r){ return r.unit_id !== unitId || r.done; });
-
-  // remind_date = exchange_date + 30日
   var d = new Date(String(exchangeDate).replace(/\//g, '-'));
   d.setDate(d.getDate() + 30);
   var remindDate = d.getFullYear() + '/'
     + String(d.getMonth()+1).padStart(2,'0') + '/'
     + String(d.getDate()).padStart(2,'0');
-
   reminders.push({
     id:            'bacilus_' + unitId + '_' + Date.now(),
     unit_id:       unitId,
@@ -741,7 +700,6 @@ function _registerBacilusReminder(unitId, displayId, exchangeDate) {
   console.log('[T3] バチルスリマインド登録:', displayId, '→', remindDate);
 }
 
-// 完了マーク（管理タブから呼ぶ）
 window.Pages._bacilusMarkDone = function(reminderId) {
   var reminders = _getBacilusReminders();
   var today = new Date().toISOString().split('T')[0].replace(/-/g, '/');
@@ -750,11 +708,9 @@ window.Pages._bacilusMarkDone = function(reminderId) {
   });
   _setBacilusReminders(reminders);
   UI.toast('✅ バチルスキング添加を記録しました', 'success', 2000);
-  // 管理タブを再描画（バナーを消す）
   if (typeof Pages._refreshBacilusReminders === 'function') Pages._refreshBacilusReminders();
 };
 
-// スヌーズ（3日後に再表示）
 window.Pages._bacilusSnooze = function(reminderId) {
   var reminders = _getBacilusReminders();
   var snoozeDate = new Date(); snoozeDate.setDate(snoozeDate.getDate() + 3);
@@ -769,7 +725,6 @@ window.Pages._bacilusSnooze = function(reminderId) {
   if (typeof Pages._refreshBacilusReminders === 'function') Pages._refreshBacilusReminders();
 };
 
-// 期限到来リマインドを取得（today以降のみ）
 window._getBacilusDueReminders = function() {
   var today = new Date().toISOString().split('T')[0].replace(/-/g, '/');
   return _getBacilusReminders().filter(function(r){
@@ -777,7 +732,6 @@ window._getBacilusDueReminders = function() {
   });
 };
 
-// リマインドバナーHTML（管理タブに埋め込む用）
 window._renderBacilusReminderBanner = function() {
   var due = window._getBacilusDueReminders();
   if (!due.length) return '';
@@ -819,7 +773,6 @@ window._renderBacilusReminderBanner = function() {
     + '</div>';
 };
 
-// インデックス経由のヘルパー（onclick内クォートネスト回避）
 window.Pages._bacilusDoneIdx = function(idx) {
   var due = window._getBacilusDueReminders();
   var r   = due[idx];
@@ -831,7 +784,6 @@ window.Pages._bacilusSnoozeIdx = function(idx) {
   if (r) window.Pages._bacilusSnooze(r.id);
 };
 
-// 管理タブのリマインドエリアだけ再描画
 window.Pages._refreshBacilusReminders = function() {
   var area = document.getElementById('bacilus-remind-area');
   if (!area) return;
@@ -842,7 +794,6 @@ window.Pages._refreshBacilusReminders = function() {
     area.remove();
   }
 };
-
 
 window.PAGES = window.PAGES || {};
 window.PAGES['t3-session'] = function () { Pages.t3Session(Store.getParams()); };
