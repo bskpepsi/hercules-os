@@ -1,6 +1,7 @@
 // FILE: js/pages/t3_session.js
-// build: 20260417a-fix2
+// build: 20260418b
 // 変更点:
+//   - [20260418b] 容器選択肢に「その他」ボタンを追加（Step2 🥉③ 4択統一）
 //   - [fix2] window.Pages → Pages に統一（6箇所）
 //           window.Pages が undefined のため TypeError を起こしていたのを修正
 //           このエラーが app.js:Pages is not defined 連鎖の元凶だった
@@ -8,7 +9,7 @@
 //   - [fix1] _renderT3Session: lineDisp に同じフォールバック追加
 'use strict';
 
-console.log('[HerculesOS] t3_session.js v20260417a-fix2 loaded');
+console.log('[HerculesOS] t3_session.js v20260418b loaded');
 
 window._t3Session = window._t3Session || null;
 
@@ -423,7 +424,7 @@ function _renderT3MemberCard(m, idx, s) {
     <div style="padding:8px 14px 10px;border-bottom:1px solid var(--border2)">
       <div style="font-size:.72rem;font-weight:700;color:var(--text3);margin-bottom:5px">📦 容器</div>
       <div style="display:flex;gap:6px;margin-bottom:10px">
-        ${['1.8L','2.7L','4.8L'].map(v => `
+        ${['1.8L','2.7L','4.8L','その他'].map(v => `
           <button type="button" onclick="Pages._t3SetMemberContainer(${idx},'${v}')"
             style="flex:1;padding:7px 0;border-radius:7px;font-size:.82rem;font-weight:700;cursor:pointer;
               border:2px solid ${m.container===v?'var(--green)':'var(--border)'};

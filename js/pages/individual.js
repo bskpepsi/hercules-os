@@ -2,8 +2,13 @@
 // individual.js
 // 役割: 個体の一覧・詳細・新規登録・編集・ステータス変更を担う。
 //       個体台帳の中心画面。ロット・成長記録・ラベルへの導線も持つ。
-// build: 20260418a
+// build: 20260418b
 //
+// 20260418b 修正:
+//   - [Step2 🥈②] 発育日付クイック記録ボタン追加
+//     個体詳細に「⏭️ 次のステップ」カードを表示し、未記録の次ステップ日付を
+//     今日の日付でワンタップ保存できるUIを追加（蛹室→前蛹→蛹→羽化）
+//     ♀への人工蛹室移動は confirm() で二重確認
 // 20260418a 修正:
 //   - [Step2 ③] 性別フィルタに「不明」ボタン追加（val='_unknown'）
 //     _unknown は store.js の filterIndividuals 側で sex が空/不明/? を包括して拾う
@@ -19,7 +24,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] individual.js v20260418a loaded');
+console.log('[HerculesOS] individual.js v20260418b loaded');
 
 const Pages = window.Pages || {};
 
@@ -797,6 +802,9 @@ function _renderDetail(ind, main) {
         </div>
       </div>
 
+      <!-- 🥈② 発育日付クイック記録ボタン（20260418b）-->
+      ${_renderQuickDateButtons(ind)}
+
       ${String(ind.is_defective) === 'true' ? `
       <div class="card" style="border-color:rgba(231,76,60,.4);background:rgba(231,76,60,.05)">
         <div class="card-title" style="color:var(--red)">⚠️ 不全記録</div>
@@ -1047,6 +1055,118 @@ Pages._indDateSave = async function (indId) {
     Store.patchDBItem('individuals', 'ind_id', indId, updates);
     Pages.individualDetail(indId);
   } catch (e) {}
+};
+
+// ────────────────────────────────────────────────────────────────
+// 🥈② 発育日付クイック記録ボタン（20260418b）
+// ────────────────────────────────────────────────────────────────
+// 既存の「📅 発育日付を入力」モーダルとは別に、未記録の次ステップを
+// 「今日の日付でワンタップ記録」できるボタンを個体詳細画面に追加する。
+//
+// 既存画面のラベル付けを踏襲:
+//   - ind.artificial_cell_date → 🏠 蛹室確認日
+//   - ind.prepupa_date         → 🛌 前蛹確認日（人工蛹室移動日）♂のみ
+//   - ind.pupa_check_date      → 🐛 蛹確認日
+//   - ind.eclosion_date        → 🦋 羽化日
+//
+// 表示ロジック:
+//   - 羽化済みなら何も表示しない
+//   - 蛹室未確認 → 蛹室確認ボタンのみ
+//   - 蛹室確認済 / 前蛹未確認 → 前蛹確認ボタン（♂なら「人工蛹室へ移動」ラベル）
+//   - 前蛹確認済 / 蛹未確認   → 蛹確認ボタン
+//   - 蛹確認済 / 羽化未確認   → 羽化ボタン
+// ────────────────────────────────────────────────────────────────
+function _renderQuickDateButtons(ind) {
+  if (!ind || !ind.ind_id) return '';
+  if (ind.eclosion_date) return '';  // 羽化済みは何も出さない
+
+  const btns = [];
+
+  if (!ind.artificial_cell_date) {
+    btns.push({
+      label:  '🏠 蛹室確認',
+      hint:   '幼虫が蛹室を作ったのを確認した日',
+      field:  'artificial_cell_date',
+      color:  '#7bb37b',
+    });
+  } else if (!ind.prepupa_date) {
+    // ♂なら「人工蛹室移動」の意味合いを前面に、♀は警告つきで
+    const isMale   = ind.sex === '♂';
+    const isFemale = ind.sex === '♀';
+    btns.push({
+      label:  isMale ? '🛌 前蛹確認 / 人工蛹室へ移動' : '🛌 前蛹確認',
+      hint:   isMale
+        ? '前蛹になった日を記録。人工蛹室への移動日としても使用'
+        : (isFemale
+          ? '♀は自然蛹室が基本です（例外時のみタップ）'
+          : '前蛹になった日を記録'),
+      field:  'prepupa_date',
+      color:  isFemale ? '#c8813a' : 'var(--amber)',
+      warn:   isFemale,
+    });
+  } else if (!ind.pupa_check_date) {
+    btns.push({
+      label:  '🐛 蛹確認',
+      hint:   '蛹になった日を記録。+50〜70日後が羽化目安',
+      field:  'pupa_check_date',
+      color:  '#b07bc8',
+    });
+  } else {
+    btns.push({
+      label:  '🦋 羽化',
+      hint:   '成虫として羽化した日を記録',
+      field:  'eclosion_date',
+      color:  'var(--gold)',
+    });
+  }
+
+  if (!btns.length) return '';
+
+  return `
+    <div class="card" style="margin-bottom:10px;border-color:rgba(202,164,48,.25)">
+      <div class="card-title">⏭️ 次のステップ（ワンタップ記録）</div>
+      ${btns.map(b => `
+        <button type="button"
+          onclick="Pages._indQuickDateSave('${ind.ind_id}', '${b.field}', ${JSON.stringify(b.label).replace(/"/g,'&quot;')}, ${b.warn ? 'true' : 'false'})"
+          style="display:block;width:100%;padding:14px 12px;margin-top:4px;
+            border:1px solid ${b.color};background:var(--surface2);color:var(--text1);
+            border-radius:10px;cursor:pointer;text-align:left;font-size:.95rem">
+          <div style="font-weight:700;color:${b.color}">${b.label}</div>
+          <div style="font-size:.72rem;color:var(--text3);margin-top:2px">${b.hint} → 今日の日付で記録</div>
+        </button>
+      `).join('')}
+      <div style="font-size:.7rem;color:var(--text3);margin-top:8px;padding:4px">
+        💡 別の日付で記録したい場合は「✏️ 編集」→「発育日付」から入力してください
+      </div>
+    </div>`;
+}
+
+Pages._indQuickDateSave = async function (indId, field, label, warnBeforeSave) {
+  if (!indId || !field) return;
+
+  // ♀ への人工蛹室移動など、警告付きの場合は確認
+  if (warnBeforeSave) {
+    if (!confirm('♀は通常、自然蛹室のまま管理します。\n例外的に人工蛹室へ移動する場合のみOKを押してください。\n\n今日の日付を「前蛹確認日」として記録しますか？')) {
+      return;
+    }
+  }
+
+  const today = new Date();
+  const y = today.getFullYear();
+  const m = String(today.getMonth() + 1).padStart(2, '0');
+  const d = String(today.getDate()).padStart(2, '0');
+  const todayStr = `${y}/${m}/${d}`;
+
+  const updates = { ind_id: indId };
+  updates[field] = todayStr;
+
+  try {
+    await apiCall(() => API.individual.update(updates), (label || '日付') + ' を記録しました 📅');
+    Store.patchDBItem('individuals', 'ind_id', indId, updates);
+    Pages.individualDetail(indId);
+  } catch (e) {
+    console.error('[_indQuickDateSave] error:', e);
+  }
 };
 
 Pages._indFlagMenu = function (id, guinness, parent, g200) {

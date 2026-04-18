@@ -1,6 +1,13 @@
 // ════════════════════════════════════════════════════════════════
 // growth.js v5 — 成長記録入力画面（体重測定UIベース・全導線統一）
-// build: 20260413bj
+// build: 20260418b
+//
+// 20260418b 修正 (Step2 🥉③ マット交換履歴の記録強化):
+//   - 容器選択肢: 1.8L / 2.7L / 4.8L / その他 の4択に統一（「その他」でフリーテキスト入力）
+//   - マット選択肢に T0 を追加（T0/T1/T2/T3/MD）
+//   - 交換種別コードを FULL / ADD / NONE に統一（旧: FULL / PARTIAL / ''）
+//     既存データの互換性のため、編集モーダルで旧PARTIAL値も受容する
+//   - 編集モーダルも同じ選択肢を反映
 //
 // 20260413bj 修正:
 //   - 交換種別の初期値を「全交換（FULL）」に変更
@@ -11,6 +18,8 @@
 //   - 保存時にlocalStorage(hcos_sizeCat_<ind_id>)へ永続保存
 // ════════════════════════════════════════════════════════════════
 'use strict';
+
+console.log('[HerculesOS] growth.js v20260418b loaded');
 
 // ── 体重閾値バッジ ───────────────────────────────────────────────
 const GR_THRESHOLDS = [
@@ -61,6 +70,9 @@ Pages.growthRecord = function (params = {}) {
   let _selMat      = '';
   let _selStage    = '';
   let _hasMalt     = false;
+  // 🥉③ 容器「その他」モードフラグ（20260418b）
+  // _selContainer が 1.8L/2.7L/4.8L 以外の任意文字列のとき true
+  let _containerOther = false;
 
   function _applyModePreset(mode) {
     const p = GR_MODE_PRESETS[mode] || GR_MODE_PRESETS.normal;
@@ -82,6 +94,10 @@ Pages.growthRecord = function (params = {}) {
       _selStage = (_lastStage || obj.current_stage || obj.stage || '').toUpperCase();
     }
     if (!_selContainer) _selContainer = obj.current_container || obj.container_size || '';
+    // 🥉③ ロード済みの容器が規定値以外（例: 旧 "3.5L" や任意カスタム）なら その他モード扱い
+    if (_selContainer && !['1.8L','2.7L','4.8L'].includes(_selContainer)) {
+      _containerOther = true;
+    }
     if (!_selMat)       _selMat       = obj.current_mat       || obj.mat_type       || '';
     if (!_selSizeCat) {
       var _lsKey = 'hcos_sizeCat_' + targetId;
@@ -265,21 +281,28 @@ Pages.growthRecord = function (params = {}) {
             <div class="field">
               <label class="field-label" style="font-size:.72rem;color:var(--text3);font-weight:700">容器</label>
               ${_grBtnGroup('gr-container',
-                [{val:'1.8L',label:'1.8L'},{val:'2.7L',label:'2.7L'},{val:'4.8L',label:'4.8L'},{val:'',label:'—'}],
-                _selContainer, 'Pages._grSelContainer')}
+                [{val:'1.8L',label:'1.8L'},{val:'2.7L',label:'2.7L'},{val:'4.8L',label:'4.8L'},{val:'OTHER',label:'その他'}],
+                (_containerOther ? 'OTHER' : _selContainer), 'Pages._grSelContainer')}
+              ${_containerOther ? `
+                <input type="text" id="gr-container-other" class="input"
+                  style="margin-top:6px;font-size:.92rem"
+                  placeholder="容器名を入力（例: 5L、パンケ大、ブロー 等）"
+                  value="${(_selContainer || '').replace(/"/g,'&quot;')}"
+                  oninput="window._grContOther = this.value">
+              ` : ''}
             </div>
 
             <div class="field">
               <label class="field-label" style="font-size:.72rem;color:var(--text3);font-weight:700">交換種別</label>
               ${_grBtnGroup('gr-exchange',
-                [{val:'FULL',label:'全交換'},{val:'PARTIAL',label:'追加'},{val:'',label:'なし'}],
+                [{val:'FULL',label:'全交換'},{val:'ADD',label:'追加'},{val:'NONE',label:'なし'}],
                 _selExchange, 'Pages._grSelExchange')}
             </div>
 
             <div class="field">
               <label class="field-label" style="font-size:.72rem;color:var(--text3);font-weight:700">マット</label>
               ${_grBtnGroup('gr-mat',
-                [{val:'T1',label:'T1'},{val:'T2',label:'T2'},{val:'T3',label:'T3'},{val:'MD',label:'MD'}],
+                [{val:'T0',label:'T0'},{val:'T1',label:'T1'},{val:'T2',label:'T2'},{val:'T3',label:'T3'},{val:'MD',label:'MD'}],
                 _selMat, 'Pages._grSelMat')}
             </div>
 
@@ -460,7 +483,18 @@ Pages.growthRecord = function (params = {}) {
   };
 
   // ── ボタン選択 ───────────────────────────────────────────────
-  Pages._grSelContainer = function(v) { _selContainer = v; render(); };
+  // 🥉③ 容器: 「その他」選択時はフリーテキスト入力モードへ切替（20260418b）
+  Pages._grSelContainer = function(v) {
+    if (v === 'OTHER') {
+      _containerOther = true;
+      // 規定値から切替時は一旦クリア、既にカスタム値があれば保持
+      if (['1.8L','2.7L','4.8L'].includes(_selContainer)) _selContainer = '';
+    } else {
+      _containerOther = false;
+      _selContainer = (_selContainer === v) ? '' : v;
+    }
+    render();
+  };
   Pages._grSelExchange  = function(v) { _selExchange  = v; render(); };
   Pages._grSelMat       = function(v) { _selMat       = v; render(); };
   Pages._grSelStage     = function(v) { _selStage     = v; render(); };
@@ -602,7 +636,14 @@ Pages.growthRecord = function (params = {}) {
     if (!weight || parseFloat(weight) <= 0) { UI.toast('体重を入力してください（0.1g以上）', 'error'); return; }
 
     var stage     = document.getElementById('gr-stage')?.value     || _selStage     || '';
-    var container = document.getElementById('gr-container')?.value || _selContainer || '';
+    // 🥉③ 容器: _containerOther モードならフリーテキスト値を優先（20260418b）
+    var container = '';
+    if (_containerOther) {
+      container = (document.getElementById('gr-container-other')?.value || '').trim();
+    } else {
+      container = document.getElementById('gr-container')?.value || _selContainer || '';
+      if (container === 'OTHER') container = '';  // 未入力のOTHERボタンは空扱い
+    }
     var exchange  = document.getElementById('gr-exchange')?.value  || _selExchange  || '';
     var mat       = document.getElementById('gr-mat')?.value       || _selMat       || '';
     var sizeCat   = document.getElementById('gr-size-cat')?.value  || _selSizeCat   || '';
@@ -765,6 +806,19 @@ Pages._grEditRecord = async function(recordId) {
   var initExch   = rec ? (rec.exchange_type || '') : '';
   var initNote   = rec ? (rec.note_private  || '') : '';
   var STAGE_OPTS = ['L1L2','L3','PREPUPA'].map(function(s){ return '<option value="' + s + '" ' + (initStage===s?'selected':'') + '>' + s + '</option>'; }).join('');
+  // 🥉③ 容器: 既存値が規定外（任意カスタム）なら選択肢に個別エントリ追加（20260418b）
+  var CONT_STD = ['1.8L','2.7L','4.8L'];
+  var CONT_OPTS = CONT_STD.map(function(v){ return '<option value="' + v + '" ' + (initCont===v?'selected':'') + '>' + v + '</option>'; }).join('');
+  if (initCont && !CONT_STD.includes(initCont)) {
+    CONT_OPTS += '<option value="' + initCont.replace(/"/g,'&quot;') + '" selected>' + initCont + '（その他）</option>';
+  }
+  // 🥉③ マット: T0追加（20260418b）
+  var MAT_OPTS = ['T0','T1','T2','T3','MD'].map(function(v){ return '<option value="' + v + '" ' + (initMat===v?'selected':'') + '>' + v + '</option>'; }).join('');
+  // 🥉③ 交換種別: FULL/ADD/NONE に統一（旧 PARTIAL データも互換表示）(20260418b)
+  var EXCH_OPTS = ''
+    + '<option value="FULL" ' + (initExch==='FULL'?'selected':'') + '>全交換</option>'
+    + '<option value="ADD" '  + (initExch==='ADD'||initExch==='PARTIAL'?'selected':'') + '>追加</option>'
+    + '<option value="NONE" ' + (initExch==='NONE'?'selected':'') + '>なし</option>';
   UI.modal(`
     <div class="modal-title">成長記録を編集</div>
     <div class="form-section" style="max-height:60vh;overflow-y:auto">
@@ -772,11 +826,11 @@ Pages._grEditRecord = async function(recordId) {
       ${UI.field('体重(g)', '<input type="number" id="gre-weight" class="input" step="0.1" value="' + initWeight + '" placeholder="例: 45.2">')}
       <div class="form-row-2">
         ${UI.field('ステージ', '<select id="gre-stage" class="input"><option value="">—</option>' + STAGE_OPTS + '</select>')}
-        ${UI.field('容器', '<select id="gre-cont" class="input"><option value="">—</option>' + ['1.8L','2.7L','4.8L'].map(function(v){ return '<option value="' + v + '" ' + (initCont===v?'selected':'') + '>' + v + '</option>'; }).join('') + '</select>')}
+        ${UI.field('容器', '<select id="gre-cont" class="input"><option value="">—</option>' + CONT_OPTS + '</select>')}
       </div>
       <div class="form-row-2">
-        ${UI.field('マット', '<select id="gre-mat" class="input"><option value="">—</option>' + ['T1','T2','T3','MD'].map(function(v){ return '<option value="' + v + '" ' + (initMat===v?'selected':'') + '>' + v + '</option>'; }).join('') + '</select>')}
-        ${UI.field('交換区分', '<select id="gre-exch" class="input"><option value="">—</option><option value="FULL" ' + (initExch==='FULL'?'selected':'') + '>全交換</option><option value="PARTIAL" ' + (initExch==='PARTIAL'?'selected':'') + '>追加のみ</option></select>')}
+        ${UI.field('マット', '<select id="gre-mat" class="input"><option value="">—</option>' + MAT_OPTS + '</select>')}
+        ${UI.field('交換区分', '<select id="gre-exch" class="input"><option value="">—</option>' + EXCH_OPTS + '</select>')}
       </div>
       ${UI.field('メモ', '<input type="text" id="gre-note" class="input" value="' + initNote + '" placeholder="任意">')}
     </div>
