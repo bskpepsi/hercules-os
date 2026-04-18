@@ -2,7 +2,15 @@
 // individual.js
 // 役割: 個体の一覧・詳細・新規登録・編集・ステータス変更を担う。
 //       個体台帳の中心画面。ロット・成長記録・ラベルへの導線も持つ。
-// build: 20260418b
+// build: 20260418g
+//
+// 20260418g 修正:
+//   - 血統・種親セクションをユニット/ロット詳細と統一デザインに変更
+//     - 祖父×祖母の血統原文とサイズを表示（例: U71 (160mm) × 165T-REX.T-115 (69mm)）
+//     - 血統タグ表示を削除、父種親/母種親のブロックに統一
+//     - 種親タップで種親詳細へ遷移する際 _back/_backParams を付与
+//       → 種親詳細の←で個体詳細に戻れる
+//     - ライン・元ロット(同腹一覧)リンクは従来通り維持
 //
 // 20260418b 修正:
 //   - [Step2 🥈②] 発育日付クイック記録ボタン追加
@@ -24,7 +32,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] individual.js v20260418b loaded');
+console.log('[HerculesOS] individual.js v20260418g loaded');
 
 const Pages = window.Pages || {};
 
@@ -651,39 +659,69 @@ function _renderDetail(ind, main) {
         </div>
         <div class="acc-body">
           ${(() => {
+            // ── [20260418g] ユニット/ロット詳細と同じ「祖父×祖母」形式に統一 ──
+            // backCtx は種親詳細から戻る時にこの個体詳細に正しく戻れるよう戻り先情報を付与
+            const backCtx = { page: 'ind-detail', params: { indId: ind.ind_id } };
+
+            // 祖父母の血統原文を「血統原文 (サイズmm) × 血統原文 (サイズmm)」形式に整形
+            function _grandBloodlineLine(par) {
+              if (!par) return '';
+              const patRaw = (par.paternal_raw || '').trim();
+              const matRaw = (par.maternal_raw || '').trim();
+              const patSize = par.father_parent_size_mm;
+              const matSize = par.mother_parent_size_mm;
+              if (!patRaw && !matRaw) return ''; // 両方なし → 血統行自体を出さない
+              function _fmt(raw, size) {
+                if (!raw) return '—';
+                return raw + (size ? ' (' + size + 'mm)' : '');
+              }
+              return _fmt(patRaw, patSize) + ' × ' + _fmt(matRaw, matSize);
+            }
+
+            // 種親詳細遷移時の onclick 文字列を生成（戻り先情報付き）
+            function _buildParentOnclick(parId) {
+              const backParamsJson = JSON.stringify(backCtx.params || {})
+                .replace(/'/g, "\\'")
+                .replace(/"/g, '&quot;');
+              return "routeTo('parent-detail',{parId:'" + parId + "',_back:'" + backCtx.page + "',_backParams:'" + backParamsJson + "'})";
+            }
+
             function _parBlock(par, parId, sex) {
               if (!par && !parId) return '';
               const mc = sex === '♂' ? 'var(--male,#5ba8e8)' : 'var(--female,#e87fa0)';
               const bg = sex === '♂' ? 'rgba(91,168,232,.05)' : 'rgba(232,127,160,.05)';
-              const bd = sex === '♂' ? 'rgba(91,168,232,.2)' : 'rgba(232,127,160,.2)';
-              const tcBg = sex === '♂' ? 'rgba(91,168,232,.12)' : 'rgba(232,127,160,.12)';
-              const tcBd = sex === '♂' ? 'rgba(91,168,232,.3)' : 'rgba(232,127,160,.3)';
+              const bd = sex === '♂' ? 'rgba(91,168,232,.2)'  : 'rgba(232,127,160,.2)';
               if (!par) {
                 return '<div style="padding:8px 10px;background:' + bg + ';border-radius:8px;border:1px solid ' + bd + ';margin-bottom:6px">'
-                  + '<span style="font-size:.75rem;color:' + mc + ';font-weight:700">' + sex + '</span>'
+                  + '<span style="font-size:.75rem;color:' + mc + ';font-weight:700">' + sex + '親</span>'
                   + ' <span style="font-size:.8rem;color:var(--text3)">情報なし</span>'
                   + '</div>';
               }
-              const name    = par.parent_display_id || par.display_name || '—';
-              const rawText = sex === '♂' ? (par.paternal_raw || par.maternal_raw || '') : (par.maternal_raw || par.paternal_raw || '');
-              const tagSrc  = sex === '♂' ? (par.paternal_tags || par.bloodline_tags || '[]') : (par.maternal_tags || par.bloodline_tags || '[]');
-              const tags    = (() => { try { const t = JSON.parse(tagSrc); return Array.isArray(t) ? t : []; } catch(e) { return []; } })();
-              const tagHtml = tags.slice(0, 5).map(t =>
-                '<span style="font-size:.68rem;padding:1px 6px;border-radius:20px;background:' + tcBg + ';color:' + mc + ';border:1px solid ' + tcBd + '">' + t + '</span>'
-              ).join(' ');
+              const name          = par.parent_display_id || par.display_name || '—';
+              const grandLine     = _grandBloodlineLine(par);
+              const parentOnclick = _buildParentOnclick(parId);
               return '<div style="padding:8px 10px;background:' + bg + ';border-radius:8px;border:1px solid ' + bd + ';margin-bottom:6px">'
-                + '<div style="display:flex;align-items:baseline;gap:6px;margin-bottom:' + (rawText||tags.length?'4':'0') + 'px">'
-                +   '<span style="font-size:.75rem;color:' + mc + ';font-weight:700;flex-shrink:0">' + sex + '</span>'
-                +   '<span style="font-size:.88rem;font-weight:700;cursor:pointer;color:var(--text1)"'
-                +     ' onclick="routeTo(' + "'" + 'parent-detail' + "'" + ',{parId:' + "'" + parId + "'" + '})">' + name + '</span>'
-                +   (par.size_mm ? '<span style="font-size:.8rem;color:var(--green);font-weight:700;margin-left:auto;flex-shrink:0">' + par.size_mm + 'mm</span>' : '')
+                // 親情報行（タップで種親詳細へ）
+                + '<div style="display:flex;align-items:baseline;gap:6px;cursor:pointer" onclick="' + parentOnclick + '">'
+                +   '<span style="font-size:.75rem;color:' + mc + ';font-weight:700;flex-shrink:0">' + sex + '親</span>'
+                +   '<span style="font-size:.88rem;font-weight:700;color:var(--text1)">' + name + '</span>'
+                +   (par.size_mm ? '<span style="font-size:.8rem;color:var(--green);font-weight:700">(' + par.size_mm + 'mm)</span>' : '')
+                +   '<span style="margin-left:auto;color:var(--text3);font-size:.9rem">›</span>'
                 + '</div>'
-                + (rawText ? '<div style="font-size:.73rem;color:var(--text2);font-family:var(--font-mono);word-break:break-all;margin-bottom:' + (tags.length?'4':'0') + 'px;line-height:1.4">' + rawText + '</div>' : '')
-                + (tags.length ? '<div style="display:flex;flex-wrap:wrap;gap:3px">' + tagHtml + '</div>' : '')
+                // 血統行（祖父×祖母）※ 両方なしなら非表示
+                + (grandLine
+                  ? '<div style="display:flex;align-items:baseline;gap:6px;margin-top:4px;padding-top:4px;border-top:1px dashed ' + bd + '">'
+                    +   '<span style="font-size:.72rem;color:var(--text3);font-weight:700;flex-shrink:0;min-width:36px">血統</span>'
+                    +   '<span style="font-size:.78rem;color:var(--text2);word-break:break-all;line-height:1.4">' + grandLine + '</span>'
+                    + '</div>'
+                  : '')
                 + '</div>';
             }
+
             const fBlock = _parBlock(father, ind.father_par_id, '♂');
             const mBlock = _parBlock(mother, ind.mother_par_id, '♀');
+
+            // 個体詳細固有: ライン・元ロットリンク（同腹一覧への導線含む）
             const lineRow = line
               ? '<div style="font-size:.78rem;color:var(--text3);margin-top:6px">'
                 + 'ライン: <span style="cursor:pointer;color:var(--blue)" onclick="routeTo(' + "'" + 'line-detail' + "'" + ',{lineId:' + "'" + line.line_id + "'" + '})">'
@@ -696,6 +734,7 @@ function _renderDetail(ind, main) {
                 + ' <span onclick="routeTo(' + "'" + 'ind-list' + "'" + ',{lotId:' + "'" + ind.origin_lot_id + "'" + '})" style="cursor:pointer;color:var(--text3);font-size:.72rem">同腹一覧 ›</span>'
                 + '</div>';
             })() : '';
+
             return (fBlock || mBlock ? fBlock + mBlock : '<div style="font-size:.82rem;color:var(--text3);padding:4px 0">親情報なし</div>')
               + (lineRow || lotRow ? '<div style="padding-top:4px;border-top:1px solid var(--border);margin-top:6px">' + lineRow + lotRow + '</div>' : '');
           })()}
