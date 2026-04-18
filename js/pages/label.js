@@ -1,6 +1,10 @@
 // FILE: js/pages/label.js
-// build: 20260418d-fix1
+// build: 20260418e-fix1
 // 修正:
+//   - [20260418e-fix1] 戻るボタンが反応しない問題を修正
+//                     JSON.stringify を onclick属性に埋め込むと "{"key":"val"}" の
+//                     ダブルクォートがHTML構文を壊していた
+//                     → シングルクォート形式の文字列に変換する _toOnclickParams を導入
 //   - [20260418d-fix1] members が JSON文字列で来た時にparseしてから処理する
 //                     (TypeError: _members.filter is not a function の修正)
 //   - [20260418d] ユニット性別表示を頭数カウント式に改善
@@ -11,7 +15,7 @@
 //   - Bug 3: _backRoute が存在する場合に「詳細に戻る」ボタンを追加
 'use strict';
 
-window._LABEL_BUILD = '20260418d-fix1';
+window._LABEL_BUILD = '20260418e-fix1';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 function _normStageForLabel(code) {
@@ -272,12 +276,34 @@ Pages.labelGen = function (params = {}) {
   const _originTargetId = _isUnitMode ? (_unitDisplayId || targetId) : targetId;
   const origin       = isDirectMode ? _detailPageKey(targetType, _originTargetId) : null;
 
+  // [20260418e-fix1] onclick属性内でダブルクォートが壊れる問題を修正
+  // JSON.stringify はダブルクォートを含む文字列を返すため、
+  // onclick="routeTo('x', {"key":"val"})" という壊れたHTMLになっていた
+  // → シングルクォートのみを使った形式に変換する
+  function _toOnclickParams(obj) {
+    if (!obj || typeof obj !== 'object') return '{}';
+    var parts = [];
+    Object.keys(obj).forEach(function(k) {
+      var v = obj[k];
+      if (typeof v === 'string') {
+        parts.push(k + ":'" + String(v).replace(/'/g, "\\'") + "'");
+      } else if (typeof v === 'boolean' || typeof v === 'number') {
+        parts.push(k + ':' + String(v));
+      } else if (v === null || v === undefined) {
+        // skip
+      } else {
+        // オブジェクト/配列は文字列化を諦め、空にする（今回のユースケースでは出現しない）
+      }
+    });
+    return '{' + parts.join(',') + '}';
+  }
+
   const headerOpts = _backRoute
-    ? { back: true, backFn: `routeTo('${_backRoute}',${JSON.stringify(_backParam)})` }
+    ? { back: true, backFn: "routeTo('" + _backRoute + "'," + _toOnclickParams(_backParam) + ")" }
     : _inEblQueue
       ? { back: true, backFn: "routeTo('egg-lot-bulk',{_showComplete:true})" }
       : (isDirectMode && origin
-          ? { back: true, backFn: `routeTo('${origin.page}',${JSON.stringify(origin.params)})` }
+          ? { back: true, backFn: "routeTo('" + origin.page + "'," + _toOnclickParams(origin.params) + ")" }
           : { back: true });
 
   function render() {
@@ -393,11 +419,11 @@ Pages.labelGen = function (params = {}) {
               ✅ 完了画面へ戻る（全${_eblQueueTotal}枚発行済み）
             </button>`}` : origin ? `
             <button class="btn btn-ghost btn-full" style="margin-top:2px;font-size:.82rem"
-              onclick="routeTo('${origin.page}',${JSON.stringify(origin.params)})">
+              onclick="routeTo('${origin.page}',${_toOnclickParams(origin.params)})">
               ← ${targetType==='IND'?'個体':targetType==='LOT'?'ロット':targetType==='PAR'?'種親':'詳細'}に戻る
             </button>` : _backRoute ? `
             <button class="btn btn-ghost btn-full" style="margin-top:2px;font-size:.82rem"
-              onclick="routeTo('${_backRoute}',${JSON.stringify(_backParam)})">
+              onclick="routeTo('${_backRoute}',${_toOnclickParams(_backParam)})">
               ← 詳細に戻る
             </button>` : ''}
             <div style="font-size:.7rem;color:var(--text3);margin-top:10px;line-height:1.6;
