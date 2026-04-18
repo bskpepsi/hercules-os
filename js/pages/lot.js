@@ -3,8 +3,11 @@
 // lot.js — Phase4-1 UI統一版
 // ロット一覧・詳細・分割・個体化を担う
 // カードUIを3列（コード | 頭数+ステージ | ›）に統一
-// build: 20260418f
+// build: 20260418f-fix1
 // 変更点:
+//   - [20260418f-fix1] 親タップで種親詳細に遷移しないバグを修正
+//                     _backParams のJSON内ダブルクォートが onclick属性を壊していた
+//                     → &quot; にエスケープして属性内に安全に埋め込む
 //   - [20260418f] 血統・種親カードの血統表示を「祖父×祖母」形式に変更
 //                 父種親の paternal_raw/maternal_raw（= 祖父/祖母の血統原文）を表示
 //                 例: U71 (160mm) × 165T-REX.T-115 (69mm)
@@ -15,7 +18,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] lot.js v20260418f loaded');
+console.log('[HerculesOS] lot.js v20260418f-fix1 loaded');
 
 // ────────────────────────────────────────────────────────────────
 // [20260418f] 血統・種親カードを生成（ロット詳細用）
@@ -68,7 +71,11 @@ function _lotRenderParentageCard(line, backCtx) {
     if (!backCtx || !backCtx.page) {
       return "routeTo('parent-detail',{parId:'" + parId + "'})";
     }
-    var backParamsJson = JSON.stringify(backCtx.params || {}).replace(/'/g, "\\'");
+    // onclick属性はダブルクォートで囲まれるので、内部のダブルクォートを &quot; にエスケープする
+    // さらに JSON文字列リテラルはシングルクォートで囲むので、シングルクォートも \\' にエスケープ
+    var backParamsJson = JSON.stringify(backCtx.params || {})
+      .replace(/'/g, "\\'")
+      .replace(/"/g, '&quot;');
     return "routeTo('parent-detail',{parId:'" + parId + "',_back:'" + backCtx.page + "',_backParams:'" + backParamsJson + "'})";
   }
 

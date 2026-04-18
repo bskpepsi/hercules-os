@@ -1,7 +1,10 @@
 // ════════════════════════════════════════════════════════════════
 // unit_detail.js — 飼育ユニット（BU）詳細画面
-// build: 20260418f
+// build: 20260418f-fix1
 // 変更点:
+//   - [20260418f-fix1] 親タップで種親詳細に遷移しないバグを修正
+//                     _backParams のJSON内ダブルクォートが onclick属性を壊していた
+//                     → &quot; にエスケープして属性内に安全に埋め込む
 //   - [20260418f] 血統・種親カードの血統表示を「祖父×祖母」形式に変更
 //                 父種親の paternal_raw/maternal_raw（= 祖父/祖母の血統原文）を表示
 //                 例: U71 (160mm) × 165T-REX.T-115 (69mm)
@@ -9,19 +12,10 @@
 //                 → 種親詳細から戻った時に「ユニットが見つかりません」にならない
 //   - [20260418e] 血統・種親カードを追加（ラインから父母種親・血統原文を表示）
 //   - [20260418a] Step2 ③ 性別編集UI追加（メンバー行の性別バッジをタップ可能に）
-//                 ♂/♀/不明 の3択モーダル → API.unit.update で members JSON 保存
-//   - [fix4] 編集モーダルの値取得をDOM参照から window._udEditState 経由に変更
-//           onchangeで状態オブジェクトに保存、保存時はそこから読む
-//           → id属性やUI.select実装に依存せず確実に動作する
-//   - [fix3] 容器サイズ選択肢を業務仕様通り 1.8L/2.7L/4.8L/その他 の4択に（3.5L削除）
-//   - [fix2] _udSaveBasic の構文エラー修正（try-catch閉じた後の孤立コード削除）
-//   - [fix2] 描画エラー時のセーフティネット追加（画面真っ暗対策）
-//   - [fix1] 孵化日に生のDate文字列が表示される問題を修正（_udFormatDate追加）
-//   - [fix1] メンバー行の未判別性別「?」を非表示に修正
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-console.log('[HerculesOS] unit_detail.js v20260418f loaded');
+console.log('[HerculesOS] unit_detail.js v20260418f-fix1 loaded');
 
 // ── Bug 4 修正: 孵化日フォーマット関数 ─────────────────────────
 function _udFormatDate(d) {
@@ -120,7 +114,11 @@ function _udRenderParentageCard(line, backCtx) {
       return "routeTo('parent-detail',{parId:'" + parId + "'})";
     }
     // _backParams は JSON文字列として渡す (parent_v2.js でJSON.parseして使用)
-    const backParamsJson = JSON.stringify(backCtx.params || {}).replace(/'/g, "\\'");
+    // onclick属性はダブルクォートで囲まれるので、内部のダブルクォートを &quot; にエスケープする
+    // さらに JSON文字列リテラルはシングルクォートで囲むので、シングルクォートも \\' にエスケープ
+    const backParamsJson = JSON.stringify(backCtx.params || {})
+      .replace(/'/g, "\\'")
+      .replace(/"/g, '&quot;');
     return "routeTo('parent-detail',{parId:'" + parId + "',_back:'" + backCtx.page + "',_backParams:'" + backParamsJson + "'})";
   }
 
