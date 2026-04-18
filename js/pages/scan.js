@@ -1,6 +1,12 @@
 // FILE: js/pages/scan.js
-// build: 20260417k-fix1
-// 変更点:
+// build: 20260418i
+// 変更点(20260417k-fix1→20260418i):
+//   - [Pages._qrSwitchMode] 継続読取りタブを押したら即座に
+//     routeTo('continuous-scan') で AI読取モードに遷移するよう修正
+//     （handover_20260413be.md の設計に復帰）
+//   - 情報確認 / 移行編成 タブは従来通り qr-scan 画面内でモード切替
+//
+// 以前の変更点(20260417k-fix1):
 //   - continuous-scan への誘導を修正
 //   - BU（UNIT）タイプのQRスキャン時に適切にcontinuous-scanにルーティング
 // ────────────────────────────────────────────────────────────────
@@ -157,6 +163,13 @@ BU:HM2026-A1-U01"
   }
 
   Pages._qrSwitchMode = function(m) {
+    // [20260418i] 継続読取りタブは AI読取モード (continuous-scan) に直接遷移
+    // 過去の handover_20260413be.md の設計に戻す変更。
+    // confirm / transition タブは qr-scan 画面のまま従来通りモード切替のみ。
+    if (m === 'record') {
+      routeTo('continuous-scan');
+      return;
+    }
     _scanMode = m;
     window._qrScanMode = m;
     window._qrAddingToSession = false;
