@@ -1,6 +1,10 @@
 // FILE: js/pages/label.js
-// build: 20260418e-fix1
+// build: 20260418e-fix2
 // 修正:
+//   - [20260418e-fix2] T1/T2/T3セッション中のラベル発行時の戻り先を修正
+//                     _backRoute > origin の優先度に変更
+//                     セッション中(_backRoute='t1-session')なら「T1編成に戻る」表示
+//                     確定済みユニット詳細から(_backRoute='unit-detail')なら「詳細に戻る」
 //   - [20260418e-fix1] 戻るボタンが反応しない問題を修正
 //                     JSON.stringify を onclick属性に埋め込むと "{"key":"val"}" の
 //                     ダブルクォートがHTML構文を壊していた
@@ -15,7 +19,7 @@
 //   - Bug 3: _backRoute が存在する場合に「詳細に戻る」ボタンを追加
 'use strict';
 
-window._LABEL_BUILD = '20260418e-fix1';
+window._LABEL_BUILD = '20260418e-fix2';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 function _normStageForLabel(code) {
@@ -417,14 +421,14 @@ Pages.labelGen = function (params = {}) {
             <button class="btn btn-ghost btn-full" style="font-weight:700;color:var(--green)"
               onclick="window._eblGoNextLabel(${_eblQueueIdx})">
               ✅ 完了画面へ戻る（全${_eblQueueTotal}枚発行済み）
-            </button>`}` : origin ? `
+            </button>`}` : _backRoute ? `
+            <button class="btn btn-ghost btn-full" style="margin-top:2px;font-size:.82rem"
+              onclick="routeTo('${_backRoute}',${_toOnclickParams(_backParam)})">
+              ← ${_backRoute === 't1-session' ? 'T1編成に戻る' : _backRoute === 't2-session' ? 'T2編成に戻る' : _backRoute === 't3-session' ? 'T3編成に戻る' : '詳細に戻る'}
+            </button>` : origin ? `
             <button class="btn btn-ghost btn-full" style="margin-top:2px;font-size:.82rem"
               onclick="routeTo('${origin.page}',${_toOnclickParams(origin.params)})">
               ← ${targetType==='IND'?'個体':targetType==='LOT'?'ロット':targetType==='PAR'?'種親':'詳細'}に戻る
-            </button>` : _backRoute ? `
-            <button class="btn btn-ghost btn-full" style="margin-top:2px;font-size:.82rem"
-              onclick="routeTo('${_backRoute}',${_toOnclickParams(_backParam)})">
-              ← 詳細に戻る
             </button>` : ''}
             <div style="font-size:.7rem;color:var(--text3);margin-top:10px;line-height:1.6;
               padding-top:8px;border-top:1px solid var(--border)">
