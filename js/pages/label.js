@@ -1,15 +1,17 @@
 // FILE: js/pages/label.js
-// build: 20260418d
+// build: 20260418d-fix1
 // 修正:
+//   - [20260418d-fix1] members が JSON文字列で来た時にparseしてから処理する
+//                     (TypeError: _members.filter is not a function の修正)
 //   - [20260418d] ユニット性別表示を頭数カウント式に改善
-//                 例: ♂2頭なら「♂2・♀」、♂1♀1なら「♂・♀」、判別0なら「♂・♀」
+//                 例: ♂2頭なら「♂2・♀」、♂1♀1なら「♂1・♀1」、判別0なら「♂・♀」
 //   - [20260418d] UNIT の戻り先を t1-session → unit-detail に修正
 //                 ラベル発行後「詳細に戻る」を押すとスキャン画面まで戻っていた問題
 //   - Bug 1: ユニットラベルの性別未判別時を ♂・♀ 表示に修正
 //   - Bug 3: _backRoute が存在する場合に「詳細に戻る」ボタンを追加
 'use strict';
 
-window._LABEL_BUILD = '20260418d';
+window._LABEL_BUILD = '20260418d-fix1';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 function _normStageForLabel(code) {
@@ -1081,13 +1083,6 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
     unitSuffix = idParts.length > 1 ? idParts[idParts.length - 1] : rawId;
   }
 
-  var m0 = (ld.members && ld.members[0]) ? ld.members[0] : null;
-  var m1 = (ld.members && ld.members[1]) ? ld.members[1] : null;
-  var m0w   = m0 && m0.weight_g ? String(m0.weight_g) : '';
-  var m1w   = m1 && m1.weight_g ? String(m1.weight_g) : '';
-  var m0sex = m0 ? (m0.sex || '') : '';
-  var m1sex = m1 ? (m1.sex || '') : '';
-
   // ── [20260418d] ユニット性別表示: 頭数カウント式 ─────────────
   // ♂0/♀0 → 「♂・♀」（未判別）
   // ♂1/♀0 → 「♂1・♀」
@@ -1095,7 +1090,22 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
   // ♂1/♀1 → 「♂1・♀1」
   // ♂2/♀1 → 「♂2・♀1」
   // 判別済みの性別は頭数を必ず付ける（1頭でも省略しない）
-  var _members = ld.members || [];
+  //
+  // 注意: ld.members は配列またはJSON文字列で渡される可能性があるので正規化する
+  var _members = ld.members;
+  if (typeof _members === 'string' && _members.trim()) {
+    try { _members = JSON.parse(_members); } catch (_) { _members = []; }
+  }
+  if (!Array.isArray(_members)) _members = [];
+
+  // 正規化後の配列から m0/m1 を再取得
+  var m0 = _members[0] || null;
+  var m1 = _members[1] || null;
+  var m0w   = m0 && m0.weight_g ? String(m0.weight_g) : '';
+  var m1w   = m1 && m1.weight_g ? String(m1.weight_g) : '';
+  var m0sex = m0 ? (m0.sex || '') : '';
+  var m1sex = m1 ? (m1.sex || '') : '';
+
   var _maleCnt   = _members.filter(function(m) { return m && m.sex === '♂'; }).length;
   var _femaleCnt = _members.filter(function(m) { return m && m.sex === '♀'; }).length;
   var _totalDetermined = _maleCnt + _femaleCnt;
