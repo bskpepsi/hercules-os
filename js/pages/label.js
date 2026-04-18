@@ -1,11 +1,15 @@
 // FILE: js/pages/label.js
-// build: 20260415d-fix1
+// build: 20260418d
 // 修正:
+//   - [20260418d] ユニット性別表示を頭数カウント式に改善
+//                 例: ♂2頭なら「♂2・♀」、♂1♀1なら「♂・♀」、判別0なら「♂・♀」
+//   - [20260418d] UNIT の戻り先を t1-session → unit-detail に修正
+//                 ラベル発行後「詳細に戻る」を押すとスキャン画面まで戻っていた問題
 //   - Bug 1: ユニットラベルの性別未判別時を ♂・♀ 表示に修正
 //   - Bug 3: _backRoute が存在する場合に「詳細に戻る」ボタンを追加
 'use strict';
 
-window._LABEL_BUILD = '20260415d-fix1';
+window._LABEL_BUILD = '20260418d';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 function _normStageForLabel(code) {
@@ -69,7 +73,9 @@ function _detailPageKey(targetType, targetId) {
   if (targetType === 'LOT')  return { page: 'lot-detail',     params: { lotId: targetId } };
   if (targetType === 'PAR')  return { page: 'parent-detail',  params: { parId: targetId } };
   if (targetType === 'SET')  return { page: 'pairing-detail', params: { pairingId: targetId } };
-  if (targetType === 'UNIT') return { page: 't1-session',     params: {} };
+  // [20260418d] UNIT戻り先を t1-session → unit-detail に修正
+  // targetId にはユニットの display_id が入る想定（_udLabelParams 経由）
+  if (targetType === 'UNIT') return { page: 'unit-detail',    params: { unitDisplayId: targetId } };
   return null;
 }
 
@@ -260,7 +266,9 @@ Pages.labelGen = function (params = {}) {
   const pars = Store.getDB('parents') || [];
 
   const isDirectMode = !!params.targetId || _isUnitMode || _isIndDraftMode || targetType === 'IND_FORMAL';
-  const origin       = isDirectMode ? _detailPageKey(targetType, targetId) : null;
+  // [20260418d] UNIT の場合は _unitDisplayId を優先して渡す（戻り先が unit-detail へ）
+  const _originTargetId = _isUnitMode ? (_unitDisplayId || targetId) : targetId;
+  const origin       = isDirectMode ? _detailPageKey(targetType, _originTargetId) : null;
 
   const headerOpts = _backRoute
     ? { back: true, backFn: `routeTo('${_backRoute}',${JSON.stringify(_backParam)})` }
@@ -1080,24 +1088,29 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
   var m0sex = m0 ? (m0.sex || '') : '';
   var m1sex = m1 ? (m1.sex || '') : '';
 
-  // ── Bug 1 修正: 性別未判別時は ♂・♀ 表示 ──────────────────
-  var _anySexDetermined = (m0sex === '♂' || m0sex === '♀') || (m1sex === '♂' || m1sex === '♀');
+  // ── [20260418d] ユニット性別表示: 頭数カウント式 ─────────────
+  // ♂0/♀0 → 「♂・♀」（未判別）
+  // ♂1/♀0 → 「♂1・♀」
+  // ♂2/♀0 → 「♂2・♀」
+  // ♂1/♀1 → 「♂1・♀1」
+  // ♂2/♀1 → 「♂2・♀1」
+  // 判別済みの性別は頭数を必ず付ける（1頭でも省略しない）
+  var _members = ld.members || [];
+  var _maleCnt   = _members.filter(function(m) { return m && m.sex === '♂'; }).length;
+  var _femaleCnt = _members.filter(function(m) { return m && m.sex === '♀'; }).length;
+  var _totalDetermined = _maleCnt + _femaleCnt;
 
-  function _unitMemberSex(idx, sex) {
-    var sym = sex === '♂' ? '&#9794;' : sex === '♀' ? '&#9792;' : (idx===0?'&#9794;':'&#9792;');
-    if (sex === '♂' || sex === '♀') {
-      return (idx+1) + '<span style="display:inline-flex;align-items:center;justify-content:center;'
-        + 'width:14px;height:14px;border-radius:50%;border:1.2px solid #000;'
-        + 'font-size:10px;font-weight:700;color:#000;line-height:1;vertical-align:middle">'
-        + sym + '</span>';
-    }
-    return (idx+1) + '<span style="font-size:10px;font-weight:700;color:#000">' + sym + '</span>';
+  var unitSexHtml;
+  if (_totalDetermined === 0) {
+    // 誰も判別していない
+    unitSexHtml = '<span style="font-size:11px;font-weight:700;color:#000">&#9794;&#183;&#9792;</span>';
+  } else {
+    // 判別済みなら頭数を必ず付ける（♂N・♀N形式、1頭でも省略しない）
+    var _maleSide   = '&#9794;' + (_maleCnt > 0 ? _maleCnt : '');
+    var _femaleSide = '&#9792;' + (_femaleCnt > 0 ? _femaleCnt : '');
+    unitSexHtml = '<span style="font-size:11px;font-weight:700;color:#000">'
+      + _maleSide + '&#183;' + _femaleSide + '</span>';
   }
-
-  var unitSexHtml = _anySexDetermined
-    ? '<span style="font-size:10px;font-weight:700;color:#000">'
-      + _unitMemberSex(0, m0sex) + '&nbsp;' + _unitMemberSex(1, m1sex) + '</span>'
-    : '<span style="font-size:11px;font-weight:700;color:#000">&#9794;&#183;&#9792;</span>';
 
   var showMx = (mat === 'T2' || mat === 'T3');
   var mxIsOn = ld.mat_molt === true || ld.mat_molt === 'true';
