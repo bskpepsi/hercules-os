@@ -3,12 +3,81 @@
 // lot.js — Phase4-1 UI統一版
 // ロット一覧・詳細・分割・個体化を担う
 // カードUIを3列（コード | 頭数+ステージ | ›）に統一
-// build: 20260414a-fix1
+// build: 20260418e
 // 変更点:
+//   - [20260418e] ロット詳細画面に血統・種親カードを追加
 //   - Bug 5: ユニット一覧のメンバー表示で未判別性別の「?」を非表示に修正
 // ════════════════════════════════════════════════════════════════
 
 'use strict';
+
+console.log('[HerculesOS] lot.js v20260418e loaded');
+
+// ────────────────────────────────────────────────────────────────
+// [20260418e] 血統・種親カードを生成（ユニット詳細・ロット詳細共通仕様）
+// 引数: line - Store.getLine() の結果
+// 返値: HTML文字列。lineが null/undefined の場合は空文字を返す
+//
+// 表示内容:
+//   ♂親 [display_id] ([size]mm) ›
+//   血統 [bloodline_raw]
+//
+//   ♀親 [display_id] ([size]mm) ›
+//   血統 [bloodline_raw]
+// ────────────────────────────────────────────────────────────────
+function _lotRenderParentageCard(line) {
+  if (!line) return '';
+
+  var father = line.father_par_id ? (Store.getParent(line.father_par_id) || null) : null;
+  var mother = line.mother_par_id ? (Store.getParent(line.mother_par_id) || null) : null;
+
+  if (!father && !mother && !line.father_par_id && !line.mother_par_id) return '';
+
+  function _parBlock(par, parId, sex) {
+    if (!par && !parId) return '';
+    var mc = sex === '♂' ? 'var(--male,#5ba8e8)' : 'var(--female,#e87fa0)';
+    var bg = sex === '♂' ? 'rgba(91,168,232,.05)' : 'rgba(232,127,160,.05)';
+    var bd = sex === '♂' ? 'rgba(91,168,232,.2)'  : 'rgba(232,127,160,.2)';
+
+    if (!par) {
+      return '<div style="padding:8px 10px;background:' + bg + ';border-radius:8px;border:1px solid ' + bd + ';margin-bottom:6px">'
+        + '<span style="font-size:.75rem;color:' + mc + ';font-weight:700">' + sex + '親</span>'
+        + ' <span style="font-size:.8rem;color:var(--text3)">情報なし</span>'
+        + '</div>';
+    }
+
+    var name         = par.parent_display_id || par.display_name || '—';
+    var bloodlineRaw = par.bloodline_raw || '';
+
+    return '<div style="padding:8px 10px;background:' + bg + ';border-radius:8px;border:1px solid ' + bd + ';margin-bottom:6px">'
+      // 親情報行
+      + '<div style="display:flex;align-items:baseline;gap:6px;cursor:pointer"'
+      +   ' onclick="routeTo(\'parent-detail\',{parId:\'' + parId + '\'})">'
+      +   '<span style="font-size:.75rem;color:' + mc + ';font-weight:700;flex-shrink:0">' + sex + '親</span>'
+      +   '<span style="font-size:.88rem;font-weight:700;color:var(--text1)">' + name + '</span>'
+      +   (par.size_mm ? '<span style="font-size:.8rem;color:var(--green);font-weight:700">(' + par.size_mm + 'mm)</span>' : '')
+      +   '<span style="margin-left:auto;color:var(--text3);font-size:.9rem">›</span>'
+      + '</div>'
+      // 血統行
+      + '<div style="display:flex;align-items:baseline;gap:6px;margin-top:4px;padding-top:4px;border-top:1px dashed ' + bd + '">'
+      +   '<span style="font-size:.72rem;color:var(--text3);font-weight:700;flex-shrink:0;min-width:36px">血統</span>'
+      +   '<span style="font-size:.78rem;color:var(--text2);word-break:break-all;line-height:1.4">'
+      +     (bloodlineRaw || '<span style="color:var(--text3)">—</span>')
+      +   '</span>'
+      + '</div>'
+      + '</div>';
+  }
+
+  var fBlock = _parBlock(father, line.father_par_id, '♂');
+  var mBlock = _parBlock(mother, line.mother_par_id, '♀');
+
+  if (!fBlock && !mBlock) return '';
+
+  return '<div class="card" style="margin-bottom:10px">'
+    + '<div class="card-title">血統・種親</div>'
+    + fBlock + mBlock
+    + '</div>';
+}
 
 // ────────────────────────────────────────────────────────────────
 // _lotDisplayStageLabel — ステージコード（新旧問わず）→ 新6区分の表示ラベル
@@ -643,6 +712,9 @@ function _renderLotDetail(lot, main) {
           ${lot.note ? _infoRow('メモ', lot.note) : ''}
         </div>
       </div>
+
+      <!-- 血統・種親（20260418e）-->
+      ${_lotRenderParentageCard(line)}
 
       ${!lot.hatch_date ? `
       ${!lot.t1_done ? `<button class="btn btn-full" style="background:var(--green);color:#fff;font-weight:700;margin-bottom:4px"

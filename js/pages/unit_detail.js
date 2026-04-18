@@ -1,7 +1,8 @@
 // ════════════════════════════════════════════════════════════════
 // unit_detail.js — 飼育ユニット（BU）詳細画面
-// build: 20260418a
+// build: 20260418e
 // 変更点:
+//   - [20260418e] 血統・種親カードを追加（ラインから父母種親・血統原文を表示）
 //   - [20260418a] Step2 ③ 性別編集UI追加（メンバー行の性別バッジをタップ可能に）
 //                 ♂/♀/不明 の3択モーダル → API.unit.update で members JSON 保存
 //   - [fix4] 編集モーダルの値取得をDOM参照から window._udEditState 経由に変更
@@ -15,7 +16,7 @@
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-console.log('[HerculesOS] unit_detail.js v20260418a loaded');
+console.log('[HerculesOS] unit_detail.js v20260418e loaded');
 
 // ── Bug 4 修正: 孵化日フォーマット関数 ─────────────────────────
 function _udFormatDate(d) {
@@ -58,6 +59,73 @@ function _udParseMembers(unit) {
     try { return JSON.parse(raw); } catch(_) {}
   }
   return [];
+}
+
+// ────────────────────────────────────────────────────────────────
+// [20260418e] 血統・種親カードを生成（ユニット詳細・ロット詳細共通）
+// 引数: line - Store.getLine() の結果
+// 返値: HTML文字列。lineが null/undefined の場合は空文字を返す
+//
+// 表示内容:
+//   ♂親 [display_id] ([size]mm) ›
+//   血統 [bloodline_raw]
+//
+//   ♀親 [display_id] ([size]mm) ›
+//   血統 [bloodline_raw]
+// ────────────────────────────────────────────────────────────────
+function _udRenderParentageCard(line) {
+  if (!line) return '';
+
+  const father = line.father_par_id ? (Store.getParent(line.father_par_id) || null) : null;
+  const mother = line.mother_par_id ? (Store.getParent(line.mother_par_id) || null) : null;
+
+  // 何もデータがなければカード自体を表示しない
+  if (!father && !mother && !line.father_par_id && !line.mother_par_id) return '';
+
+  function _parBlock(par, parId, sex) {
+    if (!par && !parId) return '';
+    const mc = sex === '♂' ? 'var(--male,#5ba8e8)' : 'var(--female,#e87fa0)';
+    const bg = sex === '♂' ? 'rgba(91,168,232,.05)' : 'rgba(232,127,160,.05)';
+    const bd = sex === '♂' ? 'rgba(91,168,232,.2)'  : 'rgba(232,127,160,.2)';
+
+    if (!par) {
+      return '<div style="padding:8px 10px;background:' + bg + ';border-radius:8px;border:1px solid ' + bd + ';margin-bottom:6px">'
+        + '<span style="font-size:.75rem;color:' + mc + ';font-weight:700">' + sex + '親</span>'
+        + ' <span style="font-size:.8rem;color:var(--text3)">情報なし</span>'
+        + '</div>';
+    }
+
+    const name         = par.parent_display_id || par.display_name || '—';
+    const bloodlineRaw = par.bloodline_raw || '';
+
+    return '<div style="padding:8px 10px;background:' + bg + ';border-radius:8px;border:1px solid ' + bd + ';margin-bottom:6px">'
+      // 親情報行
+      + '<div style="display:flex;align-items:baseline;gap:6px;cursor:pointer"'
+      +   ' onclick="routeTo(\'parent-detail\',{parId:\'' + parId + '\'})">'
+      +   '<span style="font-size:.75rem;color:' + mc + ';font-weight:700;flex-shrink:0">' + sex + '親</span>'
+      +   '<span style="font-size:.88rem;font-weight:700;color:var(--text1)">' + name + '</span>'
+      +   (par.size_mm ? '<span style="font-size:.8rem;color:var(--green);font-weight:700">(' + par.size_mm + 'mm)</span>' : '')
+      +   '<span style="margin-left:auto;color:var(--text3);font-size:.9rem">›</span>'
+      + '</div>'
+      // 血統行
+      + '<div style="display:flex;align-items:baseline;gap:6px;margin-top:4px;padding-top:4px;border-top:1px dashed ' + bd + '">'
+      +   '<span style="font-size:.72rem;color:var(--text3);font-weight:700;flex-shrink:0;min-width:36px">血統</span>'
+      +   '<span style="font-size:.78rem;color:var(--text2);word-break:break-all;line-height:1.4">'
+      +     (bloodlineRaw || '<span style="color:var(--text3)">—</span>')
+      +   '</span>'
+      + '</div>'
+      + '</div>';
+  }
+
+  const fBlock = _parBlock(father, line.father_par_id, '♂');
+  const mBlock = _parBlock(mother, line.mother_par_id, '♀');
+
+  if (!fBlock && !mBlock) return '';
+
+  return '<div class="card" style="margin-bottom:10px">'
+    + '<div class="card-title">血統・種親</div>'
+    + fBlock + mBlock
+    + '</div>';
 }
 
 // 個体一覧からこのユニット由来の個体を検索
@@ -301,6 +369,9 @@ function _renderUnitDetail(unit, main) {
         </table>
         ${unit.note ? `<div style="margin-top:8px;font-size:.78rem;color:var(--text2);background:var(--surface2);border-radius:8px;padding:8px">📝 ${unit.note}</div>` : ''}
       </div>
+
+      <!-- 血統・種親（20260418e）-->
+      ${_udRenderParentageCard(line)}
 
       <!-- メンバー構成 -->
       ${memberSection}
