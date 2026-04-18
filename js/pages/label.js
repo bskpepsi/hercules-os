@@ -1,10 +1,10 @@
 // FILE: js/pages/label.js
-// build: 20260418e-fix2
+// build: 20260418e-fix3
 // 修正:
+//   - [20260418e-fix3] e-fix2 で勝手にボタン文言を変更していたのを元に戻す
+//                     常に「詳細に戻る」表示に統一
 //   - [20260418e-fix2] T1/T2/T3セッション中のラベル発行時の戻り先を修正
 //                     _backRoute > origin の優先度に変更
-//                     セッション中(_backRoute='t1-session')なら「T1編成に戻る」表示
-//                     確定済みユニット詳細から(_backRoute='unit-detail')なら「詳細に戻る」
 //   - [20260418e-fix1] 戻るボタンが反応しない問題を修正
 //                     JSON.stringify を onclick属性に埋め込むと "{"key":"val"}" の
 //                     ダブルクォートがHTML構文を壊していた
@@ -19,7 +19,7 @@
 //   - Bug 3: _backRoute が存在する場合に「詳細に戻る」ボタンを追加
 'use strict';
 
-window._LABEL_BUILD = '20260418e-fix2';
+window._LABEL_BUILD = '20260418e-fix3';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 function _normStageForLabel(code) {
@@ -424,7 +424,7 @@ Pages.labelGen = function (params = {}) {
             </button>`}` : _backRoute ? `
             <button class="btn btn-ghost btn-full" style="margin-top:2px;font-size:.82rem"
               onclick="routeTo('${_backRoute}',${_toOnclickParams(_backParam)})">
-              ← ${_backRoute === 't1-session' ? 'T1編成に戻る' : _backRoute === 't2-session' ? 'T2編成に戻る' : _backRoute === 't3-session' ? 'T3編成に戻る' : '詳細に戻る'}
+              ← 詳細に戻る
             </button>` : origin ? `
             <button class="btn btn-ghost btn-full" style="margin-top:2px;font-size:.82rem"
               onclick="routeTo('${origin.page}',${_toOnclickParams(origin.params)})">
