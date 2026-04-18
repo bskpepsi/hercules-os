@@ -2,8 +2,11 @@
 // individual.js
 // 役割: 個体の一覧・詳細・新規登録・編集・ステータス変更を担う。
 //       個体台帳の中心画面。ロット・成長記録・ラベルへの導線も持つ。
-// build: 20260414b-fix1
+// build: 20260418a
 //
+// 20260418a 修正:
+//   - [Step2 ③] 性別フィルタに「不明」ボタン追加（val='_unknown'）
+//     _unknown は store.js の filterIndividuals 側で sex が空/不明/? を包括して拾う
 // 20260414b-fix1 修正:
 //   - 個体一覧カードのライン未表示を修正
 //     （line_id がキャッシュで解決できない場合に display_id からフォールバック抽出）
@@ -16,7 +19,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] individual.js v20260414b-fix1 loaded');
+console.log('[HerculesOS] individual.js v20260418a loaded');
 
 const Pages = window.Pages || {};
 
@@ -235,9 +238,10 @@ function _statusFilters(active) {
 
 function _sexFilters(active) {
   return [
-    { val:'',  label:'性別全て' },
-    { val:'♂', label:'♂' },
-    { val:'♀', label:'♀' },
+    { val:'',         label:'性別全て' },
+    { val:'♂',        label:'♂' },
+    { val:'♀',        label:'♀' },
+    { val:'_unknown', label:'不明' },
   ].map(s =>
     `<button class="pill ${s.val === active ? 'active' : ''}" data-val="${s.val}">${s.label}</button>`
   ).join('');

@@ -1,7 +1,13 @@
 // ════════════════════════════════════════════════════════════════
 // dashboard.js  v4 — Phase6 交換アラート新仕様対応
+// build: 20260418a
+// 変更点:
+//   - [20260418a] Step2 ③ 性別集計サマリーカード追加（KPIバー直下）
+//                 Store.getSexStats() の結果を種親/個体/ユニット別に表示
 // ════════════════════════════════════════════════════════════════
 'use strict';
+
+console.log('[HerculesOS] dashboard.js v20260418a loaded');
 
 Pages.dashboard = async function () {
   const main = document.getElementById('main');
@@ -306,6 +312,9 @@ function _renderDashboard(main) {
         </div>`).join('')}
       </div>
 
+      <!-- 性別集計サマリー（Step2 ③ 20260418a）-->
+      ${_dashSexStatsCard()}
+
       <!-- ⑤ ロット交換アラート一覧（Phase6新規） -->
       ${matDue.length ? `
       <div class="card">
@@ -454,6 +463,67 @@ function _renderDashboard(main) {
       <div style="text-align:center;padding:12px 0;font-size:.72rem;color:var(--text3)">
         HerculesOS v1.1.0 — Phase 6
       </div>
+    </div>`;
+}
+
+// ── 性別集計サマリー（Step2 ③ 20260418a）─────────────────────
+// Store.getSexStats() の結果を種親/個体/ユニット別の3x3テーブルで表示。
+// 飼育中判定の詳細は Store.getSexStats() 内のコメント参照。
+function _dashSexStatsCard() {
+  if (typeof Store.getSexStats !== 'function') return '';
+  let s;
+  try { s = Store.getSexStats(); } catch (e) { console.warn('[dashboard] getSexStats error:', e); return ''; }
+  if (!s || !s.total) return '';
+
+  const maleCol    = 'var(--male,#5ba8e8)';
+  const femaleCol  = 'var(--female,#e87fa0)';
+  const unknownCol = 'var(--text3)';
+
+  const cell = (v, col, bold) =>
+    `<td style="text-align:right;padding:6px 8px;font-family:var(--font-mono);${bold?'font-weight:700;':''}color:${col}">${v}</td>`;
+
+  const rows = [
+    { label: '種親',    male: s.parents.male,     female: s.parents.female,     unknown: null },
+    { label: `個体`,    male: s.individuals.male, female: s.individuals.female, unknown: s.individuals.unknown },
+    { label: `ユニット（${s.units.unitCount}U）`, male: s.units.male, female: s.units.female, unknown: s.units.unknown },
+  ];
+
+  const grandTotal = s.total.male + s.total.female + s.total.unknown;
+  if (grandTotal === 0) return ''; // 全部ゼロなら非表示
+
+  return `
+    <div class="card" onclick="routeTo('ind-list')" style="cursor:pointer">
+      <div class="card-title" style="display:flex;align-items:center;justify-content:space-between">
+        <span>👥 性別集計（飼育中）</span>
+        <span style="font-size:.7rem;font-weight:400;color:var(--text3)">合計 ${grandTotal}</span>
+      </div>
+      <table style="width:100%;font-size:.82rem;border-collapse:collapse;margin-top:4px">
+        <thead>
+          <tr>
+            <th style="text-align:left;font-weight:500;color:var(--text3);padding:4px 8px"></th>
+            <th style="text-align:right;padding:4px 8px;color:${maleCol};font-weight:700">♂</th>
+            <th style="text-align:right;padding:4px 8px;color:${femaleCol};font-weight:700">♀</th>
+            <th style="text-align:right;padding:4px 8px;color:${unknownCol};font-weight:500">不明</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(r => `
+            <tr style="border-top:1px solid var(--border2)">
+              <td style="padding:6px 8px;color:var(--text2)">${r.label}</td>
+              ${cell(r.male,    maleCol,    false)}
+              ${cell(r.female,  femaleCol,  false)}
+              ${r.unknown === null
+                ? `<td style="text-align:right;padding:6px 8px;color:var(--text3)">—</td>`
+                : cell(r.unknown, unknownCol, false)}
+            </tr>`).join('')}
+          <tr style="border-top:2px solid var(--border)">
+            <td style="padding:6px 8px;font-weight:700;color:var(--text1)">合計</td>
+            ${cell(s.total.male,    maleCol,    true)}
+            ${cell(s.total.female,  femaleCol,  true)}
+            ${cell(s.total.unknown, unknownCol, true)}
+          </tr>
+        </tbody>
+      </table>
     </div>`;
 }
 

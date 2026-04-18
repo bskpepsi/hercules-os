@@ -1,7 +1,9 @@
 // ════════════════════════════════════════════════════════════════
 // unit_detail.js — 飼育ユニット（BU）詳細画面
-// build: 20260417a-fix4
+// build: 20260418a
 // 変更点:
+//   - [20260418a] Step2 ③ 性別編集UI追加（メンバー行の性別バッジをタップ可能に）
+//                 ♂/♀/不明 の3択モーダル → API.unit.update で members JSON 保存
 //   - [fix4] 編集モーダルの値取得をDOM参照から window._udEditState 経由に変更
 //           onchangeで状態オブジェクトに保存、保存時はそこから読む
 //           → id属性やUI.select実装に依存せず確実に動作する
@@ -13,7 +15,7 @@
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-console.log('[HerculesOS] unit_detail.js v20260417a-fix4 loaded');
+console.log('[HerculesOS] unit_detail.js v20260418a loaded');
 
 // ── Bug 4 修正: 孵化日フォーマット関数 ─────────────────────────
 function _udFormatDate(d) {
@@ -223,7 +225,7 @@ function _renderUnitDetail(unit, main) {
     : members.length > 0
       ? `<div class="card" style="margin-bottom:10px">
           <div class="card-title">メンバー構成（${members.length}頭）</div>
-          ${members.map((m, i) => _renderUdMemberRow(m, i, records)).join('')}
+          ${members.map((m, i) => _renderUdMemberRow(m, i, records, unit.display_id)).join('')}
         </div>`
       : `<div class="card" style="margin-bottom:10px">
           <div class="card-title">メンバー構成</div>
@@ -469,20 +471,32 @@ Pages._udSaveBasic = async function () {
 };
 
 // ── メンバー行 ───────────────────────────────────────────────────
-// Bug 5 修正: ♂/♀ のみ表示、未判別は非表示
-function _renderUdMemberRow(m, idx, records) {
+// [20260418a] 性別バッジをタップ可能にし、♂/♀/不明 を切替できるようにした
+//             未判別時は「?」を表示（編集導線として機能させるため）
+function _renderUdMemberRow(m, idx, records, unitDisplayId) {
   const slotLabel = idx === 0 ? '1頭目' : idx === 1 ? '2頭目' : `${idx+1}頭目`;
+  const slotNo    = m.unit_slot_no || (idx + 1);
   const slotRecs  = records.filter(r => parseInt(r.unit_slot_no, 10) === m.unit_slot_no);
   const latestW   = slotRecs.length > 0
     ? slotRecs.sort((a,b) => String(b.record_date).localeCompare(String(a.record_date)))[0].weight_g
     : (m.weight_g || null);
-  const sexColor = m.sex === '♂' ? '#3366cc' : m.sex === '♀' ? '#cc3366' : 'var(--text3)';
+  const sexRaw   = m.sex || '';
+  const hasSex   = sexRaw === '♂' || sexRaw === '♀';
+  const sexColor = sexRaw === '♂' ? '#3366cc' : sexRaw === '♀' ? '#cc3366' : 'var(--text3)';
+  const sexLabel = hasSex ? sexRaw : '?';
+  const sexBtnBg = hasSex ? 'transparent' : 'rgba(224,144,64,.12)';
+  const sexBtnBorder = hasSex ? 'var(--border)' : 'rgba(224,144,64,.4)';
 
   return `
   <div style="padding:10px 0;border-bottom:1px solid var(--border2)">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
       <span style="font-weight:800;font-size:.9rem;color:var(--text1)">${slotLabel}</span>
-      ${(m.sex && m.sex !== '不明') ? `<span style="font-size:.8rem;font-weight:700;color:${sexColor}">${m.sex}</span>` : ''}
+      <button onclick="Pages._udEditMemberSex('${unitDisplayId}', ${slotNo})"
+        style="font-size:.8rem;font-weight:700;color:${sexColor};background:${sexBtnBg};
+          border:1px solid ${sexBtnBorder};border-radius:6px;padding:2px 10px;cursor:pointer;
+          display:inline-flex;align-items:center;gap:4px">
+        <span>${sexLabel}</span><span style="font-size:.65rem;opacity:.6">✏️</span>
+      </button>
       ${m.size_category ? `<span style="font-size:.75rem;padding:1px 6px;border-radius:4px;background:rgba(76,175,120,.12);color:var(--green)">${m.size_category}</span>` : ''}
       ${latestW ? `<span style="font-size:.8rem;font-weight:700;margin-left:auto">${latestW}g</span>` : ''}
     </div>
@@ -492,6 +506,88 @@ function _renderUdMemberRow(m, idx, records) {
     </div>
   </div>`;
 }
+
+// ── メンバー性別編集モーダル（20260418a）────────────────────────
+Pages._udEditMemberSex = function (displayId, slotNo) {
+  const unit = Store.getUnitByDisplayId && Store.getUnitByDisplayId(displayId);
+  if (!unit) { UI.toast('ユニットが見つかりません', 'error'); return; }
+
+  const members = _udParseMembers(unit);
+  // unit_slot_no 優先、なければインデックスでフォールバック
+  let m = members.find(x => x.unit_slot_no === slotNo);
+  if (!m) m = members[slotNo - 1];
+  if (!m) { UI.toast('メンバーが見つかりません', 'error'); return; }
+
+  const curSex    = m.sex || '不明';
+  const slotLabel = slotNo === 1 ? '1頭目' : slotNo === 2 ? '2頭目' : `${slotNo}頭目`;
+
+  const opts = [
+    { val:'♂',   color:'#3366cc' },
+    { val:'♀',   color:'#cc3366' },
+    { val:'不明', color:'var(--text3)' },
+  ];
+
+  UI.modal(`
+    <div class="modal-title">性別を変更（${slotLabel}）</div>
+    <div style="font-size:.75rem;color:var(--text3);margin-top:4px;margin-bottom:10px">
+      現在: <span style="font-weight:700;color:${curSex==='♂'?'#3366cc':curSex==='♀'?'#cc3366':'var(--text3)'}">${curSex}</span>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
+      ${opts.map(o => `
+        <button class="btn"
+          style="font-size:1rem;padding:14px;background:${curSex===o.val?'rgba(91,168,232,.15)':'var(--surface2)'};
+            border:${curSex===o.val?'2px solid var(--blue)':'1px solid var(--border)'};
+            color:${o.color};font-weight:700;border-radius:10px;cursor:pointer"
+          onclick="Pages._udSaveMemberSex('${displayId}', ${slotNo}, '${o.val}')">
+          ${o.val}
+        </button>
+      `).join('')}
+    </div>
+    <div class="modal-footer" style="margin-top:10px">
+      <button class="btn btn-ghost" style="width:100%" onclick="UI.closeModal()">キャンセル</button>
+    </div>
+  `);
+};
+
+Pages._udSaveMemberSex = async function (displayId, slotNo, newSex) {
+  const unit = Store.getUnitByDisplayId && Store.getUnitByDisplayId(displayId);
+  if (!unit) { UI.toast('ユニットが見つかりません', 'error'); return; }
+
+  const members = _udParseMembers(unit);
+  let targetIdx = members.findIndex(x => x.unit_slot_no === slotNo);
+  if (targetIdx === -1) targetIdx = slotNo - 1;
+  if (targetIdx < 0 || targetIdx >= members.length) {
+    UI.toast('対象メンバーが見つかりません', 'error'); return;
+  }
+
+  members[targetIdx] = { ...members[targetIdx], sex: newSex };
+  const newMembersStr = JSON.stringify(members);
+
+  console.log('[UD][20260418a] save member sex', { displayId, slotNo, newSex });
+  UI.closeModal();
+
+  try {
+    UI.loading(true);
+    await API.unit.update({ unit_id: unit.unit_id, members: newMembersStr });
+
+    // 楽観的キャッシュ更新
+    if (typeof Store.patchDBItem === 'function') {
+      Store.patchDBItem('breeding_units', 'unit_id', unit.unit_id, { members: newMembersStr });
+    }
+
+    UI.toast(`✅ ${slotNo}頭目を ${newSex} に変更しました`, 'success', 2000);
+    Pages.unitDetail({ unitDisplayId: displayId });
+  } catch (e) {
+    console.error('[UD] save member sex error:', e);
+    UI.toast('❌ 保存失敗: ' + (e.message || '通信エラー'), 'error', 4000);
+    // 通信失敗でもローカルは更新（既存fix4の _udSaveBasic と同じ方針）
+    if (typeof Store.patchDBItem === 'function') {
+      Store.patchDBItem('breeding_units', 'unit_id', unit.unit_id, { members: newMembersStr });
+    }
+  } finally {
+    UI.loading(false);
+  }
+};
 
 // ── T2/T3移行ショートカット ─────────────────────────────────────
 Pages._udStartT2 = function (displayId) {

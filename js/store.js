@@ -12,7 +12,8 @@
 'use strict';
 
 // Version marker — update when deploying to verify cache bust
-console.log('[HerculesOS] store.js v20260325a loaded');
+// 20260418a: Step2 ③ 性別頭数集計 — getSexStats() 追加 / filterIndividuals の '_unknown' 対応
+console.log('[HerculesOS] store.js v20260418a loaded');
 
 const Store = (() => {
 
@@ -285,7 +286,11 @@ const Store = (() => {
       list = list.filter(i => i.current_stage === filters.stage);
     }
 
-    if (filters.sex) list = list.filter(i => i.sex === filters.sex);
+    if (filters.sex === '_unknown') {
+      list = list.filter(i => !i.sex || i.sex === '不明' || i.sex === '?');
+    } else if (filters.sex) {
+      list = list.filter(i => i.sex === filters.sex);
+    }
 
     const _TERMINAL_STATUSES = new Set(['dead', 'sold']);
 
@@ -392,6 +397,75 @@ const Store = (() => {
     });
   }
 
+  // ── 性別頭数集計（Step2 ③）─────────────────────────────────
+  // 全体/種親/個別/ユニット別の♂♀不明カウント
+  //
+  // 飼育中判定:
+  //   - IND: status が alive / larva / prepupa / pupa / adult / seed_candidate / seed_reserved
+  //   - BU:  status === 'active'
+  //   - PAR: status === 'active'（♂♀のみ、不明は想定しない）
+  function getSexStats() {
+    const parents = _db.parents        || [];
+    const inds    = _db.individuals    || [];
+    const units   = _db.breeding_units || [];
+
+    const ALIVE_IND = new Set([
+      'alive', 'larva', 'prepupa', 'pupa', 'adult',
+      'seed_candidate', 'seed_reserved',
+    ]);
+    const isUnknown = v => !v || v === '不明' || v === '?';
+
+    // 種親（active のみ）
+    const pActive = parents.filter(p => p.status === 'active');
+    const parStats = {
+      male:   pActive.filter(p => p.sex === '♂').length,
+      female: pActive.filter(p => p.sex === '♀').length,
+    };
+
+    // 個体（飼育中ステータスのみ）
+    const iAlive = inds.filter(i => ALIVE_IND.has(i.status));
+    const indStats = {
+      male:    iAlive.filter(i => i.sex === '♂').length,
+      female:  iAlive.filter(i => i.sex === '♀').length,
+      unknown: iAlive.filter(i => isUnknown(i.sex)).length,
+    };
+
+    // ユニット（active のみ、members[] を展開）
+    const uActive = units.filter(u => u.status === 'active');
+    let uMale = 0, uFemale = 0, uUnknown = 0;
+    uActive.forEach(u => {
+      let mems = u.members;
+      if (typeof mems === 'string' && mems.trim()) {
+        try { mems = JSON.parse(mems); } catch (_) { mems = []; }
+      }
+      if (!Array.isArray(mems)) mems = [];
+      mems.forEach(m => {
+        if (m.sex === '♂')      uMale++;
+        else if (m.sex === '♀') uFemale++;
+        else                    uUnknown++;
+      });
+    });
+    const unitStats = {
+      male:      uMale,
+      female:    uFemale,
+      unknown:   uUnknown,
+      unitCount: uActive.length,
+    };
+
+    const total = {
+      male:    parStats.male   + indStats.male   + unitStats.male,
+      female:  parStats.female + indStats.female + unitStats.female,
+      unknown: indStats.unknown + unitStats.unknown,
+    };
+
+    return {
+      total,
+      parents:     parStats,
+      individuals: indStats,
+      units:       unitStats,
+    };
+  }
+
   return {
     navigate, back, getPage, getParams, getPrev,
     setLoading, isLoading, toast,
@@ -408,5 +482,6 @@ const Store = (() => {
     setDraft, getDraft, clearDraft,
     filterIndividuals, filterLots,
     getPairingStats,
+    getSexStats,
   };
 })();
