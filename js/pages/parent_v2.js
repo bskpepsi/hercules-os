@@ -263,6 +263,26 @@ Pages.parentDetail = async function (parIdParam) {
   const mTags  = _parseTags(p.maternal_tags);
   const cTags  = _parseTags(p.child_tags);
 
+  // ── [20260418f] 外部から戻り先が指定されていれば、ヘッダーの←ボタンでそちらに戻す ──
+  // ユニット詳細 / ロット詳細 → 種親詳細 と遷移した後、種親詳細で戻ると Store.back() 系だと
+  // unitDisplayId / lotId が失われて「ユニットが見つかりません」等になるのを防ぐ
+  const _routeParams = (Store.getParams && Store.getParams()) || {};
+  let _customBackFn = null;
+  if (_routeParams._back) {
+    let _backParamsObj = {};
+    try {
+      _backParamsObj = _routeParams._backParams ? JSON.parse(_routeParams._backParams) : {};
+    } catch(_) { _backParamsObj = {}; }
+    // onclick="..." はダブルクォートで囲まれる属性なので、内部のダブルクォートは &quot; にエスケープ
+    // さらに、JSON.parse に渡す文字列リテラルはシングルクォートで囲むので、シングルクォートもエスケープ
+    const _bpJson      = JSON.stringify(_backParamsObj);
+    const _bpJsonEsc   = _bpJson.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+    _customBackFn = "routeTo('" + _routeParams._back + "',JSON.parse('" + _bpJsonEsc + "'))";
+  }
+  const _headerOpts = _customBackFn
+    ? { back: true, backFn: _customBackFn, action: { fn: `_parentEditMenu('${parId}')`, icon: '…' } }
+    : { back: true, action: { fn: `_parentEditMenu('${parId}')`, icon: '…' } };
+
   // ペアリング可能状況
   const today = new Date(); today.setHours(0,0,0,0);
   let pairingBadge = '';
@@ -273,7 +293,7 @@ Pages.parentDetail = async function (parIdParam) {
   }
 
   main.innerHTML = `
-    ${UI.header(pid, { back: true, action: { fn: `_parentEditMenu('${parId}')`, icon: '…' } })}
+    ${UI.header(pid, _headerOpts)}
     <div class="page-body">
 
       <!-- ヘッダーカード -->

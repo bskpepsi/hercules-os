@@ -1,7 +1,12 @@
 // ════════════════════════════════════════════════════════════════
 // unit_detail.js — 飼育ユニット（BU）詳細画面
-// build: 20260418e
+// build: 20260418f
 // 変更点:
+//   - [20260418f] 血統・種親カードの血統表示を「祖父×祖母」形式に変更
+//                 父種親の paternal_raw/maternal_raw（= 祖父/祖母の血統原文）を表示
+//                 例: U71 (160mm) × 165T-REX.T-115 (69mm)
+//   - [20260418f] 種親詳細への遷移時に戻り先情報を付与（_back / _backParams）
+//                 → 種親詳細から戻った時に「ユニットが見つかりません」にならない
 //   - [20260418e] 血統・種親カードを追加（ラインから父母種親・血統原文を表示）
 //   - [20260418a] Step2 ③ 性別編集UI追加（メンバー行の性別バッジをタップ可能に）
 //                 ♂/♀/不明 の3択モーダル → API.unit.update で members JSON 保存
@@ -16,7 +21,7 @@
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-console.log('[HerculesOS] unit_detail.js v20260418e loaded');
+console.log('[HerculesOS] unit_detail.js v20260418f loaded');
 
 // ── Bug 4 修正: 孵化日フォーマット関数 ─────────────────────────
 function _udFormatDate(d) {
@@ -62,18 +67,26 @@ function _udParseMembers(unit) {
 }
 
 // ────────────────────────────────────────────────────────────────
-// [20260418e] 血統・種親カードを生成（ユニット詳細・ロット詳細共通）
-// 引数: line - Store.getLine() の結果
+// [20260418f] 血統・種親カードを生成（ユニット詳細用）
+// 引数:
+//   line - Store.getLine() の結果
+//   backCtx - { page: 'unit-detail', params: {unitDisplayId: '...'} } 戻り先情報
 // 返値: HTML文字列。lineが null/undefined の場合は空文字を返す
 //
 // 表示内容:
 //   ♂親 [display_id] ([size]mm) ›
-//   血統 [bloodline_raw]
+//   血統 [paternal_raw (father_parent_size_mm mm)] × [maternal_raw (mother_parent_size_mm mm)]
 //
 //   ♀親 [display_id] ([size]mm) ›
-//   血統 [bloodline_raw]
+//   血統 [paternal_raw (father_parent_size_mm mm)] × [maternal_raw (mother_parent_size_mm mm)]
+//
+// 血統行は「父方祖父 × 母方祖母」形式。表示規則:
+//   両方あり:        U71 (160mm) × 165T-REX.T-115 (69mm)
+//   サイズなし:      U71 × 165T-REX.T-115
+//   片方のみ:        U71 (160mm) × —
+//   両方なし:        血統行自体を非表示
 // ────────────────────────────────────────────────────────────────
-function _udRenderParentageCard(line) {
+function _udRenderParentageCard(line, backCtx) {
   if (!line) return '';
 
   const father = line.father_par_id ? (Store.getParent(line.father_par_id) || null) : null;
@@ -81,6 +94,35 @@ function _udRenderParentageCard(line) {
 
   // 何もデータがなければカード自体を表示しない
   if (!father && !mother && !line.father_par_id && !line.mother_par_id) return '';
+
+  // 祖父母ペアから「血統原文(サイズ) × 血統原文(サイズ)」の文字列を生成
+  function _grandBloodlineLine(par) {
+    if (!par) return '';
+    const patRaw = (par.paternal_raw || '').trim();
+    const matRaw = (par.maternal_raw || '').trim();
+    const patSize = par.father_parent_size_mm;
+    const matSize = par.mother_parent_size_mm;
+
+    if (!patRaw && !matRaw) return ''; // 両方なし → 血統行自体を出さない
+
+    function _fmt(raw, size) {
+      if (!raw) return '—';
+      return raw + (size ? ' (' + size + 'mm)' : '');
+    }
+
+    return _fmt(patRaw, patSize) + ' × ' + _fmt(matRaw, matSize);
+  }
+
+  // backCtx を onclick用のパラメータ文字列にエンコード
+  // (parent_v2.js 側で _back / _backParams を見て戻り先を動的に決定する)
+  function _buildParentOnclick(parId) {
+    if (!backCtx || !backCtx.page) {
+      return "routeTo('parent-detail',{parId:'" + parId + "'})";
+    }
+    // _backParams は JSON文字列として渡す (parent_v2.js でJSON.parseして使用)
+    const backParamsJson = JSON.stringify(backCtx.params || {}).replace(/'/g, "\\'");
+    return "routeTo('parent-detail',{parId:'" + parId + "',_back:'" + backCtx.page + "',_backParams:'" + backParamsJson + "'})";
+  }
 
   function _parBlock(par, parId, sex) {
     if (!par && !parId) return '';
@@ -95,25 +137,25 @@ function _udRenderParentageCard(line) {
         + '</div>';
     }
 
-    const name         = par.parent_display_id || par.display_name || '—';
-    const bloodlineRaw = par.bloodline_raw || '';
+    const name           = par.parent_display_id || par.display_name || '—';
+    const grandLine      = _grandBloodlineLine(par);
+    const parentOnclick  = _buildParentOnclick(parId);
 
     return '<div style="padding:8px 10px;background:' + bg + ';border-radius:8px;border:1px solid ' + bd + ';margin-bottom:6px">'
       // 親情報行
-      + '<div style="display:flex;align-items:baseline;gap:6px;cursor:pointer"'
-      +   ' onclick="routeTo(\'parent-detail\',{parId:\'' + parId + '\'})">'
+      + '<div style="display:flex;align-items:baseline;gap:6px;cursor:pointer" onclick="' + parentOnclick + '">'
       +   '<span style="font-size:.75rem;color:' + mc + ';font-weight:700;flex-shrink:0">' + sex + '親</span>'
       +   '<span style="font-size:.88rem;font-weight:700;color:var(--text1)">' + name + '</span>'
       +   (par.size_mm ? '<span style="font-size:.8rem;color:var(--green);font-weight:700">(' + par.size_mm + 'mm)</span>' : '')
       +   '<span style="margin-left:auto;color:var(--text3);font-size:.9rem">›</span>'
       + '</div>'
-      // 血統行
-      + '<div style="display:flex;align-items:baseline;gap:6px;margin-top:4px;padding-top:4px;border-top:1px dashed ' + bd + '">'
-      +   '<span style="font-size:.72rem;color:var(--text3);font-weight:700;flex-shrink:0;min-width:36px">血統</span>'
-      +   '<span style="font-size:.78rem;color:var(--text2);word-break:break-all;line-height:1.4">'
-      +     (bloodlineRaw || '<span style="color:var(--text3)">—</span>')
-      +   '</span>'
-      + '</div>'
+      // 血統行（祖父×祖母）※ 両方なしなら非表示
+      + (grandLine
+        ? '<div style="display:flex;align-items:baseline;gap:6px;margin-top:4px;padding-top:4px;border-top:1px dashed ' + bd + '">'
+          +   '<span style="font-size:.72rem;color:var(--text3);font-weight:700;flex-shrink:0;min-width:36px">血統</span>'
+          +   '<span style="font-size:.78rem;color:var(--text2);word-break:break-all;line-height:1.4">' + grandLine + '</span>'
+          + '</div>'
+        : '')
       + '</div>';
   }
 
@@ -370,8 +412,8 @@ function _renderUnitDetail(unit, main) {
         ${unit.note ? `<div style="margin-top:8px;font-size:.78rem;color:var(--text2);background:var(--surface2);border-radius:8px;padding:8px">📝 ${unit.note}</div>` : ''}
       </div>
 
-      <!-- 血統・種親（20260418e）-->
-      ${_udRenderParentageCard(line)}
+      <!-- 血統・種親（20260418f）-->
+      ${_udRenderParentageCard(line, { page: 'unit-detail', params: { unitDisplayId: unit.display_id } })}
 
       <!-- メンバー構成 -->
       ${memberSection}

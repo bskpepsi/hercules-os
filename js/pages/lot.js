@@ -3,35 +3,74 @@
 // lot.js — Phase4-1 UI統一版
 // ロット一覧・詳細・分割・個体化を担う
 // カードUIを3列（コード | 頭数+ステージ | ›）に統一
-// build: 20260418e
+// build: 20260418f
 // 変更点:
+//   - [20260418f] 血統・種親カードの血統表示を「祖父×祖母」形式に変更
+//                 父種親の paternal_raw/maternal_raw（= 祖父/祖母の血統原文）を表示
+//                 例: U71 (160mm) × 165T-REX.T-115 (69mm)
+//   - [20260418f] 種親詳細への遷移時に戻り先情報を付与（_back / _backParams）
 //   - [20260418e] ロット詳細画面に血統・種親カードを追加
 //   - Bug 5: ユニット一覧のメンバー表示で未判別性別の「?」を非表示に修正
 // ════════════════════════════════════════════════════════════════
 
 'use strict';
 
-console.log('[HerculesOS] lot.js v20260418e loaded');
+console.log('[HerculesOS] lot.js v20260418f loaded');
 
 // ────────────────────────────────────────────────────────────────
-// [20260418e] 血統・種親カードを生成（ユニット詳細・ロット詳細共通仕様）
-// 引数: line - Store.getLine() の結果
+// [20260418f] 血統・種親カードを生成（ロット詳細用）
+// 引数:
+//   line - Store.getLine() の結果
+//   backCtx - { page: 'lot-detail', params: {lotId: '...'} } 戻り先情報
 // 返値: HTML文字列。lineが null/undefined の場合は空文字を返す
 //
 // 表示内容:
 //   ♂親 [display_id] ([size]mm) ›
-//   血統 [bloodline_raw]
+//   血統 [paternal_raw (father_parent_size_mm mm)] × [maternal_raw (mother_parent_size_mm mm)]
 //
 //   ♀親 [display_id] ([size]mm) ›
-//   血統 [bloodline_raw]
+//   血統 [paternal_raw (father_parent_size_mm mm)] × [maternal_raw (mother_parent_size_mm mm)]
+//
+// 血統行は「父方祖父 × 母方祖母」形式。表示規則:
+//   両方あり:        U71 (160mm) × 165T-REX.T-115 (69mm)
+//   サイズなし:      U71 × 165T-REX.T-115
+//   片方のみ:        U71 (160mm) × —
+//   両方なし:        血統行自体を非表示
 // ────────────────────────────────────────────────────────────────
-function _lotRenderParentageCard(line) {
+function _lotRenderParentageCard(line, backCtx) {
   if (!line) return '';
 
   var father = line.father_par_id ? (Store.getParent(line.father_par_id) || null) : null;
   var mother = line.mother_par_id ? (Store.getParent(line.mother_par_id) || null) : null;
 
   if (!father && !mother && !line.father_par_id && !line.mother_par_id) return '';
+
+  // 祖父母ペアから「血統原文(サイズ) × 血統原文(サイズ)」の文字列を生成
+  function _grandBloodlineLine(par) {
+    if (!par) return '';
+    var patRaw = (par.paternal_raw || '').trim();
+    var matRaw = (par.maternal_raw || '').trim();
+    var patSize = par.father_parent_size_mm;
+    var matSize = par.mother_parent_size_mm;
+
+    if (!patRaw && !matRaw) return ''; // 両方なし → 血統行自体を出さない
+
+    function _fmt(raw, size) {
+      if (!raw) return '—';
+      return raw + (size ? ' (' + size + 'mm)' : '');
+    }
+
+    return _fmt(patRaw, patSize) + ' × ' + _fmt(matRaw, matSize);
+  }
+
+  // backCtx を onclick用のパラメータ文字列にエンコード
+  function _buildParentOnclick(parId) {
+    if (!backCtx || !backCtx.page) {
+      return "routeTo('parent-detail',{parId:'" + parId + "'})";
+    }
+    var backParamsJson = JSON.stringify(backCtx.params || {}).replace(/'/g, "\\'");
+    return "routeTo('parent-detail',{parId:'" + parId + "',_back:'" + backCtx.page + "',_backParams:'" + backParamsJson + "'})";
+  }
 
   function _parBlock(par, parId, sex) {
     if (!par && !parId) return '';
@@ -46,25 +85,25 @@ function _lotRenderParentageCard(line) {
         + '</div>';
     }
 
-    var name         = par.parent_display_id || par.display_name || '—';
-    var bloodlineRaw = par.bloodline_raw || '';
+    var name          = par.parent_display_id || par.display_name || '—';
+    var grandLine     = _grandBloodlineLine(par);
+    var parentOnclick = _buildParentOnclick(parId);
 
     return '<div style="padding:8px 10px;background:' + bg + ';border-radius:8px;border:1px solid ' + bd + ';margin-bottom:6px">'
       // 親情報行
-      + '<div style="display:flex;align-items:baseline;gap:6px;cursor:pointer"'
-      +   ' onclick="routeTo(\'parent-detail\',{parId:\'' + parId + '\'})">'
+      + '<div style="display:flex;align-items:baseline;gap:6px;cursor:pointer" onclick="' + parentOnclick + '">'
       +   '<span style="font-size:.75rem;color:' + mc + ';font-weight:700;flex-shrink:0">' + sex + '親</span>'
       +   '<span style="font-size:.88rem;font-weight:700;color:var(--text1)">' + name + '</span>'
       +   (par.size_mm ? '<span style="font-size:.8rem;color:var(--green);font-weight:700">(' + par.size_mm + 'mm)</span>' : '')
       +   '<span style="margin-left:auto;color:var(--text3);font-size:.9rem">›</span>'
       + '</div>'
-      // 血統行
-      + '<div style="display:flex;align-items:baseline;gap:6px;margin-top:4px;padding-top:4px;border-top:1px dashed ' + bd + '">'
-      +   '<span style="font-size:.72rem;color:var(--text3);font-weight:700;flex-shrink:0;min-width:36px">血統</span>'
-      +   '<span style="font-size:.78rem;color:var(--text2);word-break:break-all;line-height:1.4">'
-      +     (bloodlineRaw || '<span style="color:var(--text3)">—</span>')
-      +   '</span>'
-      + '</div>'
+      // 血統行（祖父×祖母）※ 両方なしなら非表示
+      + (grandLine
+        ? '<div style="display:flex;align-items:baseline;gap:6px;margin-top:4px;padding-top:4px;border-top:1px dashed ' + bd + '">'
+          +   '<span style="font-size:.72rem;color:var(--text3);font-weight:700;flex-shrink:0;min-width:36px">血統</span>'
+          +   '<span style="font-size:.78rem;color:var(--text2);word-break:break-all;line-height:1.4">' + grandLine + '</span>'
+          + '</div>'
+        : '')
       + '</div>';
   }
 
@@ -713,8 +752,8 @@ function _renderLotDetail(lot, main) {
         </div>
       </div>
 
-      <!-- 血統・種親（20260418e）-->
-      ${_lotRenderParentageCard(line)}
+      <!-- 血統・種親（20260418f）-->
+      ${_lotRenderParentageCard(line, { page: 'lot-detail', params: { lotId: lot.lot_id } })}
 
       ${!lot.hatch_date ? `
       ${!lot.t1_done ? `<button class="btn btn-full" style="background:var(--green);color:#fff;font-weight:700;margin-bottom:4px"
