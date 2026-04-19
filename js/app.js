@@ -6,17 +6,14 @@
 //       共通UIユーティリティを担う。各画面JSの呼び出し元。
 //       画面ごとのrender関数を呼び分けるシンプルなSPAルーター。
 //
-// build: 20260419c
+// build: 20260419d
 // 変更点:
-//   - [20260419c] 編集ボタン視認性改善: 通常ボタンスタイル (.78rem, 6px) に統一、
-//                 ヘッダーに「編集」ラベル追加。個体版・ユニット版どちらも改善。
-//   - [20260419c] 体重セルを中央揃えに（text-align:center）。
-//                 ユニット版体重は等幅フォント + g を小さく表記して桁ずれ防止。
-//   - [20260419c] weightTableUnit の min-width を 380→440px に拡大（編集列確保）。
-//   - [20260419b] UI.weightTableUnit の ①/② 色を 青/赤 → 金色/緑色 に変更
-//                 （青/赤は♂/♀の性別色と被り、誤認を招くため）
-//   - [20260419a] UI.weightTable の日付を MM/DD 表記に短縮（年省略）
-//   - [20260419a] UI.weightTableUnit を新設（ユニット用2頭バージョン）
+//   - [20260419d] 編集列を sticky 右端固定に変更。横スクロールしても
+//                 編集ボタンが常に画面内に見える。個体版・ユニット版両方に適用。
+//   - [20260419d] セルの padding を 8px 4px で統一してコンパクトに。
+//   - [20260419c] 編集ボタン視認性改善 / 体重セル中央揃え / 等幅フォント
+//   - [20260419b] UI.weightTableUnit の ①/② 色を 金色/緑色 に変更
+//   - [20260419a] UI.weightTable 日付 MM/DD表記・UI.weightTableUnit 新設
 //   - [20260413bj] UI.weightTable — 増減列にg/日速度を追加
 // ════════════════════════════════════════════════════════════════
 
@@ -484,31 +481,31 @@ const UI = {
       }
 
       const editBtn = showEdit && r.record_id
-        ? `<button style="font-size:.78rem;padding:4px 8px;border:1px solid var(--border);
+        ? `<button style="font-size:.82rem;padding:3px 6px;border:1px solid var(--border);
             border-radius:6px;background:var(--surface2);color:var(--text2);cursor:pointer;white-space:nowrap;line-height:1"
             onclick="Pages._grEditRecord('${r.record_id}')">✏️</button>`
         : '';
       return `<tr>
-        <td style="white-space:nowrap">${UI._gr_shortDate(r.record_date)}</td>
-        <td style="white-space:nowrap;text-align:center"><b>${r.weight_g}g</b></td>
-        <td style="white-space:nowrap">${dStr}</td>
-        <td>${UI.stageBadge(r.stage)}</td>
-        <td style="font-size:.72rem;color:var(--text3);white-space:nowrap">${UI._gr_envStr(r)}</td>
-        <td class="td-age" style="white-space:nowrap;font-size:.7rem">${recAge}</td>
-        ${showEdit ? `<td style="text-align:center">${editBtn}</td>` : ''}
+        <td style="white-space:nowrap;padding:8px 4px">${UI._gr_shortDate(r.record_date)}</td>
+        <td style="white-space:nowrap;text-align:center;padding:8px 4px"><b>${r.weight_g}g</b></td>
+        <td style="white-space:nowrap;padding:8px 4px">${dStr}</td>
+        <td style="padding:8px 4px">${UI.stageBadge(r.stage)}</td>
+        <td style="font-size:.72rem;color:var(--text3);white-space:nowrap;padding:8px 4px">${UI._gr_envStr(r)}</td>
+        <td class="td-age" style="white-space:nowrap;font-size:.7rem;padding:8px 4px">${recAge}</td>
+        ${showEdit ? `<td style="text-align:center;padding:8px 4px;position:sticky;right:0;background:var(--bg2, var(--bg));box-shadow:-4px 0 6px -3px rgba(0,0,0,.4)">${editBtn}</td>` : ''}
       </tr>`;
     }).join('');
 
     return `<div style="overflow-x:auto;-webkit-overflow-scrolling:touch">
-      <table class="data-table" style="font-size:.8rem;min-width:360px">
+      <table class="data-table" style="font-size:.8rem;min-width:360px;border-collapse:collapse">
         <thead><tr>
-          <th style="white-space:nowrap">日付</th>
-          <th style="white-space:nowrap;text-align:center">体重</th>
-          <th style="white-space:nowrap">増減/速度</th>
-          <th style="white-space:nowrap">ステージ</th>
-          <th style="white-space:nowrap">容器/マット/交換</th>
-          <th style="white-space:nowrap">日齢</th>
-          ${showEdit ? '<th style="white-space:nowrap;text-align:center">編集</th>' : ''}
+          <th style="white-space:nowrap;padding:6px 4px">日付</th>
+          <th style="white-space:nowrap;text-align:center;padding:6px 4px">体重</th>
+          <th style="white-space:nowrap;padding:6px 4px">増減/速度</th>
+          <th style="white-space:nowrap;padding:6px 4px">ステージ</th>
+          <th style="white-space:nowrap;padding:6px 4px">容器/マット/交換</th>
+          <th style="white-space:nowrap;padding:6px 4px">日齢</th>
+          ${showEdit ? '<th style="white-space:nowrap;text-align:center;padding:6px 4px;position:sticky;right:0;background:var(--bg2, var(--bg));box-shadow:-4px 0 6px -3px rgba(0,0,0,.4)">編集</th>' : ''}
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>
@@ -589,18 +586,18 @@ const UI = {
     function _weightCell(w, delta, color) {
       if (w === null) return '<span style="color:var(--text3)">—</span>';
       const deltaStr = delta !== null
-        ? '<span style="font-size:.68rem;margin-left:4px;color:' + (delta >= 0 ? 'var(--green)' : 'var(--red,#e05050)') + '">'
+        ? '<span style="font-size:.68rem;margin-left:3px;color:' + (delta >= 0 ? 'var(--green)' : 'var(--red,#e05050)') + '">'
           + (delta >= 0 ? '+' : '') + delta + '</span>'
         : '';
-      // [20260419c] 体重は等幅フォントで中央揃え（g の位置を行間で揃える）
+      // 体重は等幅フォントで中央揃え
       return '<span style="font-family:var(--font-mono);font-weight:700;color:' + color + '">'
         + w + '<span style="font-size:.72rem;margin-left:1px">g</span></span>'
         + deltaStr;
     }
 
     const rowsHtml = limited.map(rd => {
-      const cell1 = _weightCell(rd.w1, rd.d1, '#c8a84b');  // 1頭目: 金色（HerculesOSブランドカラー）
-      const cell2 = _weightCell(rd.w2, rd.d2, '#4caf78');  // 2頭目: 緑色（HerculesOSブランドカラー）
+      const cell1 = _weightCell(rd.w1, rd.d1, '#c8a84b');  // 1頭目: 金色
+      const cell2 = _weightCell(rd.w2, rd.d2, '#4caf78');  // 2頭目: 緑色
 
       // 日齢: age_days 優先、なければ前回からの経過日数
       let recAge = UI._gr_ageStr(rd.repR && rd.repR.age_days);
@@ -610,35 +607,35 @@ const UI = {
       }
 
       // 編集ボタン: slot1 or slot2 の record_id を使う（slot1 優先）
-      // [20260419c] 少し目立つスタイルに（通常ボタンと同じ視認性）
+      // [20260419d] sticky で右端固定表示（横スクロールしても常に見える）
       const editRec = rd.r1 || rd.r2;
       const editBtn = showEdit && editRec && editRec.record_id
-        ? `<button style="font-size:.78rem;padding:4px 8px;border:1px solid var(--border);
+        ? `<button style="font-size:.82rem;padding:3px 6px;border:1px solid var(--border);
             border-radius:6px;background:var(--surface2);color:var(--text2);cursor:pointer;white-space:nowrap;line-height:1"
             onclick="Pages._grEditRecord('${editRec.record_id}')">✏️</button>`
         : '';
 
       return `<tr>
-        <td style="white-space:nowrap">${UI._gr_shortDate(rd.date)}</td>
-        <td style="white-space:nowrap;text-align:center">${cell1}</td>
-        <td style="white-space:nowrap;text-align:center">${cell2}</td>
-        <td>${UI.stageBadge(rd.repR && rd.repR.stage)}</td>
-        <td style="font-size:.72rem;color:var(--text3);white-space:nowrap">${UI._gr_envStr(rd.repR || {})}</td>
-        <td class="td-age" style="white-space:nowrap;font-size:.7rem">${recAge}</td>
-        ${showEdit ? `<td style="text-align:center">${editBtn}</td>` : ''}
+        <td style="white-space:nowrap;padding:8px 4px">${UI._gr_shortDate(rd.date)}</td>
+        <td style="white-space:nowrap;text-align:center;padding:8px 4px">${cell1}</td>
+        <td style="white-space:nowrap;text-align:center;padding:8px 4px">${cell2}</td>
+        <td style="padding:8px 4px">${UI.stageBadge(rd.repR && rd.repR.stage)}</td>
+        <td style="font-size:.72rem;color:var(--text3);white-space:nowrap;padding:8px 4px">${UI._gr_envStr(rd.repR || {})}</td>
+        <td class="td-age" style="white-space:nowrap;font-size:.7rem;padding:8px 4px">${recAge}</td>
+        ${showEdit ? `<td style="text-align:center;padding:8px 4px;position:sticky;right:0;background:var(--bg2, var(--bg));box-shadow:-4px 0 6px -3px rgba(0,0,0,.4)">${editBtn}</td>` : ''}
       </tr>`;
     }).join('');
 
     return `<div style="overflow-x:auto;-webkit-overflow-scrolling:touch">
-      <table class="data-table" style="font-size:.8rem;min-width:440px">
+      <table class="data-table" style="font-size:.8rem;min-width:440px;border-collapse:collapse">
         <thead><tr>
-          <th style="white-space:nowrap">日付</th>
-          <th style="white-space:nowrap;color:#c8a84b;text-align:center">①(増減)</th>
-          <th style="white-space:nowrap;color:#4caf78;text-align:center">②(増減)</th>
-          <th style="white-space:nowrap">ステージ</th>
-          <th style="white-space:nowrap">容器/マット/交換</th>
-          <th style="white-space:nowrap">日齢</th>
-          ${showEdit ? '<th style="white-space:nowrap;text-align:center">編集</th>' : ''}
+          <th style="white-space:nowrap;padding:6px 4px">日付</th>
+          <th style="white-space:nowrap;color:#c8a84b;text-align:center;padding:6px 4px">①(増減)</th>
+          <th style="white-space:nowrap;color:#4caf78;text-align:center;padding:6px 4px">②(増減)</th>
+          <th style="white-space:nowrap;padding:6px 4px">ステージ</th>
+          <th style="white-space:nowrap;padding:6px 4px">容器/マット/交換</th>
+          <th style="white-space:nowrap;padding:6px 4px">日齢</th>
+          ${showEdit ? '<th style="white-space:nowrap;text-align:center;padding:6px 4px;position:sticky;right:0;background:var(--bg2, var(--bg));box-shadow:-4px 0 6px -3px rgba(0,0,0,.4)">編集</th>' : ''}
         </tr></thead>
         <tbody>${rowsHtml}</tbody>
       </table>
