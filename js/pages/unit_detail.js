@@ -1,7 +1,11 @@
 // ════════════════════════════════════════════════════════════════
 // unit_detail.js — 飼育ユニット（BU）詳細画面
-// build: 20260418f-fix1
+// build: 20260418j
 // 変更点:
+//   - [20260418j] 成長記録の履歴取得を unit_id + display_id の両方から検索するよう修正
+//                 古いレコードは target_id に display_id が入っていたため、
+//                 片方だけでは全履歴がヒットしなかった問題を解決
+//                 （新規レコードは 20260418j から unit_id で保存される）
 //   - [20260418f-fix1] 親タップで種親詳細に遷移しないバグを修正
 //                     _backParams のJSON内ダブルクォートが onclick属性を壊していた
 //                     → &quot; にエスケープして属性内に安全に埋め込む
@@ -15,7 +19,7 @@
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-console.log('[HerculesOS] unit_detail.js v20260418f-fix1 loaded');
+console.log('[HerculesOS] unit_detail.js v20260418j loaded');
 
 // ── Bug 4 修正: 孵化日フォーマット関数 ─────────────────────────
 function _udFormatDate(d) {
@@ -290,7 +294,24 @@ function _renderUnitDetail(unit, main) {
   const originStr = _udFormatOriginLots(unit);
   const members   = _udParseMembers(unit);
   const memberInds = _udFindMemberInds(unit);
-  const records   = (Store.getGrowthRecords && Store.getGrowthRecords(unit.unit_id)) || [];
+  // [20260418j] 成長記録を unit_id と display_id の両方から取得してマージ
+  //   古いレコードは target_id に display_id (HM2025-A2-U01) が入っており、
+  //   unit_id だけでは全履歴がヒットしないため、両方から引いて record_id で重複排除する。
+  //   新規レコード（20260418j 以降）は unit_id で保存される。
+  const records = (function() {
+    var recU = (Store.getGrowthRecords && unit.unit_id)    ? (Store.getGrowthRecords(unit.unit_id)    || []) : [];
+    var recD = (Store.getGrowthRecords && unit.display_id) ? (Store.getGrowthRecords(unit.display_id) || []) : [];
+    if (!recU.length) return recD;
+    if (!recD.length) return recU;
+    // 両方に値があれば record_id で重複排除（同じレコードが2度来ることはないが念のため）
+    var seen = {};
+    var merged = [];
+    recU.concat(recD).forEach(function(r) {
+      var key = r.record_id || (r.target_id + '|' + r.record_date + '|' + (r.unit_slot_no || '') + '|' + (r.weight_g || ''));
+      if (!seen[key]) { seen[key] = true; merged.push(r); }
+    });
+    return merged;
+  })();
   const latestRec = records.length > 0
     ? [...records].sort((a,b) => String(b.record_date).localeCompare(String(a.record_date)))[0]
     : null;

@@ -1,5 +1,13 @@
-// FILE: js/pages/continuous_scan.js  build: 20260418i
-// 変更点(bi→20260418i): Step2 継続読取りのフォロー改修
+// FILE: js/pages/continuous_scan.js  build: 20260418j
+// 変更点(20260418i→20260418j): target_id = unit_id 統一
+//   - _resolveFromQrText の BU 分岐で targetId を unit_id 優先に
+//     （以前は display_id が入り、成長記録の target_id が HM2025-xx-Uxx となって
+//      unit_id 検索でヒットしない問題を修正）
+//   - batchScan 内の同関数も同様に修正
+//   - 既存の display_id で保存されたレコードはそのまま残る
+//     （unit_detail.js 側で両方の ID で履歴を検索してマージ表示する）
+//
+// 以前の変更点(bi→20260418i): Step2 継続読取りのフォロー改修
 //   - 確認画面の共通設定カードに「区分」3択ボタン(大/中/小)を追加
 //     OCR の size_category を初期反映、ユーザー修正可
 //   - 性別3択の「未確定」ラベルを「不明」に変更（他画面と表記統一）
@@ -17,7 +25,7 @@
 //   - 右列交換欄を□全/□追表示、個体8行対応
 
 'use strict';
-console.log('[HerculesOS] continuous_scan.js v20260418i loaded');
+console.log('[HerculesOS] continuous_scan.js v20260418j loaded');
 
 // ────────────────────────────────────────────────────────────────
 // 共有ユーティリティ（continuousScan / batchScan 両方から使用）
@@ -85,7 +93,11 @@ function _resolveFromQrText(qrText) {
   if(prefix==='BU'){
     var units=Store.getDB('breeding_units')||[];
     var unit=units.find(function(u){return u.display_id===id;})||units.find(function(u){return u.unit_id===id;})||{display_id:id,unit_id:id};
-    return {targetType:'UNIT',targetId:unit.display_id||id,displayId:unit.display_id||id,entity:unit};
+    // [20260418j] targetId は unit_id を優先（GAS上の主キー）。
+    // 以前は display_id を使っており、成長記録の target_id に HM2025-A2-U01 のような
+    // 表示IDが入って unit_id 検索で履歴がヒットしなくなっていた。
+    var _targetId = unit.unit_id || unit.display_id || id;
+    return {targetType:'UNIT',targetId:_targetId,displayId:unit.display_id||id,entity:unit};
   }
   if(prefix==='IND'){
     var ind=(Store.getIndividual&&Store.getIndividual(id))||(Store.getDB('individuals')||[]).find(function(i){return i.ind_id===id||i.display_id===id;});
@@ -987,7 +999,9 @@ Pages.batchScan = function(params) {
     if(prefix==='BU'){
       var units=Store.getDB('breeding_units')||[];
       var unit=units.find(function(u){return u.display_id===id;})||units.find(function(u){return u.unit_id===id;})||{display_id:id,unit_id:id};
-      return {targetType:'UNIT',targetId:unit.display_id||id,displayId:unit.display_id||id,entity:unit};
+      // [20260418j] targetId は unit_id を優先（GAS上の主キー）
+      var _targetId = unit.unit_id || unit.display_id || id;
+      return {targetType:'UNIT',targetId:_targetId,displayId:unit.display_id||id,entity:unit};
     }
     if(prefix==='IND'){
       var ind=(Store.getIndividual&&Store.getIndividual(id))||(Store.getDB('individuals')||[]).find(function(i){return i.ind_id===id||i.display_id===id;});

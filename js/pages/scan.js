@@ -1,5 +1,9 @@
 // FILE: js/pages/scan.js
-// build: 20260418i
+// build: 20260418j
+// 変更点(20260418i→20260418j):
+//   - [_qrNavigate record mode] BU の target_id を unit_id 優先に変更
+//     （以前は display_id が入り、成長記録検索に影響していた）
+//
 // 変更点(20260417k-fix1→20260418i):
 //   - [Pages._qrSwitchMode] 継続読取りタブを押したら即座に
 //     routeTo('continuous-scan') で AI読取モードに遷移するよう修正
@@ -294,8 +298,11 @@ function _qrNavigate(mode, res, qrText) {
   } else if (mode === 'record') {
     var _ent = res.entity || {};
     var _rawEty = res.entity_type || 'IND';
+    // [20260418j] 継続読取り(record)で BU に飛ばす際、target_id は unit_id を優先
+    //   以前は display_id を優先しており、成長記録の target_id に HM2025-xx-Uxx が入り
+    //   unit_id 検索で履歴がヒットしなくなっていた問題を修正
     var _eid = (_rawEty === 'BU')
-      ? (_ent.display_id || _ent.unit_id || _extractIdFromQr('BU') || '')
+      ? (_ent.unit_id || _ent.display_id || _extractIdFromQr('BU') || '')
       : (_ent.ind_id || _ent.lot_id || _ent.unit_id || '');
     
     if (_eid) {
