@@ -6,8 +6,10 @@
 //       共通UIユーティリティを担う。各画面JSの呼び出し元。
 //       画面ごとのrender関数を呼び分けるシンプルなSPAルーター。
 //
-// build: 20260419a
+// build: 20260419b
 // 変更点:
+//   - [20260419b] UI.weightTableUnit の ①/② 色を 青/赤 → 金色/緑色 に変更
+//                 （青/赤は♂/♀の性別色と被り、誤認を招くため）
 //   - [20260419a] UI.weightTable の日付を MM/DD 表記に短縮（年省略）
 //   - [20260419a] UI.weightTableUnit を新設（ユニット用2頭バージョン）
 //                 列構成は weightTable と揃える: 日付 / 体重①(増減) / 体重②(増減) /
@@ -591,8 +593,8 @@ const UI = {
     }
 
     const rowsHtml = limited.map(rd => {
-      const cell1 = _weightCell(rd.w1, rd.d1, '#3366cc');  // 1頭目: 青
-      const cell2 = _weightCell(rd.w2, rd.d2, '#cc3366');  // 2頭目: 赤
+      const cell1 = _weightCell(rd.w1, rd.d1, '#c8a84b');  // 1頭目: 金色（HerculesOSブランドカラー）
+      const cell2 = _weightCell(rd.w2, rd.d2, '#4caf78');  // 2頭目: 緑色（HerculesOSブランドカラー）
 
       // 日齢: age_days 優先、なければ前回からの経過日数
       let recAge = UI._gr_ageStr(rd.repR && rd.repR.age_days);
@@ -624,8 +626,8 @@ const UI = {
       <table class="data-table" style="font-size:.8rem;min-width:380px">
         <thead><tr>
           <th style="white-space:nowrap">日付</th>
-          <th style="white-space:nowrap;color:#3366cc">①(増減)</th>
-          <th style="white-space:nowrap;color:#cc3366">②(増減)</th>
+          <th style="white-space:nowrap;color:#c8a84b">①(増減)</th>
+          <th style="white-space:nowrap;color:#4caf78">②(増減)</th>
           <th style="white-space:nowrap">ステージ</th>
           <th style="white-space:nowrap">容器/マット/交換</th>
           <th style="white-space:nowrap">日齢</th>
