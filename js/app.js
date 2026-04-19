@@ -6,8 +6,13 @@
 //       共通UIユーティリティを担う。各画面JSの呼び出し元。
 //       画面ごとのrender関数を呼び分けるシンプルなSPAルーター。
 //
-// build: 20260413bj
-// 変更点: UI.weightTable — 増減列にg/日速度を追加
+// build: 20260419a
+// 変更点:
+//   - [20260419a] UI.weightTable の日付を MM/DD 表記に短縮（年省略）
+//   - [20260419a] UI.weightTableUnit を新設（ユニット用2頭バージョン）
+//                 列構成は weightTable と揃える: 日付 / 体重①(増減) / 体重②(増減) /
+//                 ステージ / 容器/マット/交換 / 日齢
+//   - [20260413bj] UI.weightTable — 増減列にg/日速度を追加
 // ════════════════════════════════════════════════════════════════
 
 'use strict';
@@ -406,8 +411,44 @@ const UI = {
     return b.abbreviation || b.bloodline_name || bldId;
   },
 
-  // ── 体重推移 HTML テーブル ──────────────────────────────────
-  // build: 20260413bj — 増減列にg/日速度を追加
+  // ════════════════════════════════════════════════════════════
+  // 体重推移テーブル共通ヘルパー（weightTable / weightTableUnit で共有）
+  // [20260419a] 日付 MM/DD 表記・交換種別日本語化・容器/マット/交換の3連結
+  // ════════════════════════════════════════════════════════════
+  _gr_shortDate(d) {
+    // "2026/04/18" → "04/18"、"2026-04-18" → "04/18"
+    const s = String(d || '').replace(/-/g, '/');
+    const parts = s.split('/');
+    if (parts.length >= 3) return parts[1] + '/' + parts[2];
+    return s;
+  },
+  _gr_exchLabel(ex) {
+    const map = { 'FULL':'全', 'PARTIAL':'追', 'ADD':'追', 'NONE':'' };
+    if (map[ex] !== undefined) return map[ex];
+    return (ex && ex !== '交換なし') ? ex : '';
+  },
+  _gr_envStr(r) {
+    // 容器/マット/交換 を "/" で連結（空のものは飛ばす）
+    const cont = r.container || '';
+    const mat  = r.mat_type ? (r.mat_type + (r.has_malt ? '(M)' : '')) : '';
+    const exch = UI._gr_exchLabel(r.exchange_type);
+    return [cont, mat, exch].filter(Boolean).join('/');
+  },
+  _gr_intervalDays(prevRec, curRec) {
+    if (!prevRec || !prevRec.record_date || !curRec.record_date) return null;
+    const d1 = new Date(String(prevRec.record_date).replace(/\//g,'-'));
+    const d2 = new Date(String(curRec.record_date).replace(/\//g,'-'));
+    const diff = Math.round((d2 - d1) / 86400000);
+    return diff > 0 ? diff : null;
+  },
+  _gr_ageStr(ageDays) {
+    if (ageDays == null || ageDays === '') return '';
+    if (typeof ageDays === 'number') return Store.formatRecordAge(ageDays);
+    return String(ageDays);
+  },
+
+  // ── 体重推移 HTML テーブル（個体・ロット共通）────────────────
+  // [20260419a] 日付を MM/DD 表記に短縮
   weightTable(records, opts = {}) {
     const wts = records.filter(r => r.weight_g && +r.weight_g > 0)
       .sort((a,b) => a.record_date.localeCompare(b.record_date));
@@ -418,53 +459,37 @@ const UI = {
     const rows = wts.map((r, i) => {
       const prev  = i > 0 ? +wts[i-1].weight_g : null;
       const delta = prev !== null ? (+r.weight_g - prev) : null;
-      // ▼ 前回記録との日数差を計算（g/日の算出にも使う）
-      let _intervalDays = null;
-      let _recAgeDays = r.age_days || null;
-      if (i > 0) {
-        const _prevRec = wts[i-1];
-        if (_prevRec && _prevRec.record_date && r.record_date) {
-          const _d1 = new Date(String(_prevRec.record_date).replace(/\//g,'-'));
-          const _d2 = new Date(String(r.record_date).replace(/\//g,'-'));
-          const _dayDiff = Math.round((_d2 - _d1) / 86400000);
-          if (_dayDiff > 0) {
-            _intervalDays = _dayDiff;
-            if (!_recAgeDays) {
-              const _wks = Math.floor(_dayDiff / 7);
-              _recAgeDays = _wks > 0
-                ? '前回+' + _dayDiff + '日（' + _wks + '週）'
-                : '前回+' + _dayDiff + '日';
-            }
-          }
-        }
-      }
-      // ▼ g/日 = 増減 ÷ 経過日数（小数1桁）
-      const gPerDay = (delta !== null && _intervalDays !== null && _intervalDays > 0)
-        ? (delta / _intervalDays) : null;
+      const intervalDays = i > 0 ? UI._gr_intervalDays(wts[i-1], r) : null;
+
+      // g/日 = 増減 ÷ 経過日数（小数1桁）
+      const gPerDay = (delta !== null && intervalDays !== null && intervalDays > 0)
+        ? (delta / intervalDays) : null;
       const gPerDayStr = gPerDay !== null
         ? `<div style="font-size:.65rem;color:var(--text3);margin-top:1px">${gPerDay >= 0 ? '+' : ''}${gPerDay.toFixed(1)}g/日</div>`
         : '';
       const dStr = delta !== null
         ? `<span class="delta ${delta>=0?'pos':'neg'}">${delta>=0?'+':''}${delta.toFixed(1)}</span>${gPerDayStr}`
         : '—';
-      const recAge = _recAgeDays ? (typeof _recAgeDays === 'number' ? Store.formatRecordAge(_recAgeDays) : String(_recAgeDays)) : '';
-      const contStr = r.container  || '';
-      const exchStr = r.exchange_type === 'FULL'    ? '全交換'
-                    : r.exchange_type === 'PARTIAL'  ? '追加'
-                    : (r.exchange_type && r.exchange_type !== '交換なし') ? r.exchange_type : '';
-      const matStr  = r.mat_type ? (r.mat_type + (r.has_malt ? '（M）' : '')) : '';
+
+      // 日齢: age_days 優先、なければ前回+日数
+      let recAge = UI._gr_ageStr(r.age_days);
+      if (!recAge && intervalDays !== null) {
+        const w = Math.floor(intervalDays / 7);
+        recAge = w > 0 ? '前回+' + intervalDays + '日(' + w + '週)' : '前回+' + intervalDays + '日';
+      }
+
       const editBtn = showEdit && r.record_id
         ? `<button style="font-size:.65rem;padding:2px 6px;border:1px solid var(--border);
             border-radius:10px;background:transparent;color:var(--text3);cursor:pointer;white-space:nowrap"
             onclick="Pages._grEditRecord('${r.record_id}')">✏️</button>`
         : '';
       return `<tr>
-        <td style="white-space:nowrap">${r.record_date}</td>
+        <td style="white-space:nowrap">${UI._gr_shortDate(r.record_date)}</td>
         <td style="white-space:nowrap"><b>${r.weight_g}g</b></td>
         <td style="white-space:nowrap">${dStr}</td>
         <td>${UI.stageBadge(r.stage)}</td>
-        <td style="font-size:.72rem;color:var(--text3);white-space:nowrap">${[contStr,matStr,exchStr].filter(Boolean).join('/')}</td>
-        <td class="td-age" style="white-space:nowrap">${recAge}</td>
+        <td style="font-size:.72rem;color:var(--text3);white-space:nowrap">${UI._gr_envStr(r)}</td>
+        <td class="td-age" style="white-space:nowrap;font-size:.7rem">${recAge}</td>
         ${showEdit ? `<td>${editBtn}</td>` : ''}
       </tr>`;
     }).join('');
@@ -476,11 +501,137 @@ const UI = {
           <th style="white-space:nowrap">体重</th>
           <th style="white-space:nowrap">増減/速度</th>
           <th style="white-space:nowrap">ステージ</th>
-          <th style="white-space:nowrap">容器/マット</th>
+          <th style="white-space:nowrap">容器/マット/交換</th>
           <th style="white-space:nowrap">日齢</th>
           ${showEdit ? '<th></th>' : ''}
         </tr></thead>
         <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+  },
+
+  // ── ユニット用 体重推移 HTML テーブル（2頭バージョン）────────
+  // [20260419a] 新設
+  //   個体用 weightTable と列構成を揃え、体重列だけ「体重①(増減)/体重②(増減)」の2列に拡張
+  //   日付ごとにグループ化（unit_slot_no で 1頭目/2頭目を振り分け）
+  //   容器/マット/交換は日付行で共通（slot1/slot2 で同じ値が入る前提）
+  //
+  //   引数:
+  //     records: 成長記録配列（unit_slot_no=1 or 2 の行を含む）
+  //     opts: { showEdit: bool, maxDays: 最大日付数 }
+  weightTableUnit(records, opts = {}) {
+    if (!records || records.length === 0) return UI.empty('体重記録なし');
+
+    // 日付でグループ化（slot1/slot2 を各日付行にマージ）
+    const byDate = {};
+    records.forEach(r => {
+      const d = String(r.record_date || '');
+      if (!d) return;
+      if (!byDate[d]) {
+        byDate[d] = { date: d, slot1: null, slot2: null };
+      }
+      const slot = parseInt(r.unit_slot_no, 10);
+      if (slot === 1) byDate[d].slot1 = r;
+      else if (slot === 2) byDate[d].slot2 = r;
+      else {
+        // スロット情報なしの記録: slot1 空なら slot1 に、そうでなければ slot2 に入れる
+        if (!byDate[d].slot1) byDate[d].slot1 = r;
+        else if (!byDate[d].slot2) byDate[d].slot2 = r;
+      }
+    });
+
+    // 日付昇順（増減計算用）
+    const dateKeys = Object.keys(byDate).sort();
+    if (!dateKeys.length) return UI.empty('体重記録なし');
+
+    // 増減計算（slot ごとに前回体重を追跡）
+    let prevW1 = null, prevW2 = null;
+    const rowsData = dateKeys.map((d, i) => {
+      const g = byDate[d];
+      const r1 = g.slot1;
+      const r2 = g.slot2;
+      const w1 = r1 && r1.weight_g ? +r1.weight_g : null;
+      const w2 = r2 && r2.weight_g ? +r2.weight_g : null;
+
+      const d1 = (w1 !== null && prevW1 !== null) ? (Math.round((w1 - prevW1) * 10) / 10) : null;
+      const d2 = (w2 !== null && prevW2 !== null) ? (Math.round((w2 - prevW2) * 10) / 10) : null;
+
+      if (w1 !== null) prevW1 = w1;
+      if (w2 !== null) prevW2 = w2;
+
+      // 代表レコード（ステージ・環境・日齢用）
+      const repR = r1 || r2;
+
+      // 経過日数（前回日付との差）
+      const intervalDays = i > 0 ? UI._gr_intervalDays(byDate[dateKeys[i-1]].slot1 || byDate[dateKeys[i-1]].slot2, repR) : null;
+
+      return {
+        date: d,
+        r1: r1, r2: r2,
+        w1: w1, w2: w2,
+        d1: d1, d2: d2,
+        repR: repR,
+        intervalDays: intervalDays,
+      };
+    });
+
+    // 表示は降順（新しい日付が上）
+    rowsData.reverse();
+    const limited = opts.maxDays ? rowsData.slice(0, opts.maxDays) : rowsData;
+
+    const showEdit = opts.showEdit !== false;
+
+    function _weightCell(w, delta, color) {
+      if (w === null) return '<span style="color:var(--text3)">—</span>';
+      const deltaStr = delta !== null
+        ? '<span style="font-size:.68rem;margin-left:4px;color:' + (delta >= 0 ? 'var(--green)' : 'var(--red,#e05050)') + '">'
+          + (delta >= 0 ? '+' : '') + delta + '</span>'
+        : '';
+      return '<b style="color:' + color + '">' + w + 'g</b>' + deltaStr;
+    }
+
+    const rowsHtml = limited.map(rd => {
+      const cell1 = _weightCell(rd.w1, rd.d1, '#3366cc');  // 1頭目: 青
+      const cell2 = _weightCell(rd.w2, rd.d2, '#cc3366');  // 2頭目: 赤
+
+      // 日齢: age_days 優先、なければ前回からの経過日数
+      let recAge = UI._gr_ageStr(rd.repR && rd.repR.age_days);
+      if (!recAge && rd.intervalDays !== null) {
+        const w = Math.floor(rd.intervalDays / 7);
+        recAge = w > 0 ? '前回+' + rd.intervalDays + '日(' + w + '週)' : '前回+' + rd.intervalDays + '日';
+      }
+
+      // 編集ボタン: slot1 or slot2 の record_id を使う（slot1 優先）
+      const editRec = rd.r1 || rd.r2;
+      const editBtn = showEdit && editRec && editRec.record_id
+        ? `<button style="font-size:.65rem;padding:2px 6px;border:1px solid var(--border);
+            border-radius:10px;background:transparent;color:var(--text3);cursor:pointer;white-space:nowrap"
+            onclick="Pages._grEditRecord('${editRec.record_id}')">✏️</button>`
+        : '';
+
+      return `<tr>
+        <td style="white-space:nowrap">${UI._gr_shortDate(rd.date)}</td>
+        <td style="white-space:nowrap">${cell1}</td>
+        <td style="white-space:nowrap">${cell2}</td>
+        <td>${UI.stageBadge(rd.repR && rd.repR.stage)}</td>
+        <td style="font-size:.72rem;color:var(--text3);white-space:nowrap">${UI._gr_envStr(rd.repR || {})}</td>
+        <td class="td-age" style="white-space:nowrap;font-size:.7rem">${recAge}</td>
+        ${showEdit ? `<td>${editBtn}</td>` : ''}
+      </tr>`;
+    }).join('');
+
+    return `<div style="overflow-x:auto;-webkit-overflow-scrolling:touch">
+      <table class="data-table" style="font-size:.8rem;min-width:380px">
+        <thead><tr>
+          <th style="white-space:nowrap">日付</th>
+          <th style="white-space:nowrap;color:#3366cc">①(増減)</th>
+          <th style="white-space:nowrap;color:#cc3366">②(増減)</th>
+          <th style="white-space:nowrap">ステージ</th>
+          <th style="white-space:nowrap">容器/マット/交換</th>
+          <th style="white-space:nowrap">日齢</th>
+          ${showEdit ? '<th></th>' : ''}
+        </tr></thead>
+        <tbody>${rowsHtml}</tbody>
       </table>
     </div>`;
   },

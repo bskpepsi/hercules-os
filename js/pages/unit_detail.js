@@ -1,28 +1,23 @@
 // ════════════════════════════════════════════════════════════════
 // unit_detail.js — 飼育ユニット（BU）詳細画面
-// build: 20260419a
+// build: 20260419b
 // 変更点:
-//   - [20260419a] 成長記録の表示を「1行で2頭分」に改善
-//                 日付でグループ化し、1頭目(①)と2頭目(②)の体重を横並び表示。
-//                 件数表示も「日付数」ベースに変更（例: 成長記録（2日分））。
+//   - [20260419b] _udRenderGrowthRecords を UI.weightTableUnit 呼び出しに統合
+//                 個体用 UI.weightTable と見た目を統一（日付/①(増減)/②(増減)/ステージ/
+//                 容器/マット/交換/日齢 の6列構成）
+//   - [20260419a] 成長記録の表示を「1行で2頭分」に改善 (初版・表形式)
 //   - [20260418k] 成長記録の非同期ロードを追加
 //                 app.js の syncAll は growthMap をキャッシュしないため、
 //                 ユニット詳細を開くたびに API.growth.list で取得。
 //                 unit_id と display_id の両方を並列取得してマージする。
-//                 成長記録カードは常時表示（0件時は「記録なし」メッセージ）。
 //   - [20260418j] 成長記録の履歴取得を unit_id + display_id の両方から検索するよう修正
-//                 古いレコードは target_id に display_id が入っていたため、
-//                 片方だけでは全履歴がヒットしなかった問題を解決
-//                 （新規レコードは 20260418j から unit_id で保存される）
 //   - [20260418f-fix1] 親タップで種親詳細に遷移しないバグを修正
-//                     _backParams のJSON内ダブルクォートが onclick属性を壊していた
-//                     → &quot; にエスケープして属性内に安全に埋め込む
 //   - [20260418f] 血統・種親カードの血統表示を「祖父×祖母」形式に変更
 //   - [20260418a] Step2 ③ 性別編集UI追加（メンバー行の性別バッジをタップ可能に）
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-console.log('[HerculesOS] unit_detail.js v20260419a loaded');
+console.log('[HerculesOS] unit_detail.js v20260419b loaded');
 
 // ── Bug 4 修正: 孵化日フォーマット関数 ─────────────────────────
 function _udFormatDate(d) {
@@ -329,72 +324,12 @@ Pages.unitDetail = function (params = {}) {
 // [20260419a] 成長記録の表示を「1行で2頭分」に改善
 //   日付ごとにグループ化し、各日付行に 1頭目と2頭目の体重を横並び表示。
 //   継続読取りで撮影したラベルと同じ形式で直感的。
+// [20260419b] UI.weightTableUnit に統合（個体版 UI.weightTable と見た目統一）
+//   列構成: 日付 / ①(増減) / ②(増減) / ステージ / 容器/マット/交換 / 日齢
 function _udRenderGrowthRecords(records) {
   if (!records || records.length === 0) return '';
-
-  // 日付ごとにグループ化
-  var byDate = {};
-  records.forEach(function(r) {
-    var d = String(r.record_date || '');
-    if (!d) return;
-    if (!byDate[d]) {
-      byDate[d] = {
-        date: d,
-        slot1: null,
-        slot2: null,
-        // 日付代表のマット/交換種別（どちらかあれば）
-        matType: '',
-        exchangeType: '',
-        eventType: '',
-      };
-    }
-    var slot = parseInt(r.unit_slot_no, 10);
-    if (slot === 1) byDate[d].slot1 = r;
-    else if (slot === 2) byDate[d].slot2 = r;
-    // 最初に来た値を採用（両スロットで同じはずだが念のため）
-    if (!byDate[d].matType && r.mat_type) byDate[d].matType = r.mat_type;
-    if (!byDate[d].exchangeType && r.exchange_type) byDate[d].exchangeType = r.exchange_type;
-    if (!byDate[d].eventType && r.event_type) byDate[d].eventType = r.event_type;
-  });
-
-  // 日付降順で並べる
-  var dates = Object.keys(byDate).sort(function(a, b) { return String(b).localeCompare(String(a)); });
-  var limited = dates.slice(0, 15); // 最新15日分まで表示
-
-  // 交換種別の日本語化
-  function _exLabel(ex) {
-    var map = { 'FULL': '全', 'HALF': '半', 'PARTIAL': '追', 'FIRST': '初', 'NONE': '' };
-    return (map[String(ex)] !== undefined) ? map[String(ex)] : String(ex || '');
-  }
-
-  return limited.map(function(d) {
-    var g = byDate[d];
-    var dateShort = d.slice(5); // MM/DD
-    var w1 = g.slot1 && g.slot1.weight_g ? g.slot1.weight_g : null;
-    var w2 = g.slot2 && g.slot2.weight_g ? g.slot2.weight_g : null;
-
-    var w1Str = w1 !== null ? w1 + 'g' : '—';
-    var w2Str = w2 !== null ? w2 + 'g' : '—';
-
-    // マット・交換種別の末尾ラベル（例: T1/全 or T2）
-    var exLabel = _exLabel(g.exchangeType);
-    var tailLabel = g.matType
-      ? (exLabel ? g.matType + '/' + exLabel : g.matType)
-      : (exLabel || '');
-
-    return '<div style="display:flex;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--border2);font-size:.82rem">'
-      + '<span style="color:var(--text3);min-width:48px">' + dateShort + '</span>'
-      + '<span style="flex:1;display:flex;align-items:center;gap:4px">'
-        + '<span style="color:#3366cc;font-size:.75rem;font-weight:700">①</span>'
-        + '<span style="font-weight:700;min-width:40px">' + w1Str + '</span>'
-      + '</span>'
-      + '<span style="flex:1;display:flex;align-items:center;gap:4px">'
-        + '<span style="color:#cc3366;font-size:.75rem;font-weight:700">②</span>'
-        + '<span style="font-weight:700;min-width:40px">' + w2Str + '</span>'
-      + '</span>'
-      + (tailLabel ? '<span style="color:var(--text3);font-size:.7rem;min-width:48px;text-align:right">' + tailLabel + '</span>' : '')
-      + '</div>';
-  }).join('');
+  // 個体用 weightTable とデザイン統一。ユニットは 2頭バージョン。
+  return UI.weightTableUnit(records, { showEdit: true });
 }
 
 function _renderUnitDetail(unit, main) {
