@@ -1,7 +1,10 @@
 // ════════════════════════════════════════════════════════════════
 // unit_detail.js — 飼育ユニット（BU）詳細画面
-// build: 20260418k
+// build: 20260419a
 // 変更点:
+//   - [20260419a] 成長記録の表示を「1行で2頭分」に改善
+//                 日付でグループ化し、1頭目(①)と2頭目(②)の体重を横並び表示。
+//                 件数表示も「日付数」ベースに変更（例: 成長記録（2日分））。
 //   - [20260418k] 成長記録の非同期ロードを追加
 //                 app.js の syncAll は growthMap をキャッシュしないため、
 //                 ユニット詳細を開くたびに API.growth.list で取得。
@@ -15,16 +18,11 @@
 //                     _backParams のJSON内ダブルクォートが onclick属性を壊していた
 //                     → &quot; にエスケープして属性内に安全に埋め込む
 //   - [20260418f] 血統・種親カードの血統表示を「祖父×祖母」形式に変更
-//                 父種親の paternal_raw/maternal_raw（= 祖父/祖母の血統原文）を表示
-//                 例: U71 (160mm) × 165T-REX.T-115 (69mm)
-//   - [20260418f] 種親詳細への遷移時に戻り先情報を付与（_back / _backParams）
-//                 → 種親詳細から戻った時に「ユニットが見つかりません」にならない
-//   - [20260418e] 血統・種親カードを追加（ラインから父母種親・血統原文を表示）
 //   - [20260418a] Step2 ③ 性別編集UI追加（メンバー行の性別バッジをタップ可能に）
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-console.log('[HerculesOS] unit_detail.js v20260418k loaded');
+console.log('[HerculesOS] unit_detail.js v20260419a loaded');
 
 // ── Bug 4 修正: 孵化日フォーマット関数 ─────────────────────────
 function _udFormatDate(d) {
@@ -328,27 +326,75 @@ Pages.unitDetail = function (params = {}) {
 };
 
 // ────────────────────────────────────────────────────────────────
+// [20260419a] 成長記録の表示を「1行で2頭分」に改善
+//   日付ごとにグループ化し、各日付行に 1頭目と2頭目の体重を横並び表示。
+//   継続読取りで撮影したラベルと同じ形式で直感的。
 function _udRenderGrowthRecords(records) {
   if (!records || records.length === 0) return '';
-  return [...records]
-    .sort((a,b) => String(b.record_date).localeCompare(String(a.record_date)))
-    .slice(0, 10)
-    .map(r => {
-      const dateShort = String(r.record_date||'').slice(5);
-      const wStr = r.weight_g ? r.weight_g + 'g' : '—';
-      const slotBadge = r.unit_slot_no
-        ? `<span style="font-size:.65rem;padding:1px 5px;background:rgba(91,168,232,.15);color:var(--blue);border-radius:4px">${r.unit_slot_no}頭目</span>`
-        : '';
-      const evBadge = r.event_type
-        ? `<span style="font-size:.65rem;padding:1px 5px;background:rgba(224,144,64,.15);color:var(--amber);border-radius:4px">${r.event_type}</span>`
-        : '';
-      return '<div style="display:flex;gap:6px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border2);font-size:.78rem">'
-        + `<span style="color:var(--text3);min-width:60px">${dateShort}</span>`
-        + `<span style="font-weight:700">${wStr}</span>`
-        + slotBadge + evBadge
-        + `<span style="color:var(--text3);font-size:.7rem">${r.mat_type||''}</span>`
-        + '</div>';
-    }).join('');
+
+  // 日付ごとにグループ化
+  var byDate = {};
+  records.forEach(function(r) {
+    var d = String(r.record_date || '');
+    if (!d) return;
+    if (!byDate[d]) {
+      byDate[d] = {
+        date: d,
+        slot1: null,
+        slot2: null,
+        // 日付代表のマット/交換種別（どちらかあれば）
+        matType: '',
+        exchangeType: '',
+        eventType: '',
+      };
+    }
+    var slot = parseInt(r.unit_slot_no, 10);
+    if (slot === 1) byDate[d].slot1 = r;
+    else if (slot === 2) byDate[d].slot2 = r;
+    // 最初に来た値を採用（両スロットで同じはずだが念のため）
+    if (!byDate[d].matType && r.mat_type) byDate[d].matType = r.mat_type;
+    if (!byDate[d].exchangeType && r.exchange_type) byDate[d].exchangeType = r.exchange_type;
+    if (!byDate[d].eventType && r.event_type) byDate[d].eventType = r.event_type;
+  });
+
+  // 日付降順で並べる
+  var dates = Object.keys(byDate).sort(function(a, b) { return String(b).localeCompare(String(a)); });
+  var limited = dates.slice(0, 15); // 最新15日分まで表示
+
+  // 交換種別の日本語化
+  function _exLabel(ex) {
+    var map = { 'FULL': '全', 'HALF': '半', 'PARTIAL': '追', 'FIRST': '初', 'NONE': '' };
+    return (map[String(ex)] !== undefined) ? map[String(ex)] : String(ex || '');
+  }
+
+  return limited.map(function(d) {
+    var g = byDate[d];
+    var dateShort = d.slice(5); // MM/DD
+    var w1 = g.slot1 && g.slot1.weight_g ? g.slot1.weight_g : null;
+    var w2 = g.slot2 && g.slot2.weight_g ? g.slot2.weight_g : null;
+
+    var w1Str = w1 !== null ? w1 + 'g' : '—';
+    var w2Str = w2 !== null ? w2 + 'g' : '—';
+
+    // マット・交換種別の末尾ラベル（例: T1/全 or T2）
+    var exLabel = _exLabel(g.exchangeType);
+    var tailLabel = g.matType
+      ? (exLabel ? g.matType + '/' + exLabel : g.matType)
+      : (exLabel || '');
+
+    return '<div style="display:flex;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--border2);font-size:.82rem">'
+      + '<span style="color:var(--text3);min-width:48px">' + dateShort + '</span>'
+      + '<span style="flex:1;display:flex;align-items:center;gap:4px">'
+        + '<span style="color:#3366cc;font-size:.75rem;font-weight:700">①</span>'
+        + '<span style="font-weight:700;min-width:40px">' + w1Str + '</span>'
+      + '</span>'
+      + '<span style="flex:1;display:flex;align-items:center;gap:4px">'
+        + '<span style="color:#cc3366;font-size:.75rem;font-weight:700">②</span>'
+        + '<span style="font-weight:700;min-width:40px">' + w2Str + '</span>'
+      + '</span>'
+      + (tailLabel ? '<span style="color:var(--text3);font-size:.7rem;min-width:48px;text-align:right">' + tailLabel + '</span>' : '')
+      + '</div>';
+  }).join('');
 }
 
 function _renderUnitDetail(unit, main) {
@@ -506,8 +552,15 @@ function _renderUnitDetail(unit, main) {
       ${memberSection}
 
       <!-- 成長記録 -->
+      ${(function() {
+        // [20260419a] 件数表示: レコード数ではなくユニークな日付数
+        //   1日の記録で slot1 と slot2 の2レコードあるが、見た目は1行なので日付数で数える
+        var _uniqDates = {};
+        records.forEach(function(r) { if (r.record_date) _uniqDates[r.record_date] = true; });
+        var _dayCount = Object.keys(_uniqDates).length;
+        return `
       <div class="card" style="margin-bottom:10px">
-        <div class="card-title">成長記録${records.length > 0 ? `（${records.length}件）` : ''}</div>
+        <div class="card-title">成長記録${records.length > 0 ? `（${_dayCount}日分）` : ''}</div>
         ${records.length > 0
           ? _udRenderGrowthRecords(records)
           : '<div id="ud-growth-loading" style="padding:14px 4px;font-size:.82rem;color:var(--text3);text-align:center">⏳ 成長記録を読み込み中...<br><span style="font-size:.7rem;color:var(--text3)">記録が無い場合はここに「記録なし」と表示されます</span></div>'}
@@ -515,7 +568,8 @@ function _renderUnitDetail(unit, main) {
           onclick="Pages._udGrowthRecord('${unit.unit_id}','${unit.display_id}')">
           📷 成長記録を追加
         </button>
-      </div>
+      </div>`;
+      })()}
 
       <!-- アクション -->
       <div class="card">
