@@ -1,7 +1,12 @@
 // ════════════════════════════════════════════════════════════════
 // unit_detail.js — 飼育ユニット（BU）詳細画面
-// build: 20260418j
+// build: 20260418k
 // 変更点:
+//   - [20260418k] 成長記録の非同期ロードを追加
+//                 app.js の syncAll は growthMap をキャッシュしないため、
+//                 ユニット詳細を開くたびに API.growth.list で取得。
+//                 unit_id と display_id の両方を並列取得してマージする。
+//                 成長記録カードは常時表示（0件時は「記録なし」メッセージ）。
 //   - [20260418j] 成長記録の履歴取得を unit_id + display_id の両方から検索するよう修正
 //                 古いレコードは target_id に display_id が入っていたため、
 //                 片方だけでは全履歴がヒットしなかった問題を解決
@@ -19,7 +24,7 @@
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-console.log('[HerculesOS] unit_detail.js v20260418j loaded');
+console.log('[HerculesOS] unit_detail.js v20260418k loaded');
 
 // ── Bug 4 修正: 孵化日フォーマット関数 ─────────────────────────
 function _udFormatDate(d) {
@@ -257,6 +262,69 @@ Pages.unitDetail = function (params = {}) {
         </div>
       </div>`;
   }
+
+  // ── [20260418j] 成長記録の非同期ロード ──
+  //   app.js の syncAll は growthMap をキャッシュしない設計のため、
+  //   ユニット詳細を開くたびにここで明示的に API から取得する必要がある。
+  //   target_id が unit_id と display_id の両方に存在する可能性があるため、
+  //   両方を並列で呼んでマージし、Store に保存してから再描画する。
+  (async function _udLoadGrowthAsync() {
+    if (!unit || !API || !API.growth || !API.growth.list) return;
+    try {
+      var promises = [];
+      if (unit.unit_id) {
+        promises.push(API.growth.list('BU', unit.unit_id).catch(function(e){ console.warn('[UD] growth.list unit_id error:', e.message); return {records:[]}; }));
+      } else {
+        promises.push(Promise.resolve({records:[]}));
+      }
+      if (unit.display_id && unit.display_id !== unit.unit_id) {
+        promises.push(API.growth.list('BU', unit.display_id).catch(function(e){ console.warn('[UD] growth.list display_id error:', e.message); return {records:[]}; }));
+      } else {
+        promises.push(Promise.resolve({records:[]}));
+      }
+      var results = await Promise.all(promises);
+      var recU = (results[0] && results[0].records) || [];
+      var recD = (results[1] && results[1].records) || [];
+
+      // record_id で重複排除してマージ（通常は重複しないはずだが念のため）
+      var seen = {};
+      var merged = [];
+      recU.concat(recD).forEach(function(r) {
+        var key = r.record_id || (r.target_id + '|' + r.record_date + '|' + (r.unit_slot_no || '') + '|' + (r.weight_g || ''));
+        if (!seen[key]) { seen[key] = true; merged.push(r); }
+      });
+
+      // Store に両方のキーでキャッシュ（次回即座に表示できるように）
+      if (unit.unit_id) {
+        Store.setGrowthRecords(unit.unit_id,    recU);
+      }
+      if (unit.display_id && unit.display_id !== unit.unit_id) {
+        Store.setGrowthRecords(unit.display_id, recD);
+      }
+
+      // 現在もユニット詳細ページにいて、同じユニットを見ているなら描画更新
+      if (Store.getPage && Store.getPage() === 'unit-detail') {
+        var curParams = Store.getParams() || {};
+        var curDisp = curParams.unitDisplayId || curParams.displayId || curParams.display_id || '';
+        if (!curDisp || curDisp === unit.display_id) {
+          console.log('[UD] growth loaded:', merged.length, 'records');
+          if (merged.length > 0) {
+            // 記録があれば全体を再レンダリング（Storeキャッシュ経由で記録カードが表示される）
+            try { _renderUnitDetail(unit, main); } catch(_){}
+          } else {
+            // 0件ならロード中メッセージを「記録なし」に差し替えるだけ（フラッシュ回避）
+            var loadingEl = document.getElementById('ud-growth-loading');
+            if (loadingEl) {
+              loadingEl.innerHTML = '<div style="padding:6px 0;color:var(--text3)">📭 まだ記録がありません</div>'
+                + '<div style="font-size:.7rem;color:var(--text3);margin-top:4px">下の「📷 成長記録を追加」ボタンから記録できます</div>';
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.error('[UD] growth async load error:', e);
+    }
+  })();
 };
 
 // ────────────────────────────────────────────────────────────────
@@ -438,15 +506,16 @@ function _renderUnitDetail(unit, main) {
       ${memberSection}
 
       <!-- 成長記録 -->
-      ${records.length > 0 ? `
       <div class="card" style="margin-bottom:10px">
-        <div class="card-title">成長記録（${records.length}件）</div>
-        ${_udRenderGrowthRecords(records)}
+        <div class="card-title">成長記録${records.length > 0 ? `（${records.length}件）` : ''}</div>
+        ${records.length > 0
+          ? _udRenderGrowthRecords(records)
+          : '<div id="ud-growth-loading" style="padding:14px 4px;font-size:.82rem;color:var(--text3);text-align:center">⏳ 成長記録を読み込み中...<br><span style="font-size:.7rem;color:var(--text3)">記録が無い場合はここに「記録なし」と表示されます</span></div>'}
         <button class="btn btn-ghost btn-sm" style="margin-top:8px;width:100%"
           onclick="Pages._udGrowthRecord('${unit.unit_id}','${unit.display_id}')">
           📷 成長記録を追加
         </button>
-      </div>` : ''}
+      </div>
 
       <!-- アクション -->
       <div class="card">

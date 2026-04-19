@@ -1,4 +1,10 @@
-// FILE: js/pages/continuous_scan.js  build: 20260418j
+// FILE: js/pages/continuous_scan.js  build: 20260418k
+// 変更点(20260418j→20260418k):
+//   - 継続読取り画面の戻るボタン（←）の遷移先を明示的に決定
+//     params.targetType/displayId から正しい元画面に戻す。
+//     以前は Store.back() 依存で、ユニット詳細→継続読取り→←の経路で
+//     「ユニットが見つかりません」画面になっていたのを修正。
+//
 // 変更点(20260418i→20260418j): target_id = unit_id 統一
 //   - _resolveFromQrText の BU 分岐で targetId を unit_id 優先に
 //     （以前は display_id が入り、成長記録の target_id が HM2025-xx-Uxx となって
@@ -25,7 +31,7 @@
 //   - 右列交換欄を□全/□追表示、個体8行対応
 
 'use strict';
-console.log('[HerculesOS] continuous_scan.js v20260418j loaded');
+console.log('[HerculesOS] continuous_scan.js v20260418k loaded');
 
 // ────────────────────────────────────────────────────────────────
 // 共有ユーティリティ（continuousScan / batchScan 両方から使用）
@@ -181,6 +187,26 @@ Pages.continuousScan = function(params) {
   var MAT_OPTIONS  = ['T0','T1','T2','T3','MD'];
   var CONT_OPTIONS = ['1.8L','2.7L','4.8L','8L','10L'];
 
+  // ── [20260418k] 戻るボタンの遷移先を決定 ──
+  //   ユニット詳細/個体詳細から飛んできた場合はそこに戻す。
+  //   そうでなければ Store.back()。
+  //   params.displayId が BU-xxx or HM2025-xx-Uxx の場合: ユニット詳細へ
+  //   params.targetType === 'IND' で targetId がある場合: 個体詳細へ
+  //   それ以外: Store.back()
+  function _csHeaderBackFn() {
+    if (params.targetType === 'UNIT' && params.displayId) {
+      // unitDisplayId はシングルクォート文字列で onclick に埋め込むため、
+      // クォート系は念のためサニタイズ
+      var safeDisp = String(params.displayId).replace(/'/g, "").replace(/"/g, '');
+      return "routeTo('unit-detail',{unitDisplayId:'" + safeDisp + "'})";
+    }
+    if (params.targetType === 'IND' && params.targetId) {
+      var safeId = String(params.targetId).replace(/'/g, "").replace(/"/g, '');
+      return "routeTo('ind-detail',{indId:'" + safeId + "'})";
+    }
+    return 'Store.back()';
+  }
+
   var _state = {
     step:'capture', targetType:null, targetId:null, displayId:null,
     entity:null, members:[], capturedImage:null, ocrResult:null,
@@ -250,7 +276,7 @@ Pages.continuousScan = function(params) {
   // ── Step1: 撮影 ───────────────────────────────────────────────
   function renderCapture() {
     main.innerHTML =
-      UI.header('📷 継続読取り', {back:true}) +
+      UI.header('📷 継続読取り', {back:true, backFn: _csHeaderBackFn()}) +
       '<div class="page-body">' +
       '<div class="card" style="padding:14px 16px"><div style="font-size:.82rem;font-weight:700;color:var(--text2);margin-bottom:6px">📋 使い方</div>' +
       '<div style="font-size:.74rem;color:var(--text3);line-height:1.8">① カメラボタンを押す<br>② 画面の<span style="color:#4caf78;font-weight:700">緑の枠</span>にラベル全体を合わせる<br>③ 枠内に収まったら「撮影する」を押す<br>💡 明るい場所でQRコードが鮮明に写るよう注意</div></div>' +
