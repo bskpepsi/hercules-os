@@ -630,8 +630,8 @@ const UI = {
       <table class="data-table" style="font-size:.8rem;min-width:440px;border-collapse:collapse">
         <thead><tr>
           <th style="white-space:nowrap;padding:6px 4px">日付</th>
-          <th style="white-space:nowrap;color:#c8a84b;text-align:center;padding:6px 4px">①(増減)</th>
-          <th style="white-space:nowrap;color:#4caf78;text-align:center;padding:6px 4px">②(増減)</th>
+          <th style="white-space:nowrap;color:#c8a84b;text-align:center;padding:6px 4px">①体重</th>
+          <th style="white-space:nowrap;color:#4caf78;text-align:center;padding:6px 4px">②体重</th>
           <th style="white-space:nowrap;padding:6px 4px">ステージ</th>
           <th style="white-space:nowrap;padding:6px 4px">容器/マット/交換</th>
           <th style="white-space:nowrap;padding:6px 4px">日齢</th>
