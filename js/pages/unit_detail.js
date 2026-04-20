@@ -1,7 +1,15 @@
 // ════════════════════════════════════════════════════════════════
 // unit_detail.js — 飼育ユニット（BU）詳細画面
-// build: 20260419b
+// build: 20260419c
 // 変更点:
+//   - [20260419c] ユニット用 成長記録編集モーダル追加
+//                 Pages._udEditGrowthRecord(r1Id, r2Id, date): 体重①/体重② を
+//                 横並びで編集できる2頭対応モーダル。共通フィールド
+//                 (ステージ/容器/マット/交換/メモ) は両スロットに反映。
+//                 Pages._udSaveEditGrowth: 変更があったスロットのみ
+//                 API.growth.update を順次呼び出し。Store 更新後に
+//                 _renderUnitDetail で全体再描画。
+//                 _udRenderGrowthRecords で editHandler を渡すよう修正。
 //   - [20260419b] _udRenderGrowthRecords を UI.weightTableUnit 呼び出しに統合
 //                 個体用 UI.weightTable と見た目を統一（日付/①(増減)/②(増減)/ステージ/
 //                 容器/マット/交換/日齢 の6列構成）
@@ -17,7 +25,7 @@
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-console.log('[HerculesOS] unit_detail.js v20260419b loaded');
+console.log('[HerculesOS] unit_detail.js v20260419c loaded');
 
 // ── Bug 4 修正: 孵化日フォーマット関数 ─────────────────────────
 function _udFormatDate(d) {
@@ -326,10 +334,15 @@ Pages.unitDetail = function (params = {}) {
 //   継続読取りで撮影したラベルと同じ形式で直感的。
 // [20260419b] UI.weightTableUnit に統合（個体版 UI.weightTable と見た目統一）
 //   列構成: 日付 / ①(増減) / ②(増減) / ステージ / 容器/マット/交換 / 日齢
+// [20260419c] editHandler を渡してユニット用の2頭編集モーダルを使う
 function _udRenderGrowthRecords(records) {
   if (!records || records.length === 0) return '';
   // 個体用 weightTable とデザイン統一。ユニットは 2頭バージョン。
-  return UI.weightTableUnit(records, { showEdit: true });
+  // 編集ボタンは Pages._udEditGrowthRecord を呼ぶ(体重①/②の2列編集)
+  return UI.weightTableUnit(records, {
+    showEdit: true,
+    editHandler: 'Pages._udEditGrowthRecord',
+  });
 }
 
 function _renderUnitDetail(unit, main) {
@@ -796,6 +809,211 @@ Pages._udGrowthRecord = function (unitId, displayId) {
     displayId: displayId,
     mode: 'growth'
   });
+};
+
+// ═══════════════════════════════════════════════════════════════
+// [20260419c] ユニット用 成長記録編集モーダル
+//   既存の Pages._grEditRecord は単一体重フィールドで個別飼育向け。
+//   ユニットは2頭飼育のため、体重①/体重②を横並びで編集できる専用モーダルを用意。
+//   引数:
+//     r1Id: 1頭目の record_id（空の場合あり）
+//     r2Id: 2頭目の record_id（空の場合あり）
+//     date: 対象日付（表示用/保存リクエストで使用）
+// ═══════════════════════════════════════════════════════════════
+Pages._udEditGrowthRecord = function (r1Id, r2Id, date) {
+  // growthMap から両スロットのレコードを検索
+  var gm = Store.getDB('growthMap') || {};
+  var rec1 = null, rec2 = null;
+  Object.values(gm).forEach(function (recs) {
+    (recs || []).forEach(function (r) {
+      if (r1Id && r.record_id === r1Id) rec1 = r;
+      if (r2Id && r.record_id === r2Id) rec2 = r;
+    });
+  });
+
+  // 共通フィールドの初期値: rec1 優先、なければ rec2
+  var base = rec1 || rec2 || {};
+  var initDate = String(base.record_date || date || '').replace(/\//g, '-');
+  var initW1   = rec1 ? (rec1.weight_g || '') : '';
+  var initW2   = rec2 ? (rec2.weight_g || '') : '';
+  var initStage = base.stage || '';
+  var initCont  = base.container || '';
+  var initMat   = base.mat_type || '';
+  var initExch  = base.exchange_type || '';
+  var initNote  = base.note_private || '';
+
+  // セレクト選択肢（_grEditRecord と統一）
+  var STAGE_OPTS = ['L1L2', 'L3', 'PREPUPA'].map(function (s) {
+    return '<option value="' + s + '" ' + (initStage === s ? 'selected' : '') + '>' + s + '</option>';
+  }).join('');
+
+  var CONT_STD = ['1.8L', '2.7L', '4.8L'];
+  var CONT_OPTS = CONT_STD.map(function (v) {
+    return '<option value="' + v + '" ' + (initCont === v ? 'selected' : '') + '>' + v + '</option>';
+  }).join('');
+  if (initCont && !CONT_STD.includes(initCont)) {
+    CONT_OPTS += '<option value="' + initCont.replace(/"/g, '&quot;') + '" selected>' + initCont + '（その他）</option>';
+  }
+
+  var MAT_OPTS = ['T0', 'T1', 'T2', 'T3', 'MD'].map(function (v) {
+    return '<option value="' + v + '" ' + (initMat === v ? 'selected' : '') + '>' + v + '</option>';
+  }).join('');
+
+  var EXCH_OPTS = ''
+    + '<option value="FULL" ' + (initExch === 'FULL' ? 'selected' : '') + '>全交換</option>'
+    + '<option value="ADD" '  + (initExch === 'ADD' || initExch === 'PARTIAL' ? 'selected' : '') + '>追加</option>'
+    + '<option value="NONE" ' + (initExch === 'NONE' ? 'selected' : '') + '>なし</option>';
+
+  // 状態: 片方しかレコードがない場合の注意書き
+  var missingNote = '';
+  if (!rec1 && rec2) {
+    missingNote = '<div style="font-size:.72rem;color:var(--text3);margin:-4px 0 8px">※1頭目の記録は存在しません。体重①を入力すると新規追加されます。</div>';
+  } else if (rec1 && !rec2) {
+    missingNote = '<div style="font-size:.72rem;color:var(--text3);margin:-4px 0 8px">※2頭目の記録は存在しません。体重②を入力すると新規追加されます。</div>';
+  }
+
+  UI.modal(`
+    <div class="modal-title">成長記録を編集（ユニット）</div>
+    <div class="form-section" style="max-height:60vh;overflow-y:auto">
+      ${UI.field('記録日', '<input type="date" id="ude-date" class="input" value="' + initDate + '">')}
+      <div class="form-row-2">
+        ${UI.field('<span style="color:#c8a84b">①体重(g)</span>', '<input type="number" id="ude-w1" class="input" step="0.1" value="' + initW1 + '" placeholder="例: 22">')}
+        ${UI.field('<span style="color:#4caf78">②体重(g)</span>', '<input type="number" id="ude-w2" class="input" step="0.1" value="' + initW2 + '" placeholder="例: 22">')}
+      </div>
+      ${missingNote}
+      <div class="form-row-2">
+        ${UI.field('ステージ', '<select id="ude-stage" class="input"><option value="">—</option>' + STAGE_OPTS + '</select>')}
+        ${UI.field('容器', '<select id="ude-cont" class="input"><option value="">—</option>' + CONT_OPTS + '</select>')}
+      </div>
+      <div class="form-row-2">
+        ${UI.field('マット', '<select id="ude-mat" class="input"><option value="">—</option>' + MAT_OPTS + '</select>')}
+        ${UI.field('交換区分', '<select id="ude-exch" class="input"><option value="">—</option>' + EXCH_OPTS + '</select>')}
+      </div>
+      ${UI.field('メモ', '<input type="text" id="ude-note" class="input" value="' + (initNote || '') + '" placeholder="任意">')}
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" style="flex:1" onclick="UI.closeModal()">キャンセル</button>
+      <button class="btn btn-primary" style="flex:2" onclick="Pages._udSaveEditGrowth('${r1Id || ''}','${r2Id || ''}')">更新</button>
+    </div>
+  `);
+};
+
+// 保存ハンドラ: 変更があったスロットのみ API.growth.update を呼ぶ
+Pages._udSaveEditGrowth = async function (r1Id, r2Id) {
+  var date   = (document.getElementById('ude-date')?.value  || '').replace(/-/g, '/');
+  var w1     = document.getElementById('ude-w1')?.value      || '';
+  var w2     = document.getElementById('ude-w2')?.value      || '';
+  var stage  = document.getElementById('ude-stage')?.value   || '';
+  var cont   = document.getElementById('ude-cont')?.value    || '';
+  var mat    = document.getElementById('ude-mat')?.value     || '';
+  var exch   = document.getElementById('ude-exch')?.value    || '';
+  var note   = document.getElementById('ude-note')?.value    || '';
+
+  // 既存レコードを取得（変更検知用）
+  var gm = Store.getDB('growthMap') || {};
+  var rec1 = null, rec2 = null;
+  Object.values(gm).forEach(function (recs) {
+    (recs || []).forEach(function (r) {
+      if (r1Id && r.record_id === r1Id) rec1 = r;
+      if (r2Id && r.record_id === r2Id) rec2 = r;
+    });
+  });
+
+  // 共通payload部分
+  var commonPayload = {
+    record_date:   date,
+    stage:         stage,
+    container:     cont,
+    mat_type:      mat,
+    exchange_type: exch,
+    note_private:  note,
+  };
+
+  // 各スロットの更新判定と payload 準備
+  // - レコードが存在 + いずれかのフィールドに変更あり → update
+  // - 体重が空欄 → 体重なしで更新（他フィールドだけ更新）
+  var updates = [];
+  if (rec1 && r1Id) {
+    var p1 = Object.assign({ record_id: r1Id, weight_g: w1 }, commonPayload);
+    // 変更があるかチェック（軽量な比較: 主要フィールドのみ）
+    var changed1 = (
+      String(rec1.weight_g || '') !== String(w1 || '') ||
+      String(rec1.record_date || '') !== date ||
+      (rec1.stage || '') !== stage ||
+      (rec1.container || '') !== cont ||
+      (rec1.mat_type || '') !== mat ||
+      (rec1.exchange_type || '') !== exch ||
+      (rec1.note_private || '') !== note
+    );
+    if (changed1) updates.push({ slot: 1, payload: p1 });
+  }
+  if (rec2 && r2Id) {
+    var p2 = Object.assign({ record_id: r2Id, weight_g: w2 }, commonPayload);
+    var changed2 = (
+      String(rec2.weight_g || '') !== String(w2 || '') ||
+      String(rec2.record_date || '') !== date ||
+      (rec2.stage || '') !== stage ||
+      (rec2.container || '') !== cont ||
+      (rec2.mat_type || '') !== mat ||
+      (rec2.exchange_type || '') !== exch ||
+      (rec2.note_private || '') !== note
+    );
+    if (changed2) updates.push({ slot: 2, payload: p2 });
+  }
+
+  if (updates.length === 0) {
+    UI.toast('変更がありません', 'info');
+    UI.closeModal();
+    return;
+  }
+
+  try {
+    UI.loading(true);
+    UI.closeModal();
+    // 順次更新（並列ではなくシーケンシャルにする: Sheets書き込み競合を避けるため）
+    for (var u of updates) {
+      await apiCall(function () { return API.growth.update(u.payload); }, null);
+    }
+    UI.toast('成長記録を更新しました (' + updates.length + '件)', 'success');
+
+    // Store の growthMap を更新（画面再描画用）
+    Object.entries(gm).forEach(function (entry) {
+      var tid = entry[0], recs = entry[1] || [];
+      var dirty = false;
+      updates.forEach(function (u) {
+        var rid = u.payload.record_id;
+        var idx = recs.findIndex(function (r) { return r.record_id === rid; });
+        if (idx >= 0) {
+          Object.assign(recs[idx], u.payload);
+          dirty = true;
+        }
+      });
+      if (dirty) Store.setGrowthRecords(tid, recs);
+    });
+
+    // ユニット詳細の成長記録テーブルを再描画
+    //   ロード完了時と同じパターンで、_renderUnitDetail で全体を再レンダリング
+    if (Store.getPage && Store.getPage() === 'unit-detail') {
+      var p = Store.getParams() || {};
+      var unitDisplayId = p.unitDisplayId || p.displayId || p.display_id || '';
+      var unitId = p.unitId || p.id || '';
+      var unit = null;
+      if (unitDisplayId && Store.getUnitByDisplayId) {
+        unit = Store.getUnitByDisplayId(unitDisplayId);
+      }
+      if (!unit && unitId) {
+        unit = (Store.getDB('breeding_units') || []).find(function (u) { return u.unit_id === unitId; });
+      }
+      var main = document.getElementById('main');
+      if (unit && main) {
+        try { _renderUnitDetail(unit, main); } catch (_) {}
+      }
+    }
+  } catch (e) {
+    UI.toast('更新失敗: ' + e.message, 'error');
+  } finally {
+    UI.loading(false);
+  }
 };
 
 // ページ登録

@@ -6,8 +6,11 @@
 //       共通UIユーティリティを担う。各画面JSの呼び出し元。
 //       画面ごとのrender関数を呼び分けるシンプルなSPAルーター。
 //
-// build: 20260419d
+// build: 20260419e
 // 変更点:
+//   - [20260419e] UI.weightTableUnit: editHandler オプションで編集ボタンの
+//                 onclick 呼び出し関数名を切替可能に。ユニット画面では
+//                 Pages._udEditGrowthRecord(r1_id, r2_id, date) を呼び出せる。
 //   - [20260419d] 編集列を sticky 右端固定に変更。横スクロールしても
 //                 編集ボタンが常に画面内に見える。個体版・ユニット版両方に適用。
 //   - [20260419d] セルの padding を 8px 4px で統一してコンパクトに。
@@ -520,7 +523,13 @@ const UI = {
   //
   //   引数:
   //     records: 成長記録配列（unit_slot_no=1 or 2 の行を含む）
-  //     opts: { showEdit: bool, maxDays: 最大日付数 }
+  //     opts:
+  //       showEdit: bool — 編集ボタンを表示するか (default: true)
+  //       maxDays:  number — 最大日付数
+  //       editHandler: string — 編集ボタンのonclick呼び出し関数名
+  //                    (default: 'Pages._grEditRecord')
+  //                    指定時は "${editHandler}('record_id1','record_id2','date')" の形で呼ぶ
+  //                    → ユニット画面では両スロットの record_id と日付を受け取れる
   weightTableUnit(records, opts = {}) {
     if (!records || records.length === 0) return UI.empty('体重記録なし');
 
@@ -608,11 +617,28 @@ const UI = {
 
       // 編集ボタン: slot1 or slot2 の record_id を使う（slot1 優先）
       // [20260419d] sticky で右端固定表示（横スクロールしても常に見える）
-      const editRec = rd.r1 || rd.r2;
-      const editBtn = showEdit && editRec && editRec.record_id
+      // [20260419e] editHandler オプションでユニット用ハンドラに切替可能
+      //   デフォルト: 単一record_id方式 (Pages._grEditRecord)
+      //   指定時: "${editHandler}('r1_id','r2_id','date')" 形式でユニット用編集を呼ぶ
+      const editHandler = opts.editHandler || 'Pages._grEditRecord';
+      const r1Id = (rd.r1 && rd.r1.record_id) ? String(rd.r1.record_id) : '';
+      const r2Id = (rd.r2 && rd.r2.record_id) ? String(rd.r2.record_id) : '';
+      const hasAnyId = r1Id || r2Id;
+      let onclickAttr = '';
+      if (hasAnyId) {
+        if (opts.editHandler) {
+          // ユニット用: 3引数 (r1_id, r2_id, date)
+          onclickAttr = `${editHandler}('${r1Id}','${r2Id}','${rd.date}')`;
+        } else {
+          // デフォルト: 単一record_id方式
+          const singleId = r1Id || r2Id;
+          onclickAttr = `${editHandler}('${singleId}')`;
+        }
+      }
+      const editBtn = showEdit && hasAnyId
         ? `<button style="font-size:.82rem;padding:3px 6px;border:1px solid var(--border);
             border-radius:6px;background:var(--surface2);color:var(--text2);cursor:pointer;white-space:nowrap;line-height:1"
-            onclick="Pages._grEditRecord('${editRec.record_id}')">✏️</button>`
+            onclick="${onclickAttr}">✏️</button>`
         : '';
 
       return `<tr>
