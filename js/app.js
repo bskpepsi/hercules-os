@@ -6,8 +6,11 @@
 //       共通UIユーティリティを担う。各画面JSの呼び出し元。
 //       画面ごとのrender関数を呼び分けるシンプルなSPAルーター。
 //
-// build: 20260419e
+// build: 20260420a
 // 変更点:
+//   - [20260420a] UI.weightTableUnit: 日付順を昇順表示に変更（古い=上、新しい=下）
+//                 以前は rowsData.reverse() で降順表示していたが、個体用 weightTable
+//                 (昇順)と挙動を揃えるため除去。
 //   - [20260419e] UI.weightTableUnit: editHandler オプションで編集ボタンの
 //                 onclick 呼び出し関数名を切替可能に。ユニット画面では
 //                 Pages._udEditGrowthRecord(r1_id, r2_id, date) を呼び出せる。
@@ -586,8 +589,8 @@ const UI = {
       };
     });
 
-    // 表示は降順（新しい日付が上）
-    rowsData.reverse();
+    // [20260420a] 表示は昇順（古い日付が上、新しい日付が下）— 個体用 weightTable と統一
+    //   以前: rowsData.reverse() で降順にしていたが、ユーザー要望で昇順に戻す
     const limited = opts.maxDays ? rowsData.slice(0, opts.maxDays) : rowsData;
 
     const showEdit = opts.showEdit !== false;

@@ -1,7 +1,15 @@
 // ════════════════════════════════════════════════════════════════
 // unit_detail.js — 飼育ユニット（BU）詳細画面
-// build: 20260419c
+// build: 20260420a
 // 変更点:
+//   - [20260420a] 「成長記録（N日分）」→「成長記録（N回）」にラベル変更
+//                 N はレコード数（全スロット合算）を表示
+//   - [20260420a] ユニット体重推移グラフ追加（Chart.js、①②別の2ライン）
+//                 _udWeightChartBlock: canvas 生成、_udDrawWeightChart: 描画
+//                 個体用 _drawWeightChart と同等の機能、体重列を2本の折れ線で表示
+//   - [20260420a] アクションボタン均等配置 + 順番変更
+//                 🔄 T2移行（or T3移行/T3更新） / 📷 成長記録 / 🏷️ ラベル発行
+//                 全て flex:1 で均等幅、3ボタン1行表示
 //   - [20260419c] ユニット用 成長記録編集モーダル追加
 //                 Pages._udEditGrowthRecord(r1Id, r2Id, date): 体重①/体重② を
 //                 横並びで編集できる2頭対応モーダル。共通フィールド
@@ -501,16 +509,17 @@ function _renderUnitDetail(unit, main) {
 
       <!-- 成長記録 -->
       ${(function() {
-        // [20260419a] 件数表示: レコード数ではなくユニークな日付数
-        //   1日の記録で slot1 と slot2 の2レコードあるが、見た目は1行なので日付数で数える
-        var _uniqDates = {};
-        records.forEach(function(r) { if (r.record_date) _uniqDates[r.record_date] = true; });
-        var _dayCount = Object.keys(_uniqDates).length;
+        // [20260420a] 件数表示を「N回」に変更
+        //   N = スロットをまたいだ全レコード数（slot1 と slot2 を合算）
+        //   用途: 「〇回記録した」という回数感覚。スロット別に数えると分かりにくい
+        var _recCount = records.length;
+        // [20260420a] 体重推移グラフ（2本線：①と②）
+        var _chartBlock = _udWeightChartBlock(unit.unit_id, records);
         return `
       <div class="card" style="margin-bottom:10px">
-        <div class="card-title">成長記録${records.length > 0 ? `（${_dayCount}日分）` : ''}</div>
+        <div class="card-title">成長記録${records.length > 0 ? `（${_recCount}回）` : ''}</div>
         ${records.length > 0
-          ? _udRenderGrowthRecords(records)
+          ? (_chartBlock + _udRenderGrowthRecords(records))
           : '<div id="ud-growth-loading" style="padding:14px 4px;font-size:.82rem;color:var(--text3);text-align:center">⏳ 成長記録を読み込み中...<br><span style="font-size:.7rem;color:var(--text3)">記録が無い場合はここに「記録なし」と表示されます</span></div>'}
         <button class="btn btn-ghost btn-sm" style="margin-top:8px;width:100%"
           onclick="Pages._udGrowthRecord('${unit.unit_id}','${unit.display_id}')">
@@ -522,34 +531,145 @@ function _renderUnitDetail(unit, main) {
       <!-- アクション -->
       <div class="card">
         <div class="card-title">アクション</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <!-- [20260420a] 3ボタン均等配置 (flex:1) + 順番変更:
+             🔄 T2移行(or T3) / 📷 成長記録 / 🏷️ ラベル発行 -->
+        <div style="display:flex;gap:8px">
           ${unit.status === 'active' && unit.stage_phase === 'T1' ? `
-          <button class="btn btn-primary" style="background:var(--blue)"
+          <button class="btn btn-primary" style="flex:1;background:var(--blue)"
             onclick="Pages._udStartT2('${unit.display_id}')">
             🔄 T2移行
           </button>` : ''}
           ${unit.status === 'active' && unit.stage_phase === 'T2' ? `
-          <button class="btn btn-primary" style="background:var(--amber);color:#1a1a1a"
+          <button class="btn btn-primary" style="flex:1;background:var(--amber);color:#1a1a1a"
             onclick="Pages._udStartT3('${unit.display_id}')">
             ⭐ T3移行
           </button>` : ''}
           ${unit.status === 'active' && unit.stage_phase === 'T3' ? `
-          <button class="btn btn-primary" style="background:rgba(224,144,64,.15);border:2px solid var(--amber);color:var(--amber)"
+          <button class="btn btn-primary" style="flex:1;background:rgba(224,144,64,.15);border:2px solid var(--amber);color:var(--amber)"
             onclick="Pages._udStartT3('${unit.display_id}')">
             🔄 T3 Mx/体重更新
           </button>` : ''}
-          <button class="btn btn-ghost"
-            onclick="Pages._udLabelGen('${unit.display_id}')">
-            🏷️ ラベル発行
-          </button>
-          <button class="btn btn-ghost" style="font-size:.8rem"
+          <button class="btn btn-ghost" style="flex:1"
             onclick="Pages._udGrowthRecord('${unit.unit_id}','${unit.display_id}')">
             📷 成長記録
+          </button>
+          <button class="btn btn-ghost" style="flex:1"
+            onclick="Pages._udLabelGen('${unit.display_id}')">
+            🏷️ ラベル発行
           </button>
         </div>
       </div>
 
     </div>`;
+
+  // [20260420a] 体重推移グラフを描画（canvas 要素が DOM に挿入された直後に実行）
+  //   2本の折れ線: ①(金色 #c8a84b) と ②(緑色 #4caf78)
+  //   weight_g > 0 のスロット1/スロット2 の各レコードを日付昇順でプロット
+  if (records && records.length > 0) {
+    var _hasSlotData = records.some(function(r) {
+      var w = r && r.weight_g;
+      return w !== '' && w !== null && w !== undefined && +w > 0;
+    });
+    if (_hasSlotData) {
+      setTimeout(function() { _udDrawWeightChart(unit.unit_id, records); }, 100);
+    }
+  }
+}
+
+// ────────────────────────────────────────────────────────────────
+// [20260420a] ユニット体重推移グラフ（Chart.js、①② 2ライン）
+// ────────────────────────────────────────────────────────────────
+function _udWeightChartBlock(unitId, records) {
+  if (!records || records.length === 0) return '';
+  // 体重が入っているレコードが2件以上あればグラフ表示
+  var hasWeight = records.filter(function(r) {
+    var w = r && r.weight_g;
+    return w !== '' && w !== null && w !== undefined && +w > 0;
+  });
+  if (hasWeight.length < 2) return '';
+  var chartId = 'ud-chart-' + (unitId || 'x');
+  return '<canvas id="' + chartId + '" style="max-height:180px;margin-bottom:12px"></canvas>';
+}
+
+function _udDrawWeightChart(unitId, records) {
+  var el = document.getElementById('ud-chart-' + (unitId || 'x'));
+  if (!el) return;
+  if (typeof Chart === 'undefined') {
+    console.warn('[UD] Chart.js が読み込まれていません');
+    return;
+  }
+
+  // 日付ごとにグループ化して slot1 / slot2 の体重を集める
+  var byDate = {};
+  records.forEach(function(r) {
+    if (!r || !r.record_date) return;
+    var w = r.weight_g;
+    if (w === '' || w === null || w === undefined || +w <= 0) return;
+    var d = String(r.record_date);
+    if (!byDate[d]) byDate[d] = { slot1:null, slot2:null };
+    var slot = parseInt(r.unit_slot_no, 10);
+    if (slot === 1) byDate[d].slot1 = +w;
+    else if (slot === 2) byDate[d].slot2 = +w;
+    else {
+      // スロット情報なし: 空いている方に入れる
+      if (byDate[d].slot1 === null) byDate[d].slot1 = +w;
+      else if (byDate[d].slot2 === null) byDate[d].slot2 = +w;
+    }
+  });
+
+  // 日付昇順（古い→新しい）
+  var dateKeys = Object.keys(byDate).sort();
+  if (!dateKeys.length) return;
+
+  var data1 = dateKeys.map(function(d) { return byDate[d].slot1; });
+  var data2 = dateKeys.map(function(d) { return byDate[d].slot2; });
+
+  // slot2 が全部 null なら 2本目は描画しない（1頭のみのユニット）
+  var hasSlot2 = data2.some(function(v) { return v !== null; });
+
+  var datasets = [{
+    label: '①',
+    data: data1,
+    borderColor: '#c8a84b',
+    backgroundColor: 'rgba(200,168,75,0.1)',
+    pointBackgroundColor: '#c8a84b',
+    pointRadius: 4,
+    tension: 0.3,
+    fill: false,
+    spanGaps: true,
+  }];
+  if (hasSlot2) {
+    datasets.push({
+      label: '②',
+      data: data2,
+      borderColor: '#4caf78',
+      backgroundColor: 'rgba(76,175,120,0.1)',
+      pointBackgroundColor: '#4caf78',
+      pointRadius: 4,
+      tension: 0.3,
+      fill: false,
+      spanGaps: true,
+    });
+  }
+
+  new Chart(el, {
+    type: 'line',
+    data: { labels: dateKeys, datasets: datasets },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: {
+          display: hasSlot2,  // 2本ある時のみ凡例表示
+          position: 'top',
+          labels: { color: '#9aa89a', font: { size: 11 } },
+        },
+      },
+      scales: {
+        x: { ticks: { color: '#6a7c6a', maxTicksLimit: 5, font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.06)' } },
+        y: { ticks: { color: '#6a7c6a', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.06)' } },
+      }
+    }
+  });
 }
 
 // ── ラベル発行 ────────────────────────────────────────────────────
