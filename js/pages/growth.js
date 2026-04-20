@@ -1,6 +1,22 @@
 // ════════════════════════════════════════════════════════════════
 // growth.js v5 — 成長記録入力画面（体重測定UIベース・全導線統一）
-// build: 20260418b
+// build: 20260420b
+//
+// 20260420b 修正:
+//   - マット選択と連動してモルトトグルを自動設定
+//       T2選択 → モルトON（モルトパウダー40% + T2マット運用に整合）
+//       T0/T1/T3/MD選択 → モルトOFF
+//   - 手動入力モード切替時もこの自動設定が働く
+//     （ユーザーがマットを再選択すると必ず上書き、迷わないように）
+//
+// 20260420a 修正:
+//   - モードボタンを「手動入力 / T1移行」の2つに整理
+//       ・「通常」→「手動入力」にラベル変更（機能は同じ）
+//       ・「T2初回移行」モードは削除（LOT の初回移行は T1 のみ）
+//       ・「T1移行」ボタン: 押下時に _grJumpToT1 経由で Pages.t1SessionStart(lotId)
+//         を直接呼び、QRスキャン画面を経由せずに T1セッション継続画面へ直行
+//         対象が LOT 以外の場合はエラートースト
+//   - GR_MODE_PRESETS から 't2' エントリ削除
 //
 // 20260418b 修正 (Step2 🥉③ マット交換履歴の記録強化):
 //   - 容器選択肢: 1.8L / 2.7L / 4.8L / その他 の4択に統一（「その他」でフリーテキスト入力）
@@ -19,7 +35,7 @@
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-console.log('[HerculesOS] growth.js v20260418b loaded');
+console.log('[HerculesOS] growth.js v20260420a loaded');
 
 // ── 体重閾値バッジ ───────────────────────────────────────────────
 const GR_THRESHOLDS = [
@@ -28,10 +44,12 @@ const GR_THRESHOLDS = [
 ];
 
 // ── モードプリセット ────────────────────────────────────────────
+// [20260420a] 't2' エントリ削除。T1 はボタン押下時に直接 t1SessionStart を呼ぶため
+//   このプリセットは normal 用（手動入力）のみフォーム状態の初期化に使われる。
+//   t1 エントリはボタンのラベル表示に使われる（モード遷移はしない）。
 const GR_MODE_PRESETS = {
-  normal: { label: '通常',       mat: '',   exchange: 'FULL', stage: '' },
+  normal: { label: '手動入力',   mat: '',   exchange: 'FULL', stage: '' },
   t1:     { label: 'T1移行',     mat: 'T1', exchange: 'FULL', stage: 'L1L2' },
-  t2:     { label: 'T2初回移行', mat: 'T2', exchange: 'FULL', stage: 'L3'   },
 };
 
 // ── ボタン式グループヘルパー ────────────────────────────────────
@@ -79,6 +97,10 @@ Pages.growthRecord = function (params = {}) {
     if (p.mat)      _selMat      = p.mat;
     if (p.exchange) _selExchange = p.exchange;
     if (p.stage)    _selStage    = p.stage;
+    // [20260420b] マット連動でモルトトグル自動設定
+    //   T2 → ON、それ以外 → OFF
+    //   モードの切替でもマットが確定するので、モルト状態も同期する
+    _hasMalt = (_selMat === 'T2');
   }
 
   function _loadEntityDefaults() {
@@ -222,10 +244,16 @@ Pages.growthRecord = function (params = {}) {
 
         ${targetId ? `
         <div style="display:flex;gap:5px">
-          ${Object.entries(GR_MODE_PRESETS).map(([k, p]) =>
-            `<button class="btn btn-sm ${_mode===k ? 'btn-primary' : 'btn-ghost'}" style="flex:1;font-size:.78rem;padding:10px 4px"
-              onclick="Pages._grSetMode('${k}')">${p.label}</button>`
-          ).join('')}
+          ${Object.entries(GR_MODE_PRESETS).map(([k, p]) => {
+            // [20260420a] T1移行ボタンはモード切替ではなく、直接 T1 セッションへジャンプ
+            //   normal のみ通常のモード切替（_grSetMode）を呼ぶ
+            var oc = (k === 't1')
+              ? "Pages._grJumpToT1('" + (targetType || '') + "','" + (targetId || '') + "','" + (displayId || '') + "')"
+              : "Pages._grSetMode('" + k + "')";
+            return '<button class="btn btn-sm ' + (_mode===k ? 'btn-primary' : 'btn-ghost') + '" '
+              + 'style="flex:1;font-size:.78rem;padding:10px 4px" '
+              + 'onclick="' + oc + '">' + p.label + '</button>';
+          }).join('')}
         </div>` : ''}
 
         <div class="card" style="border-color:rgba(76,175,120,.35);padding:14px 10px">
@@ -466,6 +494,35 @@ Pages.growthRecord = function (params = {}) {
     if (d) setTimeout(function() { var e = document.getElementById('gr-date');   if (e) e.value = d; }, 0);
   };
 
+  // ── [20260420a] T1移行ボタン: 対象LOTをそのままT1セッションに投入 ──
+  //   QRスキャン画面を経由せず、LOT ID を直接 Pages.t1SessionStart に渡す。
+  //   対象が LOT 以外の場合はエラートーストで通知し遷移しない。
+  //   成長記録画面で入力途中の体重などは保存されないため、離脱前に
+  //   ユーザーに確認を取る。
+  Pages._grJumpToT1 = function(tType, tId, tDisplay) {
+    if (tType !== 'LOT') {
+      UI.toast('T1移行はロット(L0)からのみ実行できます', 'error');
+      return;
+    }
+    if (!tId) {
+      UI.toast('ロットIDが不明です', 'error');
+      return;
+    }
+    // 体重入力などがある場合は離脱確認
+    var w = document.getElementById('gr-weight')?.value;
+    var hasInput = w && parseFloat(w) > 0;
+    if (hasInput) {
+      if (!confirm('入力中の体重は保存されずに破棄されます。T1移行画面に移りますか？')) {
+        return;
+      }
+    }
+    if (typeof Pages.t1SessionStart === 'function') {
+      Pages.t1SessionStart(tId);
+    } else {
+      UI.toast('T1移行機能が読み込まれていません', 'error');
+    }
+  };
+
   // ── 対象選択 ─────────────────────────────────────────────────
   Pages._grSetType = function(type) {
     targetType = type; targetId = ''; displayId = '';
@@ -496,7 +553,15 @@ Pages.growthRecord = function (params = {}) {
     render();
   };
   Pages._grSelExchange  = function(v) { _selExchange  = v; render(); };
-  Pages._grSelMat       = function(v) { _selMat       = v; render(); };
+  Pages._grSelMat       = function(v) {
+    _selMat = v;
+    // [20260420b] マット連動でモルトトグル自動設定
+    //   T2 → ON（モルトパウダー40% + T2マット運用に整合）
+    //   T0/T1/T3/MD → OFF
+    //   ユーザーがマットを再選択するたびに必ず上書きされる
+    _hasMalt = (v === 'T2');
+    render();
+  };
   Pages._grSelStage     = function(v) { _selStage     = v; render(); };
   // ▼ トグルスイッチ版（再描画でUIを更新）
   Pages._grToggleMalt   = function(val) { _hasMalt = val; render(); };
