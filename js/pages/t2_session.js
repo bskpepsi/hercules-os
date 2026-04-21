@@ -1,6 +1,14 @@
 // FILE: js/pages/t2_session.js
-// build: 20260420a
+// build: 20260420b
 // 変更点:
+//   - [20260420b] T2移行フローを「ユニット解体」モードに整理
+//       判断選択肢から「継続」を削除 → 「個別化 / 販売候補」の2択（死亡は独立ボタン）
+//       継続飼育 = 継続読取りモードで行う運用に分離
+//       説明文を「ユニットを解体して個別化します」に変更
+//       判断サマリから「継続」行を削除
+//       確認ダイアログから「継続」行を削除、「ユニット解体」の注記追加
+//       ユニット status を 'active' → 'individualized' に固定（常に解体される）
+//       ラベル発行対象: 個別化 + 販売候補（死亡はスキップ、仕様通り）
 //   - [20260420a] セッション保存を sessionStorage → localStorage に変更
 //       タブを閉じても未確定セッションが保持されるようにし、
 //       未確定セッション通知システム（バナー + 一覧ページ）の対象にする
@@ -10,7 +18,7 @@
 //   - _renderT2Session: lineDisp に同じフォールバック追加
 'use strict';
 
-console.log('[HerculesOS] t2_session.js v20260420a loaded');
+console.log('[HerculesOS] t2_session.js v20260420b loaded');
 
 window._t2Session = window._t2Session || null;
 
@@ -256,8 +264,8 @@ function _renderT2Session(s) {
 
       <div style="background:rgba(91,168,232,.07);border:1px solid rgba(91,168,232,.25);border-radius:8px;padding:10px 12px;margin-top:8px;font-size:.76rem;color:var(--text2);line-height:1.6">
         <b>T1→T2移行</b>を確定します。<br>
-        継続する場合も、個別化・販売候補・死亡の場合もすべてここで選んで保存してください。<br>
-        <span style="color:var(--text3)">※ T2移行後の通常交換は「継続読取りモード」を使います。</span>
+        ユニットを解体して、各個体を <b>個別化</b>・<b>販売候補</b>・<b>死亡</b> のいずれかに振り分けてください。<br>
+        <span style="color:var(--text3)">※ 2頭そのまま継続飼育する場合はここには入らず、「継続読取りモード」で体重だけ記録します。</span>
       </div>
 
       <div style="margin-top:8px;border-radius:10px;border:1.5px solid var(--border);background:var(--surface1,var(--surface));padding:12px 14px">
@@ -364,8 +372,9 @@ function _renderT2MemberCard(m, idx, s) {
       ${lbl}</button>`;
   }).join('');
 
+  // [20260420b] T2移行では「継続」を削除（継続 = 継続読取りモードで行う）
+  //             ユニットは必ず解体され、個別化/販売候補/死亡 のいずれかになる
   const decisionDefs = [
-    { key: 'continue',      lbl: '継続',     color: 'var(--blue)',  bg: 'rgba(91,168,232,.18)',  desc: '→ T2マットで2頭継続飼育します' },
     { key: 'individualize', lbl: '個別化',   color: 'var(--green)', bg: 'rgba(76,175,120,.18)',  desc: '→ 個体台帳に登録して個別飼育へ' },
     { key: 'sale',          lbl: '販売候補', color: 'var(--amber)', bg: 'rgba(224,144,64,.18)',  desc: '→ 販売候補として個体台帳に登録' },
   ];
@@ -489,8 +498,8 @@ function _renderT2MemberCard(m, idx, s) {
 }
 
 function _renderT2Summary(s) {
+  // [20260420b] 継続オプション削除に伴い、サマリからも継続行を削除
   const cnt = {
-    continue:     s.members.filter(m => m.decision === 'continue').length,
     individualize:s.members.filter(m => m.decision === 'individualize').length,
     sale:         s.members.filter(m => m.decision === 'sale').length,
     dead:         s.members.filter(m => m.decision === 'dead').length,
@@ -501,7 +510,6 @@ function _renderT2Summary(s) {
   <div style="background:var(--surface2);border-radius:10px;padding:12px 14px;margin-top:12px">
     <div style="font-size:.78rem;font-weight:700;color:var(--text2);margin-bottom:8px">判断サマリ</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:.8rem">
-      <div style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:var(--blue);flex-shrink:0"></span><span>継続</span><b style="margin-left:auto;color:var(--blue)">${cnt.continue}頭</b></div>
       <div style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:var(--green);flex-shrink:0"></span><span>個別化</span><b style="margin-left:auto;color:var(--green)">${cnt.individualize}頭</b></div>
       <div style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:var(--amber);flex-shrink:0"></span><span>販売候補</span><b style="margin-left:auto;color:var(--amber)">${cnt.sale}頭</b></div>
       <div style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:var(--red,#e05050);flex-shrink:0"></span><span>死亡</span><b style="margin-left:auto;color:var(--red,#e05050)">${cnt.dead}頭</b></div>
@@ -642,7 +650,7 @@ Pages._t2SessionSave = async function () {
     UI.toast('全頭の判断を完了してください（体重も入力してください）', 'error'); return;
   }
 
-  const continueCount     = s.members.filter(m => m.decision === 'continue').length;
+  // [20260420b] 継続削除 → ユニットは必ず解体される前提に
   const individualizeCount= s.members.filter(m => m.decision === 'individualize').length;
   const saleCount         = s.members.filter(m => m.decision === 'sale').length;
   const deadCount         = s.members.filter(m => m.decision === 'dead').length;
@@ -650,7 +658,8 @@ Pages._t2SessionSave = async function () {
 
   const confirmMsg =
     `T2移行を確定します（取り消せません）\n\nユニット: ${s.display_id}\n由来ロット: ${_formatOriginLots(s.origin_lots)}\n\n` +
-    `継続: ${continueCount}頭 → ${nextPhase}ユニット維持\n個別化: ${individualizeCount}頭 → 個体台帳へ\n販売候補: ${saleCount}頭\n死亡: ${deadCount}頭`;
+    `個別化: ${individualizeCount}頭 → 個体台帳へ\n販売候補: ${saleCount}頭\n死亡: ${deadCount}頭\n\n` +
+    `※ このユニットは解体され、status = individualized になります`;
   if (!confirm(confirmMsg)) return;
 
   s.saving = true; _renderT2Session(s);
@@ -689,7 +698,9 @@ Pages._t2SessionSave = async function () {
       lot_display_id: m.lot_display_id||'', size_category: m.size_category||'',
       weight_g: m.weight_g||null, sex: m.sex||'不明', memo: m.memo||'',
     }));
-    const _unitPatch = { t2_done:true, stage_phase:'T2', status:'active', members:JSON.stringify(_sessionMembers) };
+    // [20260420b] T2移行は必ずユニット解体 → status: 'individualized'
+    //             （GAS レスポンスで上書きされるがフォールバック値として正しい状態に）
+    const _unitPatch = { t2_done:true, stage_phase:'T2', status:'individualized', members:JSON.stringify(_sessionMembers) };
 
     if (res && res.updated_unit) {
       const _merged = Object.assign({}, _unitPatch, res.updated_unit);
@@ -707,7 +718,8 @@ Pages._t2SessionSave = async function () {
     window._t2Session = null; localStorage.removeItem('_t2SessionData');
     UI.toast('T2移行を完了しました ✅', 'success', 3000);
 
-    const _indMembers = s.members.filter(function(m){ return m.decision === 'individualize'; });
+    // [20260420b] ラベル発行対象 = 個別化 + 販売候補（死亡はスキップ）
+    const _indMembers = s.members.filter(function(m){ return m.decision === 'individualize' || m.decision === 'sale'; });
     const _createdInds = (res && Array.isArray(res.created_individuals)) ? res.created_individuals : [];
     if (_indMembers.length > 0 && _createdInds.length > 0) {
       const _indIds = _createdInds.map(function(i){ return i.ind_id; });
