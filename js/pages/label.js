@@ -1,6 +1,17 @@
 // FILE: js/pages/label.js
-// build: 20260420j
+// build: 20260420k
 // 修正:
+//   - [20260420k] T1ユニットラベル (t1_unit) の表記・レイアウト改善
+//       ① 全角コロン統一: 区分: → 区分： / M: → M： / St: → St： / 由来: → 由来：
+//       ② M+Mx 1行統合: M行の末尾に Mx：□ON ■OFF を常時表示（条件分岐削除）
+//          以前は mat==='T2'||'T3' の時のみ独立行で Mx 表示していた
+//       ③ チェックボックス間は &nbsp; 1個で統一（7pxフォント時に約1文字分の間隔）
+//       ④ 頭数+性別を absolute 配置で右上固定
+//          以前は flex 列で「ID+頭数」並列→align-items:center で ID 上下に余白が出ていた
+//          新版: 頭数+sex は絶対配置、ID/孵化日/由来 は line-height:1.3 で上詰め
+//       ⑤ 孵化日フォント 7.5px → 8px（目立たせる）+ line-height 1.5 → 1.3（詰める）
+//       ⑥ Mx判定ロジック (A案): unit の直近成長記録の has_malt を参照
+//          成長記録が無い場合は mat_type === 'T2' で自動 ON とする（運用ルール: T2=モルト必須）
 //   - [20260420j] 孵化日 Date.toString() 形式対応（全ラベル共通）
 //       問題: GAS側 _getLotHatchDate が String(dateObject) を返すため
 //              "Fri Dec 05 2025 00:00:00 GMT+0900 (日本標準時)" 形式の文字列が
@@ -45,7 +56,7 @@
 //   - Bug 3: _backRoute が存在する場合に「詳細に戻る」ボタンを追加
 'use strict';
 
-window._LABEL_BUILD = '20260420j';
+window._LABEL_BUILD = '20260420k';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 // ════════════════════════════════════════════════════════════════
@@ -665,9 +676,36 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         });
         if (lotDisplayIds.length > 0) {
           const short = lotDisplayIds.map(d => { const m = d.match(/[A-Z0-9]+-L\d+/); return m ? m[0] : d; });
-          _originLotsStr = '由来: ' + short.join(' / ');
+          // [20260420k] 半角コロン → 全角コロンに統一
+          _originLotsStr = '由来：' + short.join(' / ');
         }
       } catch(_e) {}
+
+      // [20260420k] Mx (モルト) 判定ロジック — A案: 直近成長記録の has_malt を参照
+      //   1) unit.unit_id または display_id の成長記録から最新の has_malt を取得
+      //   2) 成長記録が無ければ mat_type === 'T2' でフォールバック判定
+      //      (業務ルール: T2マットはモルトパウダー40%混合が必須)
+      //   3) 例外時も (2) のフォールバックで安全側に倒す
+      let _matMolt = false;
+      try {
+        const _unitIdForGrowth = unit.unit_id || _genDisplayId;
+        let _grRecs = Store.getGrowthRecords ? Store.getGrowthRecords(_unitIdForGrowth) : null;
+        if ((!_grRecs || !_grRecs.length) && unit.unit_id && unit.unit_id !== _genDisplayId) {
+          _grRecs = Store.getGrowthRecords(_genDisplayId);
+        }
+        if (_grRecs && _grRecs.length > 0) {
+          const _sortedGr = _grRecs.slice().sort(function(a,b){
+            return String(b.record_date||'').localeCompare(String(a.record_date||''));
+          });
+          const _hm = _sortedGr[0].has_malt;
+          _matMolt = (_hm === true || _hm === 'true' || _hm === 1 || _hm === '1');
+        } else {
+          _matMolt = (unit.mat_type === 'T2');
+        }
+      } catch(_mmErr) {
+        _matMolt = (unit.mat_type === 'T2');
+      }
+
       ld = {
         qr_text:       `BU:${_genDisplayId}`,
         display_id:    _genDisplayId,
@@ -677,6 +715,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         size_category: unit.size_category || '',
         hatch_date:    unit.hatch_date  || '',
         mat_type:      unit.mat_type    || 'T1',
+        mat_molt:      _matMolt,  // [20260420k] Mx表示用 (has_malt由来、未取得時はT2フォールバック)
         for_sale:      _genForSale,
         members:       unit.members     || [],
         records:       [],
@@ -1388,8 +1427,14 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
       + _maleSide + '&#183;' + _femaleSide + '</span>';
   }
 
-  var showMx = (mat === 'T2' || mat === 'T3');
+  // [20260420k] Mx は常時表示に変更（showMx 条件分岐を削除）
+  //             mxIsOn は _lblGenerate の UNIT ブランチで has_malt から計算済み
   var mxIsOn = ld.mat_molt === true || ld.mat_molt === 'true';
+
+  // [20260420k] マージン無しのコンパクト版チェックボックス（&nbsp; で区切る前提）
+  function chkC(label, checked) {
+    return (checked ? '■' : '□') + label;
+  }
 
   var tdU = 'border:1.5px solid #000;padding:4px 2px;font-size:8px;font-weight:700;color:#000;text-align:center';
   var thS = 'border:1.5px solid #000;padding:2px 2px;font-size:7.5px;font-weight:700;background:#000;color:#fff;text-align:center';
@@ -1417,12 +1462,14 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
   var unitSuffixHtml = unitSuffix ? '<span style="' + bLg + '">' + unitSuffix + '</span>' : '';
   var saleBadge = forSale
     ? '<span style="border:1.5px solid #000;padding:0 3px;font-size:7px;font-weight:700;color:#000;margin-left:3px">販売</span>' : '';
-  // [20260420j] T1ユニットラベルも孵化日を正規化＋表記改善
+
+  // [20260420k] 孵化日フォント 7.5px → 8px + line-height 1.5 → 1.3 + padding-right:13mm
+  //             padding-right は絶対配置の頭数+性別ボックスと重ならないため
   var _hatchNormU = _normalizeDateForLabel(ld.hatch_date);
   var hatchHtml = _hatchNormU
-    ? '<div style="font-size:7.5px;font-weight:700;color:#000;line-height:1.5">孵化日：' + _hatchNormU + '</div>' : '';
+    ? '<div style="font-size:8px;font-weight:700;color:#000;line-height:1.3;padding-right:13mm">孵化日：' + _hatchNormU + '</div>' : '';
   var originHtml = originLS
-    ? '<div style="font-size:6px;font-weight:700;color:#000;line-height:1.5">' + originLS + '</div>' : '';
+    ? '<div style="font-size:6px;font-weight:700;color:#000;line-height:1.4">' + originLS + '</div>' : '';
 
   return '<!DOCTYPE html>\n<html><head><meta charset="utf-8">\n<style>\n'
     + '  @page { size: 62mm 70mm; margin: 0; }\n'
@@ -1434,26 +1481,37 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
     + '  <div style="position:relative;background:#000;color:#fff;font-size:9px;font-weight:700;padding:0.8mm 2mm;height:5mm;display:flex;align-items:center;flex-shrink:0;overflow:hidden">'
     + '<span style="position:absolute;top:0;left:0;right:0;bottom:0;background:repeating-linear-gradient(45deg,transparent 0,transparent 4px,rgba(255,255,255,0.28) 4px,rgba(255,255,255,0.28) 6px);pointer-events:none"></span>'
     + '<span style="position:relative;z-index:1">ユニット | HerculesOS' + saleBadge + '</span></div>\n'
-    + '  <div style="display:flex;padding:1mm 1.5mm 0;gap:0;flex-shrink:0">\n'
+    // [20260420k] outer padding 1mm → 0.5mm で上詰め
+    + '  <div style="display:flex;padding:0.5mm 1.5mm 0;gap:0;flex-shrink:0">\n'
     + '    <div style="flex-shrink:0;margin-right:1.5mm">' + _qrBox(qr, 44) + '</div>\n'
-    + '    <div style="flex:1;min-width:0;padding-left:1.5mm;border-left:2px solid #000">\n'
-    + '      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;flex-wrap:nowrap">\n'
-    + '        <div style="display:flex;align-items:center;white-space:nowrap;overflow:hidden">'
-    + (prefix ? '<span style="font-size:7px;font-weight:700;color:#000;margin-right:1px;flex-shrink:0">' + prefix + '-</span>' : '')
-    + lineBadgeHtml + unitSuffixHtml + '</div>\n'
-    + '        <div style="flex-shrink:0;margin-left:2px;display:flex;flex-direction:column;align-items:center;gap:2px">'
+    // [20260420k] position:relative を追加（absolute 配置の頭数+性別ボックスの基準点）
+    + '    <div style="flex:1;min-width:0;padding-left:1.5mm;border-left:2px solid #000;position:relative">\n'
+    // [20260420k] 頭数+性別を absolute 配置で右上固定（ID/孵化日と横並びに見せる）
+    + '      <div style="position:absolute;top:0;right:0;display:flex;flex-direction:column;align-items:center;gap:1px">'
     + countBadge
     + (unitSexHtml ? '<div style="font-size:9px;font-weight:700;color:#000;text-align:center">' + unitSexHtml + '</div>' : '')
-    + '</div>\n      </div>\n'
+    + '</div>\n'
+    // [20260420k] ID行: countBadge 並置を解除、padding-right:13mm で absolute 領域と衝突回避
+    + '      <div style="display:flex;align-items:center;white-space:nowrap;overflow:hidden;padding-right:13mm;line-height:1.3">'
+    + (prefix ? '<span style="font-size:7px;font-weight:700;color:#000;margin-right:1px;flex-shrink:0">' + prefix + '-</span>' : '')
+    + lineBadgeHtml + unitSuffixHtml + '</div>\n'
+    // 孵化日 (padding-right は hatchHtml 側のインラインスタイルで設定済み)
     + '      ' + hatchHtml + '\n'
+    // 由来 (フル幅、absolute 領域は孵化日の下で終わる想定)
     + '      ' + originHtml + '\n'
-    + '      <div style="font-size:7px;font-weight:700;color:#000;line-height:1.6">区分:'
-    + chk('大', sizeCats.indexOf('大')>=0) + chk('中', sizeCats.indexOf('中')>=0) + chk('小', sizeCats.indexOf('小')>=0) + '</div>\n'
-    + '      <div style="font-size:7px;font-weight:700;color:#000;line-height:1.6">M:'
-    + ['T0','T1','T2','T3'].map(function(m){ return chk(m, mat===m); }).join('') + '</div>\n'
-    + '      <div style="font-size:7px;font-weight:700;color:#000;line-height:1.6">St:'
+    // [20260420k] 区分: → 区分： + &nbsp; 区切り
+    + '      <div style="font-size:7px;font-weight:700;color:#000;line-height:1.6">区分：'
+    + chkC('大', sizeCats.indexOf('大')>=0) + '&nbsp;'
+    + chkC('中', sizeCats.indexOf('中')>=0) + '&nbsp;'
+    + chkC('小', sizeCats.indexOf('小')>=0) + '</div>\n'
+    // [20260420k] M + Mx を 1行に統合、全角コロン、&nbsp; 区切り、flex で M と Mx の間に 3mm gap
+    + '      <div style="font-size:7px;font-weight:700;color:#000;line-height:1.6;display:flex;align-items:baseline;gap:3mm">'
+    + '<span>M：' + ['T0','T1','T2','T3'].map(function(m){ return chkC(m, mat===m); }).join('&nbsp;') + '</span>'
+    + '<span>Mx：' + chkC('ON', mxIsOn) + '&nbsp;' + chkC('OFF', !mxIsOn) + '</span>'
+    + '</div>\n'
+    // [20260420k] St: → St：
+    + '      <div style="font-size:7px;font-weight:700;color:#000;line-height:1.6">St：'
     + _stageCheckboxRow(ld.stage_code || 'T1') + '</div>\n'
-    + (showMx ? '      <div style="font-size:7px;font-weight:700;color:#000;line-height:1.6">Mx:' + chk('ON', mxIsOn) + chk('OFF', !mxIsOn) + '</div>\n' : '')
     + '    </div>\n  </div>\n'
     + '  <div style="border-top:1.5px solid #000;margin:0.8mm 1.5mm 0"></div>\n'
     + '  <div style="flex:1;padding:0 1.5mm 0.5mm;overflow:hidden">\n'
