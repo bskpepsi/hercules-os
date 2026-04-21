@@ -1,6 +1,15 @@
 // FILE: js/pages/label.js
-// build: 20260420l
+// build: 20260420m
 // 修正:
+//   - [20260420m] ロットラベル 採卵日 空欄バグ修正（note 文字列からのフォールバック抽出）
+//       問題: egg-lot-bulk で作成した lot の 採卵日 がラベル上で空欄になる
+//       原因: LOT テーブルに collect_date 列が存在せず、egg-lot-bulk は
+//              採卵日を note フィールドに "採卵日: YYYY/MM/DD" 文字列として
+//              埋め込んでいるだけで、構造化された日付カラムには書き込んでいない
+//       対応: label.js LOT ブランチで lot.collect_date / lot.hatch_date 共に空の場合、
+//              lot.note から "採卵日: YYYY/MM/DD" 形式を正規表現抽出して collect_date に設定
+//       注: 恒久対応としては LotApi.createLotBulk で lotData.hatch_date を
+//          受け取って LOT.hatch_date に書き込むべき（次回の宿題）
 //   - [20260420l] T2セッション個体化フローのラベルキュー表示バグ修正
 //       問題: ユニットT2移行時、複数頭を「個別化」決定しても
 //              1枚目のラベル発行後「次のラベルへ」ボタンが出ず2枚目以降が発行不能だった
@@ -67,7 +76,7 @@
 //   - Bug 3: _backRoute が存在する場合に「詳細に戻る」ボタンを追加
 'use strict';
 
-window._LABEL_BUILD = '20260420l';
+window._LABEL_BUILD = '20260420m';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 // ════════════════════════════════════════════════════════════════
@@ -636,6 +645,21 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
       const records = Store.getGrowthRecords(targetId) || [];
       const isMolt  = lot.mat_molt === true || lot.mat_molt === 'true';
       const autoType= (lot.stage === 'EGG' || lot.stage === 'T0' || lot.stage === 'L1L2') ? 'egg_lot' : 'multi_lot';
+
+      // [20260420m] 採卵日 抽出フォールバック
+      //   現状 LOT テーブルには collect_date 列が無く、egg-lot-bulk は採卵日を
+      //   note フィールドに "採卵日: YYYY/MM/DD" 文字列として保存しているため、
+      //   lot.collect_date / lot.hatch_date が空でも note から抽出して表示する。
+      //   本来は LotApi.createLotBulk で hatch_date に保存するのが望ましいが、
+      //   既存データを救済するためここで読み取りフォールバックを実装。
+      var _noteCollectDate = '';
+      if (!lot.collect_date && !lot.hatch_date && lot.note) {
+        var _noteMatch = String(lot.note).match(/採卵日[:：]?\s*(\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2})/);
+        if (_noteMatch) {
+          _noteCollectDate = _normalizeDateForLabel(_noteMatch[1]);
+        }
+      }
+
       ld = {
         qr_text:      `LOT:${lot.lot_id || targetId}`,
         display_id:   lot.display_id    || targetId,
@@ -648,7 +672,11 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         sex_hint:     lot.sex_hint      || '',
         size_category:lot.size_category || '',
         note_private: lot.note_private  || '',
-        collect_date: lot.collect_date  || lot.hatch_date  || '',
+        // [20260420m] collect_date の優先順位:
+        //   1) lot.collect_date (将来スキーマ対応)
+        //   2) lot.hatch_date (egg-lot 運用で代用)
+        //   3) note から "採卵日: YYYY/MM/DD" を抽出 (既存データ救済)
+        collect_date: lot.collect_date || lot.hatch_date || _noteCollectDate || '',
         records:      records.slice().sort((a,b)=>String(b.record_date).localeCompare(String(a.record_date))).slice(0,8),
         label_type:   labelType || autoType,
       };
