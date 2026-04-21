@@ -1,6 +1,14 @@
 // FILE: js/pages/t2_session.js
-// build: 20260420b
+// build: 20260420d
 // 変更点:
+//   - [20260420d] マット種別とモルトパウダーの連動実装
+//       マット種別選択時に mat_molt を自動切り替え: T2=ON, それ以外(T1/T3/MD)=OFF
+//       一括設定（_t2SetMatAll）と個別設定（_t2SetMemberMat）の両方で連動
+//       ユーザーは手動でトグルすることも可能（連動は選択時のみ）
+//   - [20260420c] T2移行セッション開始時に性別情報を引き継ぐバグ修正
+//       _buildT2Members: sex を '不明' ハードコードしていたのを src.sex を読み取るよう修正
+//       ユニット詳細で編集済みの ♂/♀/不明 が T2移行画面に反映されるようになる
+//       同様に memo も引き継ぐよう修正（以前は空文字ハードコード）
 //   - [20260420b] T2移行フローを「ユニット解体」モードに整理
 //       判断選択肢から「継続」を削除 → 「個別化 / 販売候補」の2択（死亡は独立ボタン）
 //       継続飼育 = 継続読取りモードで行う運用に分離
@@ -18,7 +26,7 @@
 //   - _renderT2Session: lineDisp に同じフォールバック追加
 'use strict';
 
-console.log('[HerculesOS] t2_session.js v20260420b loaded');
+console.log('[HerculesOS] t2_session.js v20260420d loaded');
 
 window._t2Session = window._t2Session || null;
 
@@ -157,14 +165,18 @@ function _buildT2Members(unit) {
       size_category: sizeCategory,
       t1_weight_g:   src.weight_g || (growthBySLot[slotNo] && growthBySLot[slotNo].weight_g) || null,
       weight_g:      null,
-      sex:           '不明',
+      // [20260420c] ユニットで設定済みの性別を引き継ぐ（以前は '不明' ハードコード）
+      //   unit.members JSON に保存されている src.sex を優先、なければ「不明」
+      sex:           (src.sex === '♂' || src.sex === '♀' || src.sex === '不明') ? src.sex : '不明',
       status:        'normal',
+      // [20260420d] 初期マット種別 = T2 → モルトパウダー ON
+      //   _t2SetMatAll / _t2SetMemberMat と同じロジックを使用
       mat_molt:      true,
       container:     '2.7L',
       mat_type:      'T2',
       exchange_type: 'FULL',
       decision:      null,
-      memo:          '',
+      memo:          src.memo || '',
     });
   }
   return result;
@@ -605,7 +617,14 @@ Pages._t2SetMemberContainer = function(idx, v) {
 };
 Pages._t2SetMemberMat = function(idx, v) {
   const s = window._t2Session; if (!s) return;
-  const m = s.members[idx]; if (m) { m.mat_type = v; _renderT2Session(s); }
+  const m = s.members[idx];
+  if (m) {
+    m.mat_type = v;
+    // [20260420d] マット種別とモルトパウダーを連動
+    //   T2 マット選択 → モルトパウダー ON、それ以外 → OFF
+    m.mat_molt = (v === 'T2');
+    _renderT2Session(s);
+  }
 };
 Pages._t2SetMolt = function(idx, val) {
   const s = window._t2Session; if (!s) return;
@@ -616,7 +635,17 @@ Pages._t2SetMatType = function(v) {
 };
 Pages._t2SetMatAll = function(v) {
   const s = window._t2Session; if (!s) return;
-  s.mat_type = v; s.members.forEach(function(m) { if (m.status !== 'dead') m.mat_type = v; }); _renderT2Session(s);
+  s.mat_type = v;
+  // [20260420d] マット一括設定時にモルトパウダーも連動
+  //   T2 マット選択 → モルトパウダー ON、それ以外 → OFF
+  const moltVal = (v === 'T2');
+  s.members.forEach(function(m) {
+    if (m.status !== 'dead') {
+      m.mat_type = v;
+      m.mat_molt = moltVal;
+    }
+  });
+  _renderT2Session(s);
 };
 Pages._t2SetExchangeAll = function(v) {
   const s = window._t2Session; if (!s) return;
