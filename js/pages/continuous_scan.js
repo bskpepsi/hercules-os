@@ -1,35 +1,11 @@
-// FILE: js/pages/continuous_scan.js  build: 20260420b
-// 変更点(20260420a→20260420b):
-//   - _cscanAttachExistingMatches: 既存レコードとマッチした行について、
-//     マット/容器/交換タイプを DB スナップショットから復元するように変更。
-//     これまでは OCR 最新値(例: T3/4.8L)が全行に適用されていたため、
-//     過去の記録行(例: 4/18 T1, 4/20 T2)まで T3 に上書きされていた問題を修正。
-//     既存行は過去値を保持、新規追加行だけが OCR 最新値を使う。
-//
-// 変更点(20260418k→20260420a):
-//   - 共通設定から「記録日（デフォルト）」フィールドを削除
-//     （テーブル各行に日付入力があるため重複。削除後は各行のdate空欄時に
-//      OCR record_date / 今日の日付でフォールバック）
-//   - 性別ボタンの表記を変更（単独スキャン / batchScan 両方）
-//     「◯♂ 雄」→「♂ オス」、「◯♀ 雌」→「♀ メス」、「不明」/「未確定」→「不明」
-//   - 🎯 重複登録バグ修正（最重要）
-//     これまで _state.tableRows の全行を無条件に API.growth.create していたため、
-//     OCRでラベルの過去分を読み取ると必ず二重登録になっていた。
-//     以下のロジックを追加:
-//       1. confirm 画面進入時に Store.getGrowthRecords(targetId) で既存を取得
-//       2. 日付(+unit_slot_no)で既存とOCR行をマッチング
-//          → 各行(スロット毎)に _existing_1 / _existing_2 を保存
-//             ({record_id, weight_g, date, exchange, mat_type, container})
-//       3. 保存時、既存マッチがある場合:
-//            - スナップショットと変化なし → skip（二重登録防止）
-//            - 変化あり → API.growth.update({record_id, ...差分})
-//          既存マッチがない場合 → API.growth.create(...)（従来通り）
-//       4. UI: 既存＋未変更セルは通常背景、修正された既存セル/新規行は
-//          既存のOCR状態色(high/low/manual)で表示され視覚的に差分が見える
-//       5. stage（共通設定）は新規行のみに適用、既存行の stage は変更しない
-//     batchScan（_bsSaveItem）も同様に対応
-//
-// 変更点(20260418j→20260418k):
+// FILE: js/pages/continuous_scan.js  build: 20260421g
+// 変更点(20260418k→20260421g):
+//   - [20260421g] ユニットの継続読取りで mat_type 変更をユニット本体に反映
+//       従来: 成長記録には mat_type が記録されるが unit.mat_type は更新されず、
+//       基本情報が古いマット種別のまま、アクションボタンも古い stage_phase のまま。
+//       修正: 保存完了時、テーブル最終行の mat_type を見て unit.mat_type と
+//       stage_phase (T0/T1→T1, T2→T2, T3/MD→T3) を連動更新。
+//       併せて container_size も最終行があれば更新。
 //   - 継続読取り画面の戻るボタン（←）の遷移先を明示的に決定
 //     params.targetType/displayId から正しい元画面に戻す。
 //     以前は Store.back() 依存で、ユニット詳細→継続読取り→←の経路で
@@ -61,7 +37,7 @@
 //   - 右列交換欄を□全/□追表示、個体8行対応
 
 'use strict';
-console.log('[HerculesOS] continuous_scan.js v20260420b loaded');
+console.log('[HerculesOS] continuous_scan.js v20260421g loaded');
 
 // ────────────────────────────────────────────────────────────────
 // 共有ユーティリティ（continuousScan / batchScan 両方から使用）
@@ -91,163 +67,6 @@ function _preprocessCanvas(canvas, ctx, w, h) {
   var rng=mx-mn||1;
   for (var j=0;j<ga.length;j++){var bw=Math.round((ga[j]-mn)/rng*255)>128?255:0;px[j*4]=px[j*4+1]=px[j*4+2]=bw;px[j*4+3]=255;}
   ctx.putImageData(d,0,0); return ctx.getImageData(0,0,w,h);
-}
-
-// ────────────────────────────────────────────────────────────────
-// [20260420a] 既存成長記録とのマッチング用ヘルパー
-// ────────────────────────────────────────────────────────────────
-
-// 日付文字列を YYYY/MM/DD (zero-padded) に正規化
-//   受付パターン: "4/20", "04/20", "2026/4/20", "2026-04-20", Date オブジェクト, ...
-//   不明な形式は空文字を返す
-function _cscanNormalizeDate(v) {
-  if (v === null || v === undefined || v === '') return '';
-  // Date オブジェクト
-  if (v instanceof Date) {
-    var yy = v.getFullYear();
-    var mm = String(v.getMonth() + 1).padStart(2, '0');
-    var dd = String(v.getDate()).padStart(2, '0');
-    return yy + '/' + mm + '/' + dd;
-  }
-  var s = String(v).trim().replace(/-/g, '/');
-  // YYYY/MM/DD(T...) → 日付部分だけ取り出し
-  var m3 = s.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})/);
-  if (m3) return m3[1] + '/' + m3[2].padStart(2,'0') + '/' + m3[3].padStart(2,'0');
-  // MM/DD → 当年を補完
-  var m2 = s.match(/^(\d{1,2})\/(\d{1,2})$/);
-  if (m2) {
-    var yr = new Date().getFullYear();
-    return yr + '/' + m2[1].padStart(2,'0') + '/' + m2[2].padStart(2,'0');
-  }
-  return '';
-}
-
-// 既存成長記録とテーブル行をマッチングして、各行に _existing_1 / _existing_2 を付与
-//   args:
-//     tableRows  : _buildTableRows / _bsBuildTableRows の戻り値
-//     targetType : 'BU' または 'IND' (成長記録の target_type フィルタ用)
-//     targetId   : unit_id または ind_id
-//     isUnit     : true=ユニット(スロット2) / false=個体(スロット1のみ)
-//   side effect:
-//     各 row の _existing_1 / _existing_2 を設定（マッチなしは null）
-//     { record_id, record_date_norm, weight_g, exchange_type, mat_type, container_size } のスナップショット
-//   副作用: tableRows を直接変更
-function _cscanAttachExistingMatches(tableRows, targetType, targetId, isUnit) {
-  if (!Array.isArray(tableRows) || !targetId) return;
-
-  // 既存記録を取得
-  var allRecords = [];
-  try {
-    if (typeof Store !== 'undefined' && typeof Store.getGrowthRecords === 'function') {
-      allRecords = Store.getGrowthRecords(targetId) || [];
-    }
-  } catch (e) {
-    console.warn('[cscan] 既存記録取得失敗:', e.message);
-    return;
-  }
-
-  // target_type フィルタ + unit の場合 slot でグルーピング
-  //   BU: target_type in ['BU','UNIT'] (履歴互換)
-  //   IND: target_type = 'IND'
-  var typeSet = isUnit ? { 'BU':1, 'UNIT':1 } : { 'IND':1 };
-  var byDateSlot = {}; // key: date_norm + '|' + slot → record
-  allRecords.forEach(function(r) {
-    if (!r || !typeSet[String(r.target_type || '').toUpperCase()]) return;
-    var dn = _cscanNormalizeDate(r.record_date);
-    if (!dn) return;
-    var slot = isUnit ? (parseInt(r.unit_slot_no, 10) || 1) : 1;
-    var key = dn + '|' + slot;
-    // 同じ日付+スロットで複数レコードがある場合、最新 created_at を優先
-    if (!byDateSlot[key] ||
-        String(r.created_at || '') > String(byDateSlot[key].created_at || '')) {
-      byDateSlot[key] = r;
-    }
-  });
-
-  // テーブル行ごとにマッチング
-  tableRows.forEach(function(row) {
-    if (!row) return;
-    var dn = _cscanNormalizeDate(row.date);
-    if (!dn) {
-      row._existing_1 = null;
-      if (isUnit) row._existing_2 = null;
-      return;
-    }
-    // スロット1
-    var rec1 = byDateSlot[dn + '|1'];
-    row._existing_1 = rec1 ? _cscanRecordToSnapshot(rec1) : null;
-    // スロット2（ユニットのみ）
-    if (isUnit) {
-      var rec2 = byDateSlot[dn + '|2'];
-      row._existing_2 = rec2 ? _cscanRecordToSnapshot(rec2) : null;
-    }
-
-    // [20260420b] 既存マッチがあれば、行の mat_type / container / exchange を
-    //   DB スナップショットから復元する。
-    //   OCRの最新マット(defMat)が全行に自動引継されていたため、過去行の
-    //   値が上書きされていた。復元により、過去行は過去値を保持し、新規行のみ
-    //   OCR 最新値を使うという動作になる。
-    //   両スロットの値は同じ前提（ユニット=同容器）で slot1 優先、fallback slot2。
-    var snap = row._existing_1 || row._existing_2;
-    if (snap) {
-      if (snap.mat_type !== undefined && snap.mat_type !== '') {
-        row.mat_type = snap.mat_type;
-      }
-      if (snap.container !== undefined && snap.container !== '') {
-        row.container = snap.container;
-      }
-      if (snap.exchange_type !== undefined && snap.exchange_type !== '' && snap.exchange_type !== 'NONE') {
-        row.exchange = snap.exchange_type;
-      }
-      // state は 'auto'（薄い青＝自動引継扱い）のまま維持
-      // → 既存値の復元も「自動」カテゴリとして同色で表現（ユーザー編集時に 'manual' に変わる）
-    }
-  });
-}
-
-// 成長記録オブジェクトから差分比較用スナップショットを生成
-function _cscanRecordToSnapshot(r) {
-  return {
-    record_id:     r.record_id || '',
-    record_date:   _cscanNormalizeDate(r.record_date),
-    weight_g:      (r.weight_g !== '' && r.weight_g !== null && r.weight_g !== undefined)
-                   ? Number(r.weight_g) : '',
-    exchange_type: String(r.exchange_type || ''),
-    mat_type:      String(r.mat_type || ''),
-    container:     String(r.container || ''),
-    stage:         String(r.stage || ''),
-  };
-}
-
-// 現在の row の値から「保存時に送信する payload 相当」を slot 別に抽出
-//   戻り値: { record_date, weight_g, exchange_type, mat_type, container }
-function _cscanRowCurrentPayload(row, slotNo) {
-  var rd = _cscanNormalizeDate(row.date);
-  var wt = '';
-  if (slotNo === 1) wt = (row.weight1 !== '' ? parseFloat(row.weight1) : '');
-  else              wt = (row.weight2 !== '' ? parseFloat(row.weight2) : '');
-  if (Number.isNaN(wt)) wt = '';
-  return {
-    record_date:   rd,
-    weight_g:      wt,
-    exchange_type: row.exchange || 'NONE',
-    mat_type:      row.mat_type || '',
-    container:     row.container || '',
-  };
-}
-
-// 既存スナップショット vs 現在値: 差分あるか？
-function _cscanIsModified(snapshot, current) {
-  if (!snapshot) return false;
-  if (_cscanNormalizeDate(snapshot.record_date) !== _cscanNormalizeDate(current.record_date)) return true;
-  // 体重: 数値比較、空はそのまま不一致
-  var sw = snapshot.weight_g === '' ? '' : Number(snapshot.weight_g);
-  var cw = current.weight_g  === '' ? '' : Number(current.weight_g);
-  if (sw !== cw) return true;
-  if (String(snapshot.exchange_type || 'NONE') !== String(current.exchange_type || 'NONE')) return true;
-  if (String(snapshot.mat_type  || '') !== String(current.mat_type  || '')) return true;
-  if (String(snapshot.container || '') !== String(current.container || '')) return true;
-  return false;
 }
 
 // QRコード検出
@@ -525,17 +344,7 @@ Pages.continuousScan = function(params) {
     var prevRecs=(Store.getGrowthRecords&&Store.getGrowthRecords(_state.targetId))||[];
     var lastRec=prevRecs.length?prevRecs.slice().sort(function(a,b){return String(b.record_date).localeCompare(String(a.record_date));})[0]:null;
 
-    if(!_state.tableRows) {
-      _state.tableRows = _buildTableRows(ocr, isUnit);
-      // [20260420a] 既存成長記録とマッチング → _existing_1 / _existing_2 を付与
-      //   保存時に既存 vs 新規 + 変更有無を判定するため
-      try {
-        var _matchType = isUnit ? 'BU' : 'IND';
-        _cscanAttachExistingMatches(_state.tableRows, _matchType, _state.targetId, isUnit);
-      } catch (e) {
-        console.warn('[cscan] 既存マッチング失敗:', e.message);
-      }
-    }
+    if(!_state.tableRows) _state.tableRows=_buildTableRows(ocr,isUnit);
 
     var today=new Date().toISOString().split('T')[0];
     var recDate=(ocr.record_date||today).replace(/\//g,'-');
@@ -597,9 +406,8 @@ Pages.continuousScan = function(params) {
             '<div style="margin-bottom:10px">' +
               '<label style="font-size:.72rem;color:var(--text3);font-weight:700">性別 <span style="font-size:.68rem;color:var(--text3);font-weight:400">（OCRで読んだ◯を反映）</span></label>' +
               '<div style="display:flex;gap:8px;margin-top:6px">' +
-                // [20260420a] ラベル: 「◯♂ 雄」→「♂ オス」、「◯♀ 雌」→「♀ メス」
-                '<button class="btn '+(curSex==='♂'?'btn-primary':'btn-ghost')+'" style="flex:1;padding:10px" onclick="Pages._cScanSetSex(\'♂\')">♂ オス</button>' +
-                '<button class="btn '+(curSex==='♀'?'btn-primary':'btn-ghost')+'" style="flex:1;padding:10px" onclick="Pages._cScanSetSex(\'♀\')">♀ メス</button>' +
+                '<button class="btn '+(curSex==='♂'?'btn-primary':'btn-ghost')+'" style="flex:1;padding:10px" onclick="Pages._cScanSetSex(\'♂\')">◯♂ 雄</button>' +
+                '<button class="btn '+(curSex==='♀'?'btn-primary':'btn-ghost')+'" style="flex:1;padding:10px" onclick="Pages._cScanSetSex(\'♀\')">◯♀ 雌</button>' +
                 '<button class="btn '+(curSex==='不明'||!curSex?'btn-primary':'btn-ghost')+'" style="flex:1;padding:10px" onclick="Pages._cScanSetSex(\'不明\')">不明</button>' +
               '</div>' +
             '</div>' +
@@ -652,9 +460,10 @@ Pages.continuousScan = function(params) {
           })()
         ) +
 
-        // [20260420a] 「記録日（デフォルト）」フィールド削除
-        //   テーブル各行に日付入力があるため重複。各行の date 空欄時は
-        //   OCR record_date または保存時の今日の日付を使用（_cScanSave 参照）。
+        '<div style="margin-bottom:10px">' +
+          '<label style="font-size:.72rem;color:var(--text3);font-weight:700">記録日（デフォルト）</label>' +
+          '<input type="date" id="cs-date" class="input" value="'+recDate+'" style="margin-top:4px">' +
+        '</div>' +
         '<div style="margin-bottom:10px">' +
           '<label style="font-size:.72rem;color:var(--text3);font-weight:700">📊 ステージ <span style="color:var(--red)">*</span></label>' +
           '<select id="cs-stage" class="input" style="margin-top:4px"><option value="">選択...</option>'+stageOpts+'</select>' +
@@ -1010,7 +819,7 @@ Pages.continuousScan = function(params) {
 
   // ── 保存処理 ──────────────────────────────────────────────────
   Pages._cScanSave = async function() {
-    // [20260420a] cs-date 削除済み。各行の date または OCR record_date / 今日を使う
+    var recDate=(document.getElementById('cs-date')&&document.getElementById('cs-date').value||'').replace(/-/g,'/');
     var stage=document.getElementById('cs-stage')&&document.getElementById('cs-stage').value||'';
     var note=document.getElementById('cs-note')&&document.getElementById('cs-note').value||'';
     var isUnit=_state.targetType==='UNIT';
@@ -1044,7 +853,7 @@ Pages.continuousScan = function(params) {
             return await API.growth.create(payload);
           } catch(e) {
             if (attempt < maxRetry) {
-              console.warn('[CS] create retry ' + (attempt+1) + '/' + maxRetry + ':', e.message);
+              console.warn('[CS] save retry ' + (attempt+1) + '/' + maxRetry + ':', e.message);
               await new Promise(function(r){ setTimeout(r, 2000); }); // 2秒待ってリトライ
             } else {
               throw e; // 最終試行も失敗したら投げる
@@ -1052,29 +861,13 @@ Pages.continuousScan = function(params) {
           }
         }
       }
-      // [20260420a] update 用のリトライヘルパー
-      async function _updateWithRetry(payload, maxRetry) {
-        for (var attempt = 0; attempt <= maxRetry; attempt++) {
-          try {
-            return await API.growth.update(payload);
-          } catch(e) {
-            if (attempt < maxRetry) {
-              console.warn('[CS] update retry ' + (attempt+1) + '/' + maxRetry + ':', e.message);
-              await new Promise(function(r){ setTimeout(r, 2000); });
-            } else {
-              throw e;
-            }
-          }
-        }
-      }
 
       try {
-        var createdCount=0, updatedCount=0, skippedCount=0;
+        var savedCount=0;
 
         function mkPayload(row, extra) {
-          var rd=row.date?String(row.date).trim():new Date().toISOString().split('T')[0].replace(/-/g,'/');
+          var rd=row.date?row.date.trim():recDate||new Date().toISOString().split('T')[0].replace(/-/g,'/');
           if(rd&&rd.match(/^\d{1,2}\/\d{1,2}$/)) rd=new Date().getFullYear()+'/'+rd;
-          rd = rd.replace(/-/g,'/');
           var p=Object.assign({
             target_type:_savedTargetType, target_id:_savedTargetId,
             stage:stage, mat_type:row.mat_type||'', container_size:row.container||'',
@@ -1089,39 +882,6 @@ Pages.continuousScan = function(params) {
           return p;
         }
 
-        // [20260420a] 1スロット分のsave処理（既存/変更/新規を判定して振り分け）
-        //   existing → 変更なしなら skip、変更ありなら update
-        //   new → create（従来通り）
-        async function _saveSlot(row, slotNo, extra) {
-          var existing = slotNo === 1 ? row._existing_1 : row._existing_2;
-          var current  = _cscanRowCurrentPayload(row, slotNo);
-
-          if (existing && existing.record_id) {
-            // 既存レコードあり
-            if (!_cscanIsModified(existing, current)) {
-              // 変更なし → skip（重複登録防止）
-              skippedCount++;
-              return;
-            }
-            // 変更あり → update（stage は既存のものを維持するため指定しない）
-            var updPayload = {
-              record_id:     existing.record_id,
-              record_date:   current.record_date,
-              weight_g:      current.weight_g,
-              exchange_type: current.exchange_type,
-              mat_type:      current.mat_type,
-              container:     current.container,
-              note_private:  note,
-            };
-            await _updateWithRetry(updPayload, 2);
-            updatedCount++;
-            return;
-          }
-          // 既存マッチなし → create（従来通り）
-          await _createWithRetry(mkPayload(row, extra), 2);
-          createdCount++;
-        }
-
         if(isUnit){
           for(var i=0;i<rows.length;i++){
             var r=rows[i]; if(!r.weight1&&!r.weight2&&!r.date)continue;
@@ -1130,24 +890,22 @@ Pages.continuousScan = function(params) {
               // [20260418i] スロット1の size_category を追加
               var extra1 = {unit_slot_no:1,weight_g:r.weight1?parseFloat(r.weight1):''};
               if (_savedSlotData[0] && _savedSlotData[0].size_category) extra1.size_category = _savedSlotData[0].size_category;
-              await _saveSlot(r, 1, extra1);
+              await _createWithRetry(mkPayload(r,extra1),2);savedCount++;
             }
             if(r.weight2!==''||mbs[1]){
               // [20260418i] スロット2の size_category を追加
               var extra2 = {unit_slot_no:2,weight_g:r.weight2?parseFloat(r.weight2):''};
               if (_savedSlotData[1] && _savedSlotData[1].size_category) extra2.size_category = _savedSlotData[1].size_category;
-              await _saveSlot(r, 2, extra2);
+              await _createWithRetry(mkPayload(r,extra2),2);savedCount++;
             }
           }
         } else {
           for(var k=0;k<rows.length;k++){
             var row=rows[k]; if(!row.weight1&&!row.date)continue;
-            await _saveSlot(row, 1, {weight_g:row.weight1?parseFloat(row.weight1):''});
+            await _createWithRetry(mkPayload(row,{weight_g:row.weight1?parseFloat(row.weight1):''}),2);
+            savedCount++;
           }
         }
-
-        // [20260420a] 保存結果サマリをログ
-        console.log('[CS] save done: created='+createdCount+' updated='+updatedCount+' skipped='+skippedCount);
 
         // ── [20260418i] ユニットの場合、members JSON に性別/区分を反映 ──
         // 既存メンバー情報を保持しつつ、変更があればユニット台帳を更新
@@ -1203,18 +961,48 @@ Pages.continuousScan = function(params) {
           }
         }
 
-        // [20260420a] 保存結果: 新規/更新/skip を区別して表示
-        var _total = createdCount + updatedCount;
-        if (_total === 0 && skippedCount > 0) {
-          UI.toast('✅ 変更なし（既存'+skippedCount+'件はスキップ）','info',3000);
-        } else {
-          var _msg = '✅ 保存完了: ';
-          var _parts = [];
-          if (createdCount > 0) _parts.push('新規'+createdCount+'件');
-          if (updatedCount > 0) _parts.push('更新'+updatedCount+'件');
-          if (skippedCount > 0) _parts.push('重複スキップ'+skippedCount+'件');
-          UI.toast(_msg + _parts.join(' / '),'success',3500);
+        // ── [20260421g] ユニットの場合、最終行の mat_type を見てユニット本体を更新 ──
+        //   継続読取りで T1 → T2 のようにマット交換した場合、
+        //   成長記録だけでなく unit.mat_type / unit.stage_phase も連動更新する。
+        //   これをしないと「基本情報」のマット種別が古いまま、
+        //   アクションボタンも「T2移行」のまま変わらない問題が発生していた。
+        //   stage_phase マップ: T0/T1→T1, T2→T2, T3/MD→T3
+        if (isUnit && _savedEntity && _savedEntity.unit_id) {
+          try {
+            // 行中で mat_type が入っている最後の行を採用（新しい記録＝下の行が最新）
+            var lastMatRow = null;
+            for (var mi = rows.length - 1; mi >= 0; mi--) {
+              if (rows[mi] && rows[mi].mat_type) { lastMatRow = rows[mi]; break; }
+            }
+            if (lastMatRow && lastMatRow.mat_type) {
+              var newMat = String(lastMatRow.mat_type).trim();
+              var curMat = String(_savedEntity.mat_type || '').trim();
+              if (newMat && newMat !== curMat) {
+                var _phaseMap = { T0:'T1', T1:'T1', T2:'T2', T3:'T3', MD:'T3' };
+                var newPhase = _phaseMap[newMat] || _savedEntity.stage_phase || '';
+                var _containerSize = lastMatRow.container || _savedEntity.container_size || '';
+                var _unitMatUpdate = {
+                  unit_id:    _savedEntity.unit_id,
+                  mat_type:   newMat,
+                  stage_phase: newPhase,
+                };
+                if (_containerSize) _unitMatUpdate.container_size = _containerSize;
+                await API.unit.update(_unitMatUpdate);
+                if (Store.patchDBItem) {
+                  var _patch = { mat_type: newMat, stage_phase: newPhase };
+                  if (_containerSize) _patch.container_size = _containerSize;
+                  Store.patchDBItem('breeding_units', 'unit_id', _savedEntity.unit_id, _patch);
+                }
+                console.log('[CS] unit mat/phase updated:', curMat, '→', newMat, '/ phase:', newPhase);
+              }
+            }
+          } catch (matErr) {
+            console.error('[CS] unit mat update error:', matErr);
+            UI.toast('⚠️ マット種別の反映に失敗: ' + (matErr.message || '通信エラー') + '（記録は保存済み）', 'error', 5000);
+          }
         }
+
+        UI.toast('✅ '+savedCount+'件の記録を保存しました','success',3000);
       } catch(err){
         console.error('[CS] bg save error (all retries failed):',err);
         UI.toast('⚠️ 保存失敗（リトライ2回）: '+(err.message||'通信エラー')+' — 手動で再入力してください','error',8000);
@@ -1485,16 +1273,7 @@ Pages.batchScan = function(params) {
       ? prevRecs.slice().sort(function(a,b){return String(b.record_date).localeCompare(String(a.record_date));})[0]
       : null;
 
-    if(!item.tableRows) {
-      item.tableRows = _bsBuildTableRows(ocr, isUnit);
-      // [20260420a] 既存成長記録とマッチング（dedup用）
-      try {
-        var _bsMatchType = isUnit ? 'BU' : 'IND';
-        _cscanAttachExistingMatches(item.tableRows, _bsMatchType, item.targetId, isUnit);
-      } catch (e) {
-        console.warn('[bs] 既存マッチング失敗:', e.message);
-      }
-    }
+    if(!item.tableRows) item.tableRows = _bsBuildTableRows(ocr, isUnit);
 
     var today   = new Date().toISOString().split('T')[0];
     var recDate = (ocr.record_date||today).replace(/\//g,'-');
@@ -1552,13 +1331,15 @@ Pages.batchScan = function(params) {
           '<div style="margin-bottom:10px">' +
             '<label style="font-size:.72rem;color:var(--text3);font-weight:700">性別</label>' +
             '<div style="display:flex;gap:8px;margin-top:6px">' +
-              // [20260420a] 単独スキャンと表記統一: 「♂ オス」「♀ メス」「不明」
-              '<button class="btn '+(curSex==='♂'?'btn-primary':'btn-ghost')+'" style="flex:1;padding:10px" data-bs-idx="'+idx+'" data-bs-sex="♂" onclick="Pages._bsSetSexBtn(this)">♂ オス</button>' +
-              '<button class="btn '+(curSex==='♀'?'btn-primary':'btn-ghost')+'" style="flex:1;padding:10px" data-bs-idx="'+idx+'" data-bs-sex="♀" onclick="Pages._bsSetSexBtn(this)">♀ メス</button>' +
-              '<button class="btn '+(!curSex?'btn-primary':'btn-ghost')+'" style="flex:1;padding:10px" data-bs-idx="'+idx+'" data-bs-sex="" onclick="Pages._bsSetSexBtn(this)">不明</button>' +
+              '<button class="btn '+(curSex==='♂'?'btn-primary':'btn-ghost')+'" style="flex:1;padding:10px" data-bs-idx="'+idx+'" data-bs-sex="♂" onclick="Pages._bsSetSexBtn(this)">◯♂ 雄確定</button>' +
+              '<button class="btn '+(curSex==='♀'?'btn-primary':'btn-ghost')+'" style="flex:1;padding:10px" data-bs-idx="'+idx+'" data-bs-sex="♀" onclick="Pages._bsSetSexBtn(this)">◯♀ 雌確定</button>' +
+              '<button class="btn '+(!curSex?'btn-primary':'btn-ghost')+'" style="flex:1;padding:10px" data-bs-idx="'+idx+'" data-bs-sex="" onclick="Pages._bsSetSexBtn(this)">未確定</button>' +
             '</div>' +
           '</div>' : '') +
-        // [20260420a] 「記録日」フィールド削除（テーブル各行で日付指定可能なため重複）
+        '<div style="margin-bottom:10px">' +
+          '<label style="font-size:.72rem;color:var(--text3);font-weight:700">記録日</label>' +
+          '<input type="date" id="bs-date" class="input" value="'+recDate+'" style="margin-top:4px">' +
+        '</div>' +
         '<div style="margin-bottom:10px">' +
           '<label style="font-size:.72rem;color:var(--text3);font-weight:700">📊 ステージ <span style="color:var(--red)">*</span></label>' +
           '<select id="bs-stage" class="input" style="margin-top:4px"><option value="">選択...</option>'+stageOpts+'</select>' +
@@ -1834,7 +1615,7 @@ Pages.batchScan = function(params) {
     var item = _queue[idx];
     if(!item) return;
     var stage   = document.getElementById('bs-stage')?.value || '';
-    // [20260420a] bs-date 削除済み。各行の date または 今日を使う
+    var recDate = (document.getElementById('bs-date')?.value||'').replace(/-/g,'/');
     var note    = document.getElementById('bs-note')?.value  || '';
     var isUnit  = item.targetType === 'UNIT';
 
@@ -1850,7 +1631,7 @@ Pages.batchScan = function(params) {
 
     // バックグラウンド保存（リトライ2回）
     (async function() {
-      async function _retryCreate(payload, max) {
+      async function _retry(payload, max) {
         for(var i=0;i<=max;i++){
           try{ return await API.growth.create(payload); }
           catch(e){
@@ -1858,21 +1639,11 @@ Pages.batchScan = function(params) {
           }
         }
       }
-      // [20260420a] update 用のリトライ
-      async function _retryUpdate(payload, max) {
-        for(var i=0;i<=max;i++){
-          try{ return await API.growth.update(payload); }
-          catch(e){
-            if(i<max) await new Promise(function(r){setTimeout(r,2000);}); else throw e;
-          }
-        }
-      }
       try {
-        var createdCount = 0, updatedCount = 0, skippedCount = 0;
+        var savedCount = 0;
         function mkPayload(row, extra) {
-          var rd = row.date?String(row.date).trim():new Date().toISOString().split('T')[0].replace(/-/g,'/');
+          var rd = row.date?row.date.trim():recDate||new Date().toISOString().split('T')[0].replace(/-/g,'/');
           if(rd&&rd.match(/^\d{1,2}\/\d{1,2}$/)) rd=new Date().getFullYear()+'/'+rd;
-          rd = rd.replace(/-/g,'/');
           var p = Object.assign({
             target_type:item.targetType, target_id:item.targetId,
             stage:stage, mat_type:row.mat_type||'', container_size:row.container||'',
@@ -1882,55 +1653,21 @@ Pages.batchScan = function(params) {
           if(!isUnit && item.detectedSex) p.sex = item.detectedSex;
           return p;
         }
-        // [20260420a] 1スロット分の save（既存/変更/新規を判定）
-        async function _bsSaveSlot(row, slotNo, extra) {
-          var existing = slotNo === 1 ? row._existing_1 : row._existing_2;
-          var current  = _cscanRowCurrentPayload(row, slotNo);
-          if (existing && existing.record_id) {
-            if (!_cscanIsModified(existing, current)) {
-              skippedCount++;
-              return;
-            }
-            await _retryUpdate({
-              record_id:     existing.record_id,
-              record_date:   current.record_date,
-              weight_g:      current.weight_g,
-              exchange_type: current.exchange_type,
-              mat_type:      current.mat_type,
-              container:     current.container,
-              note_private:  note,
-            }, 2);
-            updatedCount++;
-            return;
-          }
-          await _retryCreate(mkPayload(row, extra), 2);
-          createdCount++;
-        }
-
         if(isUnit){
           var mbs = item.members||[];
           for(var i=0;i<rows.length;i++){
             var r=rows[i]; if(!r.weight1&&!r.weight2&&!r.date)continue;
-            if(r.weight1!==''||mbs[0]){
-              await _bsSaveSlot(r, 1, {unit_slot_no:1,weight_g:r.weight1?parseFloat(r.weight1):''});
-            }
-            if(r.weight2!==''||mbs[1]){
-              await _bsSaveSlot(r, 2, {unit_slot_no:2,weight_g:r.weight2?parseFloat(r.weight2):''});
-            }
+            if(r.weight1!==''||mbs[0]){await _retry(mkPayload(r,{unit_slot_no:1,weight_g:r.weight1?parseFloat(r.weight1):''}),2);savedCount++;}
+            if(r.weight2!==''||mbs[1]){await _retry(mkPayload(r,{unit_slot_no:2,weight_g:r.weight2?parseFloat(r.weight2):''}),2);savedCount++;}
           }
         } else {
           for(var k=0;k<rows.length;k++){
             var row=rows[k]; if(!row.weight1&&!row.date)continue;
-            await _bsSaveSlot(row, 1, {weight_g:row.weight1?parseFloat(row.weight1):''});
+            await _retry(mkPayload(row,{weight_g:row.weight1?parseFloat(row.weight1):''}),2);
+            savedCount++;
           }
         }
-        // [20260420a] 保存結果サマリ
-        console.log('[BS] save done '+item.displayId+': created='+createdCount+' updated='+updatedCount+' skipped='+skippedCount);
-        var _parts = [];
-        if (createdCount > 0) _parts.push('新規'+createdCount);
-        if (updatedCount > 0) _parts.push('更新'+updatedCount);
-        if (skippedCount > 0) _parts.push('重複'+skippedCount);
-        UI.toast('✅ '+item.displayId+' 完了 ('+_parts.join(' / ')+')','success',2500);
+        UI.toast('✅ '+item.displayId+' 保存完了','success',2000);
       } catch(e) {
         item.saved = false;
         console.error('[BS] save error:', e);
