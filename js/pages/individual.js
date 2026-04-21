@@ -2,7 +2,14 @@
 // individual.js
 // 役割: 個体の一覧・詳細・新規登録・編集・ステータス変更を担う。
 //       個体台帳の中心画面。ロット・成長記録・ラベルへの導線も持つ。
-// build: 20260420a
+// build: 20260420b
+//
+// 20260420b 修正:
+//   - 個体詳細の「孵化日」「個体化日」表示で Store.formatDateForDisplay() を使用
+//     GAS から "Fri Dec 05 2025 00:00:00 GMT+0900 (日本標準時)" 形式の文字列が
+//     入ってきた場合でも "2025/12/05" に正規化して表示
+//   - 個体編集フォームの hatch_date 入力欄も正規化経由で "YYYY-MM-DD" に変換
+//     これで <input type="date"> が値を受け取って編集できる
 //
 // 20260420a 修正:
 //   - 形態・成長データ入力フォームに「全長サイズ (mm)」(adult_size_mm) を追加
@@ -642,8 +649,8 @@ function _renderDetail(ind, main) {
           <div class="info-list">
             ${_infoRow('産地',     ind.locality          || '—')}
             ${_infoRow('累代',     ind.generation        || '—')}
-            ${_infoRow('孵化日',   ind.hatch_date        || '未設定')}
-            ${_infoRow('個体化日', ind.individual_date   || '—')}
+            ${_infoRow('孵化日',   (Store.formatDateForDisplay ? Store.formatDateForDisplay(ind.hatch_date) : ind.hatch_date) || '未設定')}
+            ${_infoRow('個体化日', (Store.formatDateForDisplay ? Store.formatDateForDisplay(ind.individual_date) : ind.individual_date) || '—')}
             ${_infoRow('容器',     ind.current_container || '—')}
             ${_infoRow('マット',   ind.current_mat       || '—')}
             ${_infoRow('保管場所', ind.storage_location  || '—')}
@@ -1386,7 +1393,17 @@ Pages.individualNew = function (params = {}) {
             v('current_stage', 'L1L2')), true)}
         </div>
         <div class="form-row-2">
-          ${UI.field('孵化日', UI.input('hatch_date', 'date', v('hatch_date')))}
+          ${UI.field('孵化日', UI.input('hatch_date', 'date',
+            // [20260420d] GAS から "Fri Dec 05 ..." 形式が来る場合があるので正規化
+            (function() {
+              var raw = v('hatch_date');
+              if (!raw) return '';
+              if (Store.formatDateForDisplay) {
+                return Store.formatDateForDisplay(raw).replace(/\//g, '-');
+              }
+              return String(raw).replace(/\//g, '-');
+            })()
+          ))}
           ${UI.field('累代',   UI.input('generation', 'text', v('generation'), 'WF1 / CBF1'))}
         </div>
         <div class="form-row-2">
