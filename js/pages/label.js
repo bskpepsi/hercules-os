@@ -1,6 +1,17 @@
 // FILE: js/pages/label.js
-// build: 20260420i
+// build: 20260420j
 // 修正:
+//   - [20260420j] 孵化日 Date.toString() 形式対応（全ラベル共通）
+//       問題: GAS側 _getLotHatchDate が String(dateObject) を返すため
+//              "Fri Dec 05 2025 00:00:00 GMT+0900 (日本標準時)" 形式の文字列が
+//              hatch_date に入ってきて、個別飼育ラベルに改行しながら表示されていた
+//       対応: label.js 上部に _normalizeDateForLabel ヘルパー関数を追加し
+//              YYYY/MM/DD / YYYY-MM-DD / Date.toString / ISO datetime 等の
+//              多形式を YYYY/MM/DD に統一して表示
+//       適用: 個別飼育ラベル (ind_fixed)、ロットラベル (multi_lot)、
+//              T1ユニットラベル (t1_unit)、販売候補ラベル (ind_sale) の全てに適用
+//       T1ユニットラベルの孵化日も目立たせた (6.5px→7.5px、「孵: 」→「孵化日：」)
+//       ※ GAS側 _getLotHatchDate 自体の修正は次回の宿題として継続
 //   - [20260420i] 個別飼育ラベル (ind_fixed, 62×70mm) の孵化日を目立たせる + Mx統合
 //       hatchHtml: 6.5px→8px、表記「孵: YYYY-MM-DD」→「孵化日：YYYY/MM/DD」
 //       ダッシュ区切りをスラッシュ区切りに統一
@@ -12,16 +23,8 @@
 //       4行構成: ①ID+性別 ②孵化日 ③サイズ+体重+測定日 ④ステージ
 //   - [20260420g] 販売候補簡易ラベルを 62×40mm → 62×25mm に縮小
 //       種親ラベルと同じ最小サイズに短縮
-//       QRコード 60px → 48px、ヘッダー高 5mm → 3.5mm
-//       メモ欄を削除（25mmでは収まらないため・詳細はアプリで確認）
-//       最新体重に測定日 (M/D) を括弧書きで追加表示
-//       孵化日 (YY/M/D) を追加表示
-//       ヘッダー文言を「販売候補」→「販売」に短縮
-//       ID/ロットバッジも縮小 (13px → 10px)
 //   - [20260420f] 販売候補簡易ラベル (ind_sale) を新規追加
 //       LABEL_TYPE_DEFS に ind_sale エントリ追加
-//       _labelDimensions に ind_sale 対応
-//       _buildLabelHTML の分岐に ind_sale 追加
 //       _buildIndSaleLabelHTML 新規関数を実装
 //       T2移行完了画面から販売候補個体は自動的にこのラベルで起動される
 //   - [20260418e-fix3] e-fix2 で勝手にボタン文言を変更していたのを元に戻す
@@ -42,8 +45,47 @@
 //   - Bug 3: _backRoute が存在する場合に「詳細に戻る」ボタンを追加
 'use strict';
 
-window._LABEL_BUILD = '20260420i';
+window._LABEL_BUILD = '20260420j';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
+
+// ════════════════════════════════════════════════════════════════
+// [20260420j] 日付表示の正規化ヘルパー
+// ════════════════════════════════════════════════════════════════
+// GAS側の _getLotHatchDate が Date オブジェクトを String(date) で返してくるため、
+// "Fri Dec 05 2025 00:00:00 GMT+0900 (日本標準時)" 形式の文字列が hatch_date に
+// 入ってくるケースがある。ラベル表示側で多形式を受け入れて YYYY/MM/DD に統一。
+//
+// 対応フォーマット:
+//   - YYYY/MM/DD       (理想形)
+//   - YYYY-MM-DD       (ISO日付)
+//   - YYYY-MM-DDTHH:MM (ISO datetime)
+//   - Fri Dec 05 2025  (Date.toString)
+//   - 不正値 → 空文字
+// ════════════════════════════════════════════════════════════════
+function _normalizeDateForLabel(raw) {
+  if (!raw) return '';
+  var str = String(raw).trim();
+  if (!str) return '';
+  // 先頭10文字で YYYY/MM/DD or YYYY-MM-DD を判定
+  var m = str.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
+  if (m) {
+    var y  = m[1];
+    var mm = String(parseInt(m[2], 10)).padStart(2, '0');
+    var dd = String(parseInt(m[3], 10)).padStart(2, '0');
+    return y + '/' + mm + '/' + dd;
+  }
+  // Date.toString() / ISO 等 → Date にパース
+  try {
+    var d = new Date(str);
+    if (!isNaN(d.getTime())) {
+      var y2  = d.getFullYear();
+      var mm2 = String(d.getMonth() + 1).padStart(2, '0');
+      var dd2 = String(d.getDate()).padStart(2, '0');
+      return y2 + '/' + mm2 + '/' + dd2;
+    }
+  } catch(e) {}
+  return str;
+}
 
 function _normStageForLabel(code) {
   if (!code) return '';
@@ -940,10 +982,11 @@ function _buildLabelHTML(ld, qrSrc) {
   var countBadge = (isLot && ld.count)
     ? '<span style="display:inline-block;border:2px solid #000;border-radius:3px;padding:0 3px;font-size:13px;font-weight:700;color:#000;line-height:1.4">' + ld.count + '頭</span>' : '';
   var sexHtml = !isLot ? _sexDisplay(ld.sex || '') : '';
+  // [20260420j] 孵化日を正規化してから表示（Date.toString() 形式も YYYY/MM/DD に統一）
   // [20260420i] 孵化日を目立たせる: 6.5px → 8px、表記を「孵: YYYY-MM-DD」→「孵化日：YYYY/MM/DD」
-  //             ダッシュ区切りをスラッシュ区切りに統一
-  var hatchHtml = (!isLot && ld.hatch_date)
-    ? '<div style="font-size:8px;font-weight:700;color:#000;line-height:1.6">孵化日：' + String(ld.hatch_date).replace(/-/g,'/') + '</div>' : '';
+  var _hatchNorm = _normalizeDateForLabel(ld.hatch_date);
+  var hatchHtml = (!isLot && _hatchNorm)
+    ? '<div style="font-size:8px;font-weight:700;color:#000;line-height:1.6">孵化日：' + _hatchNorm + '</div>' : '';
   var mxHtml = showMx
     ? '<div style="font-size:7px;font-weight:700;color:#000;line-height:1.7">Mx:' + chk('ON', mxIsOn) + chk('OFF', !mxIsOn) + '</div>' : '';
 
@@ -991,7 +1034,7 @@ function _buildLabelHTML(ld, qrSrc) {
       '  <div style="border-top:2px solid #000;margin:1mm 1.5mm 0"></div>\n'
       + '  <div style="padding:1.5mm 2mm;flex:1;display:flex;flex-direction:column;justify-content:space-evenly">\n'
       + '    <pre style="font-family:monospace;font-size:17px;font-weight:700;color:#000;margin:0 0 4px;line-height:1.5;white-space:pre">採卵日  ' + (ld.collect_date ? ld.collect_date.replace(/-/g,'/') : '____/__/__') + '</pre>\n'
-      + '    <pre style="font-family:monospace;font-size:17px;font-weight:700;color:#000;margin:0;line-height:1.5;white-space:pre">孵化日  ' + (ld.hatch_date ? ld.hatch_date.replace(/-/g,'/') : '____/__/__') + '</pre>\n'
+      + '    <pre style="font-family:monospace;font-size:17px;font-weight:700;color:#000;margin:0;line-height:1.5;white-space:pre">孵化日  ' + (ld.hatch_date ? _normalizeDateForLabel(ld.hatch_date) : '____/__/__') + '</pre>\n'
       + '  </div>\n'
     ) : (
       '  <div style="border-top:1.5px solid #000;margin:0.8mm 1.5mm 0"></div>\n'
@@ -1131,11 +1174,11 @@ function _buildIndSaleLabelHTML(ld, qrSrc) {
   }
 
   // 孵化日を YY/M/D 形式に短縮（2025-12-05 → 25/12/5）
-  // フォーマット揺れ対応（Date.toString() 形式などは formatDateForDisplay 経由で正規化済みを想定）
-  var hatchDisp = ld.hatch_date || '';
+  // [20260420j] Date.toString() 形式も受け付けるため _normalizeDateForLabel で先に YYYY/MM/DD に統一
+  var hatchDisp = _normalizeDateForLabel(ld.hatch_date);
   var hatchShort = '';
   if (hatchDisp) {
-    var hp = String(hatchDisp).replace(/-/g,'/').split('/');
+    var hp = hatchDisp.split('/');
     if (hp.length === 3) {
       var yy = hp[0].length === 4 ? hp[0].slice(2) : hp[0];
       var hm = parseInt(hp[1], 10);
@@ -1374,8 +1417,10 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
   var unitSuffixHtml = unitSuffix ? '<span style="' + bLg + '">' + unitSuffix + '</span>' : '';
   var saleBadge = forSale
     ? '<span style="border:1.5px solid #000;padding:0 3px;font-size:7px;font-weight:700;color:#000;margin-left:3px">販売</span>' : '';
-  var hatchHtml = ld.hatch_date
-    ? '<div style="font-size:6.5px;font-weight:700;color:#000">孵: ' + ld.hatch_date + '</div>' : '';
+  // [20260420j] T1ユニットラベルも孵化日を正規化＋表記改善
+  var _hatchNormU = _normalizeDateForLabel(ld.hatch_date);
+  var hatchHtml = _hatchNormU
+    ? '<div style="font-size:7.5px;font-weight:700;color:#000;line-height:1.5">孵化日：' + _hatchNormU + '</div>' : '';
   var originHtml = originLS
     ? '<div style="font-size:6px;font-weight:700;color:#000;line-height:1.5">' + originLS + '</div>' : '';
 
