@@ -1,6 +1,12 @@
 // FILE: js/pages/label.js
-// build: 20260421d
+// build: 20260421f
 // 修正:
+//   - [20260421f] 販売候補ラベル (ind_sale) デザイン見直し
+//       ヘッダー文言: "🏷️ 販売" → "🏷️ 販売候補"
+//       孵化日の年を2桁 → 4桁 (2025/12/5 形式)
+//       情報エリアの vertical 配置を justify-content:space-between → 自然な縦積み
+//       (gap:0.3mm, 各行 line-height:1.1) に変更し行間を圧縮
+//       フォントサイズを少し縮小して全体が 25mm 内にバランス良く収まるよう調整
 //   - [20260421d] 販売候補個体のラベル種別 自動フォールバック
 //       params.labelType 未指定で targetType==='IND' の場合、
 //       Store.getIndividual(targetId) を引いて for_sale/status を判定し、
@@ -89,7 +95,7 @@
 //   - Bug 3: _backRoute が存在する場合に「詳細に戻る」ボタンを追加
 'use strict';
 
-window._LABEL_BUILD = '20260421d';
+window._LABEL_BUILD = '20260421f';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 // ════════════════════════════════════════════════════════════════
@@ -1301,17 +1307,18 @@ function _buildIndSaleLabelHTML(ld, qrSrc) {
     }
   }
 
-  // 孵化日を YY/M/D 形式に短縮（2025-12-05 → 25/12/5）
+  // 孵化日を YYYY/M/D 形式に整形（2025-12-05 → 2025/12/5、年は4桁）
+  // [20260421f] ユーザー要望により年は4桁表記（旧: 25/12/5 → 新: 2025/12/5）
   // [20260420j] Date.toString() 形式も受け付けるため _normalizeDateForLabel で先に YYYY/MM/DD に統一
   var hatchDisp = _normalizeDateForLabel(ld.hatch_date);
   var hatchShort = '';
   if (hatchDisp) {
     var hp = hatchDisp.split('/');
     if (hp.length === 3) {
-      var yy = hp[0].length === 4 ? hp[0].slice(2) : hp[0];
+      var yyyy = hp[0].length === 4 ? hp[0] : ('20' + hp[0]);
       var hm = parseInt(hp[1], 10);
       var hd = parseInt(hp[2], 10);
-      if (!isNaN(hm) && !isNaN(hd)) hatchShort = yy + '/' + hm + '/' + hd;
+      if (!isNaN(hm) && !isNaN(hd)) hatchShort = yyyy + '/' + hm + '/' + hd;
     }
   }
 
@@ -1337,10 +1344,10 @@ function _buildIndSaleLabelHTML(ld, qrSrc) {
     + '</style></head><body>\n'
     + '<div style="width:62mm;height:25mm;display:flex;flex-direction:column">\n'
 
-    // ヘッダー (3.5mm・オレンジストライプで「販売」と視覚的に識別)
+    // ヘッダー (3.5mm・オレンジストライプで「販売候補」と視覚的に識別)
     + '  <div style="position:relative;background:#000;color:#fff;font-size:7.5px;font-weight:700;padding:0.3mm 2mm;height:3.5mm;display:flex;align-items:center;flex-shrink:0;overflow:hidden">'
     + '    <span style="position:absolute;top:0;left:0;right:0;bottom:0;background:repeating-linear-gradient(45deg,transparent 0,transparent 4px,rgba(255,180,80,0.38) 4px,rgba(255,180,80,0.38) 6px);pointer-events:none"></span>'
-    + '    <span style="position:relative;z-index:1">🏷️ 販売 | HerculesOS</span>'
+    + '    <span style="position:relative;z-index:1">🏷️ 販売候補 | HerculesOS</span>'
     + '  </div>\n'
 
     // メインエリア (QRと情報を横並び・残り 21.5mm)
@@ -1350,36 +1357,36 @@ function _buildIndSaleLabelHTML(ld, qrSrc) {
     + '    <div style="flex-shrink:0;display:flex;align-items:center">' + _qrBox(qrSrc, 48) + '</div>\n'
 
     // 情報エリア (右)
-    + '    <div style="flex:1;min-width:0;display:flex;flex-direction:column;justify-content:space-between;padding-left:1mm;border-left:1.5px solid #000">\n'
+    + '    <div style="flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:0.3mm;padding-left:1mm;border-left:1.5px solid #000">\n'
 
     // 1行目: ID + 性別
-    + '      <div style="display:flex;justify-content:space-between;align-items:center;gap:1mm">\n'
+    + '      <div style="display:flex;justify-content:space-between;align-items:center;gap:1mm;line-height:1.1">\n'
     + '        <div style="display:flex;align-items:center;gap:1.5px;flex-wrap:nowrap;min-width:0;overflow:hidden">'
     + (prefix ? '<span style="font-size:7px;font-weight:700;color:#000;white-space:nowrap">' + prefix + '-</span>' : '')
     + lineBadgeHtml + lotSuffixHtml
     + '</div>\n'
-    + '        <span style="font-size:15px;font-weight:900;color:' + sexColor + ';line-height:1;flex-shrink:0">' + sexChar + '</span>\n'
+    + '        <span style="font-size:14px;font-weight:900;color:' + sexColor + ';line-height:1;flex-shrink:0">' + sexChar + '</span>\n'
     + '      </div>\n'
 
     // 2行目: 孵化日 (ID直下に配置)
     + (hatchShort
-      ? '      <div style="font-size:8px;font-weight:700;color:#000;white-space:nowrap;line-height:1.2">孵化日：' + hatchShort + '</div>\n'
+      ? '      <div style="font-size:7.5px;font-weight:700;color:#000;white-space:nowrap;line-height:1.1">孵化日：' + hatchShort + '</div>\n'
       : '')
 
     // 3行目: サイズ + 体重(測定日)
-    + '      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:1mm">\n'
+    + '      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:1mm;line-height:1.1">\n'
     + '        <div>' + sizeHtml + '</div>\n'
     + (latestW
-      ? '        <div style="font-size:11px;font-weight:900;color:#000;line-height:1;white-space:nowrap">'
-        + latestW + '<span style="font-size:8px;margin-left:0.5px">g</span>'
-        + (measDateShort ? '<span style="font-size:7.5px;font-weight:700;margin-left:2px">(' + measDateShort + ')</span>' : '')
+      ? '        <div style="font-size:10.5px;font-weight:900;color:#000;line-height:1;white-space:nowrap">'
+        + latestW + '<span style="font-size:7.5px;margin-left:0.5px">g</span>'
+        + (measDateShort ? '<span style="font-size:7px;font-weight:700;margin-left:1.5px">(' + measDateShort + ')</span>' : '')
         + '</div>\n'
       : '')
     + '      </div>\n'
 
     // 4行目: ステージ
     + (stageLabel
-      ? '      <div style="line-height:1.1"><span style="display:inline-block;border:1.2px solid #000;border-radius:2px;padding:0 3px;font-size:8px;font-weight:800;color:#000">' + stageLabel + '</span></div>\n'
+      ? '      <div style="line-height:1;margin-top:0.2mm"><span style="display:inline-block;border:1.2px solid #000;border-radius:2px;padding:0 3px;font-size:7.5px;font-weight:800;color:#000;line-height:1.3">' + stageLabel + '</span></div>\n'
       : '')
 
     + '    </div>\n'

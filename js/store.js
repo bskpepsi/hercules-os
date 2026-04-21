@@ -12,10 +12,10 @@
 'use strict';
 
 // Version marker — update when deploying to verify cache bust
-// 20260420d: formatDateForDisplay() 追加 — GASから来る"Fri Dec 05 ..."形式を"YYYY/MM/DD"に統一
-//            calcAge も formatDateForDisplay 経由にして Date.toString() 形式を計算可能に
 // 20260418a: Step2 ③ 性別頭数集計 — getSexStats() 追加 / filterIndividuals の '_unknown' 対応
-console.log('[HerculesOS] store.js v20260418a loaded');
+// 20260421f: 販売候補フィルタ修正 — for_sale フラグ判定 (T2移行直後の個体対応)
+//            飼育中フィルタから for_sale===true 個体を除外
+console.log('[HerculesOS] store.js v20260421f loaded');
 
 const Store = (() => {
 
@@ -113,60 +113,13 @@ const Store = (() => {
     return _db.individuals.filter(i => i.lot_id === lotId || i.origin_lot_id === lotId);
   }
 
-  // ── [20260420d] 日付表示用の正規化 ─────────────────────────────
-  // GAS からは日付が Date オブジェクトを String() した
-  // "Fri Dec 05 2025 00:00:00 GMT+0900 (日本標準時)" 形式で来ることがある。
-  // これを "YYYY/MM/DD" に統一する表示用ヘルパー。
-  //
-  // 受け取る形式:
-  //   - Date オブジェクト
-  //   - "2025/12/05" / "2025-12-05" （既に整形済）
-  //   - "Fri Dec 05 2025 00:00:00 GMT+0900 (日本標準時)" (Dateの toString)
-  //   - ISO 8601 文字列 "2025-12-05T00:00:00..."
-  //   - 空文字 / null / undefined
-  //
-  // 返値: "YYYY/MM/DD" (zero-padded) or 空文字
-  function formatDateForDisplay(v) {
-    if (v === null || v === undefined || v === '') return '';
-    // Date オブジェクト直接
-    if (v instanceof Date && !isNaN(v)) {
-      var y = v.getFullYear();
-      var m = String(v.getMonth() + 1).padStart(2, '0');
-      var d = String(v.getDate()).padStart(2, '0');
-      return y + '/' + m + '/' + d;
-    }
-    var s = String(v).trim();
-    if (!s) return '';
-    // 既に "YYYY/MM/DD" または "YYYY-MM-DD" （ISO 8601 含む）
-    var m1 = s.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
-    if (m1) {
-      return m1[1] + '/' + String(m1[2]).padStart(2, '0') + '/' + String(m1[3]).padStart(2, '0');
-    }
-    // Date.toString() 形式 ("Fri Dec 05 2025 ...") は new Date() でパース可能
-    var d2 = new Date(s);
-    if (!isNaN(d2)) {
-      var y2 = d2.getFullYear();
-      var m2 = String(d2.getMonth() + 1).padStart(2, '0');
-      var d2s = String(d2.getDate()).padStart(2, '0');
-      return y2 + '/' + m2 + '/' + d2s;
-    }
-    // パース不可の場合はそのまま返す（壊さない）
-    return s;
-  }
-
   // ── 日齢計算 ──────────────────────────────────────────────────
   function calcAge(hatchDate, targetDate) {
     if (!hatchDate) return null;
-    // [20260420d] 日付正規化を経由するよう変更
-    //   GAS から "Fri Dec 05 2025 ..." 形式が来ても計算できるように
-    let hdStr = formatDateForDisplay(hatchDate);
-    if (!hdStr) {
-      // フォールバック: 既存挙動を維持
-      hdStr = hatchDate instanceof Date
-        ? hatchDate.toISOString().split('T')[0]
-        : String(hatchDate);
-      hdStr = hdStr.replace(/-/g, '/').trim();
-    }
+    let hdStr = hatchDate instanceof Date
+      ? hatchDate.toISOString().split('T')[0]
+      : String(hatchDate);
+    hdStr = hdStr.replace(/-/g, '/').trim();
     const parts = hdStr.split('/');
     if (parts.length < 3) return null;
     const hatch = new Date(+parts[0], +parts[1] - 1, +parts[2]);
@@ -350,11 +303,25 @@ const Store = (() => {
       'seed_candidate','seed_reserved',            // 旧種親候補
     ]);
 
+    // [20260421f] 販売候補フラグ判定（for_sale===true も販売候補として扱う）
+    //   T2移行等で作成された個体は status='larva'/'alive' のまま for_sale=true だけが
+    //   セットされている場合があるため、for_sale===true を個別にチェックする。
+    const _isForSaleInd = function(i) {
+      return i.for_sale === true || i.for_sale === 'true'
+          || i.for_sale === 1    || i.for_sale === '1'
+          || i.status === 'for_sale';
+    };
+
     if (filters.status === '_all' || filters.status === '') {
       // 全状態: フィルタなし（sold・dead含む全件）
     } else if (filters.status === 'alive') {
       // 「飼育中」= 新仕様のalive + 旧ライフサイクルステータス全て
-      list = list.filter(i => _ALIVE_STATUSES.has(i.status));
+      //   ただし販売候補フラグが立っている個体は「販売候補」タブに分離するので除外
+      list = list.filter(i => _ALIVE_STATUSES.has(i.status) && !_isForSaleInd(i));
+    } else if (filters.status === 'for_sale') {
+      // 「販売候補」= status==='for_sale' または for_sale===true (T2移行直後の個体を拾う)
+      //   ただし sold/dead の終端ステータスは除外（sold後に for_sale フラグが残る可能性）
+      list = list.filter(i => _isForSaleInd(i) && !_TERMINAL_STATUSES.has(i.status));
     } else if (filters.status) {
       list = list.filter(i => i.status === filters.status);
     }
@@ -522,7 +489,7 @@ const Store = (() => {
     getIndividual, getLine, getLot, getParent, getBloodline,
     getIndividualsByLine, getIndividualsByLot,
     getUnitByDisplayId, getUnit, getUnitsByOriginLotId,
-    calcAge, formatRecordAge, formatDateForDisplay,
+    calcAge, formatRecordAge,
     getVerdict,
     setGrowthRecords, getGrowthRecords, addGrowthRecord,
     setSetting, getSetting,

@@ -2,7 +2,13 @@
 // individual.js
 // 役割: 個体の一覧・詳細・新規登録・編集・ステータス変更を担う。
 //       個体台帳の中心画面。ロット・成長記録・ラベルへの導線も持つ。
-// build: 20260421e
+// build: 20260421f
+//
+// 20260421f 修正:
+//   - 一覧カード表示で for_sale フラグを優先判定
+//     T2移行で作成された販売候補個体は status='larva' のまま for_sale=true なので
+//     status だけで判定すると「飼育中」になってしまう。ind.for_sale===true であれば
+//     status に関わらず「販売候補」バッジを表示するように修正。
 //
 // 20260421e 修正:
 //   - 販売候補/出品中/飼育中戻し のステータス変更エラー修正
@@ -367,8 +373,17 @@ function _indCardHTML(ind) {
     seed_candidate:'飼育中', seed_reserved:'飼育中',
     for_sale:'販売候補', listed:'出品中', sold:'販売済み', dead:'死亡',
   };
-  const stLbl = stMap[ind.status] || ind.status || '—';
-  const stClr = stColor[ind.status] || 'var(--text3)';
+  // [20260421f] for_sale フラグが立っていれば、status に関わらず「販売候補」として表示
+  //   T2移行で作成された販売候補個体は status='larva' のまま for_sale=true になるため、
+  //   status のみで判定すると「飼育中」として表示されてしまう
+  const _isTerminalInd = (ind.status === 'sold' || ind.status === 'dead');
+  const _isForSaleInd  = (!_isTerminalInd) && (
+    ind.for_sale === true || ind.for_sale === 'true' ||
+    ind.for_sale === 1    || ind.for_sale === '1'    ||
+    ind.status === 'for_sale'
+  );
+  const stLbl = _isForSaleInd ? '販売候補' : (stMap[ind.status] || ind.status || '—');
+  const stClr = _isForSaleInd ? '#9c27b0' : (stColor[ind.status] || 'var(--text3)');
 
   const icons = [
     (String(ind.guinness_flag||'').toUpperCase()==='TRUE'||ind.guinness_flag===1||ind.guinness_flag===true) ? '🏆' : '',
