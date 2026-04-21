@@ -1,6 +1,17 @@
 // FILE: js/pages/label.js
-// build: 20260420k
+// build: 20260420l
 // 修正:
+//   - [20260420l] T2セッション個体化フローのラベルキュー表示バグ修正
+//       問題: ユニットT2移行時、複数頭を「個別化」決定しても
+//              1枚目のラベル発行後「次のラベルへ」ボタンが出ず2枚目以降が発行不能だった
+//       原因: label.js が _eblQueueIdx（egg-lot-bulk専用）しか認識せず、
+//              t2_session.js が送信する _t2LabelMode / _t2LabelIdx / _t2LabelTotal を
+//              完全に無視していた
+//       対応: キュー検出を EBL と T2 の両対応に統一
+//              - _inEblQueue / _inT2Queue を個別に判定
+//              - _inAnyQueue / _queueIdx / _queueTotal / _queueNextClick で統一レンダリング
+//              - T2 の「次」は window._t2LabelNextFn() を呼び出す
+//              - T2 の戻り先は qr-scan?mode=t2
 //   - [20260420k] T1ユニットラベル (t1_unit) の表記・レイアウト改善
 //       ① 全角コロン統一: 区分: → 区分： / M: → M： / St: → St： / 由来: → 由来：
 //       ② M+Mx 1行統合: M行の末尾に Mx：□ON ■OFF を常時表示（条件分岐削除）
@@ -56,7 +67,7 @@
 //   - Bug 3: _backRoute が存在する場合に「詳細に戻る」ボタンを追加
 'use strict';
 
-window._LABEL_BUILD = '20260420k';
+window._LABEL_BUILD = '20260420l';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 // ════════════════════════════════════════════════════════════════
@@ -352,6 +363,27 @@ Pages.labelGen = function (params = {}) {
   const _eblQueueTotal = params._eblQueueTotal  !== undefined ? parseInt(params._eblQueueTotal,10) : 0;
   const _inEblQueue    = _eblQueueIdx >= 0 && _eblQueueTotal > 0;
 
+  // [20260420l] T2セッション個体化フローのラベルキュー認識
+  //   t2_session.js の _t2LaunchAllLabels は:
+  //     - params に _t2LabelMode / _t2LabelIdx / _t2LabelTotal を送信
+  //     - window._t2LabelNextFn にクロージャを格納（次の個体に遷移する _next()）
+  //   label.js がこれを認識していなかったため、1枚目のラベル発行後「次のラベルへ」
+  //   ボタンが表示されず、複数頭個体化した時の2枚目以降が発行不能だった。
+  const _t2LabelIdx    = params._t2LabelIdx   !== undefined ? parseInt(params._t2LabelIdx,10)   : -1;
+  const _t2LabelTotal  = params._t2LabelTotal !== undefined ? parseInt(params._t2LabelTotal,10) : 0;
+  const _inT2Queue     = !!params._t2LabelMode && _t2LabelTotal > 0;
+
+  // 統一キュー状態（EBLまたはT2）
+  const _inAnyQueue   = _inEblQueue || _inT2Queue;
+  const _queueIdx     = _inEblQueue ? _eblQueueIdx   : (_inT2Queue ? _t2LabelIdx   : -1);
+  const _queueTotal   = _inEblQueue ? _eblQueueTotal : (_inT2Queue ? _t2LabelTotal : 0);
+  const _queueNextClick = _inEblQueue
+    ? ("window._eblGoNextLabel(" + _eblQueueIdx + ")")
+    : "window._t2LabelNextFn && window._t2LabelNextFn()";
+  const _queueBackFn = _inEblQueue
+    ? "routeTo('egg-lot-bulk',{_showComplete:true})"
+    : "routeTo('qr-scan',{mode:'t2'})";
+
   const inds = Store.filterIndividuals({ status: 'alive' });
   const lots = Store.filterLots({ status: 'active' });
   const pars = Store.getDB('parents') || [];
@@ -385,8 +417,8 @@ Pages.labelGen = function (params = {}) {
 
   const headerOpts = _backRoute
     ? { back: true, backFn: "routeTo('" + _backRoute + "'," + _toOnclickParams(_backParam) + ")" }
-    : _inEblQueue
-      ? { back: true, backFn: "routeTo('egg-lot-bulk',{_showComplete:true})" }
+    : _inAnyQueue
+      ? { back: true, backFn: _queueBackFn }
       : (isDirectMode && origin
           ? { back: true, backFn: "routeTo('" + origin.page + "'," + _toOnclickParams(origin.params) + ")" }
           : { back: true });
@@ -490,18 +522,18 @@ Pages.labelGen = function (params = {}) {
               <button class="btn btn-ghost" style="flex:1"
                 onclick="Pages._lblGenerate('${targetType}','${targetId}','${labelType}')">🔄 再生成</button>
             </div>
-            ${_inEblQueue ? `
+            ${_inAnyQueue ? `
             <div style="font-size:.72rem;color:var(--text3);padding:4px 0;text-align:center;margin-bottom:4px">
-              ${_eblQueueIdx+1} / ${_eblQueueTotal}枚目
+              ${_queueIdx+1} / ${_queueTotal}枚目
             </div>
-            ${_eblQueueIdx + 1 < _eblQueueTotal ? `
+            ${_queueIdx + 1 < _queueTotal ? `
             <button class="btn btn-primary btn-full" style="font-weight:700"
-              onclick="window._eblGoNextLabel(${_eblQueueIdx})">
-              次のラベルへ →（${_eblQueueIdx+2}/${_eblQueueTotal}枚目）
+              onclick="${_queueNextClick}">
+              次のラベルへ →（${_queueIdx+2}/${_queueTotal}枚目）
             </button>` : `
             <button class="btn btn-ghost btn-full" style="font-weight:700;color:var(--green)"
-              onclick="window._eblGoNextLabel(${_eblQueueIdx})">
-              ✅ 完了画面へ戻る（全${_eblQueueTotal}枚発行済み）
+              onclick="${_queueNextClick}">
+              ✅ 完了画面へ戻る（全${_queueTotal}枚発行済み）
             </button>`}` : _backRoute ? `
             <button class="btn btn-ghost btn-full" style="margin-top:2px;font-size:.82rem"
               onclick="routeTo('${_backRoute}',${_toOnclickParams(_backParam)})">
