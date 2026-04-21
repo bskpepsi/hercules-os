@@ -1,6 +1,8 @@
 // FILE: js/pages/manage.js
-// build: 20260416c
-// 変更点: 管理画面クイック登録に「✨ ヤフオク出品文AIジェネレーター」ボタンを追加
+// build: 20260420b
+// 変更点:
+//   - [20260420b] ページ先頭に未確定セッションバナー追加（UI.pendingBanner()）
+//   - [20260416c] 管理画面クイック登録に「✨ ヤフオク出品文AIジェネレーター」ボタンを追加
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
@@ -89,6 +91,9 @@ Pages.manage = function () {
   main.innerHTML = `
     ${UI.header('管理', {})}
     <div class="page-body">
+
+      <!-- [20260420b] 未確定セッション通知バナー -->
+      ${UI.pendingBanner ? UI.pendingBanner() : ''}
 
       <!-- 管理カード一覧 -->
       ${sections.map(s => `

@@ -1,12 +1,16 @@
 // FILE: js/pages/t2_session.js
-// build: 20260418b
+// build: 20260420a
 // 変更点:
+//   - [20260420a] セッション保存を sessionStorage → localStorage に変更
+//       タブを閉じても未確定セッションが保持されるようにし、
+//       未確定セッション通知システム（バナー + 一覧ページ）の対象にする
+//       キー名は '_t2SessionData' のまま変更なし（既存データ互換）
 //   - [20260418b] 容器選択肢に「その他」ボタンを追加（Step2 🥉③ 4択統一）
 //   - t2SessionStart: unit.line_id が空の場合に display_id から line_code を抽出してフォールバック解決
 //   - _renderT2Session: lineDisp に同じフォールバック追加
 'use strict';
 
-console.log('[HerculesOS] t2_session.js v20260418b loaded');
+console.log('[HerculesOS] t2_session.js v20260420a loaded');
 
 window._t2Session = window._t2Session || null;
 
@@ -193,10 +197,10 @@ function _formatOriginLots(originLotDisplayIds) {
 }
 
 function _saveT2SessionToStorage() {
-  try { sessionStorage.setItem('_t2SessionData', JSON.stringify(window._t2Session)); } catch(e) {}
+  try { localStorage.setItem('_t2SessionData', JSON.stringify(window._t2Session)); } catch(e) {}
 }
 function _restoreT2SessionFromStorage() {
-  try { const raw = sessionStorage.getItem('_t2SessionData'); if (raw) window._t2Session = JSON.parse(raw); } catch(e) {}
+  try { const raw = localStorage.getItem('_t2SessionData'); if (raw) window._t2Session = JSON.parse(raw); } catch(e) {}
 }
 
 Pages.t2Session = function (params = {}) {
@@ -561,7 +565,7 @@ Pages._t2SessionBack = function () {
 };
 Pages._t2SessionCancel = function () {
   if (confirm('セッションを破棄しますか？（入力内容は消えます）')) {
-    window._t2Session = null; sessionStorage.removeItem('_t2SessionData'); routeTo('qr-scan', { mode: 't2' });
+    window._t2Session = null; localStorage.removeItem('_t2SessionData'); routeTo('qr-scan', { mode: 't2' });
   }
 };
 Pages._t2SetContainer = function(v) {
@@ -700,7 +704,7 @@ Pages._t2SessionSave = async function () {
       res.created_individuals.forEach(ind => { if (typeof Store.addDBItem === 'function') Store.addDBItem('individuals', ind); });
     }
 
-    window._t2Session = null; sessionStorage.removeItem('_t2SessionData');
+    window._t2Session = null; localStorage.removeItem('_t2SessionData');
     UI.toast('T2移行を完了しました ✅', 'success', 3000);
 
     const _indMembers = s.members.filter(function(m){ return m.decision === 'individualize'; });

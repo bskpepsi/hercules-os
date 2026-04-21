@@ -1,6 +1,10 @@
 // FILE: js/pages/t3_session.js
-// build: 20260418b
+// build: 20260420a
 // 変更点:
+//   - [20260420a] セッション保存を sessionStorage → localStorage に変更
+//       タブを閉じても未確定セッションが保持されるようにし、
+//       未確定セッション通知システム（バナー + 一覧ページ）の対象にする
+//       キー名は '_t3SessionData' のまま変更なし（既存データ互換）
 //   - [20260418b] 容器選択肢に「その他」ボタンを追加（Step2 🥉③ 4択統一）
 //   - [fix2] window.Pages → Pages に統一（6箇所）
 //           window.Pages が undefined のため TypeError を起こしていたのを修正
@@ -9,7 +13,7 @@
 //   - [fix1] _renderT3Session: lineDisp に同じフォールバック追加
 'use strict';
 
-console.log('[HerculesOS] t3_session.js v20260418b loaded');
+console.log('[HerculesOS] t3_session.js v20260420a loaded');
 
 window._t3Session = window._t3Session || null;
 
@@ -196,10 +200,10 @@ function _formatT3OriginLots(ids) {
 }
 
 function _saveT3SessionToStorage() {
-  try { sessionStorage.setItem('_t3SessionData', JSON.stringify(window._t3Session)); } catch(e) {}
+  try { localStorage.setItem('_t3SessionData', JSON.stringify(window._t3Session)); } catch(e) {}
 }
 function _restoreT3SessionFromStorage() {
-  try { const raw = sessionStorage.getItem('_t3SessionData'); if (raw) window._t3Session = JSON.parse(raw); } catch(e) {}
+  try { const raw = localStorage.getItem('_t3SessionData'); if (raw) window._t3Session = JSON.parse(raw); } catch(e) {}
 }
 
 Pages.t3Session = function (params = {}) {
@@ -582,7 +586,7 @@ Pages._t3SessionBack = function () {
 };
 Pages._t3SessionCancel = function () {
   if (confirm('セッションを破棄しますか？（入力内容は消えます）')) {
-    window._t3Session = null; sessionStorage.removeItem('_t3SessionData'); routeTo('qr-scan', { mode: 't3' });
+    window._t3Session = null; localStorage.removeItem('_t3SessionData'); routeTo('qr-scan', { mode: 't3' });
   }
 };
 
@@ -659,7 +663,7 @@ Pages._t3SessionSave = async function () {
       res.created_individuals.forEach(ind => { if (typeof Store.addDBItem === 'function') Store.addDBItem('individuals', ind); });
     }
 
-    window._t3Session = null; sessionStorage.removeItem('_t3SessionData');
+    window._t3Session = null; localStorage.removeItem('_t3SessionData');
     UI.toast('T3（3齢後期）移行を完了しました ✅', 'success', 3000);
 
     _registerBacilusReminder(s.unit_id, s.display_id, today);

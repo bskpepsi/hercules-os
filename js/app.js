@@ -6,8 +6,13 @@
 //       共通UIユーティリティを担う。各画面JSの呼び出し元。
 //       画面ごとのrender関数を呼び分けるシンプルなSPAルーター。
 //
-// build: 20260420a
+// build: 20260420b
 // 変更点:
+//   - [20260420b] 未確定セッション通知システム用のヘルパーを追加
+//       UI.getPendingSessions(): localStorage の T1/T2/T3 セッションを検出
+//         条件: units.length >= 1 || singles.length >= 1（成果があるもののみ）
+//       UI.pendingBanner(): 1行簡潔バナーHTML生成（タップで一覧ページへ）
+//       window.PAGES に 'pending-sessions' ルート追加
 //   - [20260420a] UI.weightTableUnit: 日付順を昇順表示に変更（古い=上、新しい=下）
 //                 以前は rowsData.reverse() で降順表示していたが、個体用 weightTable
 //                 (昇順)と挙動を揃えるため除去。
@@ -81,6 +86,10 @@ window.PAGES = {
   'sale-list':   () => (typeof Pages.saleList === 'function'
     ? Pages.saleList()
     : document.getElementById('main').innerHTML = UI.empty('sale.js が読み込まれていません')),
+  // ── [20260420b] 未確定セッション一覧 ──
+  'pending-sessions': () => (typeof Pages.pendingSessions === 'function'
+    ? Pages.pendingSessions()
+    : document.getElementById('main').innerHTML = UI.empty('pending_sessions.js が読み込まれていません')),
 };
 
 // ── 起動（PAGES定義の後に配置することでPAGES参照を保証） ────────
@@ -668,6 +677,122 @@ const UI = {
         </tr></thead>
         <tbody>${rowsHtml}</tbody>
       </table>
+    </div>`;
+  },
+
+  // ════════════════════════════════════════════════════════════════
+  // [20260420b] 未確定セッション通知システム
+  // ════════════════════════════════════════════════════════════════
+  //
+  // localStorage に保持されている T1/T2/T3 移行セッションのうち、
+  // 「確定操作まで進んだが最終保存が完了していないもの」を検出してバナー表示する。
+  //
+  // 検出条件:
+  //   T1: _t1SessionData 内の units.length >= 1 または singles.length >= 1
+  //       （ユニット/個別飼育が1件以上確定済み = セッションに実質的な成果がある）
+  //   T2: _t2SessionData 内の units.length >= 1 または individualized.length >= 1
+  //   T3: _t3SessionData 内の units.length >= 1 または individualized.length >= 1
+  //
+  //   単に「セッションを開いた」だけのデータは通知しない（条件未達で破棄OK）。
+  // ════════════════════════════════════════════════════════════════
+
+  getPendingSessions() {
+    const list = [];
+
+    // T1
+    try {
+      const raw = localStorage.getItem('_t1SessionData');
+      if (raw) {
+        const s = JSON.parse(raw);
+        const unitCount   = Array.isArray(s.units)   ? s.units.length   : 0;
+        const singleCount = Array.isArray(s.singles) ? s.singles.length : 0;
+        if (unitCount >= 1 || singleCount >= 1) {
+          const lotLabel = (s.lots || []).map(function(l){ return l.display_id || l.lot_id; }).join(', ');
+          const totalHead = (s.lots || []).reduce(function(a, l){ return a + (parseInt(l.count, 10) || 0); }, 0);
+          list.push({
+            type:       'T1',
+            label:      'T1移行',
+            sessionId:  s.sessionId || '',
+            lotLabel:   lotLabel || '—',
+            lotIds:     (s.lots || []).map(function(l){ return l.lot_id; }),
+            totalHead:  totalHead,
+            unitCount:  unitCount,
+            singleCount:singleCount,
+            updatedAt:  s.session_date || '',
+          });
+        }
+      }
+    } catch(e) { console.warn('[UI.getPendingSessions] T1 parse error:', e.message); }
+
+    // T2
+    try {
+      const raw = localStorage.getItem('_t2SessionData');
+      if (raw) {
+        const s = JSON.parse(raw);
+        const unitCount = Array.isArray(s.units) ? s.units.length : 0;
+        const indCount  = Array.isArray(s.individualized) ? s.individualized.length : 0;
+        if (unitCount >= 1 || indCount >= 1) {
+          const unitLabel = (s.sourceUnits || s.sourceUnit || []).map?.(function(u){ return u.display_id || u.unit_id; }).join(', ')
+                           || (s.sourceUnit && (s.sourceUnit.display_id || s.sourceUnit.unit_id)) || '—';
+          list.push({
+            type:       'T2',
+            label:      'T2移行',
+            sessionId:  s.sessionId || '',
+            lotLabel:   unitLabel,  // T2 は元ユニット
+            unitCount:  unitCount,
+            singleCount:indCount,
+            updatedAt:  s.session_date || '',
+          });
+        }
+      }
+    } catch(e) { console.warn('[UI.getPendingSessions] T2 parse error:', e.message); }
+
+    // T3
+    try {
+      const raw = localStorage.getItem('_t3SessionData');
+      if (raw) {
+        const s = JSON.parse(raw);
+        const unitCount = Array.isArray(s.units) ? s.units.length : 0;
+        const indCount  = Array.isArray(s.individualized) ? s.individualized.length : 0;
+        if (unitCount >= 1 || indCount >= 1) {
+          const unitLabel = (s.sourceUnits || s.sourceUnit || []).map?.(function(u){ return u.display_id || u.unit_id; }).join(', ')
+                           || (s.sourceUnit && (s.sourceUnit.display_id || s.sourceUnit.unit_id)) || '—';
+          list.push({
+            type:       'T3',
+            label:      'T3移行',
+            sessionId:  s.sessionId || '',
+            lotLabel:   unitLabel,
+            unitCount:  unitCount,
+            singleCount:indCount,
+            updatedAt:  s.session_date || '',
+          });
+        }
+      }
+    } catch(e) { console.warn('[UI.getPendingSessions] T3 parse error:', e.message); }
+
+    return list;
+  },
+
+  // 未確定セッションバナー（1行簡潔表示、タップで一覧へ）
+  // 対象ページ: ダッシュボード, 管理画面 のみ
+  pendingBanner() {
+    const list = UI.getPendingSessions();
+    if (!list.length) return '';
+    const primary = list[0];
+    const countStr = list.length > 1 ? `（他${list.length - 1}件）` : '';
+    return `<div onclick="routeTo('pending-sessions')"
+      style="background:rgba(224,144,64,.15);border:1px solid var(--amber);border-radius:10px;
+      padding:10px 14px;margin-bottom:10px;cursor:pointer;display:flex;align-items:center;gap:10px">
+      <span style="font-size:1.1rem">⚠️</span>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:.85rem;font-weight:700;color:var(--amber)">
+          未確定の${primary.label}セッションがあります${countStr}
+        </div>
+        <div style="font-size:.72rem;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+          ${primary.lotLabel} — ユニット${primary.unitCount}件 / 個別${primary.singleCount}頭
+        </div>
+      </div>
+      <span style="color:var(--amber);font-size:1.1rem">→</span>
     </div>`;
   },
 };

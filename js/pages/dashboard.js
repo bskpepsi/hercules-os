@@ -1,13 +1,14 @@
 // ════════════════════════════════════════════════════════════════
 // dashboard.js  v4 — Phase6 交換アラート新仕様対応
-// build: 20260418a
+// build: 20260420b
 // 変更点:
+//   - [20260420b] ページ先頭に未確定セッションバナー追加（UI.pendingBanner()）
 //   - [20260418a] Step2 ③ 性別集計サマリーカード追加（KPIバー直下）
 //                 Store.getSexStats() の結果を種親/個体/ユニット別に表示
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-console.log('[HerculesOS] dashboard.js v20260418a loaded');
+console.log('[HerculesOS] dashboard.js v20260420b loaded');
 
 Pages.dashboard = async function () {
   const main = document.getElementById('main');
@@ -198,6 +199,9 @@ function _renderDashboard(main) {
   main.innerHTML = `
     ${_dashHeader()}
     <div class="page-body">
+
+      <!-- [20260420b] 未確定セッション通知バナー -->
+      ${UI.pendingBanner ? UI.pendingBanner() : ''}
 
       ${!gasUrl ? `<div class="card" style="border-color:rgba(224,144,64,.4);background:rgba(224,144,64,.07)">
         <div style="font-size:.85rem;color:var(--amber)">
