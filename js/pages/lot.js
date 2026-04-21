@@ -3,8 +3,12 @@
 // lot.js — Phase4-1 UI統一版
 // ロット一覧・詳細・個体化を担う
 // カードUIを3列（コード | 頭数+ステージ | ›）に統一
-// build: 20260420b
+// build: 20260420c
 // 変更点:
+//   - [20260420c] ロット・ユニット管理画面のタブ選択状態を永続化
+//       リロード時にロットタブに戻ってしまう問題を修正
+//       localStorage('hcos_lotUnitTab') にタブ選択を保存し、ページ初期化時に復元
+//       params._tab が指定された場合はそちらを優先（明示的遷移向け）
 //   - [20260420b] ロット詳細から「📷 成長記録」ボタンを削除
 //       運用方針: ロットは複数個体・2ヶ月後にユニット化するため体重計測なし
 //       アクションは「🏷️ ラベル発行」1ボタンのみ（横幅フル表示）
@@ -31,7 +35,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] lot.js v20260420b loaded');
+console.log('[HerculesOS] lot.js v20260420c loaded');
 
 // ────────────────────────────────────────────────────────────────
 // [20260418f] 血統・種親カードを生成（ロット詳細用）
@@ -163,7 +167,16 @@ Pages.lotList = function () {
   const fixedLine   = fixedLineId ? Store.getLine(fixedLineId) : null;
   const isLineLimited = !!fixedLineId;
 
-  let _activeTab = params._tab || 'lot';
+  let _activeTab = params._tab || (function() {
+    // [20260420c] リロード時にタブ状態を復元（localStorage から）
+    //   params._tab が未指定のときは localStorage の値を使う。
+    //   これでユニット一覧表示中にページをリロードしてもユニット側に戻れる。
+    try {
+      var saved = localStorage.getItem('hcos_lotUnitTab');
+      if (saved === 'lot' || saved === 'unit') return saved;
+    } catch (e) { /* noop */ }
+    return 'lot';
+  })();
   let _keyword = '';
   let filters = { status: 'active', stage: '', line_id: fixedLineId, mat_type: '' };
   let _lotStatusMode = 'active';
@@ -488,6 +501,8 @@ Pages.lotList = function () {
   Pages._lotUnitTabSwitch = function(tab) {
     _activeTab = tab;
     _keyword = '';
+    // [20260420c] タブ選択をlocalStorageに保存（リロード時の復元用）
+    try { localStorage.setItem('hcos_lotUnitTab', tab); } catch (e) { /* noop */ }
     render();
   };
   Pages._lotUnitKw = function(val) {
