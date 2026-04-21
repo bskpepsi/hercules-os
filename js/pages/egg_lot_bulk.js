@@ -1,4 +1,5 @@
 // FILE: js/pages/egg_lot_bulk.js
+// build: 20260420n
 // ────────────────────────────────────────────────────────────────
 // ════════════════════════════════════════════════════════════════
 // egg_lot_bulk.js v2 — 卵ロット一括作成
@@ -8,6 +9,11 @@
 //   - 各行で容器を 1.8L / 2.7L から個別選択可能に
 //   - 自動容器提案なし（ユーザーが決める）
 //   - ラベル連続発行: label.js の _eblQueueIdx パラメータ連携で「次のラベルへ」対応
+//
+// [20260420n] 採卵日の構造化保存に対応
+//   createLotBulk payload の各ロットに collect_date を明示付与
+//   GAS側 (LotApi.gs@20260421c) が LOT.collect_date 列に保存する
+//   note フィールドへの埋め込みは既存データ互換のため残す
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
@@ -743,12 +749,20 @@ Pages.eggLotBulk = function (params = {}) {
           line_id:        _selLineId,
           stage,
           mat_type:       mat,
-          lots: lotRows.map(row => ({
-            count:          parseInt(row.count, 10),
-            container_size: row.container || _commonContainer || '1.8L',
-            mat_type:       mat,
-            note:           '採卵日: ' + (row.collectDate || _commonDate || _todayYMD()).replace(/-/g, '/'),
-          })),
+          // [20260420n] 採卵日を構造化カラムに保存する恒久対応:
+          //   GAS側 createLotBulk は各 lot の collect_date を受け取って
+          //   LOT.collect_date 列に保存するようになった（20260421c）。
+          //   従来の note フィールドへの埋め込みは既存データ互換のため残置する。
+          lots: lotRows.map(row => {
+            const _collectDate = (row.collectDate || _commonDate || _todayYMD()).replace(/-/g, '/');
+            return {
+              count:          parseInt(row.count, 10),
+              container_size: row.container || _commonContainer || '1.8L',
+              mat_type:       mat,
+              collect_date:   _collectDate,   // [20260420n] 構造化カラム
+              note:           '採卵日: ' + _collectDate,  // 既存データ互換のため残す
+            };
+          }),
         };
         const res = await API.lot.createBulk(payload);
         console.timeEnd('[EBL] createLotBulk');

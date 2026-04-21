@@ -1,6 +1,19 @@
 // FILE: js/pages/label.js
-// build: 20260420m
+// build: 20260421d
 // 修正:
+//   - [20260421d] 販売候補個体のラベル種別 自動フォールバック
+//       params.labelType 未指定で targetType==='IND' の場合、
+//       Store.getIndividual(targetId) を引いて for_sale/status を判定し、
+//       販売候補なら自動で ind_sale (62×25mm) に切り替え。
+//       個体画面・QRスキャン・その他の経路から labelType 未指定で
+//       呼ばれた場合も、販売候補なら正しく簡易ラベルが発行される。
+//       明示的に labelType を渡している場合（T2完了画面、T1single等）は尊重。
+//   - [20260420n] LOT 採卵日の構造化カラム対応（恒久対応完成）
+//       LotApi.gs@20260421c で LOT.collect_date 列が追加されたため、
+//       label.js LOT ブランチで lot.collect_date を最優先で使用するように変更。
+//       _normalizeDateForLabel を全日付に適用し、
+//       lot.collect_date > lot.hatch_date > note抽出 の優先順位で採卵日を決定。
+//       既存データ（collect_date 列が無いロット）は note 抽出で引き続き動作。
 //   - [20260420m] ロットラベル 採卵日 空欄バグ修正（note 文字列からのフォールバック抽出）
 //       問題: egg-lot-bulk で作成した lot の 採卵日 がラベル上で空欄になる
 //       原因: LOT テーブルに collect_date 列が存在せず、egg-lot-bulk は
@@ -76,7 +89,7 @@
 //   - Bug 3: _backRoute が存在する場合に「詳細に戻る」ボタンを追加
 'use strict';
 
-window._LABEL_BUILD = '20260420m';
+window._LABEL_BUILD = '20260421d';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 // ════════════════════════════════════════════════════════════════
@@ -338,6 +351,24 @@ Pages.labelGen = function (params = {}) {
   let targetType       = (params.targetType || 'IND').toUpperCase();
   let targetId         = params.targetId   || '';
   let labelType        = params.labelType  || _defaultLabelType(targetType);
+
+  // [20260421d] 個体ラベルで labelType が明示指定されていない場合のみ、
+  //   対象個体が販売候補 (ind.for_sale===true または ind.status==='for_sale') なら
+  //   自動で ind_sale (62×25mm) にフォールバックする。
+  //   これで個体画面・QRスキャン・その他の経路から labelType 未指定で
+  //   ラベル発行されても販売候補が正しく簡易ラベルになる。
+  //   明示指定 (params.labelType) は常に尊重する。
+  if (!params.labelType && targetType === 'IND' && targetId && labelType === 'ind_fixed') {
+    try {
+      const _ind = (typeof Store !== 'undefined' && typeof Store.getIndividual === 'function')
+        ? Store.getIndividual(targetId)
+        : null;
+      if (_ind && (_ind.for_sale === true || _ind.for_sale === 'true' || _ind.status === 'for_sale')) {
+        labelType = 'ind_sale';
+        console.log('[LABEL] auto-detected sale candidate, switching to ind_sale:', targetId);
+      }
+    } catch (_e) { console.warn('[LABEL] sale auto-detect failed:', _e.message); }
+  }
 
   const _isUnitMode    = targetType === 'UNIT';
   const _unitDisplayId = params.displayId || targetId || '';
@@ -646,14 +677,15 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
       const isMolt  = lot.mat_molt === true || lot.mat_molt === 'true';
       const autoType= (lot.stage === 'EGG' || lot.stage === 'T0' || lot.stage === 'L1L2') ? 'egg_lot' : 'multi_lot';
 
-      // [20260420m] 採卵日 抽出フォールバック
-      //   現状 LOT テーブルには collect_date 列が無く、egg-lot-bulk は採卵日を
-      //   note フィールドに "採卵日: YYYY/MM/DD" 文字列として保存しているため、
-      //   lot.collect_date / lot.hatch_date が空でも note から抽出して表示する。
-      //   本来は LotApi.createLotBulk で hatch_date に保存するのが望ましいが、
-      //   既存データを救済するためここで読み取りフォールバックを実装。
+      // [20260420m/n] 採卵日の取得 — 優先順位:
+      //   1) lot.collect_date (20260421c 以降の構造化カラム) ← 最優先
+      //   2) lot.hatch_date (egg-lot 運用で代用されていた経緯)
+      //   3) lot.note から "採卵日: YYYY/MM/DD" を抽出 (既存データ救済)
+      //   いずれも _normalizeDateForLabel で YYYY/MM/DD に統一
+      var _lotCollectNorm = _normalizeDateForLabel(lot.collect_date);
+      var _lotHatchNorm   = _normalizeDateForLabel(lot.hatch_date);
       var _noteCollectDate = '';
-      if (!lot.collect_date && !lot.hatch_date && lot.note) {
+      if (!_lotCollectNorm && !_lotHatchNorm && lot.note) {
         var _noteMatch = String(lot.note).match(/採卵日[:：]?\s*(\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2})/);
         if (_noteMatch) {
           _noteCollectDate = _normalizeDateForLabel(_noteMatch[1]);
@@ -665,18 +697,15 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         display_id:   lot.display_id    || targetId,
         line_code:    line.line_code    || line.display_id || '',
         stage_code:   lot.stage_life    || lot.stage       || '',
-        hatch_date:   lot.hatch_date    || '',
+        hatch_date:   _lotHatchNorm     || '',
         count:        lot.count         || '',
         mat_type:     lot.mat_type      || '',
         mat_molt:     isMolt,
         sex_hint:     lot.sex_hint      || '',
         size_category:lot.size_category || '',
         note_private: lot.note_private  || '',
-        // [20260420m] collect_date の優先順位:
-        //   1) lot.collect_date (将来スキーマ対応)
-        //   2) lot.hatch_date (egg-lot 運用で代用)
-        //   3) note から "採卵日: YYYY/MM/DD" を抽出 (既存データ救済)
-        collect_date: lot.collect_date || lot.hatch_date || _noteCollectDate || '',
+        // 採卵日の優先順位: collect_date > hatch_date > note抽出
+        collect_date: _lotCollectNorm || _lotHatchNorm || _noteCollectDate || '',
         records:      records.slice().sort((a,b)=>String(b.record_date).localeCompare(String(a.record_date))).slice(0,8),
         label_type:   labelType || autoType,
       };

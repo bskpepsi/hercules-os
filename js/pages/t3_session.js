@@ -1,10 +1,11 @@
 // FILE: js/pages/t3_session.js
-// build: 20260420a
+// build: 20260421d
 // 変更点:
-//   - [20260420a] セッション保存を sessionStorage → localStorage に変更
-//       タブを閉じても未確定セッションが保持されるようにし、
-//       未確定セッション通知システム（バナー + 一覧ページ）の対象にする
-//       キー名は '_t3SessionData' のまま変更なし（既存データ互換）
+//   - [20260421d] T3移行確定後に完了画面 (_t3ShowCompletion) を表示するように変更
+//       T2と同じ仕組みで、確定済み個体を一覧表示し各個体ごとにラベル発行ボタンを配置
+//       販売候補の個体は 🏷️販売ラベル ボタンから自動で ind_sale (62×25mm) が発行される
+//       新規ルート 't3-completion' を登録して label-gen から戻れるように対応
+//       以前は即 qr-scan に戻るだけで、販売候補個体のラベル発行経路が実質無かった
 //   - [20260418b] 容器選択肢に「その他」ボタンを追加（Step2 🥉③ 4択統一）
 //   - [fix2] window.Pages → Pages に統一（6箇所）
 //           window.Pages が undefined のため TypeError を起こしていたのを修正
@@ -13,7 +14,7 @@
 //   - [fix1] _renderT3Session: lineDisp に同じフォールバック追加
 'use strict';
 
-console.log('[HerculesOS] t3_session.js v20260420a loaded');
+console.log('[HerculesOS] t3_session.js v20260421d loaded');
 
 window._t3Session = window._t3Session || null;
 
@@ -200,10 +201,10 @@ function _formatT3OriginLots(ids) {
 }
 
 function _saveT3SessionToStorage() {
-  try { localStorage.setItem('_t3SessionData', JSON.stringify(window._t3Session)); } catch(e) {}
+  try { sessionStorage.setItem('_t3SessionData', JSON.stringify(window._t3Session)); } catch(e) {}
 }
 function _restoreT3SessionFromStorage() {
-  try { const raw = localStorage.getItem('_t3SessionData'); if (raw) window._t3Session = JSON.parse(raw); } catch(e) {}
+  try { const raw = sessionStorage.getItem('_t3SessionData'); if (raw) window._t3Session = JSON.parse(raw); } catch(e) {}
 }
 
 Pages.t3Session = function (params = {}) {
@@ -586,7 +587,7 @@ Pages._t3SessionBack = function () {
 };
 Pages._t3SessionCancel = function () {
   if (confirm('セッションを破棄しますか？（入力内容は消えます）')) {
-    window._t3Session = null; localStorage.removeItem('_t3SessionData'); routeTo('qr-scan', { mode: 't3' });
+    window._t3Session = null; sessionStorage.removeItem('_t3SessionData'); routeTo('qr-scan', { mode: 't3' });
   }
 };
 
@@ -663,11 +664,25 @@ Pages._t3SessionSave = async function () {
       res.created_individuals.forEach(ind => { if (typeof Store.addDBItem === 'function') Store.addDBItem('individuals', ind); });
     }
 
-    window._t3Session = null; localStorage.removeItem('_t3SessionData');
+    window._t3Session = null; sessionStorage.removeItem('_t3SessionData');
     UI.toast('T3（3齢後期）移行を完了しました ✅', 'success', 3000);
 
     _registerBacilusReminder(s.unit_id, s.display_id, today);
-    routeTo('qr-scan', { mode: 't3' });
+
+    // [20260421d] T2と同様に完了画面を表示し、各個体ごとにラベル発行できるようにする
+    //   以前は即 qr-scan に戻っていたため、販売候補の個体ラベルを
+    //   あとから個体一覧やスキャンで出すしかなく手間が大きかった
+    const _indMembers = s.members.filter(function(m){ return m.decision === 'individualize' || m.decision === 'sale'; });
+    const _createdInds = (res && Array.isArray(res.created_individuals)) ? res.created_individuals : [];
+    if (_indMembers.length > 0 && _createdInds.length > 0) {
+      window._t3CompletedInds    = _createdInds;
+      window._t3CompletedMembers = _indMembers;
+      window._t3CompletedUnitDisp= s.display_id || '';
+      window._t3LabeledIds       = {};
+      Pages._t3ShowCompletion();
+    } else {
+      routeTo('qr-scan', { mode: 't3' });
+    }
 
   } catch (e) {
     console.error('[T3] save error:', e); s.saving = false; _renderT3Session(s);
@@ -807,3 +822,124 @@ Pages._refreshBacilusReminders = function() {
 
 window.PAGES = window.PAGES || {};
 window.PAGES['t3-session'] = function () { Pages.t3Session(Store.getParams()); };
+
+// ════════════════════════════════════════════════════════════════
+// [20260421d] T3移行完了画面 — 確定済み個体一覧とラベル発行ボタン
+// ════════════════════════════════════════════════════════════════
+//
+// フロー:
+//   T3移行を確定 → 完了画面（この関数）を表示
+//     → 各個体のラベル発行ボタンから label-gen に遷移
+//     → label-gen から戻ったら再度この画面を表示（ルート登録済み）
+//     → 「完了」ボタンでQRスキャンに戻る
+//
+// 販売候補は自動で ind_sale (62×25mm簡易ラベル) が発行される
+//   （_t3OpenLabel が forSale フラグを見て labelType を切替）
+// ════════════════════════════════════════════════════════════════
+
+Pages._t3ShowCompletion = function () {
+  const main = document.getElementById('main');
+  if (!main) return;
+
+  const inds    = window._t3CompletedInds    || [];
+  const members = window._t3CompletedMembers || [];
+  const unitDsp = window._t3CompletedUnitDisp|| '';
+  const labeled = window._t3LabeledIds       || {};
+
+  if (inds.length === 0) {
+    routeTo('qr-scan', { mode: 't3' });
+    return;
+  }
+
+  const unprintedCount = inds.filter(function(i){ return !labeled[i.ind_id]; }).length;
+
+  main.innerHTML = `
+    ${UI.header('T3移行完了', { back: false })}
+    <div class="page-body">
+
+      <!-- 成功サマリ -->
+      <div class="card" style="padding:16px;margin-bottom:12px;
+        background:rgba(76,175,120,.08);border:1px solid rgba(76,175,120,.3)">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+          <span style="font-size:1.6rem">✅</span>
+          <div>
+            <div style="font-size:1rem;font-weight:700;color:var(--green)">T3（3齢後期）移行を完了しました</div>
+            <div style="font-size:.75rem;color:var(--text3)">${unitDsp ? 'ユニット ' + unitDsp + ' を解体' : ''}</div>
+          </div>
+        </div>
+        <div style="font-size:.78rem;color:var(--text2);line-height:1.6">
+          ${inds.length}頭を個別飼育として登録しました。<br>
+          ${unprintedCount > 0
+            ? `<span style="color:var(--amber)">⚠️ ${unprintedCount}頭分のラベルが未発行です</span>`
+            : '<span style="color:var(--green)">✅ 全頭のラベル発行ボタンを押下済み</span>'}
+        </div>
+      </div>
+
+      <!-- 個体一覧（ラベル発行ボタン付き） -->
+      <div class="card" style="margin-bottom:12px">
+        <div class="card-title">確定済み個体（${inds.length}頭）</div>
+        ${inds.map(function(ind, i) {
+          const m = members[i] || {};
+          const sex = ind.sex || m.sex || '不明';
+          const sexColor = sex === '♂' ? '#3366cc' : sex === '♀' ? '#cc3366' : 'var(--text3)';
+          const weight = m.weight_g || ind.latest_weight_g || '';
+          const sizeCat = m.size_category || ind.size_category || '';
+          const isLabeled = !!labeled[ind.ind_id];
+          const forSale = !!ind.for_sale || m.decision === 'sale';
+          return `
+          <div style="display:flex;align-items:center;gap:8px;padding:12px 0;border-bottom:1px solid var(--border2);flex-wrap:wrap">
+            <div style="display:flex;align-items:center;gap:6px;flex:1;min-width:140px">
+              <span style="font-weight:800;font-family:var(--font-mono);color:var(--gold);font-size:.92rem">${ind.display_id || ind.ind_id}</span>
+              <span style="color:${sexColor};font-weight:700;font-size:.95rem">${sex}</span>
+              ${sizeCat ? `<span style="font-size:.7rem;padding:1px 6px;border-radius:4px;background:rgba(76,175,120,.12);color:var(--green)">${sizeCat}</span>` : ''}
+              ${weight ? `<span style="font-size:.8rem;font-weight:700">${weight}g</span>` : ''}
+              ${forSale ? '<span style="font-size:.65rem;padding:1px 6px;border-radius:4px;background:rgba(224,144,64,.15);color:var(--amber)">販売候補</span>' : ''}
+            </div>
+            <div style="display:flex;gap:6px;align-items:center">
+              ${isLabeled ? '<span style="font-size:.7rem;color:var(--green)">✅印刷済</span>' : '<span style="font-size:.7rem;color:var(--amber)">未印刷</span>'}
+              <button class="btn btn-sm" style="font-size:.78rem;padding:6px 12px;
+                background:${isLabeled ? 'var(--bg2)' : (forSale ? 'var(--amber)' : 'var(--green)')};
+                color:${isLabeled ? 'var(--text2)' : '#fff'};
+                border:1px solid ${isLabeled ? 'var(--border)' : (forSale ? 'var(--amber)' : 'var(--green)')};
+                border-radius:6px;cursor:pointer;font-weight:700"
+                onclick="Pages._t3OpenLabel('${ind.ind_id}', ${forSale ? 'true' : 'false'})">
+                🏷️ ${forSale ? (isLabeled ? '販売ラベル再発行' : '販売ラベル') : (isLabeled ? '再発行' : 'ラベル')}
+              </button>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+
+      <!-- 完了ボタン -->
+      <button class="btn btn-primary" style="width:100%;padding:14px;font-weight:700;font-size:.95rem"
+        onclick="Pages._t3FinishCompletion()">
+        ${unprintedCount > 0 ? `完了（${unprintedCount}頭未印刷のまま終了）` : '完了（QRスキャンに戻る）'}
+      </button>
+    </div>`;
+};
+
+// ラベル発行ボタン押下 → label-gen に遷移し、このボタンを押したことを印刷済みとして記録
+// 販売候補は簡易ラベル（ind_sale, 62×25mm）を使用、通常個体は個別飼育ラベル（ind_fixed, 62×70mm）
+Pages._t3OpenLabel = function (indId, isForSale) {
+  window._t3LabeledIds = window._t3LabeledIds || {};
+  window._t3LabeledIds[indId] = true;
+  const routeParams = {
+    targetType: 'IND',
+    targetId:   indId,
+    labelType:  isForSale ? 'ind_sale' : 'ind_fixed',
+    _back:      't3-completion'
+  };
+  routeTo('label-gen', routeParams);
+};
+
+// 完了ボタン: 完了データをクリアして QRスキャンに戻る
+Pages._t3FinishCompletion = function () {
+  window._t3CompletedInds     = null;
+  window._t3CompletedMembers  = null;
+  window._t3CompletedUnitDisp = '';
+  window._t3LabeledIds        = {};
+  routeTo('qr-scan', { mode: 't3' });
+};
+
+// label-gen から戻ってこれるようルート登録
+window.PAGES['t3-completion'] = function () { Pages._t3ShowCompletion(); };

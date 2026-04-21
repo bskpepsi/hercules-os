@@ -1,5 +1,13 @@
 // FILE: js/pages/scan.js
-// build: 20260418j
+// build: 20260421d
+// 変更点(20260418j→20260421d):
+//   - [20260421d] 販売候補個体スキャン時のラベル種別判定
+//       _qrResolveEntity で IND プレフィックスのとき、
+//       ind.for_sale / ind.status==='for_sale' を判定して
+//       label_type を 'ind_sale' (簡易販売ラベル) に切替
+//       LABEL_DISPLAY マップにも 'ind_sale' エントリを追加し
+//       QR差分画面で正しく「⑦ 販売候補ラベル（簡易）」と表示
+//
 // 変更点(20260418i→20260418j):
 //   - [_qrNavigate record mode] BU の target_id を unit_id 優先に変更
 //     （以前は display_id が入り、成長記録検索に影響していた）
@@ -366,7 +374,11 @@ function _qrLocalResolve(v) {
     const line = Store.getLine(ind.line_id) || {};
     const recs = Store.getGrowthRecords(ind.ind_id) || [];
     const lg   = recs.filter(r => r.weight_g && +r.weight_g > 0).slice(-1)[0] || null;
-    return { entity_type: 'IND', entity: ind, line, last_growth: lg, missing: [], label_type: 'ind_fixed' };
+    // [20260421d] 販売候補の個体は ind_sale (62×25mm 簡易ラベル) を発行する
+    //   ind.for_sale===true または ind.status==='for_sale' なら販売候補扱い
+    const _isForSale = (ind.for_sale === true || ind.for_sale === 'true' || ind.status === 'for_sale');
+    const _labelType = _isForSale ? 'ind_sale' : 'ind_fixed';
+    return { entity_type: 'IND', entity: ind, line, last_growth: lg, missing: [], label_type: _labelType };
   }
   if (prefix === 'LOT') {
     const lot = Store.getLot(id)
@@ -649,6 +661,7 @@ Pages.qrDiff = function (params = {}) {
     multi_lot: '② 複数頭飼育ラベル',
     ind_fixed: '③ 個別飼育ラベル',
     set:       '④ 産卵セットラベル',
+    ind_sale:  '⑦ 販売候補ラベル（簡易）',
   };
   const labelName = LABEL_DISPLAY[label_type] || label_type || entity_type;
 
