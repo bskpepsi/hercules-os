@@ -1,6 +1,24 @@
 // FILE: js/pages/label.js
-// build: 20260418e-fix3
+// build: 20260420h
 // 修正:
+//   - [20260420h] 販売候補簡易ラベルの配置調整
+//       孵化日の位置を3行目→2行目（ID直下）に移動
+//       表記を「孵: 25/12/5」→「孵化日：25/12/5」に変更（全角コロン）
+//       4行構成: ①ID+性別 ②孵化日 ③サイズ+体重+測定日 ④ステージ
+//   - [20260420g] 販売候補簡易ラベルを 62×40mm → 62×25mm に縮小
+//       種親ラベルと同じ最小サイズに短縮
+//       QRコード 60px → 48px、ヘッダー高 5mm → 3.5mm
+//       メモ欄を削除（25mmでは収まらないため・詳細はアプリで確認）
+//       最新体重に測定日 (M/D) を括弧書きで追加表示
+//       孵化日 (YY/M/D) を追加表示
+//       ヘッダー文言を「販売候補」→「販売」に短縮
+//       ID/ロットバッジも縮小 (13px → 10px)
+//   - [20260420f] 販売候補簡易ラベル (ind_sale) を新規追加
+//       LABEL_TYPE_DEFS に ind_sale エントリ追加
+//       _labelDimensions に ind_sale 対応
+//       _buildLabelHTML の分岐に ind_sale 追加
+//       _buildIndSaleLabelHTML 新規関数を実装
+//       T2移行完了画面から販売候補個体は自動的にこのラベルで起動される
 //   - [20260418e-fix3] e-fix2 で勝手にボタン文言を変更していたのを元に戻す
 //                     常に「詳細に戻る」表示に統一
 //   - [20260418e-fix2] T1/T2/T3セッション中のラベル発行時の戻り先を修正
@@ -19,7 +37,7 @@
 //   - Bug 3: _backRoute が存在する場合に「詳細に戻る」ボタンを追加
 'use strict';
 
-window._LABEL_BUILD = '20260418e-fix3';
+window._LABEL_BUILD = '20260420h';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 function _normStageForLabel(code) {
@@ -61,6 +79,7 @@ const LABEL_TYPE_DEFS = [
   { code: 'egg_lot',   label: '① 卵管理',      target: 'LOT',  desc: '採卵後・採卵日印字・孵化日手書き欄付き 62×40mm' },
   { code: 'multi_lot', label: '② 複数頭飼育',  target: 'LOT',  desc: 'ロット管理用・採卵日/孵化日欄付き 62×40mm' },
   { code: 'ind_fixed', label: '③ 個別飼育',    target: 'IND',  desc: '個体管理用（記録表付き）62×70mm' },
+  { code: 'ind_sale',  label: '⑦ 販売候補（簡易）', target: 'IND', desc: '販売仕分け用・最小サイズ 62×25mm' },
   { code: 't1_unit',   label: '⑥ T1ユニット', target: 'UNIT', desc: 'T1移行後の2頭飼育（記録表付き）62×70mm' },
   { code: 'set',       label: '④ 産卵セット',  target: 'SET',  desc: '産卵セット情報 62×40mm' },
   { code: 'parent',    label: '⑤ 種親',        target: 'PAR',  desc: '種親QR・血統タグ 62×25mm' },
@@ -90,6 +109,10 @@ function _detailPageKey(targetType, targetId) {
 }
 
 function _labelDimensions(labelType, targetType) {
+  // [20260420g] 販売候補簡易ラベルを 62×40mm → 62×25mm に縮小（種親と同サイズ・最小）
+  if (labelType === 'ind_sale') {
+    return { wMm:62, hMm:25, wPx:234, hPx:94, scale:3, label:'62×25mm' };
+  }
   if (labelType === 'multi_lot' || labelType === 'egg_lot') {
     return { wMm:62, hMm:40, wPx:234, hPx:151, scale:3, label:'62×40mm' };
   }
@@ -842,9 +865,10 @@ function _buildLabelHTML(ld, qrSrc) {
   var lt = ld.label_type || 'ind_fixed';
   var noteShort = (ld.note_private||'').slice(0, 28);
 
-  if (lt === 'set')     return _buildSetLabelHTML(ld, null, qrSrc);
-  if (lt === 'parent')  return _buildParentLabelHTML(ld, null, qrSrc);
-  if (lt === 't1_unit') return _buildT1UnitLabelHTML(ld, null, qrSrc);
+  if (lt === 'set')      return _buildSetLabelHTML(ld, null, qrSrc);
+  if (lt === 'parent')   return _buildParentLabelHTML(ld, null, qrSrc);
+  if (lt === 't1_unit')  return _buildT1UnitLabelHTML(ld, null, qrSrc);
+  if (lt === 'ind_sale') return _buildIndSaleLabelHTML(ld, qrSrc);
 
   var isLot   = lt === 'multi_lot' || lt === 'egg_lot';
   var chk     = _chkThermal;
@@ -1021,6 +1045,162 @@ function _buildParentLabelHTML(ld, _unused, qrSrc) {
     + '    <div style="display:flex;align-items:flex-start;gap:1.5mm"><span style="font-size:7px;font-weight:900;color:#b51a5a;min-width:5mm;flex-shrink:0;line-height:1.5">♀親</span>'
     + '<span style="font-size:6.5px;flex:1;word-break:break-all;line-height:1.45">' + (matStr ? matStr + matSize : '______________________________') + '</span></div>\n'
     + '  </div>\n</div>\n</body></html>';
+}
+
+// ════════════════════════════════════════════════════════════════
+// [20260420g] 販売候補・簡易ラベル (62×25mm — 最小サイズ版)
+// ════════════════════════════════════════════════════════════════
+// 設計方針:
+//   - 62×25mm の最小サイズ（種親ラベルと同サイズ）
+//   - 販売仕分け作業に必要な最低限の情報のみ
+//   - 詳細情報はQRコードをアプリでスキャンして確認する運用
+//
+// 表示項目（4行構成）:
+//   ヘッダー (3.5mm): 🏷️ 販売 | HerculesOS — オレンジストライプ
+//   左側: QRコード (48px) — スキャンで詳細画面に飛ぶ
+//   右・1行目: 個体ID (バッジ) + 性別 (♂/♀色付き大)
+//   右・2行目: 孵化日： YY/M/D ← IDの直下に配置（[20260420h]で3行目から移動）
+//   右・3行目: サイズ区分(大/中/小) + 体重 + 測定日(M/D)
+//   右・4行目: ステージ
+// ════════════════════════════════════════════════════════════════
+function _buildIndSaleLabelHTML(ld, qrSrc) {
+  var chk = _chkThermal;
+  var rawId = ld.display_id || '';
+  var sex = ld.sex || '不明';
+  var sexColor = sex === '♂' ? '#1a6bb5' : sex === '♀' ? '#b51a5a' : '#666';
+  var sexChar  = sex === '♂' ? '♂' : sex === '♀' ? '♀' : '?';
+
+  var idParts   = rawId.split('-');
+  var lineBadge = ld.line_code || '';
+  var lotSuffix = '';
+  if (lineBadge && rawId.includes('-' + lineBadge + '-')) {
+    lotSuffix = rawId.slice(rawId.indexOf('-' + lineBadge + '-') + ('-' + lineBadge + '-').length);
+  } else if (idParts.length >= 3) {
+    lotSuffix = idParts.slice(2).join('-');
+  }
+  var prefix = lineBadge && rawId.includes(lineBadge)
+    ? rawId.slice(0, rawId.indexOf(lineBadge)).replace(/-$/, '') : '';
+
+  // サイズ区分 (コンパクト)
+  var sizeCats = (ld.size_category||'').split(',').map(function(s){ return s.trim(); });
+  var sizeHtml = '<span style="font-size:7.5px;font-weight:700;color:#000">'
+    + chk('大', sizeCats.indexOf('大')>=0)
+    + chk('中', sizeCats.indexOf('中')>=0)
+    + chk('小', sizeCats.indexOf('小')>=0) + '</span>';
+
+  // 最新体重 + 測定日を records 配列から取得（日付降順で先頭）
+  var records = ld.records || [];
+  var latestW = '';
+  var latestDate = '';
+  if (records.length > 0) {
+    var sorted = records.slice().sort(function(a,b){
+      return String(b.record_date||'').localeCompare(String(a.record_date||''));
+    });
+    for (var i = 0; i < sorted.length; i++) {
+      if (sorted[i].weight_g) {
+        latestW = sorted[i].weight_g;
+        latestDate = sorted[i].record_date || '';
+        break;
+      }
+    }
+  }
+  if (!latestW && ld.latest_weight_g) latestW = ld.latest_weight_g;
+
+  // 測定日を M/D 形式に短縮（2026-04-21 → 4/21）
+  var measDateShort = '';
+  if (latestDate) {
+    var dp = String(latestDate).replace(/-/g,'/').split('/');
+    if (dp.length === 3) {
+      var mm = parseInt(dp[1], 10);
+      var dd = parseInt(dp[2], 10);
+      if (!isNaN(mm) && !isNaN(dd)) measDateShort = mm + '/' + dd;
+    }
+  }
+
+  // 孵化日を YY/M/D 形式に短縮（2025-12-05 → 25/12/5）
+  // フォーマット揺れ対応（Date.toString() 形式などは formatDateForDisplay 経由で正規化済みを想定）
+  var hatchDisp = ld.hatch_date || '';
+  var hatchShort = '';
+  if (hatchDisp) {
+    var hp = String(hatchDisp).replace(/-/g,'/').split('/');
+    if (hp.length === 3) {
+      var yy = hp[0].length === 4 ? hp[0].slice(2) : hp[0];
+      var hm = parseInt(hp[1], 10);
+      var hd = parseInt(hp[2], 10);
+      if (!isNaN(hm) && !isNaN(hd)) hatchShort = yy + '/' + hm + '/' + hd;
+    }
+  }
+
+  // ステージ
+  var stageCode = ld.stage_code || '';
+  var stageLabel = stageCode === 'L1L2' ? 'L1L2'
+    : stageCode === 'L3'     ? 'L3'
+    : stageCode === 'PREPUPA'|| stageCode === '前蛹' ? '前蛹'
+    : stageCode === 'PUPA'   || stageCode === '蛹'   ? '蛹'
+    : stageCode === 'ADULT'  || stageCode === '成虫' ? '成虫'
+    : stageCode;
+
+  // ID バッジ (25mmに収めるため小さめ)
+  var bLg = 'display:inline-block;border:1.3px solid #000;border-radius:3px;padding:0 3px;font-size:10px;font-weight:800;color:#000;line-height:1.3';
+  var lineBadgeHtml = lineBadge ? '<span style="' + bLg + '">' + lineBadge + '</span>' : '';
+  var lotSuffixHtml = lotSuffix ? '<span style="' + bLg + '">' + lotSuffix + '</span>' : '';
+
+  return '<!DOCTYPE html>\n<html><head><meta charset="utf-8">\n<style>\n'
+    + '  @page { size: 62mm 25mm; margin: 0; }\n'
+    + '  * { margin:0; padding:0; box-sizing:border-box; }\n'
+    + '  body { width:62mm; height:25mm; font-family:sans-serif; background:#fff; color:#000; overflow:hidden; }\n'
+    + '  @media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }\n'
+    + '</style></head><body>\n'
+    + '<div style="width:62mm;height:25mm;display:flex;flex-direction:column">\n'
+
+    // ヘッダー (3.5mm・オレンジストライプで「販売」と視覚的に識別)
+    + '  <div style="position:relative;background:#000;color:#fff;font-size:7.5px;font-weight:700;padding:0.3mm 2mm;height:3.5mm;display:flex;align-items:center;flex-shrink:0;overflow:hidden">'
+    + '    <span style="position:absolute;top:0;left:0;right:0;bottom:0;background:repeating-linear-gradient(45deg,transparent 0,transparent 4px,rgba(255,180,80,0.38) 4px,rgba(255,180,80,0.38) 6px);pointer-events:none"></span>'
+    + '    <span style="position:relative;z-index:1">🏷️ 販売 | HerculesOS</span>'
+    + '  </div>\n'
+
+    // メインエリア (QRと情報を横並び・残り 21.5mm)
+    + '  <div style="display:flex;padding:1mm 1.5mm 0.5mm;gap:1.5mm;flex:1;min-height:0">\n'
+
+    // QR (左, 48px = 約12.7mm)
+    + '    <div style="flex-shrink:0;display:flex;align-items:center">' + _qrBox(qrSrc, 48) + '</div>\n'
+
+    // 情報エリア (右)
+    + '    <div style="flex:1;min-width:0;display:flex;flex-direction:column;justify-content:space-between;padding-left:1mm;border-left:1.5px solid #000">\n'
+
+    // 1行目: ID + 性別
+    + '      <div style="display:flex;justify-content:space-between;align-items:center;gap:1mm">\n'
+    + '        <div style="display:flex;align-items:center;gap:1.5px;flex-wrap:nowrap;min-width:0;overflow:hidden">'
+    + (prefix ? '<span style="font-size:7px;font-weight:700;color:#000;white-space:nowrap">' + prefix + '-</span>' : '')
+    + lineBadgeHtml + lotSuffixHtml
+    + '</div>\n'
+    + '        <span style="font-size:15px;font-weight:900;color:' + sexColor + ';line-height:1;flex-shrink:0">' + sexChar + '</span>\n'
+    + '      </div>\n'
+
+    // 2行目: 孵化日 (ID直下に配置)
+    + (hatchShort
+      ? '      <div style="font-size:8px;font-weight:700;color:#000;white-space:nowrap;line-height:1.2">孵化日：' + hatchShort + '</div>\n'
+      : '')
+
+    // 3行目: サイズ + 体重(測定日)
+    + '      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:1mm">\n'
+    + '        <div>' + sizeHtml + '</div>\n'
+    + (latestW
+      ? '        <div style="font-size:11px;font-weight:900;color:#000;line-height:1;white-space:nowrap">'
+        + latestW + '<span style="font-size:8px;margin-left:0.5px">g</span>'
+        + (measDateShort ? '<span style="font-size:7.5px;font-weight:700;margin-left:2px">(' + measDateShort + ')</span>' : '')
+        + '</div>\n'
+      : '')
+    + '      </div>\n'
+
+    // 4行目: ステージ
+    + (stageLabel
+      ? '      <div style="line-height:1.1"><span style="display:inline-block;border:1.2px solid #000;border-radius:2px;padding:0 3px;font-size:8px;font-weight:800;color:#000">' + stageLabel + '</span></div>\n'
+      : '')
+
+    + '    </div>\n'
+    + '  </div>\n'
+    + '</div>\n</body></html>';
 }
 
 function _buildSetLabelHTML(ld, _unused, qrSrc) {
