@@ -1,6 +1,11 @@
 // FILE: js/pages/label.js
-// build: 20260420h
+// build: 20260420i
 // 修正:
+//   - [20260420i] 個別飼育ラベル (ind_fixed, 62×70mm) の孵化日を目立たせる + Mx統合
+//       hatchHtml: 6.5px→8px、表記「孵: YYYY-MM-DD」→「孵化日：YYYY/MM/DD」
+//       ダッシュ区切りをスラッシュ区切りに統一
+//       Mx 独立行を削除し、M行の右側に横並びで統合 (1行節約)
+//       結果: ID / 孵化日 / 区分 / M+Mx / St の5行構成 (変更前は4行+Mx独立)
 //   - [20260420h] 販売候補簡易ラベルの配置調整
 //       孵化日の位置を3行目→2行目（ID直下）に移動
 //       表記を「孵: 25/12/5」→「孵化日：25/12/5」に変更（全角コロン）
@@ -37,7 +42,7 @@
 //   - Bug 3: _backRoute が存在する場合に「詳細に戻る」ボタンを追加
 'use strict';
 
-window._LABEL_BUILD = '20260420h';
+window._LABEL_BUILD = '20260420i';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 function _normStageForLabel(code) {
@@ -935,8 +940,10 @@ function _buildLabelHTML(ld, qrSrc) {
   var countBadge = (isLot && ld.count)
     ? '<span style="display:inline-block;border:2px solid #000;border-radius:3px;padding:0 3px;font-size:13px;font-weight:700;color:#000;line-height:1.4">' + ld.count + '頭</span>' : '';
   var sexHtml = !isLot ? _sexDisplay(ld.sex || '') : '';
+  // [20260420i] 孵化日を目立たせる: 6.5px → 8px、表記を「孵: YYYY-MM-DD」→「孵化日：YYYY/MM/DD」
+  //             ダッシュ区切りをスラッシュ区切りに統一
   var hatchHtml = (!isLot && ld.hatch_date)
-    ? '<div style="font-size:6.5px;font-weight:700;color:#000">孵: ' + ld.hatch_date + '</div>' : '';
+    ? '<div style="font-size:8px;font-weight:700;color:#000;line-height:1.6">孵化日：' + String(ld.hatch_date).replace(/-/g,'/') + '</div>' : '';
   var mxHtml = showMx
     ? '<div style="font-size:7px;font-weight:700;color:#000;line-height:1.7">Mx:' + chk('ON', mxIsOn) + chk('OFF', !mxIsOn) + '</div>' : '';
 
@@ -968,11 +975,17 @@ function _buildLabelHTML(ld, qrSrc) {
     + '      ' + hatchHtml + '\n'
     + '      <div style="font-size:7px;font-weight:700;color:#000;line-height:1.7">区分:'
     + chk('大',sexCats.indexOf('大')>=0) + chk('中',sexCats.indexOf('中')>=0) + chk('小',sexCats.indexOf('小')>=0) + '</div>\n'
-    + '      <div style="font-size:7px;font-weight:700;color:#000;line-height:1.7">M:'
-    + ['T0','T1','T2','T3'].map(function(m){ return chk(m,ld.mat_type===m); }).join('') + '</div>\n'
+    // [20260420i] M行と Mx行を統合: 横並びで1行に収める（孵化日行追加により行数節約）
+    + '      <div style="display:flex;align-items:center;gap:3mm;font-size:7px;font-weight:700;color:#000;line-height:1.7">\n'
+    + '        <span>M:'
+    + ['T0','T1','T2','T3'].map(function(m){ return chk(m,ld.mat_type===m); }).join('')
+    + '</span>\n'
+    + (showMx
+      ? '        <span>Mx:' + chk('ON', mxIsOn) + chk('OFF', !mxIsOn) + '</span>\n'
+      : '')
+    + '      </div>\n'
     + '      <div style="font-size:7px;font-weight:700;color:#000;line-height:1.7">St:'
     + _stageCheckboxRow(ld.stage_code) + '</div>\n'
-    + '      ' + mxHtml + '\n'
     + '    </div>\n  </div>\n'
     + (isLot ? (
       '  <div style="border-top:2px solid #000;margin:1mm 1.5mm 0"></div>\n'
