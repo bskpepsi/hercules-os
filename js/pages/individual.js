@@ -2,28 +2,15 @@
 // individual.js
 // 役割: 個体の一覧・詳細・新規登録・編集・ステータス変更を担う。
 //       個体台帳の中心画面。ロット・成長記録・ラベルへの導線も持つ。
-// build: 20260420b
+// build: 20260421e
 //
-// 20260420b 修正:
-//   - 個体詳細の「孵化日」「個体化日」表示で Store.formatDateForDisplay() を使用
-//     GAS から "Fri Dec 05 2025 00:00:00 GMT+0900 (日本標準時)" 形式の文字列が
-//     入ってきた場合でも "2025/12/05" に正規化して表示
-//   - 個体編集フォームの hatch_date 入力欄も正規化経由で "YYYY-MM-DD" に変換
-//     これで <input type="date"> が値を受け取って編集できる
-//
-// 20260420a 修正:
-//   - 形態・成長データ入力フォームに「全長サイズ (mm)」(adult_size_mm) を追加
-//   - 形態データ入力欄の並び順を変更:
-//       頭幅 | 前蛹体重
-//       蛹サイズ | 全長サイズ
-//       胸角長
-//   - 個体詳細の形態データ表示: 「成虫サイズ」→「全長サイズ」に表記変更
-//   - 形態データ表示に「還元率」「胸角率」を追加
-//       還元率 = (全長サイズ ÷ 蛹サイズ) × 100
-//       胸角率 = (胸角長   ÷ 全長サイズ) × 100
-//     両方の値が揃っている場合のみ表示、小数点1桁
-//   - 個体詳細下部「最大体重記録: Xg」テキストを削除（体重推移で視認可能、重複情報）
-//   - 下部アクションボタン(死亡/販売候補/フラグ)の margin-left:auto を削除し均等配置
+// 20260421e 修正:
+//   - 販売候補/出品中/飼育中戻し のステータス変更エラー修正
+//     changeStatus(→deleteIndividual) は終端ステータス (dead/sold/excluded) のみ
+//     受け付けるため、for_sale/listed/alive のような非終端遷移は
+//     updateIndividual 経由に変更。StatusRules 側で validateStatusTransition
+//     が alive→for_sale, for_sale→listed 等の遷移を正しく許可する。
+//     対象: _indMarkForSale, _indMarkListed, _indMarkAlive
 //
 // 20260418g 修正:
 //   - 血統・種親セクションをユニット/ロット詳細と統一デザインに変更
@@ -542,43 +529,42 @@ function _renderDetail(ind, main) {
   ].filter(Boolean).join(' ');
 
   let statusButtons = '';
-  // [20260420a] margin-left:auto を削除して3ボタン均等配置 (flex:1 で均等幅)
-  const flagBtn = `<button class="btn btn-ghost btn-sm" style="flex:1"
+  const flagBtn = `<button class="btn btn-ghost btn-sm" style="margin-left:auto"
     onclick="Pages._indFlagMenu('${ind.ind_id}','${ind.guinness_flag}','${ind.parent_flag}','${ind.g200_flag}')">🏷 フラグ</button>`;
-  const deadBtn = `<button class="btn btn-ghost btn-sm" style="flex:1" onclick="Pages._indMarkDead('${ind.ind_id}')">💀 死亡</button>`;
+  const deadBtn = `<button class="btn btn-ghost btn-sm" onclick="Pages._indMarkDead('${ind.ind_id}')">💀 死亡</button>`;
 
   const _ALIVE_SET = new Set(['alive','larva','prepupa','pupa','adult','seed_candidate','seed_reserved']);
   if (_ALIVE_SET.has(ind.status) || !ind.status) {
     statusButtons = `<div style="display:flex;gap:8px">
       ${deadBtn}
-      <button class="btn btn-ghost btn-sm" style="flex:1" onclick="Pages._indMarkForSale('${ind.ind_id}')">🛒 販売候補</button>
+      <button class="btn btn-ghost btn-sm" onclick="Pages._indMarkForSale('${ind.ind_id}')">🛒 販売候補</button>
       ${flagBtn}
     </div>`;
   } else if (ind.status === 'for_sale') {
     statusButtons = `<div style="display:flex;gap:8px;flex-wrap:wrap">
       ${deadBtn}
-      <button class="btn btn-ghost btn-sm" style="flex:1" onclick="Pages._indMarkListed('${ind.ind_id}')">📢 出品</button>
-      <button class="btn btn-ghost btn-sm" style="flex:1" onclick="Pages._indMarkAlive('${ind.ind_id}')">↩ 飼育中に戻す</button>
+      <button class="btn btn-ghost btn-sm" onclick="Pages._indMarkListed('${ind.ind_id}')">📢 出品</button>
+      <button class="btn btn-ghost btn-sm" onclick="Pages._indMarkAlive('${ind.ind_id}')">↩ 飼育中に戻す</button>
       ${flagBtn}
     </div>`;
   } else if (ind.status === 'listed') {
     statusButtons = `<div style="display:flex;gap:8px;flex-wrap:wrap">
       ${deadBtn}
-      <button class="btn btn-ghost btn-sm" style="flex:1" onclick="Pages._indMarkSold('${ind.ind_id}')">💰 販売済みにする</button>
-      <button class="btn btn-ghost btn-sm" style="flex:1" onclick="Pages._indMarkForSale('${ind.ind_id}')">↩ 候補に戻す</button>
+      <button class="btn btn-ghost btn-sm" onclick="Pages._indMarkSold('${ind.ind_id}')">💰 販売済みにする</button>
+      <button class="btn btn-ghost btn-sm" onclick="Pages._indMarkForSale('${ind.ind_id}')">↩ 候補に戻す</button>
       ${flagBtn}
     </div>`;
   } else if (ind.status === 'sold') {
     statusButtons = `<div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button class="btn btn-ghost btn-sm" style="flex:1;font-size:.75rem;opacity:.7"
+      <button class="btn btn-ghost btn-sm" style="font-size:.75rem;opacity:.7"
         onclick="Pages._indRestoreFromSold('${ind.ind_id}','alive')">↩ 飼育中に戻す（誤入力訂正）</button>
-      <button class="btn btn-ghost btn-sm" style="flex:1;font-size:.75rem;opacity:.7"
+      <button class="btn btn-ghost btn-sm" style="font-size:.75rem;opacity:.7"
         onclick="Pages._indRestoreFromSold('${ind.ind_id}','for_sale')">↩ 販売候補に戻す（誤入力訂正）</button>
       ${flagBtn}
     </div>`;
   } else if (ind.status === 'dead') {
     statusButtons = `<div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button class="btn btn-ghost btn-sm" style="flex:1;font-size:.75rem;opacity:.7"
+      <button class="btn btn-ghost btn-sm" style="font-size:.75rem;opacity:.7"
         onclick="Pages._indRestoreFromDead('${ind.ind_id}')">↩ 飼育中に戻す（誤入力訂正）</button>
       ${flagBtn}
     </div>`;
@@ -649,8 +635,8 @@ function _renderDetail(ind, main) {
           <div class="info-list">
             ${_infoRow('産地',     ind.locality          || '—')}
             ${_infoRow('累代',     ind.generation        || '—')}
-            ${_infoRow('孵化日',   (Store.formatDateForDisplay ? Store.formatDateForDisplay(ind.hatch_date) : ind.hatch_date) || '未設定')}
-            ${_infoRow('個体化日', (Store.formatDateForDisplay ? Store.formatDateForDisplay(ind.individual_date) : ind.individual_date) || '—')}
+            ${_infoRow('孵化日',   ind.hatch_date        || '未設定')}
+            ${_infoRow('個体化日', ind.individual_date   || '—')}
             ${_infoRow('容器',     ind.current_container || '—')}
             ${_infoRow('マット',   ind.current_mat       || '—')}
             ${_infoRow('保管場所', ind.storage_location  || '—')}
@@ -669,30 +655,8 @@ function _renderDetail(ind, main) {
             ${ind.head_width_mm     ? _infoRow('頭幅',       ind.head_width_mm     + ' mm') : ''}
             ${ind.prepupa_weight_g  ? _infoRow('前蛹体重',   ind.prepupa_weight_g  + ' g')  : ''}
             ${ind.pupa_length_mm    ? _infoRow('蛹サイズ',   ind.pupa_length_mm    + ' mm') : ''}
-            ${ind.adult_size_mm     ? _infoRow('全長サイズ', ind.adult_size_mm     + ' mm') : ''}
+            ${ind.adult_size_mm     ? _infoRow('成虫サイズ', ind.adult_size_mm     + ' mm') : ''}
             ${ind.horn_length_mm    ? _infoRow('胸角長',     ind.horn_length_mm    + ' mm') : ''}
-            ${(() => {
-              // [20260420a] 還元率: (全長サイズ / 蛹サイズ) × 100
-              //   両方揃っている場合のみ表示、小数点1桁
-              const a = parseFloat(ind.adult_size_mm);
-              const p = parseFloat(ind.pupa_length_mm);
-              if (a > 0 && p > 0) {
-                const ratio = (a / p) * 100;
-                return _infoRow('還元率', ratio.toFixed(1) + ' %');
-              }
-              return '';
-            })()}
-            ${(() => {
-              // [20260420a] 胸角率: (胸角長 / 全長サイズ) × 100
-              //   両方揃っている場合のみ表示、小数点1桁
-              const h = parseFloat(ind.horn_length_mm);
-              const a = parseFloat(ind.adult_size_mm);
-              if (h > 0 && a > 0) {
-                const ratio = (h / a) * 100;
-                return _infoRow('胸角率', ratio.toFixed(1) + ' %');
-              }
-              return '';
-            })()}
           </div>
         </div>
       </div>` : ''}
@@ -915,6 +879,11 @@ function _renderDetail(ind, main) {
         </div>
       </div>`; })() : ''}
 
+      ${ind.max_weight_g ? `
+      <div style="text-align:center;padding:6px;font-size:.8rem;color:var(--text3)">
+        最大体重記録: <strong>${ind.max_weight_g}g</strong>
+      </div>` : ''}
+
       ${(() => {
         const _stageStr = String(ind.current_stage || '').toUpperCase();
         const _isAdult  = _stageStr === 'ADULT' || _stageStr === 'ADULT_PRE';
@@ -973,15 +942,18 @@ Pages._indMarkDead = async function (id) {
 
 Pages._indMarkForSale = async function (id) {
   try {
-    await apiCall(() => API.individual.changeStatus(id, 'for_sale'), '販売候補にしました');
-    Store.patchDBItem('individuals', 'ind_id', id, { status: 'for_sale' });
+    // [20260421e] for_sale は非終端ステータスなので updateIndividual 経由で遷移
+    //   (changeStatus → deleteIndividual は dead/sold/excluded 終端のみ許可)
+    await apiCall(() => API.individual.update({ ind_id: id, status: 'for_sale' }), '販売候補にしました');
+    Store.patchDBItem('individuals', 'ind_id', id, { status: 'for_sale', for_sale: true });
     Pages.individualDetail(id);
   } catch (e) {}
 };
 
 Pages._indMarkListed = async function (id) {
   try {
-    await apiCall(() => API.individual.changeStatus(id, 'listed'), '出品中にしました');
+    // [20260421e] listed は非終端ステータスなので updateIndividual 経由で遷移
+    await apiCall(() => API.individual.update({ ind_id: id, status: 'listed' }), '出品中にしました');
     Store.patchDBItem('individuals', 'ind_id', id, { status: 'listed' });
     Pages.individualDetail(id);
   } catch (e) {}
@@ -989,8 +961,9 @@ Pages._indMarkListed = async function (id) {
 
 Pages._indMarkAlive = async function (id) {
   try {
-    await apiCall(() => API.individual.changeStatus(id, 'alive'), '飼育中に戻しました');
-    Store.patchDBItem('individuals', 'ind_id', id, { status: 'alive' });
+    // [20260421e] alive は非終端ステータスなので updateIndividual 経由で遷移
+    await apiCall(() => API.individual.update({ ind_id: id, status: 'alive', for_sale: false }), '飼育中に戻しました');
+    Store.patchDBItem('individuals', 'ind_id', id, { status: 'alive', for_sale: false });
     Pages.individualDetail(id);
   } catch (e) {}
 };
@@ -1393,17 +1366,7 @@ Pages.individualNew = function (params = {}) {
             v('current_stage', 'L1L2')), true)}
         </div>
         <div class="form-row-2">
-          ${UI.field('孵化日', UI.input('hatch_date', 'date',
-            // [20260420d] GAS から "Fri Dec 05 ..." 形式が来る場合があるので正規化
-            (function() {
-              var raw = v('hatch_date');
-              if (!raw) return '';
-              if (Store.formatDateForDisplay) {
-                return Store.formatDateForDisplay(raw).replace(/\//g, '-');
-              }
-              return String(raw).replace(/\//g, '-');
-            })()
-          ))}
+          ${UI.field('孵化日', UI.input('hatch_date', 'date', v('hatch_date')))}
           ${UI.field('累代',   UI.input('generation', 'text', v('generation'), 'WF1 / CBF1'))}
         </div>
         <div class="form-row-2">
@@ -1436,21 +1399,13 @@ Pages.individualNew = function (params = {}) {
           v('mother_par_id')))}
 
         <div class="form-title">形態・成長データ</div>
-        <!-- [20260420a] 並び順変更 + 全長サイズ(adult_size_mm)追加 -->
-        <!--   頭幅       | 前蛹体重      -->
-        <!--   蛹サイズ   | 全長サイズ    -->
-        <!--   胸角長                     -->
         <div class="form-row-2">
           ${UI.field('頭幅 (mm)',    UI.input('head_width_mm',   'number', v('head_width_mm'),   '例: 14.5'))}
           ${UI.field('前蛹体重 (g)', UI.input('prepupa_weight_g','number', v('prepupa_weight_g'), '例: 45.2'))}
         </div>
         <div class="form-row-2">
-          ${UI.field('蛹サイズ (mm)',  UI.input('pupa_length_mm', 'number', v('pupa_length_mm'), '例: 90.0'))}
-          ${UI.field('全長サイズ (mm)',UI.input('adult_size_mm',  'number', v('adult_size_mm'),  '例: 165.0'))}
-        </div>
-        <div class="form-row-2">
+          ${UI.field('蛹サイズ (mm)', UI.input('pupa_length_mm', 'number', v('pupa_length_mm'), '例: 90.0'))}
           ${UI.field('胸角長 (mm)',   UI.input('horn_length_mm', 'number', v('horn_length_mm'), '例: 65.0'))}
-          <div></div>
         </div>
 
         <div class="form-title">発育日程</div>

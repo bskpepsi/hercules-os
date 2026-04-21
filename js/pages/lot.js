@@ -1,27 +1,14 @@
 // FILE: js/pages/lot.js
 // ════════════════════════════════════════════════════════════════
 // lot.js — Phase4-1 UI統一版
-// ロット一覧・詳細・個体化を担う
+// ロット一覧・詳細・分割・個体化を担う
 // カードUIを3列（コード | 頭数+ステージ | ›）に統一
-// build: 20260420c
+// build: 20260421e
 // 変更点:
-//   - [20260420c] ロット・ユニット管理画面のタブ選択状態を永続化
-//       リロード時にロットタブに戻ってしまう問題を修正
-//       localStorage('hcos_lotUnitTab') にタブ選択を保存し、ページ初期化時に復元
-//       params._tab が指定された場合はそちらを優先（明示的遷移向け）
-//   - [20260420b] ロット詳細から「📷 成長記録」ボタンを削除
-//       運用方針: ロットは複数個体・2ヶ月後にユニット化するため体重計測なし
-//       アクションは「🏷️ ラベル発行」1ボタンのみ（横幅フル表示）
-//   - [20260420a] ロット分割機能を削除
-//       ・アクションボタンから「✂️ 分割」を削除
-//       ・_splitCards / _splitContext / Pages._showSplitModal / _renderSplitModal
-//         / Pages._execSplit の約130行を削除
-//       ・ロット分割は GAS API には残存（将来のために削除せず、呼び出し元のみ除去）
-//   - [20260420a] ロット詳細アクションボタンを 2ボタン構成に整理
-//       「📷 成長記録」「🏷️ ラベル発行」の2列均等配置、1行1グループに統合
-//   - [20260420a] T1移行ボタンのガード条件を !lot.hatch_date → !lot.t1_done に変更
-//       孵化日を設定しても T1完了までは「🐛 T1移行（割り出し）を開始」ボタン常時表示
-//       孵化日ボタンは「孵化日未設定 & T1未完了」時のみ表示
+//   - [20260421e] 販売候補への個体遷移を updateIndividual 経由に変更
+//     changeStatus(→deleteIndividual) は終端ステータスのみ受付けるため
+//     for_sale 遷移はエラーになっていた。updateIndividual は
+//     StatusRules の validateStatusTransition を通すので alive→for_sale 可。
 //   - [20260418f-fix1] 親タップで種親詳細に遷移しないバグを修正
 //                     _backParams のJSON内ダブルクォートが onclick属性を壊していた
 //                     → &quot; にエスケープして属性内に安全に埋め込む
@@ -35,7 +22,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] lot.js v20260420c loaded');
+console.log('[HerculesOS] lot.js v20260421e loaded');
 
 // ────────────────────────────────────────────────────────────────
 // [20260418f] 血統・種親カードを生成（ロット詳細用）
@@ -167,16 +154,7 @@ Pages.lotList = function () {
   const fixedLine   = fixedLineId ? Store.getLine(fixedLineId) : null;
   const isLineLimited = !!fixedLineId;
 
-  let _activeTab = params._tab || (function() {
-    // [20260420c] リロード時にタブ状態を復元（localStorage から）
-    //   params._tab が未指定のときは localStorage の値を使う。
-    //   これでユニット一覧表示中にページをリロードしてもユニット側に戻れる。
-    try {
-      var saved = localStorage.getItem('hcos_lotUnitTab');
-      if (saved === 'lot' || saved === 'unit') return saved;
-    } catch (e) { /* noop */ }
-    return 'lot';
-  })();
+  let _activeTab = params._tab || 'lot';
   let _keyword = '';
   let filters = { status: 'active', stage: '', line_id: fixedLineId, mat_type: '' };
   let _lotStatusMode = 'active';
@@ -501,8 +479,6 @@ Pages.lotList = function () {
   Pages._lotUnitTabSwitch = function(tab) {
     _activeTab = tab;
     _keyword = '';
-    // [20260420c] タブ選択をlocalStorageに保存（リロード時の復元用）
-    try { localStorage.setItem('hcos_lotUnitTab', tab); } catch (e) { /* noop */ }
     render();
   };
   Pages._lotUnitKw = function(val) {
@@ -741,13 +717,23 @@ function _renderLotDetail(lot, main) {
         ${alertBadge ? `<div style="margin-top:8px">${alertBadge}</div>` : ''}
       </div>
 
-      <!-- [20260420b] ロットは体重を計らない運用方針のため、成長記録ボタンを削除。
-                       アクションは「🏷️ ラベル発行」のみに -->
-      <button style="width:100%;padding:14px 8px;border-radius:var(--radius);font-weight:700;font-size:.92rem;
-        background:var(--surface3,#3a3a4a);color:var(--gold);border:1px solid rgba(200,168,75,.4);cursor:pointer"
-        onclick="routeTo('label-gen',{targetType:'LOT',targetId:'${lot.lot_id}'})">
-        🏷️ ラベル発行
-      </button>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <button style="padding:14px 8px;border-radius:var(--radius);font-weight:700;font-size:.92rem;
+          background:var(--green);color:#fff;border:none;cursor:pointer"
+          onclick="routeTo('growth-rec',{targetType:'LOT',targetId:'${lot.lot_id}',displayId:'${lot.display_id}'})">
+          📷 成長記録
+        </button>
+        <button style="padding:14px 8px;border-radius:var(--radius);font-weight:700;font-size:.92rem;
+          background:var(--surface3,#3a3a4a);color:var(--text1);border:1px solid var(--border);cursor:pointer"
+          onclick="Pages._showSplitModal('${lot.lot_id}',${lot.count},'${lot.stage_life||lot.stage||'L1L2'}','${lot.line_id}','${lot.hatch_date||''}','${lot.display_id}')">
+          ✂️ 分割
+        </button>
+      </div>
+        <button style="grid-column:span 2;padding:12px 8px;border-radius:var(--radius);font-weight:700;font-size:.88rem;
+          background:var(--surface3,#3a3a4a);color:var(--gold);border:1px solid rgba(200,168,75,.4);cursor:pointer"
+          onclick="routeTo('label-gen',{targetType:'LOT',targetId:'${lot.lot_id}'})">
+          🏷️ ラベル発行・QRコード生成
+        </button>
 
       <div class="card">
         <div class="card-title">ロット情報</div>
@@ -780,21 +766,15 @@ function _renderLotDetail(lot, main) {
       <!-- 血統・種親（20260418f）-->
       ${_lotRenderParentageCard(line, { page: 'lot-detail', params: { lotId: lot.lot_id } })}
 
-      <!-- [20260420a] T1移行 & 孵化日設定ボタン
-           以前: !lot.hatch_date でガード → 孵化日を設定するとT1ボタンも消えていた
-           修正: !lot.t1_done で外側ガード → T1完了までは T1移行ボタン常時表示
-                 孵化日ボタンは「孵化日未設定 & T1未完了」の時のみ表示 -->
-      ${!lot.t1_done ? `
-      <button class="btn btn-full" style="background:var(--green);color:#fff;font-weight:700;margin-bottom:4px"
+      ${!lot.hatch_date ? `
+      ${!lot.t1_done ? `<button class="btn btn-full" style="background:var(--green);color:#fff;font-weight:700;margin-bottom:4px"
         onclick="Pages.t1SessionStart('${lot.lot_id}')">
         🐛 T1移行（割り出し）を開始
-      </button>
-      ${!lot.hatch_date ? `
+      </button>` : `<div style="background:rgba(76,175,120,.1);border:1px solid rgba(76,175,120,.3);border-radius:8px;padding:10px;text-align:center;font-size:.82rem;color:var(--green);margin-bottom:8px;font-weight:700">✅ T1移行済み</div>`}
       <button class="btn btn-full" style="background:var(--amber);color:#1a1a1a;font-weight:700"
         onclick="Pages._lotSetHatchDate('${lot.lot_id}')">
         📅 孵化日を設定
       </button>` : ''}
-      ` : `<div style="background:rgba(76,175,120,.1);border:1px solid rgba(76,175,120,.3);border-radius:8px;padding:10px;text-align:center;font-size:.82rem;color:var(--green);margin-bottom:8px;font-weight:700">✅ T1移行済み</div>`}
 
       <div class="accordion" id="acc-lot-growth">
         <div class="acc-hdr open" onclick="_toggleAcc('acc-lot-growth')">
@@ -883,14 +863,135 @@ function _renderLotUnitsList(lot) {
 
 
 // ════════════════════════════════════════════════════════════════
-// [20260420a] ロット分割機能を削除
-//   以前この位置に以下の関数が定義されていました:
-//     - _splitCards / _splitContext (module変数)
-//     - Pages._showSplitModal
-//     - _renderSplitModal
-//     - Pages._execSplit
-//   分割機能は廃止されたため削除。GAS API の splitLot は将来用に残存。
+// ロット分割
 // ════════════════════════════════════════════════════════════════
+let _splitCards = [];
+let _splitContext = {};
+
+Pages._showSplitModal = function (lotId, totalCount, stage, lineId, hatchDate, displayId) {
+  _splitContext = { lotId, totalCount: +totalCount, stage, lineId, hatchDate, displayId };
+  _splitCards = [
+    { count: Math.floor(totalCount/2), container:'', mat:'', size_category:'', sex_hint:'', weight:'', note:'' },
+    { count: totalCount - Math.floor(totalCount/2), container:'', mat:'', size_category:'', sex_hint:'', weight:'', note:'' },
+  ];
+  _renderSplitModal();
+};
+
+function _renderSplitModal() {
+  const { lotId, totalCount, stage, hatchDate, displayId } = _splitContext;
+  const usedCount = _splitCards.reduce((s,c) => s + (c.count||0), 0);
+  const remaining = totalCount - usedCount;
+  const totalOk   = remaining === 0;
+
+  const cardHtml = _splitCards.map((c, i) => {
+    const suffix = String.fromCharCode(65 + i);
+    const isOne  = (c.count === 1);
+    return `<div style="border:1px solid ${isOne?'var(--green)':'var(--border)'};border-radius:8px;padding:10px;margin-bottom:8px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <span style="font-family:var(--font-mono);font-weight:700;color:var(--gold);font-size:1rem">-${suffix}</span>
+        ${isOne ? '<span style="font-size:.7rem;padding:2px 8px;background:var(--green);color:#fff;border-radius:20px">自動個体化</span>' : ''}
+        <button style="margin-left:auto;color:var(--red);background:none;border:none;font-size:1rem;cursor:pointer"
+          onclick="_splitCards.splice(${i},1);_renderSplitModal()">×</button>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        <div>
+          <div style="font-size:.72rem;color:var(--text3);margin-bottom:2px">頭数 *</div>
+          <input type="number" class="input" min="1" value="${c.count||1}" style="width:100%"
+            onchange="_splitCards[${i}].count=Math.max(1,+this.value||1);_renderSplitModal()">
+        </div>
+        <div>
+          <div style="font-size:.72rem;color:var(--text3);margin-bottom:2px">容器</div>
+          <select class="input" style="width:100%" onchange="_splitCards[${i}].container=this.value">
+            ${['','1.8L','2.7L','4.8L'].map(s=>`<option value="${s}" ${c.container===s?'selected':''}>${s||'選択…'}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <div style="font-size:.72rem;color:var(--text3);margin-bottom:2px">マット</div>
+          <select class="input" style="width:100%" onchange="_splitCards[${i}].mat=this.value">
+            ${[{code:'',label:'選択…'},...MAT_TYPES].map(m=>`<option value="${m.code}" ${c.mat===m.code?'selected':''}>${m.label||m.code||'選択…'}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <div style="font-size:.72rem;color:var(--text3);margin-bottom:2px">サイズ区分</div>
+          <select class="input" style="width:100%" onchange="_splitCards[${i}].size_category=this.value">
+            ${['','大','中','小'].map(s=>`<option value="${s}" ${c.size_category===s?'selected':''}>${s||'未分類'}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <div style="font-size:.72rem;color:var(--text3);margin-bottom:2px">雌雄</div>
+          <select class="input" style="width:100%" onchange="_splitCards[${i}].sex_hint=this.value">
+            ${['','♂','♀','不明'].map(s=>`<option value="${s}" ${c.sex_hint===s?'selected':''}>${s||'未判別'}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <div style="font-size:.72rem;color:var(--text3);margin-bottom:2px">分割時体重 (g)</div>
+          <input type="number" class="input" step="0.1" min="0" value="${c.weight||''}"
+            placeholder="任意" style="width:100%"
+            oninput="_splitCards[${i}].weight=this.value">
+        </div>
+        <div>
+          <div style="font-size:.72rem;color:var(--text3);margin-bottom:2px">メモ</div>
+          <input type="text" class="input" value="${c.note||''}" style="width:100%"
+            oninput="_splitCards[${i}].note=this.value">
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  _showModal('ロット分割', `
+    <div style="font-size:.82rem;color:var(--text3);margin-bottom:8px">
+      元ロット: ${displayId} / ${totalCount}頭 / ${stage}
+    </div>
+    <div style="font-size:.85rem;font-weight:700;color:${totalOk?'var(--green)':'var(--amber)'};margin-bottom:8px">
+      割当: ${usedCount}頭 / 残り: ${remaining}頭 ${totalOk?'✅':''}
+    </div>
+    <div style="max-height:50vh;overflow-y:auto" id="split-cards-wrap">${cardHtml}</div>
+    <button class="btn btn-ghost btn-full" style="margin-top:4px"
+      onclick="_splitCards.push({count:1,container:'',mat:'',size_category:'',sex_hint:'',weight:'',note:''});_renderSplitModal()">
+      ＋ 分割先を追加
+    </button>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" style="flex:1" onclick="_closeModal()">キャンセル</button>
+      <button class="btn btn-primary" style="flex:2"
+        onclick="Pages._execSplit('${lotId}',${totalCount})"
+        ${totalOk?'':'disabled style="opacity:.5"'}>
+        分割実行
+      </button>
+    </div>`);
+}
+
+Pages._execSplit = async function (lotId, maxCount) {
+  const counts  = _splitCards.map(c => c.count||0);
+  const details = _splitCards.map(c => ({
+    container_size:  c.container || '',
+    mat_type:        c.mat       || '',
+    size_category:   c.size_category || '',
+    sex_hint:        c.sex_hint  || '',
+    note:            c.note      || '',
+    initial_weight:  c.weight    || '',
+  }));
+  const total = counts.reduce((s,n) => s+n, 0);
+
+  if (!counts.length) { UI.toast('分割先を入力してください', 'error'); return; }
+  if (total > maxCount) { UI.toast('合計(' + total + ')が元ロット頭数(' + maxCount + ')を超えています', 'error'); return; }
+  if (total !== maxCount) { UI.toast('合計(' + total + ')と元ロット(' + maxCount + '頭)が一致していません', 'error'); return; }
+
+  _closeModal();
+  try {
+    const res = await apiCall(
+      () => API.lot.split({ lot_id: lotId, split_counts: counts, split_details: details }),
+      counts.length + 'ロットに分割しました'
+    );
+    await syncAll(true);
+    if (res && res.auto_individuals && res.auto_individuals.length) {
+      const names = res.auto_individuals.map(i => i.display_id).join(', ');
+      UI.toast('自動個体化: ' + names, 'success');
+    }
+    const ctx = _splitContext;
+    if (ctx.lineId) routeTo('lot-list', { line_id: ctx.lineId });
+    else routeTo('lot-list');
+  } catch (e) {}
+};
 
 Pages._lotEditStage = function (lotId, currentStage) {
   _showModal('ステージ変更', `
@@ -1844,7 +1945,9 @@ Pages._lotPartForSaleSave = async function () {
     const autoInds = res.auto_individuals || [];
     if (saleCount === 1 && autoInds.length >= 1) {
       const indId = autoInds[0].ind_id;
-      await API.individual.changeStatus(indId, 'for_sale');
+      // [20260421e] for_sale は非終端ステータスなので updateIndividual 経由で遷移
+      //   (changeStatus → deleteIndividual は終端ステータス dead/sold/excluded のみ許可)
+      await API.individual.update({ ind_id: indId, status: 'for_sale', for_sale: true });
     } else if (newLots.length >= 1) {
       await API.lot.update({ lot_id: newLots[0].lot_id, status: 'for_sale' });
     }
