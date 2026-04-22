@@ -1,6 +1,21 @@
 // FILE: js/pages/manage.js
-// build: 20260420b
+// build: 20260422q
 // 変更点:
+//   - [20260422q] 販売管理のアイコンを 👑 → 💰 に変更（種親候補の 👑 と重複回避）
+//   - [20260422p] 管理画面のアイコン・並び替え（ユーザー要望）
+//     新しい並び順:
+//       🔗 ライン管理 / 🥚 産卵セット / 🐛 飼育管理 /
+//       ♂♀ 種親管理 / 👑 種親候補 / 🧬 血統管理 / 💰 販売管理
+//     変更内容:
+//       ① 「🥚🔗 ロット・ユニット管理」→「🐛 飼育管理」にリネーム
+//          (既存 lot-list ページはロット/ユニットタブを持つので当面このままで OK。
+//           将来は 飼育管理 ページで個体タブも追加予定)
+//       ② 「🌿 産卵セット」のアイコンを 🥚 に変更
+//       ③ 「📦 ユニット管理」エントリを削除 (lot-list のユニットタブと重複)
+//       ④ 「飼育管理」の sub に個体件数も表示（ロット/ユニット/個体の統一ビュー準備）
+//     既存リンク (line-list, pairing-list, lot-list, parent-list,
+//       parent-candidate, bloodline-list, sale-list) はすべてそのまま維持。
+//     既存のブックマーク・QRコード・各ページからのリンクはすべて動作継続。
 //   - [20260420b] ページ先頭に未確定セッションバナー追加（UI.pendingBanner()）
 //   - [20260416c] 管理画面クイック登録に「✨ ヤフオク出品文AIジェネレーター」ボタンを追加
 // ════════════════════════════════════════════════════════════════
@@ -18,7 +33,17 @@ Pages.manage = function () {
   const actLots  = lots.filter(l => l.status === 'active');
   const actPars  = pars.filter(p => !p.status || p.status === 'active');
   const actPairs = pairs.filter(p => p.status === 'active');
+  // [20260422p] 飼育管理セクションの集計用に個体・ユニット件数も先に計算
+  const activeUnits = (Store.getDB('breeding_units') || []).filter(u => u.status === 'active').length;
+  const allInds     = Store.getDB('individuals') || [];
+  const activeInds  = allInds.filter(i => {
+    const s = i.status || 'alive';
+    return s === 'alive' || s === 'larva' || s === 'prepupa' || s === 'pupa' || s === 'adult';
+  }).length;
 
+  // [20260422p] 並び順・アイコンをユーザー要望通りに変更:
+  //   ① ライン管理   ② 産卵セット   ③ 飼育管理   ④ 種親管理
+  //   ⑤ 種親候補     ⑥ 血統管理    ⑦ 販売管理
   const sections = [
     {
       icon: '🔗', label: 'ライン管理', count: lines.length, unit: 'ライン',
@@ -27,11 +52,20 @@ Pages.manage = function () {
       color: 'var(--gold)',
     },
     {
-      icon: '🥚🔗', label: 'ロット・ユニット管理',
-      count: actLots.length + ((Store.getDB('breeding_units')||[]).filter(u=>u.status==='active').length),
+      icon: '🥚', label: '産卵セット', count: actPairs.length, unit: 'セット',
+      page: 'pairing-list', newPage: 'pairing-new',
+      sub: `完了 ${pairs.filter(p=>p.status==='completed').length}件`,
+      color: '#a0c878',
+    },
+    {
+      // [20260422p] 🐛 飼育管理 = 旧「ロット・ユニット管理」のリネーム
+      //   lot-list ページは既にロット/ユニット2タブを持つ。
+      //   将来的に「個体」タブも追加して完全統合予定。
+      icon: '🐛', label: '飼育管理',
+      count: actLots.length + activeUnits + activeInds,
       unit: '件',
       page: 'lot-list', newPage: 'lot-new',
-      sub: `ロット${actLots.length}件 / ユニット${(Store.getDB('breeding_units')||[]).filter(u=>u.status==='active').length}件`,
+      sub: `ロット${actLots.length} / ユニット${activeUnits} / 個体${activeInds}`,
       color: 'var(--green)',
     },
     {
@@ -41,47 +75,27 @@ Pages.manage = function () {
       color: 'var(--blue)',
     },
     {
-      icon: '👑', label: '種親候補', count: ((Store.getDB('individuals')||[]).filter(i=>String(i.parent_flag||'').toLowerCase()==='true'||i.parent_flag===true).length), unit: '頭',
+      icon: '👑', label: '種親候補',
+      count: allInds.filter(i=>String(i.parent_flag||'').toLowerCase()==='true'||i.parent_flag===true).length,
+      unit: '頭',
       page: 'parent-candidate', newPage: null,
       sub: '昇格候補個体',
       color: 'var(--gold)',
     },
     {
-      icon: '🧬', label: '血統管理', count: blds.filter(b=>b.bloodline_id!=='BLD-UNKNOWN').length, unit: '血統',
+      icon: '🧬', label: '血統管理',
+      count: blds.filter(b=>b.bloodline_id!=='BLD-UNKNOWN').length, unit: '血統',
       page: 'bloodline-list', newPage: 'bloodline-new',
       sub: `確定 ${blds.filter(b=>b.bloodline_status==='confirmed').length}件${blds.some(b=>b.bloodline_id==='BLD-UNKNOWN') ? ' / うち不明1件' : ''}`,
       color: 'var(--amber)',
     },
     {
-      icon: '🌿', label: '産卵セット', count: actPairs.length, unit: 'セット',
-      page: 'pairing-list', newPage: 'pairing-new',
-      sub: `完了 ${pairs.filter(p=>p.status==='completed').length}件`,
-      color: '#a0c878',
-    },
-    {
-      icon: '📦', label: 'ユニット管理', count: (() => {
-        const units = Store.getDB('breeding_units') || [];
-        return units.filter(u => u.status === 'active').length;
-      })(), unit: '件',
-      page: 'unit-list', newPage: null,
-      sub: (() => {
-        const units = Store.getDB('breeding_units') || [];
-        const t1 = units.filter(u => u.stage_phase === 'T1' && u.status === 'active').length;
-        const t2 = units.filter(u => u.stage_phase === 'T2' && u.status === 'active').length;
-        const t3 = units.filter(u => u.stage_phase === 'T3' && u.status === 'active').length;
-        return `T1:${t1} / T2:${t2} / T3:${t3}`;
-      })(),
-      color: 'var(--blue)',
-    },
-    {
-      icon: '💰', label: '販売管理', count: (() => {
-        const inds = Store.getDB('individuals') || [];
-        return inds.filter(i => i.status === 'sold').length;
-      })(), unit: '頭販売済み',
+      icon: '💰', label: '販売管理',
+      count: allInds.filter(i => i.status === 'sold').length,
+      unit: '頭販売済み',
       page: 'sale-list', newPage: null,
       sub: (() => {
-        const inds = Store.getDB('individuals') || [];
-        const selling = inds.filter(i => i.status === 'for_sale' || i.status === 'listed').length;
+        const selling = allInds.filter(i => i.status === 'for_sale' || i.status === 'listed').length;
         return selling ? `販売候補・出品中 ${selling}頭` : '販売候補なし';
       })(),
       color: 'var(--green)',
