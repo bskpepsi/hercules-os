@@ -1,7 +1,18 @@
 // ════════════════════════════════════════════════════════════════
 // unit_detail.js — 飼育ユニット（BU）詳細画面
-// build: 20260421n
+// build: 20260422d
 // 変更点:
+//   - [20260422d] 🐛 バグ修正: 成長記録の削除後にユニット本体が巻き戻らない問題
+//     症状: 4/22 の T2 記録 (4.8L) を削除すると成長記録テーブルからは消えるが、
+//           ヘッダーバッジ T2 / マット種別 T2 / 容器 4.8L / アクションボタン「T3移行」
+//           がそのまま残り、残存記録の最新行 (4/21 T1/2.7L) と食い違う。
+//     原因: _udDeleteGrowthPair が growth_records を削除するだけで、
+//           breeding_units.mat_type / stage_phase / container_size を更新していなかった。
+//     修正: 削除後に「残っている成長記録の最新行」を見てユニット本体を巻き戻す
+//           ヘルパー _udReconcileUnitAfterDelete を追加。
+//           Store は同期的に先行反映（再描画前）→ 即座に画面へ反映。
+//           API はバックグラウンド（await なし）。失敗時はロールバック+再描画。
+//           残存記録が0件の場合は何もしない（ユーザー操作で復旧可能）。
 //   - [20260421n] 成長記録の非同期ロードに高速スキップ機構を追加
 //     window._skipNextGrowthLoad フラグが立っている場合、API.growth.list を
 //     スキップして Store キャッシュのみで再描画する (継続読取り保存後の高速化)。
@@ -927,6 +938,103 @@ Pages._udEditGrowthRecord = function (r1Id, r2Id, date) {
 // [20260421i] ユニット成長記録の削除
 //   ユニットの成長記録は1日に2行（スロット①②）存在するため、
 //   同じ日付の record_id ペア両方を削除する。2段確認付き。
+// [20260422d] 削除後にユニット本体 (mat_type/stage_phase/container_size) を
+//   「残っている成長記録の最新行」に合わせて巻き戻すため、
+//   _udReconcileUnitAfterDelete ヘルパーを呼び出す。
+Pages._udReconcileUnitAfterDelete = function (unitDisplayId) {
+  try {
+    var units = Store.getDB('breeding_units') || [];
+    var unit = units.find(function (u) {
+      return u.display_id === unitDisplayId || u.unit_id === unitDisplayId;
+    });
+    if (!unit || !unit.unit_id) {
+      console.warn('[UD-reconcile] unit not found for', unitDisplayId);
+      return;
+    }
+
+    // 残存成長記録を収集 (unit_id と display_id 両方のキーでヒットする可能性あり)
+    var gm = Store.getDB('growthMap') || {};
+    var recs = [];
+    if (gm[unit.unit_id]) recs = recs.concat(gm[unit.unit_id]);
+    if (unit.display_id && unit.display_id !== unit.unit_id && gm[unit.display_id]) {
+      recs = recs.concat(gm[unit.display_id]);
+    }
+    if (recs.length === 0) {
+      console.log('[UD-reconcile] no records remain, skip reconcile');
+      return;
+    }
+
+    // 日付降順ソート → 最新のマット種別/容器サイズを取得
+    recs.sort(function (a, b) {
+      var da = String(a.record_date || '').replace(/-/g, '/');
+      var db = String(b.record_date || '').replace(/-/g, '/');
+      return db.localeCompare(da);
+    });
+    var latestMat = '', latestCont = '';
+    for (var i = 0; i < recs.length; i++) {
+      var r = recs[i] || {};
+      if (!latestMat && r.mat_type) latestMat = String(r.mat_type).trim();
+      if (!latestCont && (r.container || r.container_size)) {
+        latestCont = String(r.container || r.container_size).trim();
+      }
+      if (latestMat && latestCont) break;
+    }
+
+    // 差分計算
+    var curMat  = String(unit.mat_type || '').trim();
+    var curCont = String(unit.container_size || '').trim();
+    var unitPatch = {};
+    if (latestMat && latestMat !== curMat) {
+      var phaseMap = { T0: 'T1', T1: 'T1', T2: 'T2', T3: 'T3', MD: 'T3' };
+      unitPatch.mat_type    = latestMat;
+      unitPatch.stage_phase = phaseMap[latestMat] || unit.stage_phase || '';
+    }
+    if (latestCont && latestCont !== curCont) {
+      unitPatch.container_size = latestCont;
+    }
+    if (Object.keys(unitPatch).length === 0) {
+      console.log('[UD-reconcile] no diff, skip');
+      return;
+    }
+
+    console.log('[UD-reconcile] patching unit:', unitPatch, '(from latest rec:', { latestMat: latestMat, latestCont: latestCont }, ')');
+
+    // ロールバック用の元値
+    var rollbackPatch = {
+      mat_type:       unit.mat_type       || '',
+      stage_phase:    unit.stage_phase    || '',
+      container_size: unit.container_size || '',
+    };
+
+    // 楽観UI更新: Store を先行反映 (同期) → この後の再描画で即反映される
+    if (Store.patchDBItem) {
+      Store.patchDBItem('breeding_units', 'unit_id', unit.unit_id, unitPatch);
+    }
+
+    // API はバックグラウンド (await しない)。失敗時はロールバック+再描画。
+    API.unit.update(Object.assign({ unit_id: unit.unit_id }, unitPatch))
+      .then(function () {
+        console.log('[UD-reconcile] API succeeded');
+      })
+      .catch(function (apiErr) {
+        console.error('[UD-reconcile] API failed, rolling back:', apiErr);
+        if (Store.patchDBItem) {
+          Store.patchDBItem('breeding_units', 'unit_id', unit.unit_id, rollbackPatch);
+        }
+        try {
+          var _params = Store.getParams ? Store.getParams() : {};
+          if (_params.unitDisplayId && typeof Pages.unitDetail === 'function') {
+            window._skipNextGrowthLoad = true;
+            Pages.unitDetail({ unitDisplayId: _params.unitDisplayId });
+          }
+        } catch (_rerr) { /* ignore */ }
+        UI.toast('⚠️ ユニット情報の巻き戻しに失敗: ' + (apiErr.message || '通信エラー'), 'error', 5000);
+      });
+  } catch (e) {
+    console.warn('[UD-reconcile] error (non-fatal):', e.message);
+  }
+};
+
 Pages._udDeleteGrowthPair = async function (r1Id, r2Id) {
   if (!r1Id && !r2Id) { UI.toast('削除対象の記録が見つかりません', 'error'); return; }
   if (!confirm('この日の成長記録を削除しますか？\n（①②両スロットの記録が削除されます）\n\n※この操作は元に戻せません。\n誤登録の訂正用に提供されている機能です。')) return;
@@ -957,6 +1065,17 @@ Pages._udDeleteGrowthPair = async function (r1Id, r2Id) {
         Store.setGrowthRecords(tid, filtered);
       }
     });
+
+    // [20260422d] 削除後にユニット本体を残存記録の最新行に合わせて巻き戻し
+    //   Store は同期的に先行反映されるため、直後の再描画で即座に T2→T1, 4.8L→2.7L などが反映される。
+    //   API はバックグラウンド実行（await しない）。
+    try {
+      var _paramsR = Store.getParams ? Store.getParams() : {};
+      if (_paramsR.unitDisplayId && typeof Pages._udReconcileUnitAfterDelete === 'function') {
+        Pages._udReconcileUnitAfterDelete(_paramsR.unitDisplayId);
+      }
+    } catch (_recErr) { console.warn('[UD] reconcile call failed (non-fatal):', _recErr.message); }
+
     UI.toast('成長記録を削除しました（' + deletedIds.length + '件）', 'success');
     // unit-detail ページを再描画
     // [20260421n] _skipNextGrowthLoad で API.growth.list を飛ばして高速再描画
