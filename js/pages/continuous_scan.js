@@ -1,4 +1,11 @@
-// FILE: js/pages/continuous_scan.js  build: 20260422f
+// FILE: js/pages/continuous_scan.js  build: 20260422i
+// 変更点(20260422f→20260422i):
+//   [20260422i] UI統一: 個体側の性別ボタン表記をユニット側と統一
+//     旧: 「◯♂ 雄」「◯♀ 雌」「不明」
+//     新: 「♂」「♀」「不明」 (ユニット側と同じシンプル表記)
+//     対象: L461-463 (読取り確認画面の個体側共通設定)
+//           L1527-1528 (バッチスキャンの性別確定ボタン)
+// ───────────────────────────────────────────────
 // 変更点(20260422e→20260422f): ★★★ 根本原因の修正 ★★★
 //   症状: 毎回「保存したのに画面が古いまま」「リロードすると直る」を繰り返していた。
 //   原因分析により、これまでの修正は症状(race/rerenderタイミング/楽観UI)
@@ -537,8 +544,8 @@ Pages.continuousScan = function(params) {
             '<div style="margin-bottom:10px">' +
               '<label style="font-size:.72rem;color:var(--text3);font-weight:700">性別 <span style="font-size:.68rem;color:var(--text3);font-weight:400">（OCRで読んだ◯を反映）</span></label>' +
               '<div style="display:flex;gap:8px;margin-top:6px">' +
-                '<button class="btn '+(curSex==='♂'?'btn-primary':'btn-ghost')+'" style="flex:1;padding:10px" onclick="Pages._cScanSetSex(\'♂\')">◯♂ 雄</button>' +
-                '<button class="btn '+(curSex==='♀'?'btn-primary':'btn-ghost')+'" style="flex:1;padding:10px" onclick="Pages._cScanSetSex(\'♀\')">◯♀ 雌</button>' +
+                '<button class="btn '+(curSex==='♂'?'btn-primary':'btn-ghost')+'" style="flex:1;padding:10px" onclick="Pages._cScanSetSex(\'♂\')">♂</button>' +
+                '<button class="btn '+(curSex==='♀'?'btn-primary':'btn-ghost')+'" style="flex:1;padding:10px" onclick="Pages._cScanSetSex(\'♀\')">♀</button>' +
                 '<button class="btn '+(curSex==='不明'||!curSex?'btn-primary':'btn-ghost')+'" style="flex:1;padding:10px" onclick="Pages._cScanSetSex(\'不明\')">不明</button>' +
               '</div>' +
             '</div>' +
@@ -1695,8 +1702,8 @@ Pages.batchScan = function(params) {
           '<div style="margin-bottom:10px">' +
             '<label style="font-size:.72rem;color:var(--text3);font-weight:700">性別</label>' +
             '<div style="display:flex;gap:8px;margin-top:6px">' +
-              '<button class="btn '+(curSex==='♂'?'btn-primary':'btn-ghost')+'" style="flex:1;padding:10px" data-bs-idx="'+idx+'" data-bs-sex="♂" onclick="Pages._bsSetSexBtn(this)">◯♂ 雄確定</button>' +
-              '<button class="btn '+(curSex==='♀'?'btn-primary':'btn-ghost')+'" style="flex:1;padding:10px" data-bs-idx="'+idx+'" data-bs-sex="♀" onclick="Pages._bsSetSexBtn(this)">◯♀ 雌確定</button>' +
+              '<button class="btn '+(curSex==='♂'?'btn-primary':'btn-ghost')+'" style="flex:1;padding:10px" data-bs-idx="'+idx+'" data-bs-sex="♂" onclick="Pages._bsSetSexBtn(this)">♂</button>' +
+              '<button class="btn '+(curSex==='♀'?'btn-primary':'btn-ghost')+'" style="flex:1;padding:10px" data-bs-idx="'+idx+'" data-bs-sex="♀" onclick="Pages._bsSetSexBtn(this)">♀</button>' +
               '<button class="btn '+(!curSex?'btn-primary':'btn-ghost')+'" style="flex:1;padding:10px" data-bs-idx="'+idx+'" data-bs-sex="" onclick="Pages._bsSetSexBtn(this)">未確定</button>' +
             '</div>' +
           '</div>' : '') +
