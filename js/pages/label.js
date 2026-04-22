@@ -1,30 +1,29 @@
 // FILE: js/pages/label.js
-// build: 20260422m
+// build: 20260422n
 // 修正:
-//   - [20260422m] 🐛 個別飼育ラベル (ind_fixed) で孵化日が未表示 & 下部カットオフ
-//     症状①: HM2025-C1-L01 #3 等の ind_fixed ラベルで 孵化日行が完全非表示
-//     症状②: 表の最下行の枠が下端で切れる (サーマル印刷)
-//     原因①: IND / IND_FORMAL / IND_DRAFT の各 ld 構築で fi.hatch_date /
-//            ind.hatch_date 等を直接採用し、空のときのフォールバック無し。
-//            t1_session.js の formalInd は hatch_date を含まずに構築されるので
-//            IND_FORMAL 経由では常に空になる。
-//            また _buildLabelHTML の hatchHtml も truthy なら表示の分岐で
-//            空欄表示ができていなかった。
-//     原因②: 表の各行 tdU padding 6px + 交換セルの 2行 (□全/□追) で行高が
-//            ふくらみ、全体が 70mm を超えて下部が印刷されない。
-//     修正:
-//       ① 共通ヘルパー _resolveLabelHatchDate を追加 (20260422l で UNIT に入れた
-//          ロジックを汎用化)。direct / lot_id / origin_lot_id / source_lots /
-//          members の各ソースから hatch_date を解決。診断ログも出力。
-//       ② 以下 4 ブランチ全てで適用:
-//          - UNIT       (Store unit.hatch_date → origin_lot_id → source_lots → members)
-//          - IND        (Store ind.hatch_date  → ind.lot_id → ind.origin_lot_id)
-//          - IND_FORMAL (fi.hatch_date         → fi.lot_id)
-//          - IND_DRAFT  (di.hatch_date         → di.lot_id)
-//       ③ _buildLabelHTML の hatchHtml を常時表示に変更 (blank は手書き欄)
-//       ④ 表の tdU padding 6px→4px に縮小して下部カットオフを解消
-//       ⑤ 孵化日行の line-height を 1.6 → 1.3 に圧縮
-//       ⑥ window._LABEL_BUILD を 20260422m に更新
+//   - [20260422n] 🐛 ラベル発行画面をリロードするとID/孵化日/下部ラベルが消えるバグ
+//     症状: 画面リロード (F5) すると HM2025-C1-001 等のID、孵化日、下部
+//           「T1個別飼育 HM2025-C1-L01 #3」等の note 部分が空になる。
+//     原因: routeTo('label-gen', { formalInd: {...} }) でオブジェクトを
+//           URL params として渡すと URLSearchParams が String(object) で
+//           "[object Object]" という壊れた文字列に変換。リロード時に
+//           URL hash → params 復元で formalInd = "[object Object]" (文字列)
+//           となり、fi.display_id 等すべて undefined になる。
+//           window._lblFormalCtx / window._t1LabelBackup はリロードで消失
+//           するため救済できていなかった。
+//     修正: sessionStorage に本体データを保存してリロード耐性を獲得
+//       ① ラベル生成時に formalInd / draftInd / unitDraft を
+//          sessionStorage に JSON で保存 (キーは targetType ごと)
+//       ② URL params から取り出した値が壊れた文字列か検査する
+//          _isGarbageObjectString ヘルパーで "[object Object]" を判定
+//       ③ 壊れていたら sessionStorage から復元
+//       ④ 復元成功時は console.log で通知
+//     対象: UNIT (unitDraft) / IND_DRAFT (draftInd) / IND_FORMAL (formalInd)
+//   - [20260422m] 個別飼育ラベル (ind_fixed) の孵化日表示 & 下部カットオフ解消
+//     - 共通ヘルパー _resolveLabelHatchDate を追加
+//     - UNIT / IND / IND_DRAFT / IND_FORMAL 全ブランチに適用
+//     - _buildLabelHTML の hatchHtml を常時表示に変更
+//     - 表の tdU padding 6px → 4px に縮小
 //   - [20260422l] UNIT ブランチの孵化日フォールバックを3段階に強化
 //   - [20260422k] T1ユニットラベルの孵化日表示を常時化＋親ロットフォールバック
 //   - [20260421f] 販売候補ラベル (ind_sale) デザイン見直し
@@ -121,7 +120,7 @@
 //   - Bug 3: _backRoute が存在する場合に「詳細に戻る」ボタンを追加
 'use strict';
 
-window._LABEL_BUILD = '20260422m';
+window._LABEL_BUILD = '20260422n';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 // ════════════════════════════════════════════════════════════════
@@ -467,12 +466,44 @@ Pages.labelGen = function (params = {}) {
   const _isUnitMode    = targetType === 'UNIT';
   const _unitDisplayId = params.displayId || targetId || '';
   const _unitForSale   = !!params.forSale;
-  const _unitDraft     = params.unitDraft  || null;
   const _isIndDraftMode = targetType === 'IND_DRAFT';
-  const _draftInd       = params.draftInd  || null;
   const _singleIdx      = params.singleIdx !== undefined ? params.singleIdx : -1;
   const _isFormalMode   = targetType === 'IND_FORMAL';
-  const _formalInd      = params.formalInd || null;
+
+  // ═══════════════════════════════════════════════════════════════
+  // [20260422n] リロード耐性: オブジェクト型 params を sessionStorage で救済
+  //   routeTo('label-gen', { formalInd: {...} }) は URLSearchParams で
+  //   String(object) → "[object Object]" になり、リロードで ID/孵化日/
+  //   note 等すべてが空ラベルに化ける。sessionStorage に本体を保存して
+  //   URL 値が壊れている場合に復元する。
+  // ═══════════════════════════════════════════════════════════════
+  function _isGarbageObjectString(v) {
+    return typeof v === 'string' && (v === '[object Object]' || v.indexOf('[object') === 0);
+  }
+  function _resolveObjectParam(rawValue, sessKey) {
+    // 有効オブジェクトならそのまま採用 + sessionStorage に保存
+    if (rawValue && typeof rawValue === 'object') {
+      try { sessionStorage.setItem('hcos_lbl_' + sessKey, JSON.stringify(rawValue)); } catch(_) {}
+      return rawValue;
+    }
+    // 壊れた文字列 or null → sessionStorage から復元
+    if (_isGarbageObjectString(rawValue) || !rawValue) {
+      try {
+        var s = sessionStorage.getItem('hcos_lbl_' + sessKey);
+        if (s) {
+          var parsed = JSON.parse(s);
+          if (parsed && typeof parsed === 'object') {
+            console.log('[LABEL] restored', sessKey, 'from sessionStorage (reload recovery)');
+            return parsed;
+          }
+        }
+      } catch(_) {}
+    }
+    return null;
+  }
+  const _unitDraft = _resolveObjectParam(params.unitDraft, 'unitDraft');
+  const _draftInd  = _resolveObjectParam(params.draftInd,  'draftInd');
+  const _formalInd = _resolveObjectParam(params.formalInd, 'formalInd');
 
   if (_isUnitMode) {
     window._lblUnitCtx = { displayId: _unitDisplayId, forSale: _unitForSale, draft: _unitDraft };
