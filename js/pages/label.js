@@ -1,20 +1,32 @@
 // FILE: js/pages/label.js
-// build: 20260422k
+// build: 20260422m
 // 修正:
-//   - [20260422k] 🐛 T1ユニットラベルで孵化日が表示されないバグの修正
-//     症状: HM2025-C1U01 等のユニットラベルで、HM2025- と 区分： の間に
-//           孵化日行が表示されない (ユーザー報告)
-//     原因: GAS createT1Session は親ロットの hatch_date をユニットにコピーするが
-//           親ロットが hatch_date 未設定でT1移行すると unit.hatch_date も空に。
-//           label.js の t1_unit ブランチは ld.hatch_date が falsy だと
-//           孵化日行を完全にスキップする設計だった。
-//     修正: 2段フォールバック
-//       ① unit.hatch_date が空なら unit.origin_lot_id 経由で親ロットの
-//          hatch_date を Store から取得
-//       ② それでも空なら手書き欄 (孵化日：____/__/__) を表示
-//          → 印刷後に手書きで補記できる
-//     対象関数: _lblGenerate の UNIT ブランチ (ld 構築時) +
-//              _buildT1UnitLabelHTML (hatchHtml の生成ロジック)
+//   - [20260422m] 🐛 個別飼育ラベル (ind_fixed) で孵化日が未表示 & 下部カットオフ
+//     症状①: HM2025-C1-L01 #3 等の ind_fixed ラベルで 孵化日行が完全非表示
+//     症状②: 表の最下行の枠が下端で切れる (サーマル印刷)
+//     原因①: IND / IND_FORMAL / IND_DRAFT の各 ld 構築で fi.hatch_date /
+//            ind.hatch_date 等を直接採用し、空のときのフォールバック無し。
+//            t1_session.js の formalInd は hatch_date を含まずに構築されるので
+//            IND_FORMAL 経由では常に空になる。
+//            また _buildLabelHTML の hatchHtml も truthy なら表示の分岐で
+//            空欄表示ができていなかった。
+//     原因②: 表の各行 tdU padding 6px + 交換セルの 2行 (□全/□追) で行高が
+//            ふくらみ、全体が 70mm を超えて下部が印刷されない。
+//     修正:
+//       ① 共通ヘルパー _resolveLabelHatchDate を追加 (20260422l で UNIT に入れた
+//          ロジックを汎用化)。direct / lot_id / origin_lot_id / source_lots /
+//          members の各ソースから hatch_date を解決。診断ログも出力。
+//       ② 以下 4 ブランチ全てで適用:
+//          - UNIT       (Store unit.hatch_date → origin_lot_id → source_lots → members)
+//          - IND        (Store ind.hatch_date  → ind.lot_id → ind.origin_lot_id)
+//          - IND_FORMAL (fi.hatch_date         → fi.lot_id)
+//          - IND_DRAFT  (di.hatch_date         → di.lot_id)
+//       ③ _buildLabelHTML の hatchHtml を常時表示に変更 (blank は手書き欄)
+//       ④ 表の tdU padding 6px→4px に縮小して下部カットオフを解消
+//       ⑤ 孵化日行の line-height を 1.6 → 1.3 に圧縮
+//       ⑥ window._LABEL_BUILD を 20260422m に更新
+//   - [20260422l] UNIT ブランチの孵化日フォールバックを3段階に強化
+//   - [20260422k] T1ユニットラベルの孵化日表示を常時化＋親ロットフォールバック
 //   - [20260421f] 販売候補ラベル (ind_sale) デザイン見直し
 //       ヘッダー文言: "🏷️ 販売" → "🏷️ 販売候補"
 //       孵化日の年を2桁 → 4桁 (2025/12/5 形式)
@@ -109,7 +121,7 @@
 //   - Bug 3: _backRoute が存在する場合に「詳細に戻る」ボタンを追加
 'use strict';
 
-window._LABEL_BUILD = '20260421f';
+window._LABEL_BUILD = '20260422m';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 // ════════════════════════════════════════════════════════════════
@@ -161,6 +173,68 @@ function _normStageForLabel(code) {
     ADULT_PRE:'成虫（未後食）', ADULT:'成虫（活動開始）',
   };
   return MAP[code] || code;
+}
+
+// ════════════════════════════════════════════════════════════════
+// [20260422m] 孵化日フォールバック共通ヘルパー
+// ════════════════════════════════════════════════════════════════
+// 以下の順で hatch_date を解決し、最初に見つかった値 (YYYY/MM/DD) を返す:
+//   1. opts.direct      (unit.hatch_date, ind.hatch_date, fi.hatch_date 等)
+//   2. opts.lotId       (ind.lot_id / fi.lot_id / di.lot_id) → Store.getLot(lot.hatch_date)
+//   3. opts.originLotId (unit.origin_lot_id / ind.origin_lot_id) → Store.getLot
+//   4. opts.sourceLots  (unit.source_lots JSON 配列) 各要素 → Store.getLot
+//   5. opts.members     (unit.members JSON 配列) 各 member.lot_id → Store.getLot
+// 見つからなければ '' を返す。
+// 診断ログを [<opts.debugLabel>] hatch resolve: ... として常時出力。
+// ════════════════════════════════════════════════════════════════
+function _resolveLabelHatchDate(opts) {
+  opts = opts || {};
+  var value  = '';
+  var source = 'NONE';
+  var direct = _normalizeDateForLabel(opts.direct);
+  if (direct) {
+    value = direct; source = 'direct';
+  } else if (Store && Store.getLot) {
+    var candidates = [];
+    if (opts.lotId)        candidates.push({ id: opts.lotId,       src: 'lot_id' });
+    if (opts.originLotId)  candidates.push({ id: opts.originLotId, src: 'origin_lot_id' });
+    if (opts.sourceLots) {
+      try {
+        var sl = typeof opts.sourceLots === 'string' ? JSON.parse(opts.sourceLots) : opts.sourceLots;
+        if (Array.isArray(sl)) {
+          sl.forEach(function (x, i) {
+            if (x) candidates.push({ id: x, src: 'source_lots[' + i + ']' });
+          });
+        }
+      } catch (_slErr) { /* JSON parse fail 無視 */ }
+    }
+    if (opts.members) {
+      try {
+        var mm = typeof opts.members === 'string' ? JSON.parse(opts.members) : opts.members;
+        if (Array.isArray(mm)) {
+          mm.forEach(function (m, i) {
+            if (m && m.lot_id) candidates.push({ id: m.lot_id, src: 'members[' + i + '].lot_id' });
+          });
+        }
+      } catch (_mmErr) { /* JSON parse fail 無視 */ }
+    }
+    var seen = {};
+    for (var i = 0; i < candidates.length; i++) {
+      var e = candidates[i];
+      if (seen[e.id]) continue;
+      seen[e.id] = true;
+      var L = Store.getLot(e.id);
+      if (L) {
+        var h = _normalizeDateForLabel(L.hatch_date);
+        if (h) { value = h; source = e.src + ':' + e.id; break; }
+      }
+    }
+  }
+  try {
+    var info = Object.assign({ resolved: value, source: source }, opts.debugInfo || {});
+    console.log('[' + (opts.debugLabel || 'LABEL') + '] hatch resolve:', info);
+  } catch (_logErr) { /* noop */ }
+  return value;
 }
 
 function _stageCheckboxRow(stageCode) {
@@ -674,13 +748,21 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
       const ind     = Store.getIndividual(targetId) || {};
       const line    = Store.getLine(ind.line_id)    || {};
       const records = Store.getGrowthRecords(targetId) || [];
+      // [20260422m] 孵化日フォールバック: ind.hatch_date → lot_id → origin_lot_id
+      const _indHatch = _resolveLabelHatchDate({
+        direct:      ind.hatch_date,
+        lotId:       ind.lot_id,
+        originLotId: ind.origin_lot_id,
+        debugLabel:  'LABEL IND',
+        debugInfo:   { ind_id: ind.ind_id, display_id: ind.display_id },
+      });
       ld = {
         qr_text:      `IND:${ind.ind_id || targetId}`,
         display_id:   ind.display_id    || targetId,
         line_code:    line.line_code    || line.display_id || '',
         stage_code:   ind.current_stage || ind.stage_life  || '',
         sex:          ind.sex           || '',
-        hatch_date:   ind.hatch_date    || '',
+        hatch_date:   _indHatch,
         mat_type:     ind.current_mat   || '',
         mat_molt:     ind.mat_molt,
         locality:     ind.locality      || '',
@@ -815,17 +897,15 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         _matMolt = (unit.mat_type === 'T2');
       }
 
-      // [20260422k] 孵化日フォールバック: unit.hatch_date が空なら親ロットから取得
-      //   GAS createT1Session は親ロットの hatch_date をユニットにコピーするが、
-      //   親ロットが hatch_date 未設定でT1移行した場合はユニットも空のまま。
-      //   この場合、unit.origin_lot_id 経由で親ロットを引き、そこから孵化日を補完する。
-      var _unitHatch = unit.hatch_date || '';
-      if (!_unitHatch && unit.origin_lot_id && Store.getLot) {
-        var _originLot = Store.getLot(unit.origin_lot_id);
-        if (_originLot && _originLot.hatch_date) {
-          _unitHatch = _originLot.hatch_date;
-        }
-      }
+      // [20260422m] 孵化日フォールバック: 共通ヘルパー _resolveLabelHatchDate を使用
+      var _unitHatch = _resolveLabelHatchDate({
+        direct:       unit.hatch_date,
+        originLotId:  unit.origin_lot_id,
+        sourceLots:   unit.source_lots,
+        members:      unit.members,
+        debugLabel:   'LABEL UNIT',
+        debugInfo:    { unit_id: unit.unit_id, display_id: unit.display_id },
+      });
 
       ld = {
         qr_text:       `BU:${_genDisplayId}`,
@@ -848,13 +928,20 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
     } else if (targetType === 'IND_DRAFT') {
       const di   = _genIndDraft || {};
       const line = di.line_id ? (Store.getLine(di.line_id)||{}) : {};
+      // [20260422m] 孵化日フォールバック: di.hatch_date → di.lot_id
+      const _diHatch = _resolveLabelHatchDate({
+        direct:     di.hatch_date,
+        lotId:      di.lot_id,
+        debugLabel: 'LABEL IND_DRAFT',
+        debugInfo:  { lot_id: di.lot_id, lot_display_id: di.lot_display_id, lot_item_no: di.lot_item_no },
+      });
       ld = {
         qr_text:      'IND:DRAFT',
         display_id:   `${di.lot_display_id||''}#${di.lot_item_no||'?'} DRAFT`,
         line_code:    di.line_code || line.line_code || line.display_id || '',
         stage_code:   di.stage_phase || 'T1',
         sex:          '',
-        hatch_date:   '',
+        hatch_date:   _diHatch,
         mat_type:     di.mat_type  || 'T1',
         mat_molt:     false,
         size_category:di.size_category || '',
@@ -873,13 +960,22 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
           : new Date().toISOString().split('T')[0].replace(/-/g, '/'));
         _formalRecords = [{ record_date: _t1d, weight_g: fi.weight_g, exchange_type: 'FULL' }];
       }
+      // [20260422m] 孵化日フォールバック: fi.hatch_date → fi.lot_id
+      //   t1_session.js の formalInd 構築時点で hatch_date は含まれないため、
+      //   fi.lot_id 経由で Store.getLot から孵化日を引く経路が必須。
+      const _fiHatch = _resolveLabelHatchDate({
+        direct:     fi.hatch_date,
+        lotId:      fi.lot_id,
+        debugLabel: 'LABEL IND_FORMAL',
+        debugInfo:  { display_id: fi.display_id, lot_id: fi.lot_id, lot_display_id: fi.lot_display_id },
+      });
       ld = {
         qr_text:      fi.display_id ? `IND:${fi.display_id}` : 'IND:FORMAL',
         display_id:   fi.display_id || `${fi.lot_display_id||''}#${fi.lot_item_no||'?'}`,
         line_code:    fi.line_code || line.line_code || line.display_id || '',
         stage_code:   fi.stage_phase || 'T1',
         sex:          fi.sex || '',
-        hatch_date:   fi.hatch_date || '',
+        hatch_date:   _fiHatch,
         mat_type:     fi.mat_type || 'T1',
         mat_molt:     false,
         size_category:fi.size_category || '',
@@ -1110,7 +1206,10 @@ function _buildLabelHTML(ld, qrSrc) {
   while (leftCol.length  < 4) leftCol.push(null);
   while (rightCol.length < 4) rightCol.push(null);
 
-  var tdU = 'border:1.5px solid #000;padding:6px 2px;font-size:8px;font-weight:700;color:#000;text-align:center';
+  // [20260422m] tdU padding 6px → 4px に縮小 (下部カットオフ解消)
+  //   交換セルの「□全/□追」2行表示で行高が ふくらんでいたため全体が 70mm を
+  //   超えて最下行の枠が印刷されない問題を解消。
+  var tdU = 'border:1.5px solid #000;padding:4px 2px;font-size:8px;font-weight:700;color:#000;text-align:center';
   var thS = 'border:1.5px solid #000;padding:2px 2px;font-size:7.5px;font-weight:700;background:#000;color:#fff;text-align:center';
 
   var rowsHtml = '';
@@ -1144,9 +1243,13 @@ function _buildLabelHTML(ld, qrSrc) {
   var sexHtml = !isLot ? _sexDisplay(ld.sex || '') : '';
   // [20260420j] 孵化日を正規化してから表示（Date.toString() 形式も YYYY/MM/DD に統一）
   // [20260420i] 孵化日を目立たせる: 6.5px → 8px、表記を「孵: YYYY-MM-DD」→「孵化日：YYYY/MM/DD」
+  // [20260422m] 個体ラベル (isLot=false) のときは常時表示 (空なら手書き欄)
+  //   line-height を 1.6 → 1.3 に圧縮して表領域を確保
   var _hatchNorm = _normalizeDateForLabel(ld.hatch_date);
-  var hatchHtml = (!isLot && _hatchNorm)
-    ? '<div style="font-size:8px;font-weight:700;color:#000;line-height:1.6">孵化日：' + _hatchNorm + '</div>' : '';
+  var _hatchDisp = _hatchNorm || '____/__/__';
+  var hatchHtml = !isLot
+    ? '<div style="font-size:8px;font-weight:700;color:#000;line-height:1.3">孵化日：' + _hatchDisp + '</div>'
+    : '';
   var mxHtml = showMx
     ? '<div style="font-size:7px;font-weight:700;color:#000;line-height:1.7">Mx:' + chk('ON', mxIsOn) + chk('OFF', !mxIsOn) + '</div>' : '';
 
