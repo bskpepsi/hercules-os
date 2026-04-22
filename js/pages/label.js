@@ -1,6 +1,20 @@
 // FILE: js/pages/label.js
-// build: 20260421f
+// build: 20260422k
 // 修正:
+//   - [20260422k] 🐛 T1ユニットラベルで孵化日が表示されないバグの修正
+//     症状: HM2025-C1U01 等のユニットラベルで、HM2025- と 区分： の間に
+//           孵化日行が表示されない (ユーザー報告)
+//     原因: GAS createT1Session は親ロットの hatch_date をユニットにコピーするが
+//           親ロットが hatch_date 未設定でT1移行すると unit.hatch_date も空に。
+//           label.js の t1_unit ブランチは ld.hatch_date が falsy だと
+//           孵化日行を完全にスキップする設計だった。
+//     修正: 2段フォールバック
+//       ① unit.hatch_date が空なら unit.origin_lot_id 経由で親ロットの
+//          hatch_date を Store から取得
+//       ② それでも空なら手書き欄 (孵化日：____/__/__) を表示
+//          → 印刷後に手書きで補記できる
+//     対象関数: _lblGenerate の UNIT ブランチ (ld 構築時) +
+//              _buildT1UnitLabelHTML (hatchHtml の生成ロジック)
 //   - [20260421f] 販売候補ラベル (ind_sale) デザイン見直し
 //       ヘッダー文言: "🏷️ 販売" → "🏷️ 販売候補"
 //       孵化日の年を2桁 → 4桁 (2025/12/5 形式)
@@ -801,6 +815,18 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         _matMolt = (unit.mat_type === 'T2');
       }
 
+      // [20260422k] 孵化日フォールバック: unit.hatch_date が空なら親ロットから取得
+      //   GAS createT1Session は親ロットの hatch_date をユニットにコピーするが、
+      //   親ロットが hatch_date 未設定でT1移行した場合はユニットも空のまま。
+      //   この場合、unit.origin_lot_id 経由で親ロットを引き、そこから孵化日を補完する。
+      var _unitHatch = unit.hatch_date || '';
+      if (!_unitHatch && unit.origin_lot_id && Store.getLot) {
+        var _originLot = Store.getLot(unit.origin_lot_id);
+        if (_originLot && _originLot.hatch_date) {
+          _unitHatch = _originLot.hatch_date;
+        }
+      }
+
       ld = {
         qr_text:       `BU:${_genDisplayId}`,
         display_id:    _genDisplayId,
@@ -808,7 +834,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         stage_code:    unit.stage_phase || 'T1',
         head_count:    unit.head_count  || 2,
         size_category: unit.size_category || '',
-        hatch_date:    unit.hatch_date  || '',
+        hatch_date:    _unitHatch,
         mat_type:      unit.mat_type    || 'T1',
         mat_molt:      _matMolt,  // [20260420k] Mx表示用 (has_malt由来、未取得時はT2フォールバック)
         for_sale:      _genForSale,
@@ -1561,9 +1587,13 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
 
   // [20260420k] 孵化日フォント 7.5px → 8px + line-height 1.5 → 1.3 + padding-right:13mm
   //             padding-right は絶対配置の頭数+性別ボックスと重ならないため
+  // [20260422k] 孵化日が空でも手書き欄 (____/__/__) を常時表示
+  //   以前は _hatchNormU が falsy だと行自体を消していたが、
+  //   印刷後に書き足したいケースや、親ロットも hatch_date 未設定のケースに対応。
   var _hatchNormU = _normalizeDateForLabel(ld.hatch_date);
-  var hatchHtml = _hatchNormU
-    ? '<div style="font-size:8px;font-weight:700;color:#000;line-height:1.3;padding-right:13mm">孵化日：' + _hatchNormU + '</div>' : '';
+  var _hatchDispU = _hatchNormU || '____/__/__';
+  var hatchHtml = '<div style="font-size:8px;font-weight:700;color:#000;line-height:1.3;padding-right:13mm">孵化日：'
+    + _hatchDispU + '</div>';
   var originHtml = originLS
     ? '<div style="font-size:6px;font-weight:700;color:#000;line-height:1.4">' + originLS + '</div>' : '';
 
