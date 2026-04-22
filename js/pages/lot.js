@@ -3,8 +3,31 @@
 // lot.js — Phase4-1 UI統一版
 // ロット一覧・詳細・分割・個体化を担う
 // カードUIを3列（コード | 頭数+ステージ | ›）に統一
-// build: 20260422r
+// build: 20260422s
 // 変更点:
+//   - [20260422s] カード情報の統一 (Phase E)
+//     ① 3種共通バッジ: マット種別 (T0/T1/T2/T3/MD) を右端に大きく表示
+//        (ユニットの T1/T2/T3 バッジと同じデザインを個体・ロットにも適用)
+//     ② 孵化日と経過日数を全カードに表示: 例「🥚 2025/10/15 (112日)」
+//     ③ 最終マット交換日と経過日数: 例「🔄 最終交換: 2025/12/15 (90日)」
+//        exchange_type='FULL' の成長記録のみを対象 (ADD は除外)
+//     ④ 経過日数のしきい値色分け:
+//        - T0 の 60日超: 赤字 (DAYS_WARNING_T0 = 60)
+//        - T1/T2/T3/MD の 90日超: 赤字 (DAYS_WARNING_DEFAULT = 90)
+//     ⑤ 個体カードの体重を右端に大きく表示 (ユニット互換)
+//     ⑥ ロットカードに採卵日/孵化日の2行表示
+//     ⑦ 各タブにソートバー追加:
+//        - 個体: ID順 / 孵化日順(新/旧) / 最終交換経過順 / 体重順
+//        - ユニット: ID順 / 孵化日順(新/旧) / 最終交換経過順
+//        - ロット: ID順 / 孵化日順(新/旧) / 採卵日順 / 頭数順
+//        各タブ独立 (タブごとに意味のあるソート軸が違うため)
+//     共通ヘルパー追加:
+//        - _resolveHatchDate (孵化日解決、親ロット/継承対応)
+//        - _getLastFullExchangeDate (最終FULL交換日取得)
+//        - _daysSince (経過日数計算)
+//        - _ageColor (しきい値色判定、mat別)
+//        - _formatAgeDate (「YYYY/MM/DD (Nd)」形式)
+//        - _matBadgeHTML (マット種別バッジ生成)
 //   - [20260422r] Phase C/D 追加調整
 //     ① タブ表示順を 🐛 個体 → 📦 ユニット → 🥚 ロット に変更
 //     ② デフォルトタブを 'lot' → 'ind' に変更
@@ -65,7 +88,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] lot.js v20260422r loaded');
+console.log('[HerculesOS] lot.js v20260422s loaded');
 
 // ────────────────────────────────────────────────────────────────
 // [20260418f] 血統・種親カードを生成（ロット詳細用）
@@ -188,6 +211,201 @@ function _lotDisplayStageLabel(code) {
 }
 
 // ════════════════════════════════════════════════════════════════
+// [20260422s] Phase E: カード共通ヘルパー
+// ════════════════════════════════════════════════════════════════
+
+// マット種別ごとの経過日数しきい値（超えたら赤字）
+var _MAT_DAYS_WARNING = {
+  T0: 60,
+  T1: 90, T2: 90, T3: 90, MD: 90,
+};
+
+// 日付を YYYY/MM/DD に正規化 (Date オブジェクト・ISO・'YYYY/MM/DD' すべて受容)
+function _normalizeDateYmd(v) {
+  if (!v) return '';
+  var s = String(v).trim();
+  if (!s || s === '—' || s === '-') return '';
+  // 2025/10/01 や 2025-10-01 形式
+  var m = s.match(/(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
+  if (m) {
+    return m[1] + '/' + ('0'+m[2]).slice(-2) + '/' + ('0'+m[3]).slice(-2);
+  }
+  // JSON Date.toString() の "Tue Oct 01 2025 ..." 形式
+  var d = new Date(s);
+  if (!isNaN(d.getTime())) {
+    var y = d.getFullYear();
+    var mo = ('0' + (d.getMonth()+1)).slice(-2);
+    var da = ('0' + d.getDate()).slice(-2);
+    return y + '/' + mo + '/' + da;
+  }
+  return '';
+}
+
+// 日付の経過日数を返す (今日 - 日付)。無効時は null
+function _daysSince(v) {
+  var s = _normalizeDateYmd(v);
+  if (!s) return null;
+  var d = new Date(s.replace(/\//g, '-') + 'T00:00:00');
+  if (isNaN(d.getTime())) return null;
+  var now = new Date();
+  var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  var diff = Math.floor((today.getTime() - d.getTime()) / 86400000);
+  return diff >= 0 ? diff : null;
+}
+
+// 孵化日を解決 (個体/ユニット/ロット 共通)
+//   opts.direct      - 自身の hatch_date
+//   opts.lotId       - 親ロット ID (個体用)
+//   opts.originLotId - origin_lot_id (ユニット/個体用)
+//   opts.sourceLots  - source_lots JSON配列 (ユニット用)
+// 返値: { value: 'YYYY/MM/DD', source: '...', days: N } or null
+function _resolveHatchDate(opts) {
+  opts = opts || {};
+  var d = _normalizeDateYmd(opts.direct);
+  if (d) return { value: d, source: 'direct', days: _daysSince(d) };
+  if (Store && Store.getLot) {
+    var tries = [];
+    if (opts.lotId)       tries.push({ id: opts.lotId,       src: 'lot_id' });
+    if (opts.originLotId) tries.push({ id: opts.originLotId, src: 'origin_lot_id' });
+    if (opts.sourceLots) {
+      try {
+        var arr = typeof opts.sourceLots === 'string' ? JSON.parse(opts.sourceLots) : opts.sourceLots;
+        if (Array.isArray(arr)) arr.forEach(function(x){ if (x) tries.push({id:x,src:'source'}); });
+      } catch(_){}
+    }
+    var seen = {};
+    for (var i = 0; i < tries.length; i++) {
+      if (seen[tries[i].id]) continue;
+      seen[tries[i].id] = true;
+      var L = Store.getLot(tries[i].id);
+      if (L) {
+        var hd = _normalizeDateYmd(L.hatch_date);
+        if (hd) return { value: hd, source: tries[i].src, days: _daysSince(hd) };
+      }
+    }
+  }
+  return null;
+}
+
+// 採卵日を解決 (ロット用)
+function _resolveCollectDate(lot) {
+  if (!lot) return null;
+  var d = _normalizeDateYmd(lot.collect_date);
+  if (d) return { value: d, days: _daysSince(d) };
+  // フォールバック: note から "採卵日: YYYY/MM/DD" 抽出
+  if (lot.note) {
+    var m = String(lot.note).match(/採卵日[:：]?\s*(\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2})/);
+    if (m) {
+      var n = _normalizeDateYmd(m[1]);
+      if (n) return { value: n, days: _daysSince(n) };
+    }
+  }
+  return null;
+}
+
+// 最終 FULL 交換日を取得 (target = 'IND'/'UNIT'/'LOT', id = target_id)
+// 返値: { value: 'YYYY/MM/DD', days: N } or null
+function _getLastFullExchange(targetId) {
+  if (!targetId) return null;
+  var recs = (typeof Store !== 'undefined' && Store.getGrowthRecords)
+    ? Store.getGrowthRecords(targetId) : [];
+  if (!recs || !recs.length) return null;
+  // exchange_type='FULL' のみ対象 (ADD / NONE / 空 は除外)
+  var fullRecs = recs.filter(function(r){
+    var ex = String(r.exchange_type || '').toUpperCase();
+    return ex === 'FULL' || ex === '全';
+  });
+  if (!fullRecs.length) return null;
+  fullRecs.sort(function(a,b){ return String(b.record_date||'').localeCompare(String(a.record_date||'')); });
+  var d = _normalizeDateYmd(fullRecs[0].record_date);
+  if (!d) return null;
+  return { value: d, days: _daysSince(d) };
+}
+
+// マット種別とその経過日数から色を決める
+//   days が null / しきい値未満 → 通常色
+//   しきい値超え → 赤
+function _ageColor(matType, days) {
+  if (days === null || days === undefined) return 'var(--text2)';
+  var t = String(matType || '').toUpperCase();
+  var limit = _MAT_DAYS_WARNING[t];
+  if (limit && days > limit) return 'var(--red,#e05050)';
+  return 'var(--text2)';
+}
+
+// 「YYYY/MM/DD (Nd)」形式で日付と経過日数を整形
+// matType を渡すと経過日数部の色が決まる
+function _formatAgeDate(dateObj, matType) {
+  if (!dateObj || !dateObj.value) return '';
+  var dstr = dateObj.value;
+  if (dateObj.days == null) return dstr;
+  var col = _ageColor(matType, dateObj.days);
+  return dstr + ' <span style="color:' + col + ';font-weight:700">(' + dateObj.days + '日)</span>';
+}
+
+// マット種別バッジを生成 (T0/T1/T2/T3/MD)
+// デザインはユニットの stage_phase バッジと統一
+function _matBadgeHTML(matType) {
+  var t = String(matType || '').toUpperCase();
+  if (!t || t === '—') t = '—';
+  // 色分け (ユニットと同じ配色)
+  var color = 'var(--text3)';
+  if (t === 'T0')       color = '#6a6a6a';
+  else if (t === 'T1')  color = 'var(--green)';
+  else if (t === 'T2')  color = 'var(--blue)';
+  else if (t === 'T3')  color = 'var(--amber)';
+  else if (t === 'MD')  color = '#a0c878';
+  return '<span style="display:inline-block;font-size:.95rem;font-weight:800;'
+    + 'color:' + color + ';border:1.5px solid ' + color + ';border-radius:6px;'
+    + 'padding:1px 7px;text-align:center;line-height:1.5;min-width:34px">'
+    + t + '</span>';
+}
+
+// ソートキー定義 (タブ共通の比較関数生成)
+//   key: 'id' | 'hatch_new' | 'hatch_old' | 'exchange' | 'weight_desc' |
+//        'collect_new' | 'count_desc'
+//   getter: 対象から必要情報を取り出す関数
+function _makeSortComparator(key, getters) {
+  getters = getters || {};
+  var g_hatch  = getters.hatchDays  || function(x){ var h=_resolveHatchDate({direct:x.hatch_date,lotId:x.lot_id,originLotId:x.origin_lot_id}); return h?h.days:null; };
+  var g_ex     = getters.exchDays   || function(x){ var e=_getLastFullExchange(x._targetId || x.ind_id || x.unit_id || x.lot_id); return e?e.days:null; };
+  var g_weight = getters.weight     || function(x){ return +x.latest_weight_g || 0; };
+  var g_id     = getters.displayId  || function(x){ return String(x.display_id || x.ind_id || x.unit_id || x.lot_id || ''); };
+  var g_count  = getters.count      || function(x){ return +x.count || 0; };
+  var g_collect= getters.collectDays|| function(x){ var c=_resolveCollectDate(x); return c?c.days:null; };
+
+  // 昇順/降順の null 処理共通化 (null は末尾)
+  var cmpNum = function(a,b,desc) {
+    if (a == null && b == null) return 0;
+    if (a == null) return 1;
+    if (b == null) return -1;
+    return desc ? (b - a) : (a - b);
+  };
+
+  if (key === 'hatch_new')   return function(a,b){ return cmpNum(g_hatch(a),g_hatch(b),false); }; // 日数が小さい=新しい
+  if (key === 'hatch_old')   return function(a,b){ return cmpNum(g_hatch(a),g_hatch(b),true);  };
+  if (key === 'exchange')    return function(a,b){ return cmpNum(g_ex(a),g_ex(b),true); };       // 経過日数が多い順
+  if (key === 'weight_desc') return function(a,b){ return cmpNum(g_weight(a),g_weight(b),true); };
+  if (key === 'collect_new') return function(a,b){ return cmpNum(g_collect(a),g_collect(b),false); };
+  if (key === 'count_desc')  return function(a,b){ return cmpNum(g_count(a),g_count(b),true); };
+  // default: ID昇順
+  return function(a,b){ return g_id(a).localeCompare(g_id(b)); };
+}
+
+// ソートバー HTML 生成
+function _sortBarHTML(tabKey, currentKey, opts) {
+  opts = opts || [];
+  if (!opts.length) return '';
+  var html = '<div class="filter-bar" style="margin-bottom:6px;overflow-x:auto;white-space:nowrap" id="' + tabKey + '-sort-bar">';
+  html += '<span style="font-size:.7rem;color:var(--text3);padding:3px 6px 0 4px;flex-shrink:0">並び:</span>';
+  html += opts.map(function(o){
+    return '<button class="pill ' + (currentKey===o.val?'active':'') + '" data-sort="' + o.val + '">' + o.label + '</button>';
+  }).join('');
+  html += '</div>';
+  return html;
+}
+
+// ════════════════════════════════════════════════════════════════
 // ロット一覧
 // ════════════════════════════════════════════════════════════════
 Pages.lotList = function () {
@@ -211,6 +429,10 @@ Pages.lotList = function () {
   let _indStage   = '';          // L1L2 / L3 / prepupa / pupa / adult / ''
   let _indSex     = '';          // ♂ / ♀ / 不明 / ''
   let _indLine    = fixedLineId; // ライン絞り込み
+  // [20260422s] ソート状態 (各タブ独立)
+  let _indSort    = 'id';        // id / hatch_new / hatch_old / exchange / weight_desc
+  let _unitSort   = 'id';        // id / hatch_new / hatch_old / exchange
+  let _lotSort    = 'id';        // id / hatch_new / hatch_old / collect_new / count_desc
 
   function render() {
     if (_activeTab === 'unit') { renderUnit(); return; }
@@ -236,6 +458,15 @@ Pages.lotList = function () {
         (u.stage_phase||'').toLowerCase().includes(kw)
       );
     }
+    // [20260422s] ソート適用 (ユニット用: origin_lot_id 経由の孵化日も考慮)
+    units.sort(_makeSortComparator(_unitSort, {
+      hatchDays: function(u) {
+        var h = _resolveHatchDate({ direct: u.hatch_date, originLotId: u.origin_lot_id, sourceLots: u.source_lots });
+        return h ? h.days : null;
+      },
+      exchDays: function(u) { var e = _getLastFullExchange(u.unit_id); return e ? e.days : null; },
+      displayId: function(u) { return String(u.display_id || u.unit_id || ''); },
+    }));
 
     const title = isLineLimited
       ? ((fixedLine ? (fixedLine.line_code||fixedLine.display_id) : '') + ' の飼育管理')
@@ -289,6 +520,13 @@ Pages.lotList = function () {
           `<button class="pill ${_unitStatus===s.v?'active':''}" data-ustatus="${s.v}">${s.l}</button>`
         ).join('')}
       </div>` +
+      // [20260422s] ソートバー
+      _sortBarHTML('unit', _unitSort, [
+        { val:'id',        label:'ID' },
+        { val:'hatch_new', label:'🐣新' },
+        { val:'hatch_old', label:'🐣古' },
+        { val:'exchange',  label:'🔄経過' },
+      ]) +
       `<div style="font-size:.75rem;color:var(--text3);margin-bottom:6px">${units.length}件</div>` +
       `<div id="unit-list-body">` +
       (units.length ? units.map(u => {
@@ -310,6 +548,16 @@ Pages.lotList = function () {
           : ph==='T3' ? 'var(--amber)'
           : 'var(--text3)';
 
+        // [20260422s] 孵化日・最終交換を取得
+        const _uHatch   = _resolveHatchDate({
+          direct: u.hatch_date,
+          originLotId: u.origin_lot_id,
+          sourceLots: u.source_lots,
+        });
+        const _uLastExc = _getLastFullExchange(u.unit_id);
+        // [20260422s] 右端バッジはマット種別 (mat_type) に統一
+        const _uMatType = (u.mat_type || '').toUpperCase();
+
         // members を解析して①②の情報を組み立て
         let membersArr = [];
         try {
@@ -325,7 +573,7 @@ Pages.lotList = function () {
           const mw  = m.weight_g   ? m.weight_g + 'g' : '—';
           const msc = m.size_category || '—';
           const msx = (m.sex && m.sex !== '不明') ? m.sex : '?';
-          return `<div style="font-size:.78rem;display:flex;align-items:center;gap:4px;margin-bottom:1px">
+          return `<div style="font-size:.76rem;display:flex;align-items:center;gap:4px;margin-bottom:1px">
             <span style="color:var(--text3);font-size:.65rem;min-width:14px">${mi===0?'①':'②'}</span>
             <span style="font-weight:700;color:${sexColor(msx)}">${msx}</span>
             <span style="font-weight:700;color:var(--text1)">${msc}</span>
@@ -337,15 +585,24 @@ Pages.lotList = function () {
           ? memberLines
           : `<div style="font-size:.76rem;color:var(--text2)">${hc}頭 / 区分:${sc}</div>`;
 
+        // [20260422s] 孵化日・最終交換日の表示行
+        const _dateLines = [];
+        if (_uHatch)   _dateLines.push('<span style="font-size:.68rem">🐣' + _formatAgeDate(_uHatch, _uMatType) + '</span>');
+        if (_uLastExc) _dateLines.push('<span style="font-size:.68rem">🔄' + _formatAgeDate(_uLastExc, _uMatType) + '</span>');
+        const _dateBlock = _dateLines.length
+          ? '<div style="display:flex;flex-direction:column;gap:1px;color:var(--text2);margin-top:2px">'
+            + _dateLines.map(s => '<div>'+s+'</div>').join('')
+            + '</div>'
+          : '';
+
         const srcLotsText = (() => {
           try {
             const sl = u.source_lots ? JSON.parse(u.source_lots) : [];
             if (!sl.length) return '';
             const names = sl.map(lid => {
               const lot = Store.getLot && Store.getLot(lid);
-              if (!lot) return null; // 解決できない内部IDは非表示
+              if (!lot) return null;
               const d = lot.display_id || '';
-              // "HM2025-A1-L02" → "A1-L02" に短縮
               const m = d.match(/^[A-Za-z0-9]+-([A-Za-z][0-9]+-L\d+)/);
               return m ? m[1] : d;
             }).filter(Boolean);
@@ -365,34 +622,29 @@ Pages.lotList = function () {
             <span style="font-size:.68rem;color:var(--text3);margin-top:2px">${hc}頭</span>
           </div>
 
-          <!-- ②列: ID + 由来 -->
+          <!-- ②列: ID + 由来 + 日付情報 -->
           <div style="display:flex;flex-direction:column;justify-content:center;
-            min-width:0;flex:1.2;margin-right:6px">
+            min-width:0;flex:1.3;margin-right:6px">
             <div style="font-family:var(--font-mono);font-weight:700;font-size:.82rem;color:var(--gold);
               white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
               ${u.display_id||u.unit_id}${stBadge}
             </div>
             ${srcLotsText
-              ? `<div style="font-size:.65rem;color:var(--text3);margin-top:2px;
+              ? `<div style="font-size:.63rem;color:var(--text3);margin-top:1px;
                   white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${srcLotsText}</div>`
               : ''}
+            ${_dateBlock}
           </div>
 
           <!-- ③列: 各頭情報 -->
           <div style="display:flex;flex-direction:column;justify-content:center;
-            flex:1.3;min-width:0;margin-right:6px">
+            flex:1;min-width:0;margin-right:6px">
             ${memberBlock}
           </div>
 
-          <!-- ④列: ステージバッジ + › -->
+          <!-- ④列: マット種別バッジ + › -->
           <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
-            <div style="display:flex;flex-direction:column;align-items:center">
-              <span style="font-size:.95rem;font-weight:800;
-                color:${phColor};border:1.5px solid ${phColor};border-radius:6px;
-                padding:1px 7px;text-align:center;line-height:1.5">
-                ${ph}
-              </span>
-            </div>
+            ${_matBadgeHTML(_uMatType || ph)}
             <span style="color:var(--text3);font-size:1rem">›</span>
           </div>
         </div>`;
@@ -423,6 +675,13 @@ Pages.lotList = function () {
         renderUnit();
       });
     }
+    // [20260422s] ソートバー
+    const _uSortBar = document.getElementById('unit-sort-bar');
+    if (_uSortBar) _uSortBar.addEventListener('click', e => {
+      const p = e.target.closest('.pill'); if (!p) return;
+      _unitSort = p.dataset.sort;
+      renderUnit();
+    });
   }
 
   // ══════════════════════════════════════════════════════════
@@ -449,6 +708,16 @@ Pages.lotList = function () {
         (i.note_private||'').toLowerCase().includes(kw)
       );
     }
+    // [20260422s] ソート適用
+    list.sort(_makeSortComparator(_indSort, {
+      hatchDays: function(i) {
+        var h = _resolveHatchDate({ direct: i.hatch_date, lotId: i.lot_id, originLotId: i.origin_lot_id });
+        return h ? h.days : null;
+      },
+      exchDays: function(i) { var e = _getLastFullExchange(i.ind_id); return e ? e.days : null; },
+      weight:   function(i) { return +i.latest_weight_g || 0; },
+      displayId:function(i) { return String(i.display_id || i.ind_id || ''); },
+    }));
 
     // タブピル用のカウント
     const _lotCountActive = (()=>{
@@ -540,6 +809,14 @@ Pages.lotList = function () {
         + ' oninput="Pages._lotUnitKw(this.value)">'
       + '</div>' +
       _lineBar + _stageBar + _sexBar + _statusBar +
+      // [20260422s] ソートバー
+      _sortBarHTML('ind', _indSort, [
+        { val:'id',          label:'ID' },
+        { val:'hatch_new',   label:'🐣新' },
+        { val:'hatch_old',   label:'🐣古' },
+        { val:'exchange',    label:'🔄経過' },
+        { val:'weight_desc', label:'⚖️重' },
+      ]) +
       '<div class="sec-hdr">'
         + '<span class="sec-title">' + list.length + '頭</span>'
       + '</div>' +
@@ -577,6 +854,13 @@ Pages.lotList = function () {
         renderInd();
       });
     }
+    // [20260422s] ソートバー
+    const _indSortBar = document.getElementById('ind-sort-bar');
+    if (_indSortBar) _indSortBar.addEventListener('click', e => {
+      const p = e.target.closest('.pill'); if (!p) return;
+      _indSort = p.dataset.sort;
+      renderInd();
+    });
     // キーワード入力のフォーカス維持 (Android 対策)
     setTimeout(() => {
       const inp = document.getElementById('ind-kw-input');
@@ -623,6 +907,13 @@ Pages.lotList = function () {
         ((Store.getLine(l.line_id)||{}).line_code||'').toLowerCase().includes(kw)
       );
     }
+    // [20260422s] ソート適用
+    lots.sort(_makeSortComparator(_lotSort, {
+      hatchDays: function(l){ var h = _resolveHatchDate({ direct: l.hatch_date }); return h ? h.days : null; },
+      collectDays: function(l){ var c = _resolveCollectDate(l); return c ? c.days : null; },
+      count: function(l){ return +l.count || 0; },
+      displayId: function(l){ return String(l.display_id || l.lot_id || ''); },
+    }));
     const lines = Store.getDB('lines') || [];
     const title = isLineLimited
       ? (fixedLine ? (fixedLine.line_code || fixedLine.display_id) + ' の飼育管理' : '飼育管理')
@@ -671,6 +962,13 @@ Pages.lotList = function () {
             '<button class="pill ' + (l.line_id === filters.line_id ? 'active' : '') + '" data-val="' + l.line_id + '">' + (l.line_code || l.display_id) + '</button>'
           ).join('')}
         </div>` : ''}
+        ${_sortBarHTML('lot', _lotSort, [
+          { val:'id',          label:'ID' },
+          { val:'hatch_new',   label:'🐣新' },
+          { val:'hatch_old',   label:'🐣古' },
+          { val:'collect_new', label:'🥚新' },
+          { val:'count_desc',  label:'📊頭数' },
+        ])}
         <div class="sec-hdr">
           <span class="sec-title">${lots.length}ロット / 計<strong>${totalCount}</strong>頭</span>
           <div style="display:flex;gap:8px;align-items:center">
@@ -703,6 +1001,13 @@ Pages.lotList = function () {
         render();
       });
     }
+    // [20260422s] ソートバー
+    const _lSortBar = document.getElementById('lot-sort-bar');
+    if (_lSortBar) _lSortBar.addEventListener('click', e => {
+      const p = e.target.closest('.pill'); if (!p) return;
+      _lotSort = p.dataset.sort;
+      render();
+    });
   }
 
   Pages._lotUnitTabSwitch = function(tab) {
@@ -779,29 +1084,53 @@ function _lotCardHTML(lot) {
 
     var count      = parseInt(lot.count, 10) || 0;
     var container  = lot.container_size || (latestRec && latestRec.container) || '';
-    var weightG    = latestRec && latestRec.weight_g ? latestRec.weight_g + 'g' : '';
-    var ageObj     = lot.hatch_date ? Store.calcAge(lot.hatch_date) : null;
-    var ageDays    = (ageObj && ageObj.days != null) ? ageObj.days + '日' : '';
 
+    // [20260422s] 採卵日 / 孵化日 / 最終交換 を取得
+    var _lotCollect = _resolveCollectDate(lot);
+    var _lotHatch   = _resolveHatchDate({ direct: lot.hatch_date });
+    var _lotLastExc = _getLastFullExchange(lot.lot_id);
+
+    // 日付情報行 HTML (あるものだけ表示)
+    var dateLines = [];
+    if (_lotCollect) {
+      dateLines.push('<span style="font-size:.72rem">🥚採卵 ' + _formatAgeDate(_lotCollect, '') + '</span>');
+    }
+    if (_lotHatch) {
+      dateLines.push('<span style="font-size:.72rem">🐣孵化 ' + _formatAgeDate(_lotHatch, rawMat) + '</span>');
+    }
+    if (_lotLastExc) {
+      dateLines.push('<span style="font-size:.72rem">🔄交換 ' + _formatAgeDate(_lotLastExc, rawMat) + '</span>');
+    }
+    var dateBlock = dateLines.length
+      ? '<div style="display:flex;flex-direction:column;gap:1px;color:var(--text2);margin-top:2px">'
+        + dateLines.map(function(s){ return '<div>'+s+'</div>'; }).join('')
+        + '</div>'
+      : '';
+
+    // ステージ + 容器 の簡易情報
     var parts = [];
     if (stageLbl) parts.push('<span style="font-weight:700;color:' + sColor + '">' + stageLbl + '</span>');
-    if (matLbl)   parts.push('<span>' + matLbl + '</span>');
     if (container)parts.push('<span>' + container + '</span>');
-    if (weightG)  parts.push('<span style="color:var(--green);font-weight:700">' + weightG + '</span>');
-    if (ageDays)  parts.push('<span>' + ageDays + '</span>');
     var subHtml = parts.join('<span style="font-size:.65rem;color:var(--border,rgba(255,255,255,.15));padding:0 2px">/</span>');
 
-    return '<div class="card" style="padding:12px 14px;cursor:pointer;display:flex;align-items:center;gap:12px;margin-bottom:8px"'
+    // [20260422s] 右端のマット種別バッジ
+    var matBadge = matLbl ? _matBadgeHTML(matLbl) : '';
+
+    return '<div class="card" style="padding:10px 12px;cursor:pointer;display:flex;align-items:center;gap:8px;margin-bottom:8px"'
       + ' onclick="routeTo(\'lot-detail\',{lotId:\'' + lot.lot_id + '\'})">'
-      + '<div style="min-width:44px;text-align:center;flex-shrink:0">'
-      +   '<div style="font-family:var(--font-mono);font-size:1.2rem;font-weight:800;color:var(--gold);line-height:1">' + (lineCode || '—') + '</div>'
-      +   '<div style="font-size:.75rem;font-weight:700;color:var(--text2);margin-top:3px">' + count + '<span style="font-size:.62rem;color:var(--text3)">頭</span></div>'
+      + '<div style="min-width:40px;text-align:center;flex-shrink:0;padding-right:6px;border-right:1px solid var(--border2)">'
+      +   '<div style="font-family:var(--font-mono);font-size:1.1rem;font-weight:800;color:var(--gold);line-height:1">' + (lineCode || '—') + '</div>'
+      +   '<div style="font-size:.72rem;font-weight:700;color:var(--text2);margin-top:3px">' + count + '<span style="font-size:.6rem;color:var(--text3)">頭</span></div>'
       + '</div>'
       + '<div style="flex:1;min-width:0">'
-      +   '<div style="font-family:var(--font-mono);font-size:.85rem;font-weight:700;color:var(--text1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:3px">' + (lot.display_id || '') + '</div>'
-      +   (subHtml ? '<div style="display:flex;align-items:center;gap:3px;flex-wrap:wrap;font-size:.78rem;color:var(--text2)">' + subHtml + '</div>' : '')
+      +   '<div style="font-family:var(--font-mono);font-size:.85rem;font-weight:700;color:var(--text1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (lot.display_id || '') + '</div>'
+      +   (subHtml ? '<div style="display:flex;align-items:center;gap:3px;flex-wrap:wrap;font-size:.78rem;color:var(--text2);margin-top:2px">' + subHtml + '</div>' : '')
+      +   dateBlock
       + '</div>'
-      + '<div style="color:var(--text3);font-size:1.1rem;flex-shrink:0">›</div>'
+      + '<div style="display:flex;align-items:center;gap:4px;flex-shrink:0">'
+      +   matBadge
+      +   '<span style="color:var(--text3);font-size:1rem">›</span>'
+      + '</div>'
       + '</div>';
   } catch(e) {
     return '<div class="card" style="padding:12px 14px;cursor:pointer;margin-bottom:8px"'
