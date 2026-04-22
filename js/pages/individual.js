@@ -2,7 +2,12 @@
 // individual.js
 // 役割: 個体の一覧・詳細・新規登録・編集・ステータス変更を担う。
 //       個体台帳の中心画面。ロット・成長記録・ラベルへの導線も持つ。
-// build: 20260422k
+// build: 20260422p
+//
+// 20260422p 修正:
+//   - 個体詳細の「体重推移（N件）」表記をユニットと統一:
+//     「成長記録（N回分）」に変更。件数もユニークな日付数 (記録回数) で数える。
+//   - 空状態メッセージを「体重記録」→「📷 成長記録」に合わせる
 //
 // 20260422k 修正:
 //   - T3フェーズではアクションカード自体を非表示に変更
@@ -86,7 +91,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] individual.js v20260422k loaded');
+console.log('[HerculesOS] individual.js v20260422p loaded');
 
 const Pages = window.Pages || {};
 
@@ -917,10 +922,17 @@ function _renderDetail(ind, main) {
 
       <div class="accordion" id="acc-growth">
         <div class="acc-hdr open" onclick="_toggleAcc('acc-growth')">
-          体重推移（${records.filter(r=>r.weight_g).length}件）<span class="acc-arrow">▼</span>
+          ${(() => {
+            // [20260422p] ユニット側と表記統一: 「体重推移(N件)」→「成長記録(N回分)」
+            //   件数もユニークな日付数（記録回数）で数える (ユニットと同仕様)
+            const _uniqDates = {};
+            records.forEach(r => { if (r.record_date) _uniqDates[r.record_date] = true; });
+            const _recCount = Object.keys(_uniqDates).length;
+            return `成長記録（${_recCount}回分）`;
+          })()}<span class="acc-arrow">▼</span>
         </div>
         <div class="acc-body open">
-          ${records.length ? _weightChartBlock(ind.ind_id, records) : UI.empty('記録なし', '「体重記録」ボタンから追加できます')}
+          ${records.length ? _weightChartBlock(ind.ind_id, records) : UI.empty('記録なし', '「📷 成長記録」ボタンから追加できます')}
         </div>
       </div>
 
