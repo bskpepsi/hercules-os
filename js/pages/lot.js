@@ -3,8 +3,25 @@
 // lot.js — Phase4-1 UI統一版
 // ロット一覧・詳細・分割・個体化を担う
 // カードUIを3列（コード | 頭数+ステージ | ›）に統一
-// build: 20260422c
+// build: 20260422k
 // 変更点:
+//   - [20260422k] ロット詳細画面のボタン配置変更
+//     ① 上部ボタンを3行構成に変更:
+//        旧: Row1=[📷 成長記録][✂️ 分割] / Row2=[🏷️ ラベル発行・QRコード生成]
+//        新: Row1=[📷 成長記録][🏷️ ラベル発行] / Row2=[📅 孵化日を設定]
+//            / Row3=[🐛 T1移行（割り出し）を開始]
+//        ✂️ 分割ボタンは削除 (T1移行が割り出しを兼ねる)
+//     ② 📅 孵化日を設定 / 🐛 T1移行 ボタンを血統・種親の下から上部ボタン群の
+//        直下に移動。条件付き表示:
+//        ・📅 孵化日を設定: !lot.hatch_date のときのみ
+//        ・🐛 T1移行: !lot.t1_done のときのみ
+//        ・✅ T1移行済み: lot.t1_done のとき
+//     ③ ページ下部の「🌱 生体ステージ」「🔄 マット交換」ボタンを削除
+//        生体ステージは「✏️ ロット情報を修正」モーダルから変更する設計に統一
+//        マット交換は別途 _lotEditMat 経由 (メニュー等) で呼び出し可能
+//     ④ Pages._lotEdit に「生体ステージ」選択フィールドを追加
+//        _lotEditSave で stage_life も同時に保存 (以前は別モーダル _lotEditStage
+//        から変更する必要があった)
 //   - [20260422c] 🐛 バグ修正: ユニットタブ選択中にリロードするとロットタブに戻る問題
 //     原因: _lotUnitTabSwitch がローカル変数 _activeTab と DOM だけ更新し、
 //           URL hash / Store.pageParams を更新していなかったため、
@@ -30,7 +47,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] lot.js v20260421e loaded');
+console.log('[HerculesOS] lot.js v20260422k loaded');
 
 // ────────────────────────────────────────────────────────────────
 // [20260418f] 血統・種親カードを生成（ロット詳細用）
@@ -743,6 +760,10 @@ function _renderLotDetail(lot, main) {
         ${alertBadge ? `<div style="margin-top:8px">${alertBadge}</div>` : ''}
       </div>
 
+      <!-- [20260422k] 上部ボタン 3行構成
+           Row1: [📷 成長記録][🏷️ ラベル発行]
+           Row2: [📅 孵化日を設定]  (hatch_date 未設定時のみ)
+           Row3: [🐛 T1移行（割り出し）を開始]  (t1_done=false) / ✅ T1移行済み -->
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
         <button style="padding:14px 8px;border-radius:var(--radius);font-weight:700;font-size:.92rem;
           background:var(--green);color:#fff;border:none;cursor:pointer"
@@ -750,16 +771,24 @@ function _renderLotDetail(lot, main) {
           📷 成長記録
         </button>
         <button style="padding:14px 8px;border-radius:var(--radius);font-weight:700;font-size:.92rem;
-          background:var(--surface3,#3a3a4a);color:var(--text1);border:1px solid var(--border);cursor:pointer"
-          onclick="Pages._showSplitModal('${lot.lot_id}',${lot.count},'${lot.stage_life||lot.stage||'L1L2'}','${lot.line_id}','${lot.hatch_date||''}','${lot.display_id}')">
-          ✂️ 分割
-        </button>
-      </div>
-        <button style="grid-column:span 2;padding:12px 8px;border-radius:var(--radius);font-weight:700;font-size:.88rem;
           background:var(--surface3,#3a3a4a);color:var(--gold);border:1px solid rgba(200,168,75,.4);cursor:pointer"
           onclick="routeTo('label-gen',{targetType:'LOT',targetId:'${lot.lot_id}'})">
-          🏷️ ラベル発行・QRコード生成
+          🏷️ ラベル発行
         </button>
+      </div>
+      ${!lot.hatch_date ? `
+      <button class="btn btn-full" style="background:var(--amber);color:#1a1a1a;font-weight:700;margin-top:8px"
+        onclick="Pages._lotSetHatchDate('${lot.lot_id}')">
+        📅 孵化日を設定
+      </button>` : ''}
+      ${!lot.t1_done ? `
+      <button class="btn btn-full" style="background:var(--green);color:#fff;font-weight:700;margin-top:8px"
+        onclick="Pages.t1SessionStart('${lot.lot_id}')">
+        🐛 T1移行（割り出し）を開始
+      </button>` : `
+      <div style="background:rgba(76,175,120,.1);border:1px solid rgba(76,175,120,.3);border-radius:8px;padding:10px;text-align:center;font-size:.82rem;color:var(--green);margin-top:8px;font-weight:700">
+        ✅ T1移行済み
+      </div>`}
 
       <div class="card">
         <div class="card-title">ロット情報</div>
@@ -792,15 +821,8 @@ function _renderLotDetail(lot, main) {
       <!-- 血統・種親（20260418f）-->
       ${_lotRenderParentageCard(line, { page: 'lot-detail', params: { lotId: lot.lot_id } })}
 
-      ${!lot.hatch_date ? `
-      ${!lot.t1_done ? `<button class="btn btn-full" style="background:var(--green);color:#fff;font-weight:700;margin-bottom:4px"
-        onclick="Pages.t1SessionStart('${lot.lot_id}')">
-        🐛 T1移行（割り出し）を開始
-      </button>` : `<div style="background:rgba(76,175,120,.1);border:1px solid rgba(76,175,120,.3);border-radius:8px;padding:10px;text-align:center;font-size:.82rem;color:var(--green);margin-bottom:8px;font-weight:700">✅ T1移行済み</div>`}
-      <button class="btn btn-full" style="background:var(--amber);color:#1a1a1a;font-weight:700"
-        onclick="Pages._lotSetHatchDate('${lot.lot_id}')">
-        📅 孵化日を設定
-      </button>` : ''}
+      <!-- [20260422k] 旧: 📅 孵化日を設定 / 🐛 T1移行 はここにあったが
+           上部ボタン群の直下に移動した -->
 
       <div class="accordion" id="acc-lot-growth">
         <div class="acc-hdr open" onclick="_toggleAcc('acc-lot-growth')">
@@ -811,16 +833,8 @@ function _renderLotDetail(lot, main) {
         </div>
       </div>
 
-      <div style="display:flex;gap:8px;margin-top:4px;flex-wrap:wrap">
-        <button class="btn btn-ghost btn-sm"
-          onclick="Pages._lotEditStage('${lot.lot_id}','${lot.stage_life || lot.stage || ''}')">
-          🌱 生体ステージ
-        </button>
-        <button class="btn btn-ghost btn-sm"
-          onclick="Pages._lotEditMat('${lot.lot_id}')">
-          🔄 マット交換
-        </button>
-      </div>
+      <!-- [20260422k] 旧: 🌱 生体ステージ / 🔄 マット交換 ボタンはここにあったが
+           生体ステージは「✏️ ロット情報を修正」モーダルに統合したため削除 -->
 
       ${_renderLotSaleActions(lot)}
 
@@ -1226,6 +1240,8 @@ Pages._lotEdit = function (lotId) {
   const lot   = Store.getLot(lotId);
   if (!lot) { UI.toast('ロットが見つかりません', 'error'); return; }
   const lines = Store.getDB('lines') || [];
+  // [20260422k] 生体ステージを編集モーダルに追加（旧 _lotEditStage は廃止方針）
+  const _curStage = lot.stage_life || lot.stage || '';
   UI.modal(`
     <div class="modal-title">ロット情報を修正</div>
     <div class="form-section" style="max-height:65vh;overflow-y:auto">
@@ -1235,6 +1251,13 @@ Pages._lotEdit = function (lotId) {
       </select>
       <div style="font-size:.7rem;color:var(--amber);margin-top:3px">
         ⚠️ 集計がずれている場合のみ変更してください
+      </div>`)}
+      ${UI.field('生体ステージ', `<select id="le-stage" class="input">
+        <option value="">— 未選択 —</option>
+        ${STAGE_LIST.map(s => `<option value="${s.code}" ${s.code===_curStage?'selected':''}>${s.label}</option>`).join('')}
+      </select>
+      <div style="font-size:.7rem;color:var(--text3);margin-top:3px">
+        生体（幼虫／前蛹／蛹／成虫）の成長段階
       </div>`)}
       <div class="form-row-2">
         ${UI.field('孵化日', `<input type="date" id="le-hatch" class="input" value="${(lot.hatch_date||'').replace(/\//g,'-')}">`)}
@@ -1259,6 +1282,7 @@ Pages._lotEdit = function (lotId) {
 
 Pages._lotEditSave = async function (lotId) {
   const lineId    = document.getElementById('le-line')?.value || '';
+  const stageLife = document.getElementById('le-stage')?.value || '';
   const hatch     = document.getElementById('le-hatch')?.value?.replace(/-/g,'/') || '';
   const count     = parseInt(document.getElementById('le-count')?.value || '0');
   const container = document.getElementById('le-container')?.value || '';
@@ -1268,13 +1292,16 @@ Pages._lotEditSave = async function (lotId) {
     UI.toast('ライン選択が不正です。内部IDが必要です', 'error'); return;
   }
   const payload = { lot_id: lotId, hatch_date: hatch, count, container_size: container, mat_type: mat, note };
-  if (lineId) payload.line_id = lineId;
+  if (lineId)    payload.line_id    = lineId;
+  // [20260422k] 生体ステージも同時保存
+  if (stageLife) payload.stage_life = stageLife;
   try {
     UI.loading(true);
     UI.closeModal();
     await API.lot.update(payload);
     const patch = { hatch_date: hatch, count, container_size: container, mat_type: mat, note };
-    if (lineId) patch.line_id = lineId;
+    if (lineId)    patch.line_id    = lineId;
+    if (stageLife) patch.stage_life = stageLife;
     Store.patchDBItem('lots', 'lot_id', lotId, patch);
     UI.toast('ロット情報を更新しました ✅');
     Pages.lotDetail(lotId);
