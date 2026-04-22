@@ -1,7 +1,11 @@
 // ════════════════════════════════════════════════════════════════
 // unit_detail.js — 飼育ユニット（BU）詳細画面
-// build: 20260421i
+// build: 20260421j
 // 変更点:
+//   - [20260421j] _udDeleteGrowthPair の API 呼び出し引数修正
+//     API.growth.delete はオブジェクト {record_id} を期待するが、
+//     従来は record_id 文字列を直接渡していたため
+//     GAS 側で「必須項目が不足しています: record_id」エラーになっていた
 //   - [20260421i] 成長記録編集モーダルに「🗑️ 削除」ボタンを追加
 //     Pages._udDeleteGrowthPair(r1Id, r2Id): 2段確認（confirm + prompt "削除"）を
 //     経て ①② 両スロットの記録を削除。Store 更新 + 画面再描画。
@@ -921,11 +925,13 @@ Pages._udDeleteGrowthPair = async function (r1Id, r2Id) {
     UI.loading(true); UI.closeModal();
     var deletedIds = [];
     if (r1Id) {
-      await API.growth.delete(r1Id);
+      // [20260421j] API.growth.delete はオブジェクト {record_id} を期待
+      //   従来 r1Id を直接渡していたため必須項目不足エラーになっていた
+      await API.growth.delete({ record_id: r1Id });
       deletedIds.push(r1Id);
     }
     if (r2Id && r2Id !== r1Id) {
-      await API.growth.delete(r2Id);
+      await API.growth.delete({ record_id: r2Id });
       deletedIds.push(r2Id);
     }
     // Store 更新
