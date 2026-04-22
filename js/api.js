@@ -4,7 +4,9 @@
 //       フロントの他のコードはこのファイルのメソッドのみを通してGASと通信する。
 //       成功時は data を返し、失敗時は Error をスローする。
 //       リトライ・タイムアウト・エラー整形もここで行う。
-// build: 20260417k-fix1
+// build: 20260421i
+// 変更:
+//   - [20260421i] API.growth.delete を追加（成長記録の物理削除）
 // 変更点：
 //   - unit（飼育ユニット）API追加：create, list, get, update, delete
 //   - ユニット詳細の孵化日・容器・マット更新をサポート
@@ -172,6 +174,10 @@ var API = (() => {
     create: (d)          => call('createGrowthRecord', d),
     list:   (type, id)   => call('getGrowthRecords', { target_type: type, target_id: id }),
     update: (d)          => call('updateGrowthRecord', d),
+    // [20260421i] 成長記録の物理削除（誤登録訂正用）
+    //   引数: { record_id: 'GR-xxxx' }
+    //   返値: { record_id, deleted: true }
+    delete: (d)          => call('deleteGrowthRecord', d),
   };
 
   // ── 種親 ──────────────────────────────────────────────────────
