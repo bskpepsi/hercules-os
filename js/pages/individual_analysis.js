@@ -1,7 +1,13 @@
 // ════════════════════════════════════════════════════════════════
-// individual_analysis_patch.js  build: 20260413bj
+// individual_analysis_patch.js  build: 20260422k
 // 個体詳細画面への成長分析カード追加パッチ
 // このファイルは individual.js の直後に読み込んでください
+//
+// 20260422k 修正:
+//   - ボタンレイアウト再構成 (individual.js v20260422k) に対応
+//     新レイアウト: Row2 に data-ind-btn-row2 属性が付与される
+//     Row2 の先頭 (編集ボタンの前) に 🌡️ 環境記録ボタンを挿入する
+//     フォールバック: 旧レイアウト (growth-rec onclick を検索) も維持
 // ════════════════════════════════════════════════════════════════
 
 // ── _growthAnalysisHTML: 成長分析カードのHTML生成 ────────────────
@@ -465,24 +471,49 @@ var _origInjectAnalysis = null;
 
 // ── 個体詳細に「環境記録」ボタンを追加 ────────────────────────
 // Pages.individualDetail ラップにさらにフック（env_record.jsより後に読み込まれる想定）
+//
+// [20260422k] 新レイアウト対応:
+//   新: data-ind-btn-row2 属性の付いた Row2 が存在する場合、その先頭
+//       (編集ボタンの前) に 🌡️ 環境記録ボタンを挿入する
+//       → 結果: Row2 = [🌡️ 環境記録][編集]
+//   旧: 旧レイアウト (growth-rec へのリンク) が残っている場合は
+//       従来通り別行として挿入するフォールバックを維持
 (function(){
   var _prevWithPrepupa = Pages.individualDetail;
   Pages.individualDetail = async function(indId) {
     await _prevWithPrepupa.call(this, indId);
     setTimeout(function(){
       var realId = (typeof indId === 'object') ? (indId.id || indId.indId || '') : indId;
-      // クイックアクションエリアに環境記録ボタンを追加（既存ボタン行の後）
-      var qaArea = document.querySelector('[onclick*="growth-rec"]');
+      // 既に追加済みなら二重追加防止
+      if (document.querySelector('[data-env-btn="1"]')) return;
+
+      // [20260422k] 新レイアウト優先: data-ind-btn-row2 の先頭に挿入
+      var row2 = document.querySelector('[data-ind-btn-row2="1"]');
+      if (row2) {
+        var envBtnNew = document.createElement('button');
+        envBtnNew.className = 'btn btn-ghost';
+        envBtnNew.style.cssText = 'flex:1';
+        envBtnNew.setAttribute('data-env-btn', '1');
+        envBtnNew.innerHTML = '🌡️ 環境記録';
+        envBtnNew.onclick = function(){ routeTo('env-record', {indId: realId}); };
+        // Row2 の先頭 (編集ボタンの前) に挿入
+        row2.insertBefore(envBtnNew, row2.firstChild);
+        return;
+      }
+
+      // フォールバック: 旧レイアウト (growth-rec or continuous-scan) の下に別行追加
+      var qaArea = document.querySelector('[data-ind-growth-btn="1"]')
+                || document.querySelector('[onclick*="continuous-scan"]')
+                || document.querySelector('[onclick*="growth-rec"]');
       if (!qaArea) return;
       var row = qaArea.parentNode;
-      if (!row || row.querySelector('[data-env-btn]')) return; // 二重追加防止
+      if (!row || row.querySelector('[data-env-btn]')) return;
       var envBtn = document.createElement('button');
       envBtn.className = 'btn btn-ghost';
       envBtn.style.cssText = 'flex:1;margin-top:6px';
       envBtn.setAttribute('data-env-btn', '1');
       envBtn.innerHTML = '🌡️ 環境記録';
       envBtn.onclick = function(){ routeTo('env-record', {indId: realId}); };
-      // ボタン行の後ろに追加
       var wrapper = document.createElement('div');
       wrapper.style.cssText = 'display:flex;gap:8px;margin-top:0';
       wrapper.appendChild(envBtn);

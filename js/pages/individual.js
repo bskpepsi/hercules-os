@@ -2,7 +2,22 @@
 // individual.js
 // 役割: 個体の一覧・詳細・新規登録・編集・ステータス変更を担う。
 //       個体台帳の中心画面。ロット・成長記録・ラベルへの導線も持つ。
-// build: 20260422h
+// build: 20260422k
+//
+// 20260422k 修正:
+//   - T3フェーズではアクションカード自体を非表示に変更
+//     (T3は原則すべての個体が個別飼育済みなので、分割アクションは不要。
+//      マット交換/体重更新は「📷 成長記録」ボタンから直接行える)
+//     → T1:🔄 T2移行 / T2:⭐ T3移行 のみ表示、T3ではカード無し
+//   - 「📷 成長記録」ボタンの遷移先を変更: growth-rec → continuous-scan
+//     (ユニット詳細と同じ継続読取り画面。ラベル全体をOCR→表形式で記録)
+//     個体側でも targetType:'IND' + mode:'growth' で動作
+//   - ボタン行のレイアウト再構成 (ユーザー要望通り):
+//       旧: Row1=[📷 成長記録][編集][🏷] / Row2=[🌡️ 環境記録]
+//       新: Row1=[📷 成長記録][🏷️ ラベル発行] / Row2=[🌡️ 環境記録][編集]
+//     環境記録は individual_analysis.js が後付けで挿入するため、Row2 には
+//     data-ind-btn-row2 属性を付けて挿入先として使えるようにした。
+//     (individual_analysis.js 側も併せて修正済み)
 //
 // 20260422h 修正:
 //   🔥 個体の成長記録保存後にリロードしないと反映しないバグの根本修正
@@ -71,7 +86,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] individual.js v20260422h loaded');
+console.log('[HerculesOS] individual.js v20260422k loaded');
 
 const Pages = window.Pages || {};
 
@@ -705,22 +720,38 @@ function _renderDetail(ind, main) {
         </div>` : '<div style="color:var(--amber);font-size:.8rem">⚠️ 孵化日未設定（設定すると日齢が表示されます）</div>'}
       </div>
 
-      <div style="display:flex;gap:8px">
-        <button class="btn btn-primary" style="flex:2"
-          onclick="routeTo('growth-rec',{targetType:'IND',targetId:'${ind.ind_id}',displayId:'${ind.display_id||ind.ind_id}'})"
-          title="成長記録を入力">
+      <!-- [20260422k] ボタン行レイアウト再構成
+           旧: Row1=[📷 成長記録 flex:2][編集 flex:1][🏷 flex:1] / Row2=[🌡️ 環境記録]
+           新: Row1=[📷 成長記録][🏷️ ラベル発行] / Row2=[🌡️ 環境記録][編集]
+           📷 成長記録 の遷移先は continuous-scan (ユニット詳細と統一) -->
+      <div style="display:flex;gap:8px" data-ind-btn-row1="1">
+        <button class="btn btn-primary" style="flex:1"
+          data-ind-growth-btn="1"
+          onclick="routeTo('continuous-scan',{targetType:'IND',targetId:'${ind.ind_id}',displayId:'${ind.display_id||ind.ind_id}',mode:'growth'})"
+          title="成長記録を入力（ラベル撮影）">
           📷 成長記録
         </button>
         <button class="btn btn-ghost" style="flex:1"
-          onclick="routeTo('ind-new',{editId:'${ind.ind_id}'})">編集</button>
+          onclick="routeTo('label-gen',{targetType:'IND',targetId:'${ind.ind_id}'})">
+          🏷️ ラベル発行
+        </button>
+      </div>
+      <!-- Row2: 🌡️ 環境記録ボタンは individual_analysis.js が挿入 -->
+      <div style="display:flex;gap:8px;margin-top:8px" data-ind-btn-row2="1">
         <button class="btn btn-ghost" style="flex:1"
-          onclick="routeTo('label-gen',{targetType:'IND',targetId:'${ind.ind_id}'})">🏷</button>
+          onclick="routeTo('ind-new',{editId:'${ind.ind_id}'})">
+          編集
+        </button>
       </div>
 
       ${(() => {
-        // [20260422g] T-フェーズ移行アクションカード (ユニット詳細と同構成)
+        // [20260422g/k] T-フェーズ移行アクションカード (ユニット詳細と同構成)
         //   _ALIVE_SET に該当する個体のみ T2移行/T3移行ボタンを表示。
         //   判定は _indPhase (current_mat もしくは最新成長記録の mat_type から推定)。
+        //
+        // [20260422k] T3フェーズではカード自体を非表示。
+        //   T3は原則すべての個体が個別飼育済みで、分割を伴うアクションは不要。
+        //   マット交換/体重更新は「📷 成長記録」ボタンから直接行える。
         const _isAlive = _ALIVE_SET.has(ind.status) || !ind.status;
         if (!_isAlive) return '';
         const t2Btn = _indPhase === 'T1' ? `
@@ -733,18 +764,13 @@ function _renderDetail(ind, main) {
             onclick="Pages._indStartT3('${ind.ind_id}')">
             ⭐ T3移行
           </button>` : '';
-        const t3MxBtn = _indPhase === 'T3' ? `
-          <button class="btn btn-primary" style="background:rgba(224,144,64,.15);border:2px solid var(--amber);color:var(--amber)"
-            onclick="Pages._indStartT3('${ind.ind_id}')">
-            🔄 T3 Mx/体重更新
-          </button>` : '';
-        // T-フェーズボタンが何も該当しない場合はカード自体を出さない
-        if (!t2Btn && !t3Btn && !t3MxBtn) return '';
+        // T-フェーズボタンが何も該当しない場合 (T3 等) はカード自体を出さない
+        if (!t2Btn && !t3Btn) return '';
         return `
       <div class="card" style="margin-top:10px;margin-bottom:10px">
         <div class="card-title">アクション（マット交換）</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          ${t2Btn}${t3Btn}${t3MxBtn}
+          ${t2Btn}${t3Btn}
         </div>
         <div style="font-size:.7rem;color:var(--text3);margin-top:6px">
           現在フェーズ: <b>${_indPhase}</b> ／ 継続中のマット交換は上の「📷 成長記録」から記録できます
