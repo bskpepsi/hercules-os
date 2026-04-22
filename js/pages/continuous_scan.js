@@ -1,4 +1,23 @@
-// FILE: js/pages/continuous_scan.js  build: 20260422c
+// FILE: js/pages/continuous_scan.js  build: 20260422e
+// 変更点(20260422c→20260422e): ★ レース条件修正 ★
+//   [20260422e] 🐛 重大バグ修正: 保存直後にレコードが消える/混ざる問題
+//     症状: 継続読取りで保存ボタンを押した直後、ユニット詳細画面に
+//           「古い日付の壊れた行」「片方のスロットが欠けた行」等が表示され、
+//           リロードすると正常に表示される。
+//     原因: routeTo('unit-detail') → Pages.unitDetail() →
+//           _udLoadGrowthAsync が API.growth.list を並列発行し、
+//           そのレスポンスが「バックグラウンド保存の create/update の Store 更新」
+//           と競合 (race condition)。
+//           ─ create: Store.addDBItem で新規レコード追加
+//           ─ API.growth.list: 古いサーバースナップショット (まだ create 反映前)
+//             が後から Store.setGrowthRecords で丸ごと上書き → 新規レコード消失
+//           Image 2 console の『growth loaded: 9 records』(本来10) が証拠。
+//     修正: routeTo の直前に window._skipNextGrowthLoad = true を立てて、
+//           初期レンダリングの _udLoadGrowthAsync を最初から走らせない。
+//           post-save rerender で再度フラグを立てて Store のみで描画するので、
+//           データ整合性は保たれる。次に unit-detail に入る時 (別ルート) は
+//           通常通り API.growth.list が走る。
+// ───────────────────────────────────────────────
 // 変更点(20260422b→20260422c): ★ サクサク化 + リロード不要化の2大改善 ★
 //   [20260422c-1] 🐛 重大バグ修正: 保存後の unit-detail 自動再描画が効かない問題
 //     原因: Line 1191 の _curPage 判定
@@ -971,6 +990,12 @@ Pages.continuousScan = function(params) {
 
     // 即座に詳細画面へ遷移（すでに Store は新しい値なので T2/4.8L で表示される）
     UI.toast('💾 保存中...','info',1500);
+    // [20260422e] レース条件防止: routeTo の前に skip フラグを立てる
+    //   Pages.unitDetail → _udLoadGrowthAsync が API.growth.list を並列発行し、
+    //   そのレスポンスがバックグラウンド保存の Store.addDBItem と競合すると、
+    //   古いサーバースナップショットで Store が上書きされ新規レコードが消える。
+    //   フラグは _udLoadGrowthAsync 内で消費 (false 化) される仕組み。
+    window._skipNextGrowthLoad = true;
     if(_savedTargetType==='UNIT') routeTo('unit-detail',{unitDisplayId:_savedDisplayId});
     else                           routeTo('ind-detail', {indId:_savedTargetId});
 
