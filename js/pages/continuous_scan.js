@@ -1,4 +1,37 @@
-// FILE: js/pages/continuous_scan.js  build: 20260422e
+// FILE: js/pages/continuous_scan.js  build: 20260422f
+// 変更点(20260422e→20260422f): ★★★ 根本原因の修正 ★★★
+//   症状: 毎回「保存したのに画面が古いまま」「リロードすると直る」を繰り返していた。
+//   原因分析により、これまでの修正は症状(race/rerenderタイミング/楽観UI)
+//   を直していたが、Store に書き込むデータ自体が壊れていた。
+//   リロードすると GAS から正しく再取得されて表示が直る症状は
+//   これで完全に説明がつく。
+//
+//   [20260422f-1] 🔥 CREATE 時の Store キーが誤り + レスポンスに payload 欠損
+//     旧: Store.addDBItem('growth_records', _cres)
+//       ① 'growth_records' は _db.growth_records に追加されるが、
+//          ユニット詳細画面は _db.growthMap[targetId] を読むため
+//          新規レコードは画面に反映されず、リロードまで見えなかった。
+//       ② GAS createGrowthRecord の戻り値は {record_id, age_days} のみ。
+//          payload (target_id, record_date, weight_g, container, mat_type, ...)
+//          を含まないため、仮にキーを直しても空レコードが追加されるだけ。
+//     新: fullRec = Object.assign({}, payload, _cres) でマージし、
+//         Store.addGrowthRecord(_savedTargetId, fullRec) で
+//         _db.growthMap[_savedTargetId] に正しく追加。
+//
+//   [20260422f-2] 🔥 record_date のゼロパディング欠如
+//     旧: mkPayload 内で '4/21' → '2026/4/21' のまま (月日非パディング)。
+//         この値が Store に書き戻されると Image 2 Row 2 のように
+//         '4/21' と '04/21' の混在表示が発生。
+//         また Store.addGrowthRecord 内の sort(localeCompare) も
+//         文字列比較で不安定になる。
+//     新: mkPayload 末尾で _normalizeDateStr を呼び出し '2026/04/21' に統一。
+//         _existingByDate 構築時の key も _normalizeDateStr で正規化し、
+//         古いキャッシュに非パディングデータが残っていてもマッチする。
+//
+//   [20260422f-3] _normalizeDateStr / _findExistingRecordId を
+//     mkPayload から参照できる位置に巻き上げ (関数宣言順の修正)。
+//
+// ───────────────────────────────────────────────
 // 変更点(20260422c→20260422e): ★ レース条件修正 ★
 //   [20260422e] 🐛 重大バグ修正: 保存直後にレコードが消える/混ざる問題
 //     症状: 継続読取りで保存ボタンを押した直後、ユニット詳細画面に
@@ -1020,10 +1053,27 @@ Pages.continuousScan = function(params) {
       try {
         var savedCount=0;
 
+        // [20260422f-3] _normalizeDateStr を mkPayload / _existingByDate 構築前に定義
+        //   YYYY/MM/DD 形式に統一 (月日ゼロパディング)。
+        //   旧コードでは mkPayload → _normalizeDateStr の順で定義されており、
+        //   mkPayload から参照できなかったため record_date が非パディングのまま
+        //   Store / サーバーに書き込まれていた。
+        function _normalizeDateStr(rd) {
+          if (!rd) return '';
+          var s = String(rd).trim().replace(/-/g,'/');
+          // MM/DD → YYYY/MM/DD
+          if (s.match(/^\d{1,2}\/\d{1,2}$/)) s = new Date().getFullYear() + '/' + s;
+          // YYYY/M/D → YYYY/MM/DD (ゼロパディング)
+          var m = s.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
+          if (m) s = m[1] + '/' + String(parseInt(m[2],10)).padStart(2,'0') + '/' + String(parseInt(m[3],10)).padStart(2,'0');
+          return s;
+        }
+
         function mkPayload(row, extra) {
           // [20260421h] 行に date がなければ today を使う（デフォルト欄は削除済み）
-          var rd=row.date?row.date.trim():new Date().toISOString().split('T')[0].replace(/-/g,'/');
-          if(rd&&rd.match(/^\d{1,2}\/\d{1,2}$/)) rd=new Date().getFullYear()+'/'+rd;
+          // [20260422f-2] record_date は _normalizeDateStr で 'YYYY/MM/DD' に統一
+          var rd = row.date ? row.date.trim() : new Date().toISOString().split('T')[0].replace(/-/g,'/');
+          rd = _normalizeDateStr(rd);
           // [20260422a] GAS 側の growth_records は 'container' フィールドを使用。
           //   以前は container_size で送っていたが GAS で認識されず、結果として
           //   成長記録の容器欄が空で保存されていた。両方のフィールドで送信して互換性を確保。
@@ -1048,27 +1098,19 @@ Pages.continuousScan = function(params) {
         //   - 既存 growth_records と同じ日付なら update (既存行の修正)
         //   - 日付がマッチしなければ create (新規行追加)
         //   日付比較用に既存 records を日付→record_id マップ化
+        // [20260422f-2] key も _normalizeDateStr で正規化
+        //   古いキャッシュに '2026/4/21' のような非パディングが残っていても
+        //   '2026/04/21' と同一視されるようにする。
         var _existingByDate = {};
         try {
           var _existing = (Store.getGrowthRecords && Store.getGrowthRecords(_savedTargetId)) || [];
           _existing.forEach(function(r){
             if (!r.record_date) return;
-            var _dkey = String(r.record_date).replace(/-/g,'/');
+            var _dkey = _normalizeDateStr(String(r.record_date));
             if (!_existingByDate[_dkey]) _existingByDate[_dkey] = [];
             _existingByDate[_dkey].push(r);
           });
         } catch (_ebdErr) { console.warn('[CS] existing-by-date build error:', _ebdErr.message); }
-
-        function _normalizeDateStr(rd) {
-          if (!rd) return '';
-          var s = String(rd).trim().replace(/-/g,'/');
-          // MM/DD → YYYY/MM/DD
-          if (s.match(/^\d{1,2}\/\d{1,2}$/)) s = new Date().getFullYear() + '/' + s;
-          // YYYY/M/D → YYYY/MM/DD
-          var m = s.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
-          if (m) s = m[1] + '/' + String(parseInt(m[2],10)).padStart(2,'0') + '/' + String(parseInt(m[3],10)).padStart(2,'0');
-          return s;
-        }
 
         // 既存記録を slot_no で検索するヘルパー
         function _findExistingRecordId(dateStr, slotNo) {
@@ -1101,7 +1143,31 @@ Pages.continuousScan = function(params) {
             return { _updated: true, record_id: existingRecordId };
           } else {
             var _cres = await _createWithRetry(payload, 2);
-            if (_cres && _cres.record_id && Store.addDBItem) Store.addDBItem('growth_records', _cres);
+            // ════════════════════════════════════════════════════════════════
+            // [20260422f-1] 🔥 根本バグ修正: 新規 CREATE を正しい Store キーへフル反映
+            //   旧: Store.addDBItem('growth_records', _cres)
+            //       → _db.growth_records (誰も読まない配列) に {record_id, age_days} だけ追加
+            //   新: fullRec = Object.assign({}, payload, _cres)
+            //       → _db.growthMap[_savedTargetId] (ユニット詳細が読む場所) に
+            //          target_id/record_date/weight_g/container/mat_type 全部入りで追加
+            // ════════════════════════════════════════════════════════════════
+            if (_cres && _cres.record_id) {
+              var fullRec = Object.assign({}, payload, _cres);
+              if (Store.addGrowthRecord && _savedTargetId) {
+                try {
+                  Store.addGrowthRecord(_savedTargetId, fullRec);
+                } catch (_agrErr) {
+                  console.warn('[CS] addGrowthRecord failed:', _agrErr.message);
+                  // フォールバック: 手動 push
+                  try {
+                    var _gmF = Store.getDB('growthMap') || {};
+                    if (!_gmF[_savedTargetId]) _gmF[_savedTargetId] = [];
+                    _gmF[_savedTargetId].push(fullRec);
+                    Store.setGrowthRecords(_savedTargetId, _gmF[_savedTargetId]);
+                  } catch(_){}
+                }
+              }
+            }
             return _cres;
           }
         }
