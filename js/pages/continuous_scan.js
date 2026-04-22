@@ -1,10 +1,17 @@
-// FILE: js/pages/continuous_scan.js  build: 20260422a
-// 変更点(20260421n→20260422a):
-//   - [20260422a] 診断ログ追加: 保存後のユニット本体更新が実行されているか、
-//       どの値で分岐しているか確認できるよう console.log を増強。
-//       「[CS] checking unit patch block」「[CS] unit patch calc」
-//       「[CS] unit patch decided」「[CS] unit update response」が出る。
-//       これらが出ずに終了する場合は、コード到達前に例外発生中。
+// FILE: js/pages/continuous_scan.js  build: 20260422b
+// 変更点(20260422a→20260422b):
+//   - [20260422b] ユニット mat_type 決定を 4 段階優先に改訂:
+//       ① 日付入り行で mat_state='manual' (ユーザーがタップ選択)
+//       ② 日付入り行の mat_type (最下位行、auto 状態も含む)
+//       ③ テーブル任意行で entity.mat_type と異なる mat_type
+//       ④ OCR の M チェック値
+//     OCR Mチェック誤認識 (T1→T1) でもユーザー意図を拾える。
+//   - [20260422b] _buildTableRows の OCR mat_type 反映を条件付き復活:
+//       ocr.mat_type が entity.mat_type と異なるときだけ最新行に自動セット。
+//       同じならスキップ (T1→T1 の誤認識典型パターン回避)。
+//   - [20260422a までの履歴]:
+//       - 診断ログ追加 / OCR 自動反映廃止 / 最下位日付行 mat_type 優先など
+//   - [20260421n] 保存後のユニット詳細再描画を高速化 (_skipNextGrowthLoad)
 //   - [20260421n] 保存後のユニット詳細再描画を高速化 (_skipNextGrowthLoad)
 //       各行の date 列と重複しており混乱の元だったため、
 //       入力欄を廃止し、行に date がなければ today を使うよう _cScanSave を修正
@@ -53,7 +60,7 @@
 //   - 右列交換欄を□全/□追表示、個体8行対応
 
 'use strict';
-console.log('[HerculesOS] continuous_scan.js v20260422a loaded');
+console.log('[HerculesOS] continuous_scan.js v20260422b loaded');
 
 // ────────────────────────────────────────────────────────────────
 // 共有ユーティリティ（continuousScan / batchScan 両方から使用）
@@ -295,17 +302,21 @@ Pages.continuousScan = function(params) {
       }
       rows.push(row);
     }
-    // [20260421m] ラベルの M チェック (ocr.mat_type) は「現在のマット種別」であり、
-    //   最新の書き込み行に対応する。OCR 記録行のうち日付が一番新しい (もしくは一番下の
-    //   非空行) だけに ocr.mat_type を反映する。それ以外の行は空のまま。
-    if (ocr.mat_type) {
+    // [20260422b] OCR の M チェック値 (ocr.mat_type) の最新行自動反映を条件付きで復活:
+    //   ラベルの M チェックは誤認識しやすい (Gemini OCR が連続■の最右を正しく選ばない) が、
+    //   ユーザーが最新行の mat_type を明示タップするオペレーションは省略されやすい。
+    //   妥協案: OCR の mat_type が 現在のユニット (entity) と異なる値 = 「マット交換があった」 と
+    //   解釈し、その場合のみ最新データ行の mat_type にセット。
+    //   entity と同じ値なら (誤認識の典型ケース) 反映しない = ユーザーの手動変更を尊重。
+    var _entityCurrentMat = (entity && entity.mat_type) ? String(entity.mat_type).trim() : '';
+    if (ocr.mat_type && String(ocr.mat_type).trim() !== _entityCurrentMat) {
       var lastDataRowIdx = -1;
-      for (var j = rows.length - 1; j >= 0; j--) {
-        if (rows[j] && (rows[j].date || rows[j].weight1 || rows[j].weight2)) {
-          lastDataRowIdx = j; break;
+      for (var lj = rows.length - 1; lj >= 0; lj--) {
+        if (rows[lj] && (rows[lj].date || rows[lj].weight1 || rows[lj].weight2)) {
+          lastDataRowIdx = lj; break;
         }
       }
-      if (lastDataRowIdx >= 0) {
+      if (lastDataRowIdx >= 0 && !rows[lastDataRowIdx].mat_type) {
         rows[lastDataRowIdx].mat_type = ocr.mat_type;
         rows[lastDataRowIdx].mat_state = ocr._confidence === 'low' ? 'low' : 'high';
       }
@@ -707,8 +718,13 @@ Pages.continuousScan = function(params) {
     } else if(col==='weight1'){row.weight1=val;row.weight1_state=val?'high':'empty';}
     else if(col==='weight2'){row.weight2=val;row.weight2_state=val?'high':'empty';}
     else if(col==='exchange'){row.exchange=val;row.exchange_state=val&&val!=='NONE'?'high':'empty';}
-    else if(col==='mat'){for(var i=rowIdx;i<rows.length;i++){rows[i].mat_type=val;rows[i].mat_state='manual';}}
-    else if(col==='container'){for(var j=rowIdx;j<rows.length;j++){rows[j].container=val;rows[j].container_state='manual';}}
+    // [20260422b] マット/容器の「この行から下全部変更」動作を「この行のみ変更」に変更。
+    //   従来は rowIdx 以降全行に伝播していたため、
+    //   例: 04/21 行を T1 (確認) → 04/22 行を T2 (新規)
+    //   と設定したい場合に意図せず他行も書き換わり、ユニット本体の mat_type 判定が誤る
+    //   原因になっていた。単行変更に統一。空行は保存対象外のため伝播は不要。
+    else if(col==='mat'){row.mat_type=val; row.mat_state='manual';}
+    else if(col==='container'){row.container=val; row.container_state='manual';}
 
     UI.closeModal&&UI.closeModal(); _refreshTable();
   };
@@ -907,9 +923,14 @@ Pages.continuousScan = function(params) {
           // [20260421h] 行に date がなければ today を使う（デフォルト欄は削除済み）
           var rd=row.date?row.date.trim():new Date().toISOString().split('T')[0].replace(/-/g,'/');
           if(rd&&rd.match(/^\d{1,2}\/\d{1,2}$/)) rd=new Date().getFullYear()+'/'+rd;
+          // [20260422a] GAS 側の growth_records は 'container' フィールドを使用。
+          //   以前は container_size で送っていたが GAS で認識されず、結果として
+          //   成長記録の容器欄が空で保存されていた。両方のフィールドで送信して互換性を確保。
           var p=Object.assign({
             target_type:_savedTargetType, target_id:_savedTargetId,
-            stage:stage, mat_type:row.mat_type||'', container_size:row.container||'',
+            stage:stage, mat_type:row.mat_type||'',
+            container:row.container||'',           // ← GAS が実際に参照
+            container_size:row.container||'',      // ← 念のため両方送る
             exchange_type:row.exchange||'NONE', record_date:rd,
             event_type:'WEIGHT_ONLY', note_private:note, has_malt:false,
           }, extra);
@@ -1081,35 +1102,53 @@ Pages.continuousScan = function(params) {
           }
         }
 
-        // ── [20260421m] ユニットの mat_type / stage_phase 反映 ──
-        //   ラベルの M チェック (ocr.mat_type) を「現在のマット種別」として扱う。
-        //   これは「最新の書き込み行の mat_type」と等価だが、明示的にチェックされた値を
-        //   正とする。もし OCR が mat_type を読み取れなかった場合は、
-        //   行テーブルの最終行 mat_type でフォールバック。
+        // ── [20260422a] ユニットの mat_type / stage_phase 反映 ──
+        //   優先順位の確定:
+        //     1st: 記録テーブルで「日付が入った行」の中で最下位行の mat_type
+        //          → ユーザーが新規に書き込んだ行 = 「これから使うマット」
+        //     2nd: ラベルの M チェック (ocr.mat_type)
+        //          → 補助的に使用。OCR は最右の■を読み取るが、手書きで複数■が並ぶと
+        //          読み間違いが多発するため最優先にはしない。
         //   stage_phase マップ: T0/T1→T1, T2→T2, T3/MD→T3
-        //   St チェック (ocr.stage) も current_stage として補助的に反映。
-        //   容器は前回踏襲 (entity.container_size) のまま維持するため、
-        //   ユーザーが明示的に変更したときのみ更新。
+        //   容器は日付入り行の最下位で container が入っている行から取る。
         console.log('[CS] checking unit patch block:',
           { isUnit: isUnit, hasEntity: !!_savedEntity, unitId: _savedEntity && _savedEntity.unit_id });
         if (isUnit && _savedEntity && _savedEntity.unit_id) {
           try {
             var _ocrMat = (_state.ocrResult && _state.ocrResult.mat_type) ? String(_state.ocrResult.mat_type).trim() : '';
-            // フォールバック: OCR に無ければ記録行の最終行 mat_type
-            var fallbackMat = '';
+            // [20260422b] mat_type 決定ロジック改訂:
+            //   優先順位: ① 日付入り行で 'manual' 状態のマット (ユーザーがタップで選択した値)
+            //             ② 日付入り行の mat_type (自動引継含む、最下位行)
+            //             ③ テーブル任意行で 現在の entity.mat_type と異なる値
+            //                (ユーザーが行のどこかにマット変更を書いているなら、それを優先)
+            //             ④ OCR の M チェック値
+            //   OCR の M チェックはラベル上部の連続チェック列から最右の■を読むが、
+            //   Gemini の認識精度が低く T1 を返すケースが頻発するため最低優先に下げる。
+            var _curMat = String(_savedEntity.mat_type || '').trim();
+            var manualMat = '', lastDataRowMat = '', anyDifferentMat = '';
             for (var mi = rows.length - 1; mi >= 0; mi--) {
-              if (rows[mi] && rows[mi].mat_type) { fallbackMat = rows[mi].mat_type; break; }
+              var rr = rows[mi]; if (!rr) continue;
+              if (rr.date && rr.mat_type && rr.mat_state === 'manual' && !manualMat) {
+                manualMat = rr.mat_type;
+              }
+              if (rr.date && rr.mat_type && !lastDataRowMat) {
+                lastDataRowMat = rr.mat_type;
+              }
+              if (rr.mat_type && rr.mat_type !== _curMat && !anyDifferentMat) {
+                anyDifferentMat = rr.mat_type;
+              }
             }
-            var newMat = _ocrMat || fallbackMat;
-            // 容器は記録テーブル最終行 (ユーザー修正済み値) または entity の既存値
+            var newMat = manualMat || lastDataRowMat || anyDifferentMat || _ocrMat;
+            // 容器も同様: データ入力行の最下位で container が入っている行から取る
             var _lastContRow = null;
             for (var ci = rows.length - 1; ci >= 0; ci--) {
               if (rows[ci] && rows[ci].date && rows[ci].container) { _lastContRow = rows[ci]; break; }
             }
             var newCont = _lastContRow ? _lastContRow.container : (_savedEntity.container_size || '');
             console.log('[CS] unit patch calc:',
-              { ocrMat: _ocrMat, fallbackMat: fallbackMat, newMat: newMat,
-                curMat: _savedEntity.mat_type, newCont: newCont, curCont: _savedEntity.container_size });
+              { manualMat: manualMat, lastDataRowMat: lastDataRowMat, anyDifferentMat: anyDifferentMat,
+                ocrMat: _ocrMat, newMat: newMat,
+                curMat: _curMat, newCont: newCont, curCont: _savedEntity.container_size });
 
             var unitPatch = {};
             var curMat = String(_savedEntity.mat_type || '').trim();
@@ -1715,8 +1754,9 @@ Pages.batchScan = function(params) {
     } else if(col==='weight1'){row.weight1=val;row.weight1_state=val?'high':'empty';}
     else if(col==='weight2'){row.weight2=val;row.weight2_state=val?'high':'empty';}
     else if(col==='exchange'){row.exchange=val;row.exchange_state=val&&val!=='NONE'?'high':'empty';}
-    else if(col==='mat'){for(var i=rowIdx;i<rows.length;i++){rows[i].mat_type=val;rows[i].mat_state='manual';}}
-    else if(col==='container'){for(var j=rowIdx;j<rows.length;j++){rows[j].container=val;rows[j].container_state='manual';}}
+    // [20260422b] 単行変更に統一 (継続読取りと同仕様)
+    else if(col==='mat'){row.mat_type=val; row.mat_state='manual';}
+    else if(col==='container'){row.container=val; row.container_state='manual';}
 
     UI.closeModal&&UI.closeModal();
     _bsRefreshTable(itemIdx);
@@ -1800,7 +1840,9 @@ Pages.batchScan = function(params) {
           if(rd&&rd.match(/^\d{1,2}\/\d{1,2}$/)) rd=new Date().getFullYear()+'/'+rd;
           var p = Object.assign({
             target_type:item.targetType, target_id:item.targetId,
-            stage:stage, mat_type:row.mat_type||'', container_size:row.container||'',
+            stage:stage, mat_type:row.mat_type||'',
+            container:      row.container||'',   // [20260422b] GAS GROWTH列は 'container'
+            container_size: row.container||'',   // 念のため両方送信
             exchange_type:row.exchange||'NONE', record_date:rd,
             event_type:'WEIGHT_ONLY', note_private:note, has_malt:false,
           }, extra);
