@@ -2,7 +2,19 @@
 // individual.js
 // 役割: 個体の一覧・詳細・新規登録・編集・ステータス変更を担う。
 //       個体台帳の中心画面。ロット・成長記録・ラベルへの導線も持つ。
-// build: 20260422g
+// build: 20260422h
+//
+// 20260422h 修正:
+//   🔥 個体の成長記録保存後にリロードしないと反映しないバグの根本修正
+//     原因: Pages.individualDetail が API.individual.get のレスポンスで
+//       Store.setGrowthRecords(indId, ind._growthRecords) を無条件で行い、
+//       バックグラウンド保存中の _tmp_ レコード (growth.js で作成)を
+//       上書き消去していた。消えた _tmp_ は growth.js の swap 処理で
+//       「findIndex=-1」となり何も追加されず、記録が Store から完全消失。
+//       リロードで初めてサーバーから再取得されて表示される症状が出ていた。
+//     修正: サーバーレスポンスで上書きする前に、Store に残る _tmp_ レコードを
+//       退避。サーバーレスポンスに同一 record_date + weight_g の記録が無ければ
+//       tmp を保持してマージ (あれば重複防止のため tmp 破棄)。
 //
 // 20260422g 修正:
 //   - 個体詳細画面にユニットと同じ T1/T2/T3 フェーズ表示と
@@ -59,7 +71,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] individual.js v20260422g loaded');
+console.log('[HerculesOS] individual.js v20260422h loaded');
 
 const Pages = window.Pages || {};
 
@@ -558,7 +570,31 @@ Pages.individualDetail = async function (indId) {
     if (Store.getParams().indId !== indId && Store.getParams().id !== indId) return;
     ind = res.individual;
     Store.patchDBItem('individuals', 'ind_id', indId, ind);
-    if (ind._growthRecords) Store.setGrowthRecords(indId, ind._growthRecords);
+    // [20260422h] 🔥 race condition 修正: _tmp_ レコードを退避してマージ
+    //   以前: Store.setGrowthRecords(indId, ind._growthRecords) で無条件上書き
+    //   → growth.js でバックグラウンド保存中の _tmp_XXX レコードが消されて
+    //      swap処理が失敗 (findIndex=-1 で黙殺) → 記録が Store から完全消失
+    //   新: 現在 Store に残る _tmp_ レコードのうち、
+    //       サーバーに同日+同体重の記録がまだ無いものだけ保持してマージ
+    if (ind._growthRecords) {
+      var _serverRecs  = ind._growthRecords || [];
+      var _currentRecs = Store.getGrowthRecords(indId) || [];
+      var _inflightTmps = _currentRecs.filter(function (r) {
+        return r.record_id && String(r.record_id).indexOf('_tmp_') === 0;
+      });
+      var _keepTmps = _inflightTmps.filter(function (t) {
+        // サーバーに同一 record_date + weight_g の記録がすでにあれば破棄（重複防止）
+        var _tDate = String(t.record_date || '').replace(/-/g, '/');
+        return !_serverRecs.some(function (s) {
+          return String(s.record_date || '').replace(/-/g, '/') === _tDate
+            && String(s.weight_g || '') === String(t.weight_g || '');
+        });
+      });
+      Store.setGrowthRecords(indId, _serverRecs.concat(_keepTmps));
+      if (_keepTmps.length > 0) {
+        console.log('[IND] preserved', _keepTmps.length, 'in-flight _tmp_ record(s) during merge');
+      }
+    }
     if (ind.status === 'sold') {
       try {
         const saleRes = await API.sale.list({ ind_id: indId });
