@@ -1,4 +1,28 @@
-// FILE: js/pages/continuous_scan.js  build: 20260422i
+// FILE: js/pages/continuous_scan.js  build: 20260422j
+// 変更点(20260422i→20260422j): ★★★ 個体の重複・反映不具合の根本修正 ★★★
+//   [20260422j-1] 🔥 _existingByDate を両キーから構築 (ind_id/unit_id + display_id)
+//     症状: 個体保存時に既存 04/20 record が見つからず UPDATE→CREATE に
+//           フォールバックして重複レコードが生まれる。
+//     原因: _existingByDate は Store.getGrowthRecords(_savedTargetId) だけ
+//           クエリしていたが、実際の Store には ind_id/unit_id と display_id の
+//           両方に記録が分散しうる (過去データの移行経緯)。
+//     修正: _savedTargetId と _savedDisplayId の両方でクエリし、
+//           record_id で重複排除してマージした list から日付マップを構築。
+//
+//   [20260422j-2] 🔥 _saveOne CREATE を _tmp_ パターンに変更 (growth.js と統一)
+//     症状: 保存後にリロードしないと新規行が見えない (個体側)。
+//     原因: 旧設計では API レスポンスを待ってから Store に追加していた。
+//           その間に Pages.individualDetail の API.individual.get が先に返って
+//           Store を古いデータで上書きしてしまうレース条件。
+//           個体側の merge 保護ロジックは _tmp_ プレフィックスのレコードしか
+//           保護しないので、real record_id で直接追加された場合は無防備だった。
+//     修正: Store.addGrowthRecord で先に _tmp_XXX レコードを push → API 応答後に
+//           record_id を real に swap する growth.js と同じ設計に統一。
+//           これで個体側 merge (20260422h individual.js) の _tmp_ 保護が効き、
+//           レースに強くなる。API 失敗時は _tmp_ をロールバック除去。
+//
+//   [20260422j-3] console.log のビルド番号を統一 (旧: v20260422b のまま化石化)
+// ───────────────────────────────────────────────
 // 変更点(20260422f→20260422i):
 //   [20260422i] UI統一: 個体側の性別ボタン表記をユニット側と統一
 //     旧: 「◯♂ 雄」「◯♀ 雌」「不明」
@@ -146,7 +170,7 @@
 //   - 右列交換欄を□全/□追表示、個体8行対応
 
 'use strict';
-console.log('[HerculesOS] continuous_scan.js v20260422b loaded');
+console.log('[HerculesOS] continuous_scan.js v20260422j loaded');
 
 // ────────────────────────────────────────────────────────────────
 // 共有ユーティリティ（continuousScan / batchScan 両方から使用）
@@ -1108,15 +1132,40 @@ Pages.continuousScan = function(params) {
         // [20260422f-2] key も _normalizeDateStr で正規化
         //   古いキャッシュに '2026/4/21' のような非パディングが残っていても
         //   '2026/04/21' と同一視されるようにする。
+        // [20260422j-1] 🔥 両キーからクエリしてマージ
+        //   Store には _savedTargetId (ind_id/unit_id) と _savedDisplayId の
+        //   両方に record が分散していることがある (過去データ移行経緯)。
+        //   片方のキーだけ見ると既存レコードを取りこぼして UPDATE→CREATE に
+        //   フォールバックして重複レコードが生まれていた (個体の 04/20 ダブり問題)。
         var _existingByDate = {};
         try {
-          var _existing = (Store.getGrowthRecords && Store.getGrowthRecords(_savedTargetId)) || [];
-          _existing.forEach(function(r){
+          var _idsToCheck = [_savedTargetId];
+          if (_savedDisplayId && _savedDisplayId !== _savedTargetId) {
+            _idsToCheck.push(_savedDisplayId);
+          }
+          var _mergedExisting = [];
+          var _seenIds = {};
+          _idsToCheck.forEach(function (_key) {
+            var _list = (Store.getGrowthRecords && Store.getGrowthRecords(_key)) || [];
+            _list.forEach(function (r) {
+              if (!r) return;
+              var _rid = r.record_id || '';
+              // _tmp_ はそもそも UPDATE 対象にしない（まだサーバー未確定）
+              if (_rid && String(_rid).indexOf('_tmp_') === 0) return;
+              if (_rid && _seenIds[_rid]) return;
+              if (_rid) _seenIds[_rid] = true;
+              _mergedExisting.push(r);
+            });
+          });
+          _mergedExisting.forEach(function (r) {
             if (!r.record_date) return;
             var _dkey = _normalizeDateStr(String(r.record_date));
             if (!_existingByDate[_dkey]) _existingByDate[_dkey] = [];
             _existingByDate[_dkey].push(r);
           });
+          console.log('[CS] _existingByDate built from', _idsToCheck.length, 'key(s),',
+                      _mergedExisting.length, 'record(s),',
+                      Object.keys(_existingByDate).length, 'date(s)');
         } catch (_ebdErr) { console.warn('[CS] existing-by-date build error:', _ebdErr.message); }
 
         // 既存記録を slot_no で検索するヘルパー
@@ -1149,29 +1198,56 @@ Pages.continuousScan = function(params) {
             });
             return { _updated: true, record_id: existingRecordId };
           } else {
-            var _cres = await _createWithRetry(payload, 2);
-            // ════════════════════════════════════════════════════════════════
-            // [20260422f-1] 🔥 根本バグ修正: 新規 CREATE を正しい Store キーへフル反映
-            //   旧: Store.addDBItem('growth_records', _cres)
-            //       → _db.growth_records (誰も読まない配列) に {record_id, age_days} だけ追加
-            //   新: fullRec = Object.assign({}, payload, _cres)
-            //       → _db.growthMap[_savedTargetId] (ユニット詳細が読む場所) に
-            //          target_id/record_date/weight_g/container/mat_type 全部入りで追加
-            // ════════════════════════════════════════════════════════════════
+            // ═══════════════════════════════════════════════════════════
+            // [20260422j-2] 🔥 CREATE を _tmp_ 楽観パターンに変更
+            //   旧: API 応答を待ってから Store.addGrowthRecord で real ID を追加
+            //       → 遷移直後の Pages.individualDetail/unitDetail の
+            //         API.individual.get / growth.list と race、Store 上書きで消失
+            //   新: 先に _tmp_XXX を Store.addGrowthRecord で push
+            //       → routeTo 直後の画面描画から新レコードが即座に見える
+            //       → individual.js の merge 保護ロジックが _tmp_ を保持する
+            //       → API 成功で _tmp_ を real record_id に swap
+            //       → API 失敗で _tmp_ をロールバック除去
+            //   race 時のフォールバック: _tmp_ が消えていたら real record を重複確認して push
+            // ═══════════════════════════════════════════════════════════
+            var _tmpId = '_tmp_cs_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+            var _tmpRec = Object.assign({}, payload, { record_id: _tmpId, age_days: null });
+            if (Store.addGrowthRecord && _savedTargetId) {
+              try { Store.addGrowthRecord(_savedTargetId, _tmpRec); }
+              catch (_agrErr) { console.warn('[CS] addGrowthRecord (tmp) failed:', _agrErr.message); }
+            }
+
+            var _cres;
+            try {
+              _cres = await _createWithRetry(payload, 2);
+            } catch (e) {
+              // ロールバック: _tmp_ を Store から除去
+              try {
+                var _recsR = Store.getGrowthRecords(_savedTargetId) || [];
+                var _filteredR = _recsR.filter(function (r) { return r.record_id !== _tmpId; });
+                Store.setGrowthRecords(_savedTargetId, _filteredR);
+              } catch (_) {}
+              throw e;
+            }
+
             if (_cres && _cres.record_id) {
-              var fullRec = Object.assign({}, payload, _cres);
-              if (Store.addGrowthRecord && _savedTargetId) {
-                try {
-                  Store.addGrowthRecord(_savedTargetId, fullRec);
-                } catch (_agrErr) {
-                  console.warn('[CS] addGrowthRecord failed:', _agrErr.message);
-                  // フォールバック: 手動 push
-                  try {
-                    var _gmF = Store.getDB('growthMap') || {};
-                    if (!_gmF[_savedTargetId]) _gmF[_savedTargetId] = [];
-                    _gmF[_savedTargetId].push(fullRec);
-                    Store.setGrowthRecords(_savedTargetId, _gmF[_savedTargetId]);
-                  } catch(_){}
+              // _tmp_ を real record_id に swap
+              var _recs = Store.getGrowthRecords(_savedTargetId) || [];
+              var _idx = _recs.findIndex(function (r) { return r.record_id === _tmpId; });
+              if (_idx >= 0) {
+                _recs[_idx] = Object.assign({}, _recs[_idx], {
+                  record_id: _cres.record_id,
+                  age_days:  _cres.age_days
+                });
+                Store.setGrowthRecords(_savedTargetId, _recs);
+              } else {
+                // _tmp_ がレースで消えていた → real record を重複確認して push
+                var _already = _recs.some(function (r) { return r.record_id === _cres.record_id; });
+                if (!_already) {
+                  var _fullRec = Object.assign({}, payload, _cres);
+                  _recs.push(_fullRec);
+                  Store.setGrowthRecords(_savedTargetId, _recs);
+                  console.log('[CS] tmp lost by race, pushed fresh record:', _cres.record_id);
                 }
               }
             }
