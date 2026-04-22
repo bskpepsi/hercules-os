@@ -1,4 +1,31 @@
-// FILE: js/pages/continuous_scan.js  build: 20260422b
+// FILE: js/pages/continuous_scan.js  build: 20260422c
+// 変更点(20260422b→20260422c): ★ サクサク化 + リロード不要化の2大改善 ★
+//   [20260422c-1] 🐛 重大バグ修正: 保存後の unit-detail 自動再描画が効かない問題
+//     原因: Line 1191 の _curPage 判定
+//       var _curPage = (window.location.hash||'').replace(/^#/,'').split('?')[0];
+//     は hash 文字列全体 ('page=unit-detail&unitDisplayId=...') を返していた。
+//     これを 'unit-detail' と比較しても絶対 false になり、
+//     Pages.unitDetail() の再呼び出しが一度も実行されていなかった。
+//     これが「リロードしないと画面が更新されない」症状の根本原因。
+//     修正: Store.getPage() でページ名を正しく取得。
+//   [20260422c-2] 楽観UI更新: 遷移直後から新しい画面表示
+//     保存ボタン押下 → routeTo 前に Store.patchDBItem で以下を先行反映:
+//       - breeding_units.mat_type (記録テーブルの 4 段階優先ロジックで決定)
+//       - breeding_units.stage_phase (T0/T1→T1, T2→T2, T3/MD→T3)
+//       - breeding_units.container_size (記録テーブルから)
+//     これで遷移直後から T2 バッジ / T2 マット / 4.8L / T3移行ボタン が見える。
+//     GAS 保存失敗時はロールバック + エラートースト表示 + 再描画。
+//     成長記録テーブルは CREATE (仮 record_id が必要) のため先行反映しない。
+//   [20260422c-3] 並列化による保存時間短縮:
+//     従来: 直列 3〜4回のAPI呼び出し (各 2-5秒、合計 6-13秒)
+//       await _saveOne(slot1) → await _saveOne(slot2)
+//       → await API.unit.update(members) → await API.unit.update(mat)
+//     改訂:
+//       - 成長記録 2スロット + ユニット更新を Promise.all で並列実行
+//       - ユニット更新は members + mat_type + stage_phase + container_size を
+//         1 回の API.unit.update にまとめる (API 呼び出し数を削減)
+//       - 合計: max(各 API) ≒ 2-5秒 (半分以下に短縮)
+// ───────────────────────────────────────────────
 // 変更点(20260422a→20260422b):
 //   - [20260422b] ユニット mat_type 決定を 4 段階優先に改訂:
 //       ① 日付入り行で mat_state='manual' (ユーザーがタップ選択)
@@ -883,7 +910,7 @@ Pages.continuousScan = function(params) {
     var hasData=rows.some(function(r){return r.weight1||r.weight2||r.date;});
     if(!hasData){UI.toast('体重または日付を少なくとも1行入力してください','error');return;}
 
-    // ── 楽観的更新: バリデーション後即座に遷移、バックグラウンドで保存 ──
+    // ── 保存データのスナップショット（遷移後も参照できるよう退避） ──
     var _savedTargetType = _state.targetType;
     var _savedDisplayId  = _state.displayId;
     var _savedTargetId   = _state.targetId;
@@ -893,8 +920,57 @@ Pages.continuousScan = function(params) {
     var _savedMembers    = _state.members.slice();      // [20260418i] members更新のベース
     var _savedEntity     = _state.entity;               // [20260418i] unit_id 参照用
 
-    // 即座に詳細画面へ遷移
-    UI.toast('💾 保存中...（バックグラウンド）','info',2000);
+    // ══════════════════════════════════════════════════════════════
+    // [20260422c-2] 楽観UI更新: 遷移前に Store に先行反映
+    //   押した瞬間に Store を更新しておけば、routeTo 直後のユニット詳細画面は
+    //   新しい T2/4.8L/T3移行ボタン で表示される。
+    //   API 失敗時はロールバック。成長記録は仮 record_id が必要なので対象外。
+    // ══════════════════════════════════════════════════════════════
+    var _optimisticUnitPatch = null;   // 先行反映した差分
+    var _rollbackUnitPatch   = null;   // 失敗時の復元値
+    if (isUnit && _savedEntity && _savedEntity.unit_id) {
+      try {
+        var _preOcrMat = (_state.ocrResult && _state.ocrResult.mat_type) ? String(_state.ocrResult.mat_type).trim() : '';
+        var _preCurMat = String(_savedEntity.mat_type || '').trim();
+        var preManualMat='', preLastDataRowMat='', preAnyDifferentMat='';
+        for (var pi = rows.length - 1; pi >= 0; pi--) {
+          var prr = rows[pi]; if (!prr) continue;
+          if (prr.date && prr.mat_type && prr.mat_state === 'manual' && !preManualMat) preManualMat = prr.mat_type;
+          if (prr.date && prr.mat_type && !preLastDataRowMat) preLastDataRowMat = prr.mat_type;
+          if (prr.mat_type && prr.mat_type !== _preCurMat && !preAnyDifferentMat) preAnyDifferentMat = prr.mat_type;
+        }
+        var _preNewMat = preManualMat || preLastDataRowMat || preAnyDifferentMat || _preOcrMat;
+        var _preLastContRow = null;
+        for (var pci = rows.length - 1; pci >= 0; pci--) {
+          if (rows[pci] && rows[pci].date && rows[pci].container) { _preLastContRow = rows[pci]; break; }
+        }
+        var _preNewCont = _preLastContRow ? _preLastContRow.container : '';
+
+        var _optPatch = {}, _rbPatch = {};
+        if (_preNewMat && _preNewMat !== _preCurMat) {
+          var _phaseMapPre = { T0:'T1', T1:'T1', T2:'T2', T3:'T3', MD:'T3' };
+          _optPatch.mat_type    = _preNewMat;
+          _optPatch.stage_phase = _phaseMapPre[_preNewMat] || _savedEntity.stage_phase || '';
+          _rbPatch.mat_type    = _savedEntity.mat_type || '';
+          _rbPatch.stage_phase = _savedEntity.stage_phase || '';
+        }
+        if (_preNewCont && _preNewCont !== String(_savedEntity.container_size || '').trim()) {
+          _optPatch.container_size = _preNewCont;
+          _rbPatch.container_size = _savedEntity.container_size || '';
+        }
+        if (Object.keys(_optPatch).length > 0 && Store.patchDBItem) {
+          Store.patchDBItem('breeding_units', 'unit_id', _savedEntity.unit_id, _optPatch);
+          _optimisticUnitPatch = _optPatch;
+          _rollbackUnitPatch   = _rbPatch;
+          console.log('[CS] optimistic UI patch applied (before route):', _optPatch);
+        }
+      } catch (_optErr) {
+        console.warn('[CS] optimistic UI patch failed (non-fatal):', _optErr.message);
+      }
+    }
+
+    // 即座に詳細画面へ遷移（すでに Store は新しい値なので T2/4.8L で表示される）
+    UI.toast('💾 保存中...','info',1500);
     if(_savedTargetType==='UNIT') routeTo('unit-detail',{unitDisplayId:_savedDisplayId});
     else                           routeTo('ind-detail', {indId:_savedTargetId});
 
@@ -1005,190 +1081,181 @@ Pages.continuousScan = function(params) {
           }
         }
 
+        // ══════════════════════════════════════════════════════════════
+        // [20260422c-3] 並列化: Promise.all で全APIを同時送信
+        //   成長記録 (2スロット分) + ユニット更新 (1回にまとめる) を並列。
+        //   直列だと 各 GAS コールド 2-5秒 × 3回 = 6-15秒 かかっていた。
+        //   並列にすれば max(各) ≒ 2-5秒。
+        // ══════════════════════════════════════════════════════════════
+        var savePromises = [];
+
+        // ── 成長記録 ──
         if(isUnit){
           for(var i=0;i<rows.length;i++){
             var r=rows[i];
             // [20260421m] 日付が入った行のみ保存対象 (体重なしでも可 = 追加交換)
             if(!r.date) continue;
             // スロット1
-            {
+            (function(rr){
               var extra1 = {unit_slot_no:1};
-              if (r.weight1 !== '' && r.weight1 !== null && r.weight1 !== undefined) {
-                extra1.weight_g = parseFloat(r.weight1);
+              if (rr.weight1 !== '' && rr.weight1 !== null && rr.weight1 !== undefined) {
+                extra1.weight_g = parseFloat(rr.weight1);
               }
               if (_savedSlotData[0] && _savedSlotData[0].size_category) extra1.size_category = _savedSlotData[0].size_category;
-              var _existing1 = _findExistingRecordId(r.date, 1);
-              await _saveOne(mkPayload(r, extra1), _existing1);
+              var _existing1 = _findExistingRecordId(rr.date, 1);
+              savePromises.push(_saveOne(mkPayload(rr, extra1), _existing1));
               savedCount++;
-            }
+            })(r);
             // スロット2
-            {
+            (function(rr){
               var extra2 = {unit_slot_no:2};
-              if (r.weight2 !== '' && r.weight2 !== null && r.weight2 !== undefined) {
-                extra2.weight_g = parseFloat(r.weight2);
+              if (rr.weight2 !== '' && rr.weight2 !== null && rr.weight2 !== undefined) {
+                extra2.weight_g = parseFloat(rr.weight2);
               }
               if (_savedSlotData[1] && _savedSlotData[1].size_category) extra2.size_category = _savedSlotData[1].size_category;
-              var _existing2 = _findExistingRecordId(r.date, 2);
-              await _saveOne(mkPayload(r, extra2), _existing2);
+              var _existing2 = _findExistingRecordId(rr.date, 2);
+              savePromises.push(_saveOne(mkPayload(rr, extra2), _existing2));
               savedCount++;
-            }
+            })(r);
           }
         } else {
           for(var k=0;k<rows.length;k++){
             var row=rows[k];
             // [20260421m] 日付が入った行のみ保存対象
             if(!row.date) continue;
-            var extraI = {};
-            if (row.weight1 !== '' && row.weight1 !== null && row.weight1 !== undefined) {
-              extraI.weight_g = parseFloat(row.weight1);
-            }
-            var _existingI = _findExistingRecordId(row.date, null);
-            await _saveOne(mkPayload(row, extraI), _existingI);
-            savedCount++;
+            (function(rr){
+              var extraI = {};
+              if (rr.weight1 !== '' && rr.weight1 !== null && rr.weight1 !== undefined) {
+                extraI.weight_g = parseFloat(rr.weight1);
+              }
+              var _existingI = _findExistingRecordId(rr.date, null);
+              savePromises.push(_saveOne(mkPayload(rr, extraI), _existingI));
+              savedCount++;
+            })(row);
           }
         }
 
-        // ── [20260418i] ユニットの場合、members JSON に性別/区分を反映 ──
-        // 既存メンバー情報を保持しつつ、変更があればユニット台帳を更新
+        // ── ユニット更新 (members + mat_type + stage_phase + container_size を1回にまとめる) ──
+        //   [20260422c-3] 旧コード: 2 回の API.unit.update (members / mat を別々) → 直列
+        //   新コード: 1 回の API.unit.update にまとめる + 並列実行
+        var _storeUnitPatch = {};        // Store 側の patch（members は parsed 形）
+        var _apiUnitPatch   = {};        // API 側の payload（members は JSON 文字列）
         if (isUnit && _savedEntity && _savedEntity.unit_id) {
-          var membersChanged = false;
-          var baseMembers = Array.isArray(_savedMembers) ? _savedMembers : [];
-          var newMembers;
-          if (baseMembers.length > 0) {
-            newMembers = baseMembers.map(function(m, idx){
-              var slot = _savedSlotData[idx] || {};
-              var updated = Object.assign({}, m);
-              if (slot.sex && slot.sex !== m.sex) {
-                updated.sex = slot.sex;
-                membersChanged = true;
-              }
-              if (slot.size_category && slot.size_category !== m.size_category) {
-                updated.size_category = slot.size_category;
-                membersChanged = true;
-              }
-              return updated;
-            });
-          } else {
-            // members が空の場合、入力があれば最小構造を生成
-            var candidates = _savedSlotData
-              .map(function(slot, idx){
-                return {
-                  unit_slot_no:  idx + 1,
-                  sex:           (slot && slot.sex)           || '',
-                  size_category: (slot && slot.size_category) || '',
-                };
-              })
-              .filter(function(m){ return m.sex || m.size_category; });
-            if (candidates.length > 0) {
-              newMembers = candidates;
-              membersChanged = true;
-            }
-          }
-
-          if (membersChanged && newMembers) {
-            try {
-              await API.unit.update({
-                unit_id: _savedEntity.unit_id,
-                members: JSON.stringify(newMembers),
+          // ── members (性別・区分) ──
+          try {
+            var membersChanged = false;
+            var baseMembers = Array.isArray(_savedMembers) ? _savedMembers : [];
+            var newMembers = null;
+            if (baseMembers.length > 0) {
+              newMembers = baseMembers.map(function(m, idx){
+                var slot = _savedSlotData[idx] || {};
+                var updated = Object.assign({}, m);
+                if (slot.sex && slot.sex !== m.sex) { updated.sex = slot.sex; membersChanged = true; }
+                if (slot.size_category && slot.size_category !== m.size_category) {
+                  updated.size_category = slot.size_category; membersChanged = true;
+                }
+                return updated;
               });
-              // Store キャッシュも楽観的更新
-              if (Store.patchDBItem) {
-                Store.patchDBItem('breeding_units', 'unit_id', _savedEntity.unit_id, { members: newMembers });
-              }
-            } catch (unitErr) {
-              console.error('[CS] unit update error:', unitErr);
-              UI.toast('⚠️ 性別・区分の反映に失敗: ' + (unitErr.message || '通信エラー') + '（記録は保存済み）', 'error', 5000);
+            } else {
+              // members が空の場合、入力があれば最小構造を生成
+              var candidates = _savedSlotData
+                .map(function(slot, idx){
+                  return {
+                    unit_slot_no:  idx + 1,
+                    sex:           (slot && slot.sex)           || '',
+                    size_category: (slot && slot.size_category) || '',
+                  };
+                })
+                .filter(function(m){ return m.sex || m.size_category; });
+              if (candidates.length > 0) { newMembers = candidates; membersChanged = true; }
             }
-          }
-        }
+            if (membersChanged && newMembers) {
+              _apiUnitPatch.members   = JSON.stringify(newMembers);
+              _storeUnitPatch.members = newMembers;
+            }
+          } catch (_mErr) { console.warn('[CS] members calc failed:', _mErr.message); }
 
-        // ── [20260422a] ユニットの mat_type / stage_phase 反映 ──
-        //   優先順位の確定:
-        //     1st: 記録テーブルで「日付が入った行」の中で最下位行の mat_type
-        //          → ユーザーが新規に書き込んだ行 = 「これから使うマット」
-        //     2nd: ラベルの M チェック (ocr.mat_type)
-        //          → 補助的に使用。OCR は最右の■を読み取るが、手書きで複数■が並ぶと
-        //          読み間違いが多発するため最優先にはしない。
-        //   stage_phase マップ: T0/T1→T1, T2→T2, T3/MD→T3
-        //   容器は日付入り行の最下位で container が入っている行から取る。
-        console.log('[CS] checking unit patch block:',
-          { isUnit: isUnit, hasEntity: !!_savedEntity, unitId: _savedEntity && _savedEntity.unit_id });
-        if (isUnit && _savedEntity && _savedEntity.unit_id) {
+          // ── mat_type / stage_phase / container_size (楽観更新と同じ4段階優先) ──
           try {
             var _ocrMat = (_state.ocrResult && _state.ocrResult.mat_type) ? String(_state.ocrResult.mat_type).trim() : '';
-            // [20260422b] mat_type 決定ロジック改訂:
-            //   優先順位: ① 日付入り行で 'manual' 状態のマット (ユーザーがタップで選択した値)
-            //             ② 日付入り行の mat_type (自動引継含む、最下位行)
-            //             ③ テーブル任意行で 現在の entity.mat_type と異なる値
-            //                (ユーザーが行のどこかにマット変更を書いているなら、それを優先)
-            //             ④ OCR の M チェック値
-            //   OCR の M チェックはラベル上部の連続チェック列から最右の■を読むが、
-            //   Gemini の認識精度が低く T1 を返すケースが頻発するため最低優先に下げる。
             var _curMat = String(_savedEntity.mat_type || '').trim();
             var manualMat = '', lastDataRowMat = '', anyDifferentMat = '';
             for (var mi = rows.length - 1; mi >= 0; mi--) {
-              var rr = rows[mi]; if (!rr) continue;
-              if (rr.date && rr.mat_type && rr.mat_state === 'manual' && !manualMat) {
-                manualMat = rr.mat_type;
-              }
-              if (rr.date && rr.mat_type && !lastDataRowMat) {
-                lastDataRowMat = rr.mat_type;
-              }
-              if (rr.mat_type && rr.mat_type !== _curMat && !anyDifferentMat) {
-                anyDifferentMat = rr.mat_type;
-              }
+              var rr2 = rows[mi]; if (!rr2) continue;
+              if (rr2.date && rr2.mat_type && rr2.mat_state === 'manual' && !manualMat) manualMat = rr2.mat_type;
+              if (rr2.date && rr2.mat_type && !lastDataRowMat) lastDataRowMat = rr2.mat_type;
+              if (rr2.mat_type && rr2.mat_type !== _curMat && !anyDifferentMat) anyDifferentMat = rr2.mat_type;
             }
             var newMat = manualMat || lastDataRowMat || anyDifferentMat || _ocrMat;
-            // 容器も同様: データ入力行の最下位で container が入っている行から取る
             var _lastContRow = null;
             for (var ci = rows.length - 1; ci >= 0; ci--) {
               if (rows[ci] && rows[ci].date && rows[ci].container) { _lastContRow = rows[ci]; break; }
             }
-            var newCont = _lastContRow ? _lastContRow.container : (_savedEntity.container_size || '');
+            var newCont = _lastContRow ? _lastContRow.container : '';
             console.log('[CS] unit patch calc:',
               { manualMat: manualMat, lastDataRowMat: lastDataRowMat, anyDifferentMat: anyDifferentMat,
                 ocrMat: _ocrMat, newMat: newMat,
                 curMat: _curMat, newCont: newCont, curCont: _savedEntity.container_size });
 
-            var unitPatch = {};
-            var curMat = String(_savedEntity.mat_type || '').trim();
-            if (newMat && newMat !== curMat) {
+            if (newMat && newMat !== _curMat) {
               var _phaseMap = { T0:'T1', T1:'T1', T2:'T2', T3:'T3', MD:'T3' };
-              unitPatch.mat_type    = newMat;
-              unitPatch.stage_phase = _phaseMap[newMat] || _savedEntity.stage_phase || '';
+              var _phase = _phaseMap[newMat] || _savedEntity.stage_phase || '';
+              _apiUnitPatch.mat_type    = newMat;
+              _apiUnitPatch.stage_phase = _phase;
+              _storeUnitPatch.mat_type    = newMat;
+              _storeUnitPatch.stage_phase = _phase;
             }
             if (newCont && newCont !== String(_savedEntity.container_size || '').trim()) {
-              unitPatch.container_size = newCont;
+              _apiUnitPatch.container_size   = newCont;
+              _storeUnitPatch.container_size = newCont;
             }
-            console.log('[CS] unit patch decided:', unitPatch, 'keys=', Object.keys(unitPatch).length);
-            if (Object.keys(unitPatch).length > 0) {
-              var _unitUpdRes = await API.unit.update(Object.assign({ unit_id: _savedEntity.unit_id }, unitPatch));
-              console.log('[CS] unit update response:', _unitUpdRes);
-              if (Store.patchDBItem) {
-                Store.patchDBItem('breeding_units', 'unit_id', _savedEntity.unit_id, unitPatch);
-              }
-              console.log('[CS] unit patched:', unitPatch);
-            } else {
-              console.log('[CS] unit patch skipped: no diff');
-            }
-          } catch (matErr) {
-            console.error('[CS] unit mat update error:', matErr);
-            UI.toast('⚠️ ユニット情報の反映に失敗: ' + (matErr.message || '通信エラー') + '（記録は保存済み）', 'error', 5000);
+          } catch (_mtErr) { console.warn('[CS] mat/cont calc failed:', _mtErr.message); }
+
+          // API 呼び出しは Promise.all に乗せる
+          if (Object.keys(_apiUnitPatch).length > 0) {
+            console.log('[CS] unit patch decided (batched):', _apiUnitPatch, 'keys=', Object.keys(_apiUnitPatch).length);
+            var _unitPayload = Object.assign({ unit_id: _savedEntity.unit_id }, _apiUnitPatch);
+            savePromises.push(
+              API.unit.update(_unitPayload).then(function(res){
+                // Store 側は楽観更新で mat/container は既に入っているが、
+                // members はここで反映する (遷移前には反映していない)
+                if (Store.patchDBItem && Object.keys(_storeUnitPatch).length > 0) {
+                  Store.patchDBItem('breeding_units', 'unit_id', _savedEntity.unit_id, _storeUnitPatch);
+                }
+                console.log('[CS] unit patched (from api.all):', _apiUnitPatch);
+                return res;
+              })
+            );
+          } else {
+            console.log('[CS] unit patch skipped: no diff');
           }
-        } else {
-          console.log('[CS] unit patch block skipped (not a unit or no entity)');
+        }
+
+        // ══════════════════════════════════════════════════════════════
+        // 全 API を並列実行 (Promise.allSettled で部分成功を許容)
+        // ══════════════════════════════════════════════════════════════
+        console.log('[CS] firing', savePromises.length, 'API calls in parallel');
+        var _results = await Promise.allSettled(savePromises);
+        var _rejected = _results.filter(function(r){ return r.status === 'rejected'; });
+        if (_rejected.length > 0) {
+          // 1つでも失敗したら全体失敗扱い（楽観更新をロールバック）
+          var _firstErr = _rejected[0].reason || new Error('unknown error');
+          console.error('[CS] ' + _rejected.length + '/' + _results.length + ' API calls failed');
+          throw _firstErr;
         }
 
         UI.toast('✅ '+savedCount+'件の記録を保存しました','success',3000);
 
-        // [20260421n] 保存完了後、現在のページが unit-detail / ind-detail なら再描画
-        //   Store.addDBItem で growth_records が追加されていても unit_detail は
-        //   変更を監視していないため画面が自動更新されない問題を解決。
-        //   window._skipNextGrowthLoad フラグを立てることで
-        //   unit_detail 側で API.growth.list の並列呼び出しをスキップさせ、
-        //   Store キャッシュだけで即時再描画する (高速化)。
+        // ══════════════════════════════════════════════════════════════
+        // [20260422c-1] 🐛 バグ修正: 再描画判定を Store.getPage() で取得
+        //   以前は window.location.hash から page 名を抜き出す実装だったが、
+        //   hash 構造が 'page=unit-detail&unitDisplayId=...' (URLSearchParams) のため
+        //   split('?')[0] しても hash 全体が残り、'unit-detail' と比較して絶対 false に。
+        //   → Pages.unitDetail() が一度も再呼び出されず、リロードで初めて反映されていた。
+        // ══════════════════════════════════════════════════════════════
         try {
-          var _curPage = (window.location.hash || '').replace(/^#/, '').split('?')[0];
+          var _curPage = (typeof Store !== 'undefined' && Store.getPage) ? Store.getPage() : '';
+          console.log('[CS] post-save rerender check: curPage=', _curPage, 'targetType=', _savedTargetType);
           if (_savedTargetType === 'UNIT' && _curPage === 'unit-detail' && typeof Pages.unitDetail === 'function') {
             window._skipNextGrowthLoad = true;
             Pages.unitDetail({ unitDisplayId: _savedDisplayId });
@@ -1198,7 +1265,20 @@ Pages.continuousScan = function(params) {
         } catch (_rerr) { console.warn('[CS] rerender failed (non-fatal):', _rerr.message); }
       } catch(err){
         console.error('[CS] bg save error (all retries failed):',err);
-        UI.toast('⚠️ 保存失敗（リトライ2回）: '+(err.message||'通信エラー')+' — 手動で再入力してください','error',8000);
+        // ── [20260422c-2] 楽観更新のロールバック ──
+        if (_rollbackUnitPatch && _savedEntity && _savedEntity.unit_id && Store.patchDBItem) {
+          try {
+            Store.patchDBItem('breeding_units', 'unit_id', _savedEntity.unit_id, _rollbackUnitPatch);
+            console.log('[CS] optimistic UI rolled back:', _rollbackUnitPatch);
+            // 現在 unit-detail を開いていれば再描画
+            var _curPage2 = (typeof Store !== 'undefined' && Store.getPage) ? Store.getPage() : '';
+            if (_savedTargetType === 'UNIT' && _curPage2 === 'unit-detail' && typeof Pages.unitDetail === 'function') {
+              window._skipNextGrowthLoad = true;
+              Pages.unitDetail({ unitDisplayId: _savedDisplayId });
+            }
+          } catch (_rbErr) { console.warn('[CS] rollback failed:', _rbErr.message); }
+        }
+        UI.toast('⚠️ 保存失敗: '+(err.message||'通信エラー')+' — 画面を元に戻しました。再入力してください','error',8000);
       }
     })();
   };

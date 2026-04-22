@@ -3,8 +3,16 @@
 // lot.js — Phase4-1 UI統一版
 // ロット一覧・詳細・分割・個体化を担う
 // カードUIを3列（コード | 頭数+ステージ | ›）に統一
-// build: 20260421e
+// build: 20260422c
 // 変更点:
+//   - [20260422c] 🐛 バグ修正: ユニットタブ選択中にリロードするとロットタブに戻る問題
+//     原因: _lotUnitTabSwitch がローカル変数 _activeTab と DOM だけ更新し、
+//           URL hash / Store.pageParams を更新していなかったため、
+//           リロード時の app.js の hash → params 復元で _tab が失われ、
+//           Line 157 の `params._tab || 'lot'` で 'lot' にフォールバックしていた。
+//     修正: タブ切替時に history.replaceState で URL hash (#page=lot-list&_tab=unit)
+//           と Store.navigate の両方を同期。フィルター/検索状態を壊さないため
+//           routeTo は使わず render() はそのまま残す。
 //   - [20260421e] 販売候補への個体遷移を updateIndividual 経由に変更
 //     changeStatus(→deleteIndividual) は終端ステータスのみ受付けるため
 //     for_sale 遷移はエラーになっていた。updateIndividual は
@@ -479,6 +487,24 @@ Pages.lotList = function () {
   Pages._lotUnitTabSwitch = function(tab) {
     _activeTab = tab;
     _keyword = '';
+    // [20260422c] リロード時にタブ選択が保持されるよう URL hash と Store.params を同期
+    //   既定値 'lot' は hash に含めず、'unit' の時だけ _tab=unit を URL に書く。
+    //   routeTo は使わない（使うと Pages.lotList が再実行されてローカルフィルター
+    //   状態 (_unitPhase/_unitStatus/_unitMat/_lotStatusMode 等) がリセットされるため）。
+    try {
+      var hashParts = { page: 'lot-list' };
+      if (fixedLineId) hashParts.line_id = fixedLineId;
+      if (tab !== 'lot') hashParts._tab = tab;
+      var hashStr = new URLSearchParams(hashParts).toString();
+      history.replaceState(null, '', '#' + hashStr);
+      if (typeof Store !== 'undefined' && Store.navigate) {
+        var storeParams = {};
+        if (fixedLineId) storeParams.line_id = fixedLineId;
+        if (tab !== 'lot') storeParams._tab = tab;
+        // 第3引数 true で nav イベント抑止（_renderPage の二重実行を防ぐ）
+        Store.navigate('lot-list', storeParams, true);
+      }
+    } catch (e) { console.warn('[lot] tab switch hash sync failed:', e.message); }
     render();
   };
   Pages._lotUnitKw = function(val) {
