@@ -2,7 +2,20 @@
 // individual.js
 // 役割: 個体の一覧・詳細・新規登録・編集・ステータス変更を担う。
 //       個体台帳の中心画面。ロット・成長記録・ラベルへの導線も持つ。
-// build: 20260421f
+// build: 20260422g
+//
+// 20260422g 修正:
+//   - 個体詳細画面にユニットと同じ T1/T2/T3 フェーズ表示と
+//     T2移行/T3移行 アクションボタンを追加（UI統一）
+//     ① _indComputePhase: ind.current_mat を優先、未設定なら最新成長記録の
+//        mat_type からフォールバック推定 (T0/T1→T1, T2→T2, T3/MD→T3)
+//     ② ヘッダーのバッジ行にユニットと同スタイルのフェーズピル表示
+//     ③ 画面末尾に「アクション」カードを追加（unit_detail と同構成）
+//        - T1: 🔄 T2移行 / T2: ⭐ T3移行 / T3: 🔄 T3 Mx/体重更新
+//        - 🏷️ ラベル発行 / 📷 成長記録 (常時表示)
+//     ④ Pages._indStartT2 / _indStartT3 ハンドラ追加
+//        内部で既存の Pages.t2SessionStartFromInd / t3SessionStartFromInd を呼ぶ
+//        （これらは t2_session.js / t3_session.js に既に実装済み）
 //
 // 20260421f 修正:
 //   - 一覧カード表示で for_sale フラグを優先判定
@@ -46,7 +59,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] individual.js v20260418g loaded');
+console.log('[HerculesOS] individual.js v20260422g loaded');
 
 const Pages = window.Pages || {};
 
@@ -343,6 +356,44 @@ function _toDisplayStageBadgeShort(code) {
 }
 
 // ────────────────────────────────────────────────────────────────
+// [20260422g] _indComputePhase — 個体の飼育フェーズ (T1/T2/T3) 判定
+//   ユニットの stage_phase と同等の概念を個体に導入。
+//   優先順位:
+//     ① ind.current_mat (T0/T1/T2/T3/MD)
+//     ② 最新成長記録の mat_type
+//   マッピング: T0/T1 → 'T1', T2 → 'T2', T3/MD → 'T3'
+// ────────────────────────────────────────────────────────────────
+function _indComputePhase(ind, records) {
+  const _map = function (v) {
+    const u = String(v || '').toUpperCase();
+    if (u === 'T0' || u === 'T1') return 'T1';
+    if (u === 'T2') return 'T2';
+    if (u === 'T3' || u === 'MD') return 'T3';
+    return '';
+  };
+  const fromInd = _map(ind && ind.current_mat);
+  if (fromInd) return fromInd;
+  if (records && records.length > 0) {
+    const latest = [].concat(records).sort(function (a, b) {
+      return String(b.record_date || '').localeCompare(String(a.record_date || ''));
+    })[0];
+    if (latest) return _map(latest.mat_type);
+  }
+  return '';
+}
+
+// ────────────────────────────────────────────────────────────────
+// [20260422g] _indPhaseBadgeHTML — T1/T2/T3 フェーズピルバッジのHTML
+//   ユニット詳細 (unit_detail.js L489) と同スタイル
+// ────────────────────────────────────────────────────────────────
+function _indPhaseBadgeHTML(phase) {
+  if (!phase) return '';
+  return '<span style="background:rgba(91,168,232,.15);color:var(--blue);'
+    + 'padding:2px 8px;border-radius:5px;font-weight:700;font-size:.72rem;'
+    + 'border:1px solid rgba(91,168,232,.35)">' + phase + '</span>';
+}
+
+// ────────────────────────────────────────────────────────────────
 // _indCardHTML — 個体一覧カード
 // ────────────────────────────────────────────────────────────────
 function _indCardHTML(ind) {
@@ -536,6 +587,8 @@ function _renderDetail(ind, main) {
   const promotedParent = ind.promoted_par_id ? Store.getParent(ind.promoted_par_id) : null;
   const line    = Store.getLine(ind.line_id);
   const dispId  = _safeDisplayId(ind);
+  // [20260422g] T1/T2/T3 飼育フェーズ (ユニットの stage_phase と同等)
+  const _indPhase = _indComputePhase(ind, records);
 
   const icons = [
     (String(ind.guinness_flag||'').toUpperCase()==='TRUE'||ind.guinness_flag===1||ind.guinness_flag===true) ? '<span title="ギネス候補">🏆</span>' : '',
@@ -598,6 +651,7 @@ function _renderDetail(ind, main) {
             <div style="font-family:var(--font-mono);font-size:.85rem;color:var(--gold)">${dispId}</div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
               ${_toDisplayStageBadge(ind.current_stage)}
+              ${_indPhaseBadgeHTML(_indPhase)}
               ${UI.statusBadge(ind.status)}
               ${icons}
             </div>
@@ -626,6 +680,41 @@ function _renderDetail(ind, main) {
         <button class="btn btn-ghost" style="flex:1"
           onclick="routeTo('label-gen',{targetType:'IND',targetId:'${ind.ind_id}'})">🏷</button>
       </div>
+
+      ${(() => {
+        // [20260422g] T-フェーズ移行アクションカード (ユニット詳細と同構成)
+        //   _ALIVE_SET に該当する個体のみ T2移行/T3移行ボタンを表示。
+        //   判定は _indPhase (current_mat もしくは最新成長記録の mat_type から推定)。
+        const _isAlive = _ALIVE_SET.has(ind.status) || !ind.status;
+        if (!_isAlive) return '';
+        const t2Btn = _indPhase === 'T1' ? `
+          <button class="btn btn-primary" style="background:var(--blue)"
+            onclick="Pages._indStartT2('${ind.ind_id}')">
+            🔄 T2移行
+          </button>` : '';
+        const t3Btn = _indPhase === 'T2' ? `
+          <button class="btn btn-primary" style="background:var(--amber);color:#1a1a1a"
+            onclick="Pages._indStartT3('${ind.ind_id}')">
+            ⭐ T3移行
+          </button>` : '';
+        const t3MxBtn = _indPhase === 'T3' ? `
+          <button class="btn btn-primary" style="background:rgba(224,144,64,.15);border:2px solid var(--amber);color:var(--amber)"
+            onclick="Pages._indStartT3('${ind.ind_id}')">
+            🔄 T3 Mx/体重更新
+          </button>` : '';
+        // T-フェーズボタンが何も該当しない場合はカード自体を出さない
+        if (!t2Btn && !t3Btn && !t3MxBtn) return '';
+        return `
+      <div class="card" style="margin-top:10px;margin-bottom:10px">
+        <div class="card-title">アクション（マット交換）</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          ${t2Btn}${t3Btn}${t3MxBtn}
+        </div>
+        <div style="font-size:.7rem;color:var(--text3);margin-top:6px">
+          現在フェーズ: <b>${_indPhase}</b> ／ 継続中のマット交換は上の「📷 成長記録」から記録できます
+        </div>
+      </div>`;
+      })()}
 
       ${_fromNew ? `
       <div style="background:rgba(200,168,75,.12);border:1px solid rgba(200,168,75,.35);
@@ -942,6 +1031,29 @@ function _renderDetail(ind, main) {
     setTimeout(() => _drawWeightChart(ind.ind_id, records), 100);
   }
 }
+
+// ────────────────────────────────────────────────────────────────
+// [20260422g] T2/T3 移行アクション (ユニット詳細の _udStartT2/_udStartT3 と同等)
+//   t2_session.js / t3_session.js に既に実装されている個体起点のセッション開始関数
+//   (Pages.t2SessionStartFromInd / Pages.t3SessionStartFromInd) を呼び出すだけ。
+//   UI起点が個体詳細でもユニット詳細でも同じ t2-session / t3-session 画面に遷移し、
+//   マット交換フローが統一される。
+// ────────────────────────────────────────────────────────────────
+Pages._indStartT2 = function (indId) {
+  if (typeof Pages.t2SessionStartFromInd === 'function') {
+    Pages.t2SessionStartFromInd(indId);
+  } else {
+    UI.toast('T2移行機能が読み込まれていません', 'error');
+  }
+};
+
+Pages._indStartT3 = function (indId) {
+  if (typeof Pages.t3SessionStartFromInd === 'function') {
+    Pages.t3SessionStartFromInd(indId);
+  } else {
+    UI.toast('T3移行機能が読み込まれていません', 'error');
+  }
+};
 
 // ────────────────────────────────────────────────────────────────
 // ステータス変更アクション
