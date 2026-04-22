@@ -3,8 +3,18 @@
 // lot.js — Phase4-1 UI統一版
 // ロット一覧・詳細・分割・個体化を担う
 // カードUIを3列（コード | 頭数+ステージ | ›）に統一
-// build: 20260422k
+// build: 20260422q
 // 変更点:
+//   - [20260422q] 飼育管理に「🐛 個体」タブを追加（Phase C）
+//     lot-list ページに 3つ目のタブとして個体一覧を統合。
+//     ロット/ユニット/個体 の3タブ構成に。
+//     機能:
+//       ① タブ切替で個体一覧を同画面に表示（renderInd 関数追加）
+//       ② ライン絞り込み・キーワード検索は他タブと共通
+//       ③ ステータスフィルタ (全て/飼育中/販売/死亡等) を個体タブに追加
+//       ④ _tab=ind で URL 復元対応 (リロード耐性)
+//       ⑤ 既存の Pages.individualList ページは残す (他からの導線維持)
+//     個体カード描画は individual.js の _indCardHTML を再利用（グローバル関数）。
 //   - [20260422k] ロット詳細画面のボタン配置変更
 //     ① 上部ボタンを3行構成に変更:
 //        旧: Row1=[📷 成長記録][✂️ 分割] / Row2=[🏷️ ラベル発行・QRコード生成]
@@ -47,7 +57,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] lot.js v20260422k loaded');
+console.log('[HerculesOS] lot.js v20260422q loaded');
 
 // ────────────────────────────────────────────────────────────────
 // [20260418f] 血統・種親カードを生成（ロット詳細用）
@@ -187,9 +197,15 @@ Pages.lotList = function () {
   let _unitStatus = 'active';
   let _unitMat    = '';
   let _unitLine   = fixedLineId;
+  // [20260422q] 個体タブ用ローカル状態
+  let _indStatus  = 'alive';     // alive / for_sale / listed / sold / dead / all
+  let _indStage   = '';          // L1L2 / L3 / prepupa / pupa / adult / ''
+  let _indSex     = '';          // ♂ / ♀ / 不明 / ''
+  let _indLine    = fixedLineId; // ライン絞り込み
 
   function render() {
     if (_activeTab === 'unit') { renderUnit(); return; }
+    if (_activeTab === 'ind')  { renderInd();  return; }
     renderLot();
   }
 
@@ -213,8 +229,16 @@ Pages.lotList = function () {
     }
 
     const title = isLineLimited
-      ? ((fixedLine ? (fixedLine.line_code||fixedLine.display_id) : '') + ' のロット・ユニット')
-      : 'ロット・ユニット管理';
+      ? ((fixedLine ? (fixedLine.line_code||fixedLine.display_id) : '') + ' の飼育管理')
+      : '飼育管理';
+
+    // [20260422q] タブピル行を3タブに拡張（ロット/ユニット/個体）
+    const _allInds = Store.getDB('individuals') || [];
+    const _activeIndCount = _allInds.filter(i => {
+      const s = i.status || 'alive';
+      if (isLineLimited && i.line_id !== fixedLineId) return false;
+      return s === 'alive' || s === 'larva' || s === 'prepupa' || s === 'pupa' || s === 'adult';
+    }).length;
 
     main.innerHTML =
       UI.header(title, isLineLimited ? {back:true} : {action:{fn:"routeTo('lot-new')",icon:'＋'}}) +
@@ -226,6 +250,7 @@ Pages.lotList = function () {
           return ac.length+fs.length;
         })()})</button>
         <button class="pill active" onclick="Pages._lotUnitTabSwitch('unit')">📦 ユニット (${allUnits.filter(u=>(u.status||'active')==='active').length})</button>
+        <button class="pill" onclick="Pages._lotUnitTabSwitch('ind')">🐛 個体 (${_activeIndCount})</button>
       </div>` +
       `<div style="margin-bottom:8px;position:relative">
         <input type="text" placeholder="🔍 ID・ステージで検索..." value="${_keyword}"
@@ -392,6 +417,168 @@ Pages.lotList = function () {
   }
 
   // ══════════════════════════════════════════════════════════
+  // [20260422q] 個体一覧タブ
+  //   Pages.individualList のロジックを飼育管理ページに統合したもの。
+  //   ・ライン絞り込み・キーワード検索は他タブと共通 (_keyword, _indLine)
+  //   ・ステージ/性別/ステータスの3段フィルタバー
+  //   ・個体カード描画は individual.js の _indCardHTML (グローバル関数) 再利用
+  //   ・クリックで ind-detail へ遷移
+  // ══════════════════════════════════════════════════════════
+  function renderInd() {
+    const lines = Store.getDB('lines') || [];
+    // Store.filterIndividuals で基本絞り込み
+    let list = (typeof Store !== 'undefined' && typeof Store.filterIndividuals === 'function')
+      ? Store.filterIndividuals({ status: _indStatus, stage: _indStage, sex: _indSex, line_id: _indLine })
+      : (Store.getDB('individuals') || []).slice();
+    // キーワード検索
+    if (_keyword) {
+      const kw = _keyword.toLowerCase();
+      list = list.filter(i =>
+        (i.display_id||'').toLowerCase().includes(kw) ||
+        (i.ind_id||'').toLowerCase().includes(kw) ||
+        (i.note_public||'').toLowerCase().includes(kw) ||
+        (i.note_private||'').toLowerCase().includes(kw)
+      );
+    }
+
+    // タブピル用のカウント
+    const _lotCountActive = (()=>{
+      const ac=Store.filterLots({status:'active',line_id:fixedLineId});
+      const fs=Store.filterLots({status:'for_sale',line_id:fixedLineId});
+      return ac.length+fs.length;
+    })();
+    const allUnits = Store.getDB('breeding_units') || [];
+    const activeUnitCount = allUnits.filter(u=>(u.status||'active')==='active'
+      && (!isLineLimited || u.line_id === fixedLineId)).length;
+    const allInds = Store.getDB('individuals') || [];
+    const _activeIndCount = allInds.filter(i => {
+      const s = i.status || 'alive';
+      if (isLineLimited && i.line_id !== fixedLineId) return false;
+      return s === 'alive' || s === 'larva' || s === 'prepupa' || s === 'pupa' || s === 'adult';
+    }).length;
+
+    const title = isLineLimited
+      ? ((fixedLine ? (fixedLine.line_code||fixedLine.display_id) : '') + ' の飼育管理')
+      : '飼育管理';
+
+    // ステージフィルタピル
+    const _indStages = [
+      { val:'',       label:'全て' },
+      { val:'L1L2',   label:'L1L2' },
+      { val:'L3',     label:'L3'   },
+      { val:'prepupa',label:'前蛹' },
+      { val:'pupa',   label:'蛹'   },
+      { val:'adult',  label:'成虫' },
+    ];
+    const _stageBar = '<div class="filter-bar" style="margin-bottom:6px" id="ind-stage-filter">'
+      + _indStages.map(s =>
+          '<button class="pill ' + (_indStage===s.val?'active':'') + '" data-val="' + s.val + '">' + s.label + '</button>'
+        ).join('') + '</div>';
+
+    // 性別フィルタピル
+    const _indSexes = [
+      { val:'',  label:'♂♀' },
+      { val:'♂', label:'♂'  },
+      { val:'♀', label:'♀'  },
+      { val:'不明', label:'?' },
+    ];
+    const _sexBar = '<div class="filter-bar" style="margin-bottom:6px" id="ind-sex-filter">'
+      + _indSexes.map(s =>
+          '<button class="pill ' + (_indSex===s.val?'active':'') + '" data-val="' + s.val + '">' + s.label + '</button>'
+        ).join('') + '</div>';
+
+    // ステータスフィルタピル
+    const _indStatuses = [
+      { val:'all',     label:'全て'   },
+      { val:'alive',   label:'飼育中' },
+      { val:'for_sale',label:'販売候補' },
+      { val:'listed',  label:'出品中' },
+      { val:'sold',    label:'売約済' },
+      { val:'dead',    label:'死亡'   },
+    ];
+    const _statusBar = '<div class="filter-bar" style="margin-bottom:6px" id="ind-status-filter">'
+      + _indStatuses.map(s =>
+          '<button class="pill ' + (_indStatus===s.val?'active':'') + '" data-val="' + s.val + '">' + s.label + '</button>'
+        ).join('') + '</div>';
+
+    // ライン絞り込みバー（固定ライン時は非表示）
+    const _lineBar = !isLineLimited && lines.length > 0
+      ? '<div class="filter-bar" style="margin-bottom:6px;overflow-x:auto;white-space:nowrap" id="ind-line-filter">'
+        + '<button class="pill ' + (!_indLine?'active':'') + '" data-val="">全ライン</button>'
+        + lines.slice(0,10).map(l =>
+            '<button class="pill ' + (l.line_id===_indLine?'active':'') + '" data-val="' + l.line_id + '">'
+            + (l.line_code || l.display_id) + '</button>'
+          ).join('')
+        + '</div>'
+      : '';
+
+    main.innerHTML =
+      UI.header(title, isLineLimited
+        ? { back:true, action:{fn:"routeTo('ind-new',{lineId:'"+fixedLineId+"'})",icon:'＋'} }
+        : { action:{fn:"routeTo('ind-new')",icon:'＋'} }
+      ) +
+      '<div class="page-body">' +
+      '<div class="filter-bar" style="margin-bottom:8px">'
+        + '<button class="pill" onclick="Pages._lotUnitTabSwitch(\'lot\')">🥚 ロット (' + _lotCountActive + ')</button>'
+        + '<button class="pill" onclick="Pages._lotUnitTabSwitch(\'unit\')">📦 ユニット (' + activeUnitCount + ')</button>'
+        + '<button class="pill active" onclick="Pages._lotUnitTabSwitch(\'ind\')">🐛 個体 (' + _activeIndCount + ')</button>'
+      + '</div>' +
+      '<div style="margin-bottom:8px;position:relative">'
+        + '<input type="text" placeholder="🔍 ID・メモで検索..." value="' + _keyword + '"'
+        + ' id="ind-kw-input"'
+        + ' style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--border);'
+        + 'background:var(--bg2);font-size:.88rem;color:var(--text1);box-sizing:border-box"'
+        + ' oninput="Pages._lotUnitKw(this.value)">'
+      + '</div>' +
+      _lineBar + _stageBar + _sexBar + _statusBar +
+      '<div class="sec-hdr">'
+        + '<span class="sec-title">' + list.length + '頭</span>'
+      + '</div>' +
+      '<div id="ind-list-body">' +
+        (list.length
+          ? list.map(_indCardHTML).join('')
+          : UI.empty('該当する個体がいません', isLineLimited ? 'このラインの個体がありません' : '右上の＋から登録できます'))
+      + '</div>' +
+      '</div>';
+
+    // イベント: ステージ
+    document.getElementById('ind-stage-filter').addEventListener('click', e => {
+      const p = e.target.closest('.pill'); if (!p) return;
+      _indStage = (p.dataset.val === _indStage ? '' : p.dataset.val);
+      renderInd();
+    });
+    // イベント: 性別
+    document.getElementById('ind-sex-filter').addEventListener('click', e => {
+      const p = e.target.closest('.pill'); if (!p) return;
+      _indSex = (p.dataset.val === _indSex ? '' : p.dataset.val);
+      renderInd();
+    });
+    // イベント: ステータス
+    document.getElementById('ind-status-filter').addEventListener('click', e => {
+      const p = e.target.closest('.pill'); if (!p) return;
+      _indStatus = p.dataset.val;
+      renderInd();
+    });
+    // イベント: ライン絞り込み
+    if (!isLineLimited) {
+      const _indLineFilter = document.getElementById('ind-line-filter');
+      if (_indLineFilter) _indLineFilter.addEventListener('click', e => {
+        const p = e.target.closest('.pill'); if (!p) return;
+        _indLine = (p.dataset.val === _indLine ? '' : p.dataset.val);
+        renderInd();
+      });
+    }
+    // キーワード入力のフォーカス維持 (Android 対策)
+    setTimeout(() => {
+      const inp = document.getElementById('ind-kw-input');
+      if (inp && _keyword) {
+        inp.focus();
+        try { inp.setSelectionRange(_keyword.length, _keyword.length); } catch(_) {}
+      }
+    }, 0);
+  }
+
+  // ══════════════════════════════════════════════════════════
   // ロット一覧タブ（既存機能 + キーワード検索）
   // ══════════════════════════════════════════════════════════
   function renderLot() {
@@ -429,8 +616,8 @@ Pages.lotList = function () {
     }
     const lines = Store.getDB('lines') || [];
     const title = isLineLimited
-      ? (fixedLine ? (fixedLine.line_code || fixedLine.display_id) + ' のロット・ユニット' : 'ロット・ユニット管理')
-      : 'ロット・ユニット管理';
+      ? (fixedLine ? (fixedLine.line_code || fixedLine.display_id) + ' の飼育管理' : '飼育管理')
+      : '飼育管理';
     const headerOpts = isLineLimited
       ? { back: true, action: { fn: "routeTo('lot-new',{lineId:'" + fixedLineId + "'})", icon: '＋' } }
       : { action: { fn: "routeTo('lot-new')", icon: '＋' } };
@@ -438,6 +625,13 @@ Pages.lotList = function () {
     const totalCount = lots.reduce((s, l) => s + (+l.count || 0), 0);
     const allUnits = Store.getDB('breeding_units') || [];
     const activeUnitCount = allUnits.filter(u=>(u.status||'active')==='active').length;
+    // [20260422q] 個体タブ用カウント
+    const _allInds = Store.getDB('individuals') || [];
+    const _activeIndCount = _allInds.filter(i => {
+      const s = i.status || 'alive';
+      if (isLineLimited && i.line_id !== fixedLineId) return false;
+      return s === 'alive' || s === 'larva' || s === 'prepupa' || s === 'pupa' || s === 'adult';
+    }).length;
 
     main.innerHTML = `
       ${UI.header(title, headerOpts)}
@@ -445,6 +639,7 @@ Pages.lotList = function () {
         <div class="filter-bar" style="margin-bottom:8px">
           <button class="pill active" onclick="Pages._lotUnitTabSwitch('lot')">🥚 ロット (${lots.length})</button>
           <button class="pill" onclick="Pages._lotUnitTabSwitch('unit')">📦 ユニット (${activeUnitCount})</button>
+          <button class="pill" onclick="Pages._lotUnitTabSwitch('ind')">🐛 個体 (${_activeIndCount})</button>
         </div>
         <div style="margin-bottom:8px">
           <input type="text" placeholder="🔍 ロットID・ラインで検索..." id="lot-kw-input"
