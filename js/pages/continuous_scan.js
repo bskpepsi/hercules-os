@@ -1,10 +1,11 @@
-// FILE: js/pages/continuous_scan.js  build: 20260421n
-// 変更点(20260421m→20260421n):
-//   - [20260421n] 保存後のユニット詳細再描画を高速化
-//       window._skipNextGrowthLoad フラグを立ててから Pages.unitDetail を呼び、
-//       unit_detail 側で API.growth.list の並列呼び出しをスキップさせる。
-//       Store キャッシュだけで再描画するので反映が 10-20秒 → 1秒以内に短縮。
-//   - [20260421m] 継続読取り保存ロジック刷新 (日付入り行のみ、既存行 update)
+// FILE: js/pages/continuous_scan.js  build: 20260422a
+// 変更点(20260421n→20260422a):
+//   - [20260422a] 診断ログ追加: 保存後のユニット本体更新が実行されているか、
+//       どの値で分岐しているか確認できるよう console.log を増強。
+//       「[CS] checking unit patch block」「[CS] unit patch calc」
+//       「[CS] unit patch decided」「[CS] unit update response」が出る。
+//       これらが出ずに終了する場合は、コード到達前に例外発生中。
+//   - [20260421n] 保存後のユニット詳細再描画を高速化 (_skipNextGrowthLoad)
 //       各行の date 列と重複しており混乱の元だったため、
 //       入力欄を廃止し、行に date がなければ today を使うよう _cScanSave を修正
 //   - [20260421h] 空行の保存スキップ修正
@@ -52,7 +53,7 @@
 //   - 右列交換欄を□全/□追表示、個体8行対応
 
 'use strict';
-console.log('[HerculesOS] continuous_scan.js v20260421n loaded');
+console.log('[HerculesOS] continuous_scan.js v20260422a loaded');
 
 // ────────────────────────────────────────────────────────────────
 // 共有ユーティリティ（continuousScan / batchScan 両方から使用）
@@ -1089,6 +1090,8 @@ Pages.continuousScan = function(params) {
         //   St チェック (ocr.stage) も current_stage として補助的に反映。
         //   容器は前回踏襲 (entity.container_size) のまま維持するため、
         //   ユーザーが明示的に変更したときのみ更新。
+        console.log('[CS] checking unit patch block:',
+          { isUnit: isUnit, hasEntity: !!_savedEntity, unitId: _savedEntity && _savedEntity.unit_id });
         if (isUnit && _savedEntity && _savedEntity.unit_id) {
           try {
             var _ocrMat = (_state.ocrResult && _state.ocrResult.mat_type) ? String(_state.ocrResult.mat_type).trim() : '';
@@ -1104,6 +1107,9 @@ Pages.continuousScan = function(params) {
               if (rows[ci] && rows[ci].date && rows[ci].container) { _lastContRow = rows[ci]; break; }
             }
             var newCont = _lastContRow ? _lastContRow.container : (_savedEntity.container_size || '');
+            console.log('[CS] unit patch calc:',
+              { ocrMat: _ocrMat, fallbackMat: fallbackMat, newMat: newMat,
+                curMat: _savedEntity.mat_type, newCont: newCont, curCont: _savedEntity.container_size });
 
             var unitPatch = {};
             var curMat = String(_savedEntity.mat_type || '').trim();
@@ -1115,17 +1121,23 @@ Pages.continuousScan = function(params) {
             if (newCont && newCont !== String(_savedEntity.container_size || '').trim()) {
               unitPatch.container_size = newCont;
             }
+            console.log('[CS] unit patch decided:', unitPatch, 'keys=', Object.keys(unitPatch).length);
             if (Object.keys(unitPatch).length > 0) {
-              await API.unit.update(Object.assign({ unit_id: _savedEntity.unit_id }, unitPatch));
+              var _unitUpdRes = await API.unit.update(Object.assign({ unit_id: _savedEntity.unit_id }, unitPatch));
+              console.log('[CS] unit update response:', _unitUpdRes);
               if (Store.patchDBItem) {
                 Store.patchDBItem('breeding_units', 'unit_id', _savedEntity.unit_id, unitPatch);
               }
               console.log('[CS] unit patched:', unitPatch);
+            } else {
+              console.log('[CS] unit patch skipped: no diff');
             }
           } catch (matErr) {
             console.error('[CS] unit mat update error:', matErr);
             UI.toast('⚠️ ユニット情報の反映に失敗: ' + (matErr.message || '通信エラー') + '（記録は保存済み）', 'error', 5000);
           }
+        } else {
+          console.log('[CS] unit patch block skipped (not a unit or no entity)');
         }
 
         UI.toast('✅ '+savedCount+'件の記録を保存しました','success',3000);
