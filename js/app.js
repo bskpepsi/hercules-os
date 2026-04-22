@@ -2,6 +2,17 @@
 // ────────────────────────────────────────────────────────────────
 // ════════════════════════════════════════════════════════════════
 // app.js
+// build: 20260422r
+// 変更点:
+//   - [20260422r] ボトムナビのハイライト制御を飼育ナビに対応（Phase D）
+//     ① 新しい kanbanPages 配列を追加:
+//        ['lot-list','lot-detail','unit-detail','ind-detail','ind-list']
+//        これらのページにいるとき 🐛飼育 ボタンがハイライトされる。
+//     ② managePages から 'lot-list' と 'lot-detail' を削除
+//        (以前は 📋管理 と重複してハイライトしていた)
+//     ③ renderNav の toggle 条件に
+//          (nav === 'lot-list' && kanbanPages.includes(cur))
+//        を追加。
 // 役割: アプリの起動・ルーティング・ローディング・トースト・
 //       共通UIユーティリティを担う。各画面JSの呼び出し元。
 //       画面ごとのrender関数を呼び分けるシンプルなSPAルーター。
@@ -193,10 +204,13 @@ function bindNav() {
 function renderNav() {
   const cur = Store.getPage();
   const qrPages = ['qr-scan','qr-diff','weight-mode'];
+  // [20260422r] 飼育管理系 (🐛飼育 ナビ) でハイライトされるページ群
+  const kanbanPages = ['lot-list','lot-detail','unit-detail','ind-detail','ind-list'];
+  // [20260422r] 'lot-list','lot-detail' は kanbanPages へ移動したので削除
   const managePages = [
-    'lot-list','line-list','parent-list','bloodline-list','pairing-list',
+    'line-list','parent-list','bloodline-list','pairing-list',
     'line-new','lot-new','parent-new','bloodline-new','pairing-new',
-    'lot-detail','line-detail','parent-detail','bloodline-detail','pairing-detail',
+    'line-detail','parent-detail','bloodline-detail','pairing-detail',
     'label-gen',
     'sale-list',
     'analysis-menu','line-analysis','mother-ranking','heatmap','parent-dashboard','bloodline-analysis',
@@ -206,7 +220,8 @@ function renderNav() {
     el.classList.toggle('active',
       nav === cur ||
       (nav === 'qr-scan'  && qrPages.includes(cur)) ||
-      (nav === 'manage'   && managePages.includes(cur))
+      (nav === 'manage'   && managePages.includes(cur)) ||
+      (nav === 'lot-list' && kanbanPages.includes(cur))
     );
   });
 }

@@ -3,8 +3,16 @@
 // lot.js — Phase4-1 UI統一版
 // ロット一覧・詳細・分割・個体化を担う
 // カードUIを3列（コード | 頭数+ステージ | ›）に統一
-// build: 20260422q
+// build: 20260422r
 // 変更点:
+//   - [20260422r] Phase C/D 追加調整
+//     ① タブ表示順を 🐛 個体 → 📦 ユニット → 🥚 ロット に変更
+//     ② デフォルトタブを 'lot' → 'ind' に変更
+//        (ボトムナビから 飼育 で入ったときに 個体 から見せる)
+//     ③ URL hash 同期: 'ind' が新デフォルトなので書き込み条件を反転
+//        (tab !== 'ind' のときに _tab=xxx を書く)
+//     ④ 既存の "ロット一覧へ" ボタン (lot.js 内部の他画面からの導線) は
+//        意味を保つため明示的に {_tab:'lot'} を付与
 //   - [20260422q] 飼育管理に「🐛 個体」タブを追加（Phase C）
 //     lot-list ページに 3つ目のタブとして個体一覧を統合。
 //     ロット/ユニット/個体 の3タブ構成に。
@@ -57,7 +65,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] lot.js v20260422q loaded');
+console.log('[HerculesOS] lot.js v20260422r loaded');
 
 // ────────────────────────────────────────────────────────────────
 // [20260418f] 血統・種親カードを生成（ロット詳細用）
@@ -189,7 +197,8 @@ Pages.lotList = function () {
   const fixedLine   = fixedLineId ? Store.getLine(fixedLineId) : null;
   const isLineLimited = !!fixedLineId;
 
-  let _activeTab = params._tab || 'lot';
+  // [20260422r] デフォルトタブを 'lot' → 'ind' に変更（ボトムナビ「飼育」の意図）
+  let _activeTab = params._tab || 'ind';
   let _keyword = '';
   let filters = { status: 'active', stage: '', line_id: fixedLineId, mat_type: '' };
   let _lotStatusMode = 'active';
@@ -244,13 +253,13 @@ Pages.lotList = function () {
       UI.header(title, isLineLimited ? {back:true} : {action:{fn:"routeTo('lot-new')",icon:'＋'}}) +
       `<div class="page-body">` +
       `<div class="filter-bar" style="margin-bottom:8px">
+        <button class="pill" onclick="Pages._lotUnitTabSwitch('ind')">🐛 個体 (${_activeIndCount})</button>
+        <button class="pill active" onclick="Pages._lotUnitTabSwitch('unit')">📦 ユニット (${allUnits.filter(u=>(u.status||'active')==='active').length})</button>
         <button class="pill" onclick="Pages._lotUnitTabSwitch('lot')">🥚 ロット (${(()=>{
           const ac=Store.filterLots({status:'active',line_id:fixedLineId});
           const fs=Store.filterLots({status:'for_sale',line_id:fixedLineId});
           return ac.length+fs.length;
         })()})</button>
-        <button class="pill active" onclick="Pages._lotUnitTabSwitch('unit')">📦 ユニット (${allUnits.filter(u=>(u.status||'active')==='active').length})</button>
-        <button class="pill" onclick="Pages._lotUnitTabSwitch('ind')">🐛 個体 (${_activeIndCount})</button>
       </div>` +
       `<div style="margin-bottom:8px;position:relative">
         <input type="text" placeholder="🔍 ID・ステージで検索..." value="${_keyword}"
@@ -519,9 +528,9 @@ Pages.lotList = function () {
       ) +
       '<div class="page-body">' +
       '<div class="filter-bar" style="margin-bottom:8px">'
-        + '<button class="pill" onclick="Pages._lotUnitTabSwitch(\'lot\')">🥚 ロット (' + _lotCountActive + ')</button>'
-        + '<button class="pill" onclick="Pages._lotUnitTabSwitch(\'unit\')">📦 ユニット (' + activeUnitCount + ')</button>'
         + '<button class="pill active" onclick="Pages._lotUnitTabSwitch(\'ind\')">🐛 個体 (' + _activeIndCount + ')</button>'
+        + '<button class="pill" onclick="Pages._lotUnitTabSwitch(\'unit\')">📦 ユニット (' + activeUnitCount + ')</button>'
+        + '<button class="pill" onclick="Pages._lotUnitTabSwitch(\'lot\')">🥚 ロット (' + _lotCountActive + ')</button>'
       + '</div>' +
       '<div style="margin-bottom:8px;position:relative">'
         + '<input type="text" placeholder="🔍 ID・メモで検索..." value="' + _keyword + '"'
@@ -637,9 +646,9 @@ Pages.lotList = function () {
       ${UI.header(title, headerOpts)}
       <div class="page-body">
         <div class="filter-bar" style="margin-bottom:8px">
-          <button class="pill active" onclick="Pages._lotUnitTabSwitch('lot')">🥚 ロット (${lots.length})</button>
-          <button class="pill" onclick="Pages._lotUnitTabSwitch('unit')">📦 ユニット (${activeUnitCount})</button>
           <button class="pill" onclick="Pages._lotUnitTabSwitch('ind')">🐛 個体 (${_activeIndCount})</button>
+          <button class="pill" onclick="Pages._lotUnitTabSwitch('unit')">📦 ユニット (${activeUnitCount})</button>
+          <button class="pill active" onclick="Pages._lotUnitTabSwitch('lot')">🥚 ロット (${lots.length})</button>
         </div>
         <div style="margin-bottom:8px">
           <input type="text" placeholder="🔍 ロットID・ラインで検索..." id="lot-kw-input"
@@ -699,20 +708,20 @@ Pages.lotList = function () {
   Pages._lotUnitTabSwitch = function(tab) {
     _activeTab = tab;
     _keyword = '';
-    // [20260422c] リロード時にタブ選択が保持されるよう URL hash と Store.params を同期
-    //   既定値 'lot' は hash に含めず、'unit' の時だけ _tab=unit を URL に書く。
+    // [20260422r] デフォルトが 'ind' になったので URL 書き込み条件を反転:
+    //   'ind' のときは _tab を URL に含めず、それ以外のときだけ _tab=xxx を書く。
     //   routeTo は使わない（使うと Pages.lotList が再実行されてローカルフィルター
     //   状態 (_unitPhase/_unitStatus/_unitMat/_lotStatusMode 等) がリセットされるため）。
     try {
       var hashParts = { page: 'lot-list' };
       if (fixedLineId) hashParts.line_id = fixedLineId;
-      if (tab !== 'lot') hashParts._tab = tab;
+      if (tab !== 'ind') hashParts._tab = tab;
       var hashStr = new URLSearchParams(hashParts).toString();
       history.replaceState(null, '', '#' + hashStr);
       if (typeof Store !== 'undefined' && Store.navigate) {
         var storeParams = {};
         if (fixedLineId) storeParams.line_id = fixedLineId;
-        if (tab !== 'lot') storeParams._tab = tab;
+        if (tab !== 'ind') storeParams._tab = tab;
         // 第3引数 true で nav イベント抑止（_renderPage の二重実行を防ぐ）
         Store.navigate('lot-list', storeParams, true);
       }
@@ -1838,7 +1847,7 @@ Pages._blkSave = async function () {
         </div>
         <div style="display:flex;gap:10px;margin-top:8px">
           <button class="btn btn-ghost" style="flex:1"
-            onclick="routeTo('lot-list',{line_id:'${lineId}'})">ロット一覧へ</button>
+            onclick="routeTo('lot-list',{line_id:'${lineId}',_tab:'lot'})">ロット一覧へ</button>
           <button class="btn btn-primary" style="flex:1"
             onclick="Pages._blkQrBatch(${JSON.stringify(created).replace(/"/g,'&quot;')})">🏷 QR一括発行</button>
         </div>
@@ -1866,7 +1875,7 @@ Pages._blkQrBatch = function (createdLots) {
       </div>
       <div style="display:flex;gap:8px;margin-top:8px">
         <button class="btn btn-ghost" style="flex:1"
-          onclick="routeTo('lot-list')">ロット一覧へ</button>
+          onclick="routeTo('lot-list',{_tab:'lot'})">ロット一覧へ</button>
         <button class="btn btn-primary" style="flex:1"
           onclick="window.print()">🖨 印刷</button>
       </div>
