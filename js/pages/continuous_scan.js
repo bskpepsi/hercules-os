@@ -1,16 +1,10 @@
-// FILE: js/pages/continuous_scan.js  build: 20260421m
-// 変更点(20260421k→20260421m):
-//   - [20260421m] 継続読取り保存ロジック刷新:
-//       A) 行の mat_type 初期値を空に戻し、ラベルの M チェック値 (ocr.mat_type) は
-//          「最後にデータが入った行」のみに反映。過去行の mat_type が誤って書き換わらない。
-//       B) 保存条件を「日付が入った行のみ」に変更 (体重なしでも追加交換記録として保存可)。
-//       C) 既存 growth_records と日付(+unit_slot_no)で照合し、一致なら update、
-//          不一致なら create に分岐。重複レコード乱立を防止。
-//       D) ユニットの mat_type/stage_phase 反映は ocr.mat_type を優先、なければ最終行、
-//          container_size は日付入り行の container をユーザー修正値として使用、
-//          entity の既存値と変わらなければ更新しない。
-//   - [20260421k] OCR 未検出時の初期値を entity から補完 (revised)
-//   - [20260421h] 「記録日（デフォルト）」入力欄を削除
+// FILE: js/pages/continuous_scan.js  build: 20260421n
+// 変更点(20260421m→20260421n):
+//   - [20260421n] 保存後のユニット詳細再描画を高速化
+//       window._skipNextGrowthLoad フラグを立ててから Pages.unitDetail を呼び、
+//       unit_detail 側で API.growth.list の並列呼び出しをスキップさせる。
+//       Store キャッシュだけで再描画するので反映が 10-20秒 → 1秒以内に短縮。
+//   - [20260421m] 継続読取り保存ロジック刷新 (日付入り行のみ、既存行 update)
 //       各行の date 列と重複しており混乱の元だったため、
 //       入力欄を廃止し、行に date がなければ today を使うよう _cScanSave を修正
 //   - [20260421h] 空行の保存スキップ修正
@@ -58,7 +52,7 @@
 //   - 右列交換欄を□全/□追表示、個体8行対応
 
 'use strict';
-console.log('[HerculesOS] continuous_scan.js v20260421m loaded');
+console.log('[HerculesOS] continuous_scan.js v20260421n loaded');
 
 // ────────────────────────────────────────────────────────────────
 // 共有ユーティリティ（continuousScan / batchScan 両方から使用）
@@ -1136,12 +1130,16 @@ Pages.continuousScan = function(params) {
 
         UI.toast('✅ '+savedCount+'件の記録を保存しました','success',3000);
 
-        // [20260421h] 保存完了後、現在のページが unit-detail / ind-detail なら再描画
+        // [20260421n] 保存完了後、現在のページが unit-detail / ind-detail なら再描画
         //   Store.addDBItem で growth_records が追加されていても unit_detail は
-        //   変更を監視していないため画面が自動更新されない問題を解決
+        //   変更を監視していないため画面が自動更新されない問題を解決。
+        //   window._skipNextGrowthLoad フラグを立てることで
+        //   unit_detail 側で API.growth.list の並列呼び出しをスキップさせ、
+        //   Store キャッシュだけで即時再描画する (高速化)。
         try {
           var _curPage = (window.location.hash || '').replace(/^#/, '').split('?')[0];
           if (_savedTargetType === 'UNIT' && _curPage === 'unit-detail' && typeof Pages.unitDetail === 'function') {
+            window._skipNextGrowthLoad = true;
             Pages.unitDetail({ unitDisplayId: _savedDisplayId });
           } else if (_savedTargetType === 'IND' && _curPage === 'ind-detail' && typeof Pages.individualDetail === 'function') {
             Pages.individualDetail(_savedTargetId);

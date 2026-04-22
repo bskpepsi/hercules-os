@@ -1,6 +1,10 @@
 // ════════════════════════════════════════════════════════════════
 // growth.js v5 — 成長記録入力画面（体重測定UIベース・全導線統一）
-// build: 20260421i
+// build: 20260421n
+//
+// 20260421n 修正:
+//   - 成長記録削除後のユニット詳細再描画で window._skipNextGrowthLoad フラグを立て、
+//     API.growth.list をスキップさせる (高速化)
 //
 // 20260421i 修正:
 //   - 成長記録編集モーダルに「🗑️ この記録を削除」ボタンを追加
@@ -24,7 +28,7 @@
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-console.log('[HerculesOS] growth.js v20260421i loaded');
+console.log('[HerculesOS] growth.js v20260421n loaded');
 
 // ── 体重閾値バッジ ───────────────────────────────────────────────
 const GR_THRESHOLDS = [
@@ -908,6 +912,7 @@ Pages._grDeleteRecord = async function(recordId) {
       h.innerHTML = UI.weightTable(recs);
     }
     // 現在のページが ind-detail / unit-detail なら再描画
+    // [20260421n] unit-detail は _skipNextGrowthLoad フラグで高速再描画
     try {
       var _curPage = (window.location.hash || '').replace(/^#/, '').split('?')[0];
       if (_curPage === 'ind-detail' && typeof Pages.individualDetail === 'function' && recTid) {
@@ -915,7 +920,10 @@ Pages._grDeleteRecord = async function(recordId) {
       } else if (_curPage === 'unit-detail' && typeof Pages.unitDetail === 'function') {
         // ユニット詳細は unitDisplayId が必要。Store から引く
         var _unit = (Store.getDB('breeding_units') || []).find(function(u){ return u.unit_id === recTid; });
-        if (_unit) Pages.unitDetail({ unitDisplayId: _unit.display_id });
+        if (_unit) {
+          window._skipNextGrowthLoad = true;
+          Pages.unitDetail({ unitDisplayId: _unit.display_id });
+        }
       }
     } catch (_rerr) { console.warn('[GR] rerender failed (non-fatal):', _rerr.message); }
   } catch (e) {

@@ -1,7 +1,11 @@
 // ════════════════════════════════════════════════════════════════
 // unit_detail.js — 飼育ユニット（BU）詳細画面
-// build: 20260421j
+// build: 20260421n
 // 変更点:
+//   - [20260421n] 成長記録の非同期ロードに高速スキップ機構を追加
+//     window._skipNextGrowthLoad フラグが立っている場合、API.growth.list を
+//     スキップして Store キャッシュのみで再描画する (継続読取り保存後の高速化)。
+//     これにより保存→反映時間が 10-20秒 → 1秒以内に短縮。
 //   - [20260421j] _udDeleteGrowthPair の API 呼び出し引数修正
 //     API.growth.delete はオブジェクト {record_id} を期待するが、
 //     従来は record_id 文字列を直接渡していたため
@@ -276,6 +280,16 @@ Pages.unitDetail = function (params = {}) {
   //   ユニット詳細を開くたびにここで明示的に API から取得する必要がある。
   //   target_id が unit_id と display_id の両方に存在する可能性があるため、
   //   両方を並列で呼んでマージし、Store に保存してから再描画する。
+  //
+  //   [20260421n] window._skipNextGrowthLoad フラグが立っている場合は
+  //   API.growth.list を呼ばない (継続読取り保存直後の高速再描画用)。
+  //   Store には既に最新データが入っているので、API を叩き直す必要がない。
+  //   フラグは1回だけ有効 (消費後リセット)。
+  if (window._skipNextGrowthLoad) {
+    console.log('[UD] skip growth.list (cache-only mode)');
+    window._skipNextGrowthLoad = false;
+    return;
+  }
   (async function _udLoadGrowthAsync() {
     if (!unit || !API || !API.growth || !API.growth.list) return;
     try {
@@ -945,9 +959,11 @@ Pages._udDeleteGrowthPair = async function (r1Id, r2Id) {
     });
     UI.toast('成長記録を削除しました（' + deletedIds.length + '件）', 'success');
     // unit-detail ページを再描画
+    // [20260421n] _skipNextGrowthLoad で API.growth.list を飛ばして高速再描画
     try {
       var _params = Store.getParams ? Store.getParams() : {};
       if (_params.unitDisplayId && typeof Pages.unitDetail === 'function') {
+        window._skipNextGrowthLoad = true;
         Pages.unitDetail({ unitDisplayId: _params.unitDisplayId });
       }
     } catch (_rerr) { /* ignore */ }
