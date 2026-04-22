@@ -1,22 +1,22 @@
 // ════════════════════════════════════════════════════════════════
 // growth.js v5 — 成長記録入力画面（体重測定UIベース・全導線統一）
-// build: 20260422h
+// build: 20260422r
 //
-// 20260422h 修正:
-//   🔥 個体の成長記録保存＆削除に対するUIサクサク化・整合性担保
-//     ① _tmp_ レコード消失時のフォールバック
-//        旧: bg save 完了時に findIndex(_tmp_XXX) === -1 だと何もせず終了
-//             (tmp が API.individual.get の race で消えた場合、実レコードが
-//              Store に追加されず、画面に出ないまま保存されたことになっていた)
-//        新: idx === -1 でも res.record_id が Store に未存在なら push
-//     ② 個体保存時に current_mat / current_container も同期
-//        ユニットの継続読取りで mat_type / container_size を更新するのと同等。
-//        Store.patchDBItem + API.individual.update を発行。
-//        これで T-フェーズバッジと T2/T3移行ボタンが保存直後に正しく切り替わる。
-//     ③ 削除後の巻き戻し (_grReconcileIndAfterDelete)
-//        ユニットの _udReconcileUnitAfterDelete と同等。
-//        残存記録の最新行から current_stage / current_mat / current_container /
-//        latest_weight_g を再計算して Store + API に反映。
+// 20260422r 修正:
+//   - 🐛 成長記録を削除しても即反映されずリロードが必要だったバグ修正
+//     症状: 個体詳細で記録の「🗑️ この記録を削除」を実行すると Store からは
+//           消えるがカード側グラフ・履歴テーブルは古い状態のまま。F5 で反映。
+//     原因: _grDeleteRecord の現在ページ判定が
+//             `(window.location.hash||'').replace(/^#/,'').split('?')[0]`
+//           で実装されていたが、HerculesOS の URL は
+//             #page=ind-detail&indId=IND-xxx
+//           形式で `?` を含まない。そのため _curPage には
+//             "page=ind-detail&indId=IND-xxx"
+//           という文字列全体が入り、`_curPage === 'ind-detail'` は常に偽。
+//           結果、Pages.individualDetail の再描画が呼ばれていなかった。
+//     修正: Store.getPage() を使ってページ識別。ind-detail / unit-detail の
+//          どちらでも確実に再描画される。再描画直前に画面のスクロール位置も
+//          保存・復元してユーザー体験を損なわない。
 //
 // 20260421n 修正:
 //   - 成長記録削除後のユニット詳細再描画で window._skipNextGrowthLoad フラグを立て、
@@ -44,7 +44,7 @@
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-console.log('[HerculesOS] growth.js v20260422h loaded');
+console.log('[HerculesOS] growth.js v20260422r loaded');
 
 // ── 体重閾値バッジ ───────────────────────────────────────────────
 const GR_THRESHOLDS = [
@@ -758,50 +758,13 @@ Pages.growthRecord = function (params = {}) {
       }
       try {
         var res = await _createWithRetry(payload, 2);
-        // [20260422h-①] tmp→real record_id swap (レース耐性あり)
-        //   _tmp_ が Store に残っていれば in-place 更新、
-        //   消えている (API.individual.get の overwrite 等) なら重複確認して push。
-        if (res && res.record_id) {
-          var _recs = Store.getGrowthRecords(id) || [];
-          var _idx = _recs.findIndex(function(r){ return r.record_id === _tmpRecord.record_id; });
-          if (_idx >= 0) {
-            _recs[_idx] = Object.assign({}, _recs[_idx], { record_id: res.record_id, age_days: res.age_days });
-            Store.setGrowthRecords(id, _recs);
-          } else {
-            // tmp が消えている → real record_id が既に Store にあるか確認
-            var _already = _recs.some(function(r){ return r.record_id === res.record_id; });
-            if (!_already) {
-              var _fullRec = Object.assign({}, payload, {
-                record_id: res.record_id,
-                age_days:  res.age_days
-              });
-              _recs.push(_fullRec);
-              Store.setGrowthRecords(id, _recs);
-              console.log('[GR] tmp lost by race, pushed fresh record:', res.record_id);
-            }
-          }
+        // 仮記録を正式なrecord_idで差し替え
+        var _recs = Store.getGrowthRecords(id) || [];
+        var _idx = _recs.findIndex(function(r){ return r.record_id === _tmpRecord.record_id; });
+        if (_idx >= 0 && res && res.record_id) {
+          _recs[_idx] = Object.assign({}, _recs[_idx], { record_id: res.record_id, age_days: res.age_days });
+          Store.setGrowthRecords(id, _recs);
         }
-
-        // [20260422h-②] 個体の current_mat / current_container 同期
-        //   ユニット側 (continuous_scan) と同等の役割。
-        //   T-フェーズバッジ・T2/T3移行ボタンが保存直後に正しく切り替わる。
-        //   Store 楽観更新 + サーバー永続化。失敗しても記録自体は保存済みなので警告のみ。
-        if (type === 'IND') {
-          var _indUpdate = {};
-          if (payload.mat_type)  _indUpdate.current_mat       = payload.mat_type;
-          if (payload.container) _indUpdate.current_container = payload.container;
-          if (Object.keys(_indUpdate).length > 0) {
-            try {
-              Store.patchDBItem('individuals', 'ind_id', id, _indUpdate);
-            } catch (_sErr) { console.warn('[GR] Store.patchDBItem ind failed:', _sErr.message); }
-            try {
-              await API.individual.update(Object.assign({ ind_id: id }, _indUpdate));
-            } catch (_iuErr) {
-              console.warn('[GR] API.individual.update failed (non-fatal):', _iuErr.message);
-            }
-          }
-        }
-
         UI.toast('✅ 記録しました', 'success', 2000);
       } catch (e) {
         console.error('[GR] bg save error (all retries failed):', e);
@@ -931,72 +894,6 @@ Pages._grSaveEdit = async function(recordId) {
 
 // ── [20260421i] 成長記録の削除 ────────────────────────────────────
 // 誤登録訂正用の物理削除。二段階確認 (confirm → toast) で誤操作を防止する。
-// ────────────────────────────────────────────────────────────────
-// [20260422h-③] 個体の成長記録削除後の巻き戻しヘルパー
-//   ユニットの _udReconcileUnitAfterDelete と同等の役割。
-//   残存成長記録の最新行から current_stage / current_mat /
-//   current_container / latest_weight_g を再計算して Store + API へ反映。
-//   残存ゼロ件の場合は何もしない (ユーザーが手動で再設定可能)。
-// ────────────────────────────────────────────────────────────────
-function _grReconcileIndAfterDelete(indId, remainingRecs) {
-  try {
-    var ind = Store.getIndividual(indId);
-    if (!ind) { console.warn('[GR-reconcile] individual not found:', indId); return; }
-    if (!remainingRecs || remainingRecs.length === 0) {
-      console.log('[GR-reconcile] no records remain for', indId, '→ skip');
-      return;
-    }
-    // 日付降順でソート
-    var sorted = [].concat(remainingRecs).sort(function (a, b) {
-      return String(b.record_date || '').localeCompare(String(a.record_date || ''));
-    });
-    var latest           = sorted[0];
-    var latestMatRec     = sorted.find(function (r) { return r.mat_type; })                        || latest;
-    var latestContRec    = sorted.find(function (r) { return r.container || r.container_size; })   || latest;
-    var latestWeightRec  = sorted.find(function (r) { return r.weight_g > 0; })                    || null;
-
-    var indPatch = {};
-    if (latest.stage          && latest.stage !== ind.current_stage)
-      indPatch.current_stage     = latest.stage;
-    if (latestMatRec.mat_type && latestMatRec.mat_type !== ind.current_mat)
-      indPatch.current_mat       = latestMatRec.mat_type;
-    var contVal = latestContRec.container || latestContRec.container_size;
-    if (contVal && contVal !== ind.current_container)
-      indPatch.current_container = contVal;
-    if (latestWeightRec && latestWeightRec.weight_g !== ind.latest_weight_g)
-      indPatch.latest_weight_g   = latestWeightRec.weight_g;
-
-    if (Object.keys(indPatch).length === 0) {
-      console.log('[GR-reconcile] no diff for', indId);
-      return;
-    }
-    console.log('[GR-reconcile] patching individual:', indPatch);
-
-    // ロールバック用の元値
-    var _rollback = {
-      current_stage:     ind.current_stage     || '',
-      current_mat:       ind.current_mat       || '',
-      current_container: ind.current_container || '',
-      latest_weight_g:   ind.latest_weight_g   || '',
-    };
-
-    // Store 楽観更新 (同期)
-    try { Store.patchDBItem('individuals', 'ind_id', indId, indPatch); }
-    catch (_sErr) { console.warn('[GR-reconcile] Store patch failed:', _sErr.message); }
-
-    // API バックグラウンド更新 (失敗時ロールバック)
-    API.individual.update(Object.assign({ ind_id: indId }, indPatch))
-      .then(function () { console.log('[GR-reconcile] API succeeded'); })
-      .catch(function (apiErr) {
-        console.error('[GR-reconcile] API failed, rolling back:', apiErr);
-        try { Store.patchDBItem('individuals', 'ind_id', indId, _rollback); } catch(_){}
-        UI.toast('⚠️ 個体情報の巻き戻しに失敗: ' + (apiErr.message || '通信エラー'), 'error', 5000);
-      });
-  } catch (e) {
-    console.warn('[GR-reconcile] error (non-fatal):', e.message);
-  }
-}
-
 // 削除成功時は Store.growthMap から該当 record を除去し、履歴テーブルを
 // 即時再描画する。画面が unit-detail / ind-detail の場合も reload される。
 Pages._grDeleteRecord = async function(recordId) {
@@ -1020,18 +917,10 @@ Pages._grDeleteRecord = async function(recordId) {
     UI.loading(true); UI.closeModal();
     await apiCall(function(){ return API.growth.delete({ record_id: recordId }); }, '成長記録を削除しました');
     // Store から該当 record を除去
-    var _updated = null;
     if (recTid) {
-      _updated = (gm[recTid] || []).filter(function(r){ return r.record_id !== recordId; });
-      Store.setGrowthRecords(recTid, _updated);
+      var updated = (gm[recTid] || []).filter(function(r){ return r.record_id !== recordId; });
+      Store.setGrowthRecords(recTid, updated);
     }
-
-    // [20260422h-③] 個体の場合、残存記録の最新行に合わせて current_* を巻き戻し
-    //   ユニットの _udReconcileUnitAfterDelete と同等。
-    if (rec && rec.target_type === 'IND' && recTid && _updated) {
-      _grReconcileIndAfterDelete(recTid, _updated);
-    }
-
     // 成長記録画面の履歴テーブル更新
     var h = document.getElementById('gr-history');
     if (h && recTid) {
@@ -1039,18 +928,29 @@ Pages._grDeleteRecord = async function(recordId) {
       h.innerHTML = UI.weightTable(recs);
     }
     // 現在のページが ind-detail / unit-detail なら再描画
+    // [20260422r] 以前の判定は (hash||'').split('?')[0] で誤検知していたため
+    //   Store.getPage() で正しくページ識別する。
     // [20260421n] unit-detail は _skipNextGrowthLoad フラグで高速再描画
     try {
-      var _curPage = (window.location.hash || '').replace(/^#/, '').split('?')[0];
+      var _curPage = (typeof Store !== 'undefined' && Store.getPage) ? Store.getPage() : '';
+      // 再描画前にスクロール位置を保存し、描画後に復元 (UX向上)
+      var _savedScroll = window.scrollY || 0;
+      var _restoreScroll = function() {
+        try { window.scrollTo(0, _savedScroll); } catch (_sErr) {}
+      };
       if (_curPage === 'ind-detail' && typeof Pages.individualDetail === 'function' && recTid) {
         Pages.individualDetail(recTid);
+        setTimeout(_restoreScroll, 60);
       } else if (_curPage === 'unit-detail' && typeof Pages.unitDetail === 'function') {
         // ユニット詳細は unitDisplayId が必要。Store から引く
         var _unit = (Store.getDB('breeding_units') || []).find(function(u){ return u.unit_id === recTid; });
         if (_unit) {
           window._skipNextGrowthLoad = true;
           Pages.unitDetail({ unitDisplayId: _unit.display_id });
+          setTimeout(_restoreScroll, 60);
         }
+      } else {
+        console.log('[GR] delete: no rerender (page=' + _curPage + ')');
       }
     } catch (_rerr) { console.warn('[GR] rerender failed (non-fatal):', _rerr.message); }
   } catch (e) {
