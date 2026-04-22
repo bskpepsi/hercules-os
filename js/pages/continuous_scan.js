@@ -1,5 +1,26 @@
-// FILE: js/pages/continuous_scan.js  build: 20260421g
-// 変更点(20260418k→20260421g):
+// FILE: js/pages/continuous_scan.js  build: 20260421m
+// 変更点(20260421k→20260421m):
+//   - [20260421m] 継続読取り保存ロジック刷新:
+//       A) 行の mat_type 初期値を空に戻し、ラベルの M チェック値 (ocr.mat_type) は
+//          「最後にデータが入った行」のみに反映。過去行の mat_type が誤って書き換わらない。
+//       B) 保存条件を「日付が入った行のみ」に変更 (体重なしでも追加交換記録として保存可)。
+//       C) 既存 growth_records と日付(+unit_slot_no)で照合し、一致なら update、
+//          不一致なら create に分岐。重複レコード乱立を防止。
+//       D) ユニットの mat_type/stage_phase 反映は ocr.mat_type を優先、なければ最終行、
+//          container_size は日付入り行の container をユーザー修正値として使用、
+//          entity の既存値と変わらなければ更新しない。
+//   - [20260421k] OCR 未検出時の初期値を entity から補完 (revised)
+//   - [20260421h] 「記録日（デフォルト）」入力欄を削除
+//       各行の date 列と重複しており混乱の元だったため、
+//       入力欄を廃止し、行に date がなければ today を使うよう _cScanSave を修正
+//   - [20260421h] 空行の保存スキップ修正
+//       従来: ユニット保存時 "weight1 !== '' || mbs[0]" と書かれており、
+//       行が空でもメンバーがいれば保存されてしまう重大バグ
+//       → 4行中1行だけデータがあっても 8件の空レコードが作成されていた
+//       修正: 行ごとに weight1/weight2/date の少なくとも1つが入っているときだけ保存
+//   - [20260421h] 保存即 Store.addDBItem で growth_records を反映
+//       + 保存完了後に現在のページが unit-detail/ind-detail なら Pages を直接再呼出
+//       これで保存後すぐに新しい記録が画面に反映される
 //   - [20260421g] ユニットの継続読取りで mat_type 変更をユニット本体に反映
 //       従来: 成長記録には mat_type が記録されるが unit.mat_type は更新されず、
 //       基本情報が古いマット種別のまま、アクションボタンも古い stage_phase のまま。
@@ -37,7 +58,7 @@
 //   - 右列交換欄を□全/□追表示、個体8行対応
 
 'use strict';
-console.log('[HerculesOS] continuous_scan.js v20260421g loaded');
+console.log('[HerculesOS] continuous_scan.js v20260421m loaded');
 
 // ────────────────────────────────────────────────────────────────
 // 共有ユーティリティ（continuousScan / batchScan 両方から使用）
@@ -247,12 +268,22 @@ Pages.continuousScan = function(params) {
             mat_state:'auto',container_state:'auto'};
   }
 
-  function _buildTableRows(ocrResult, isUnit) {
+  function _buildTableRows(ocrResult, isUnit, entity) {
     var ocr=ocrResult||{}, ocrRows=ocr.records||[];
-    var defMat=ocr.mat_type||'', defCont='';
+    // [20260421m] 仕様確定:
+    //   - 容器 (container): ユニット本体の container_size を初期値として全行に設定
+    //     → ユーザーが変更しなければ既存値を継承する前回踏襲モード。
+    //   - マット (mat_type): 行ごとに独立管理。OCR で各行の mat_type が読み取れない仕様なので
+    //     全行空のままで初期化する。ラベルの M チェック (ocr.mat_type) は「最新のマット」を
+    //     意味するが、既存行のマット表示を書き換えてはならない (過去の交換履歴が壊れる)。
+    //     代わりに _cScanSave の最終処理で「日付の新しい記録のみ」または
+    //     「ラベルの M チェック」をユニット本体に反映する。
+    //   - 既存行の修正: save 時に既存 growth_records と日付マッチして update/create を判定
+    var entityCont = (entity && entity.container_size) ? String(entity.container_size).trim() : '';
+    var defCont = entityCont || '';
     var maxRows=isUnit?4:8, rows=[];
     for (var i=0;i<maxRows;i++){
-      var ocrRow=ocrRows[i]||null, row=_emptyRow(defMat,defCont);
+      var ocrRow=ocrRows[i]||null, row=_emptyRow('', defCont);
       if(ocrRow){
         if(ocrRow.date)    {row.date=String(ocrRow.date);      row.date_state    =ocrRow._confidence==='low'?'low':'high';}
         if(ocrRow.weight)  {row.weight1=String(ocrRow.weight); row.weight1_state =ocrRow._confidence==='low'?'low':'high';}
@@ -268,6 +299,21 @@ Pages.continuousScan = function(params) {
         if(ocr.exchange_type){row.exchange=ocr.exchange_type;row.exchange_state=ocr._confidence==='low'?'low':'high';}
       }
       rows.push(row);
+    }
+    // [20260421m] ラベルの M チェック (ocr.mat_type) は「現在のマット種別」であり、
+    //   最新の書き込み行に対応する。OCR 記録行のうち日付が一番新しい (もしくは一番下の
+    //   非空行) だけに ocr.mat_type を反映する。それ以外の行は空のまま。
+    if (ocr.mat_type) {
+      var lastDataRowIdx = -1;
+      for (var j = rows.length - 1; j >= 0; j--) {
+        if (rows[j] && (rows[j].date || rows[j].weight1 || rows[j].weight2)) {
+          lastDataRowIdx = j; break;
+        }
+      }
+      if (lastDataRowIdx >= 0) {
+        rows[lastDataRowIdx].mat_type = ocr.mat_type;
+        rows[lastDataRowIdx].mat_state = ocr._confidence === 'low' ? 'low' : 'high';
+      }
     }
     return rows;
   }
@@ -344,7 +390,7 @@ Pages.continuousScan = function(params) {
     var prevRecs=(Store.getGrowthRecords&&Store.getGrowthRecords(_state.targetId))||[];
     var lastRec=prevRecs.length?prevRecs.slice().sort(function(a,b){return String(b.record_date).localeCompare(String(a.record_date));})[0]:null;
 
-    if(!_state.tableRows) _state.tableRows=_buildTableRows(ocr,isUnit);
+    if(!_state.tableRows) _state.tableRows=_buildTableRows(ocr,isUnit,_state.entity);
 
     var today=new Date().toISOString().split('T')[0];
     var recDate=(ocr.record_date||today).replace(/\//g,'-');
@@ -460,10 +506,6 @@ Pages.continuousScan = function(params) {
           })()
         ) +
 
-        '<div style="margin-bottom:10px">' +
-          '<label style="font-size:.72rem;color:var(--text3);font-weight:700">記録日（デフォルト）</label>' +
-          '<input type="date" id="cs-date" class="input" value="'+recDate+'" style="margin-top:4px">' +
-        '</div>' +
         '<div style="margin-bottom:10px">' +
           '<label style="font-size:.72rem;color:var(--text3);font-weight:700">📊 ステージ <span style="color:var(--red)">*</span></label>' +
           '<select id="cs-stage" class="input" style="margin-top:4px"><option value="">選択...</option>'+stageOpts+'</select>' +
@@ -819,7 +861,8 @@ Pages.continuousScan = function(params) {
 
   // ── 保存処理 ──────────────────────────────────────────────────
   Pages._cScanSave = async function() {
-    var recDate=(document.getElementById('cs-date')&&document.getElementById('cs-date').value||'').replace(/-/g,'/');
+    // [20260421h] 「記録日（デフォルト）」入力欄を削除し、各行の date を使用
+    //   行に date がない場合は今日の日付をフォールバック
     var stage=document.getElementById('cs-stage')&&document.getElementById('cs-stage').value||'';
     var note=document.getElementById('cs-note')&&document.getElementById('cs-note').value||'';
     var isUnit=_state.targetType==='UNIT';
@@ -866,7 +909,8 @@ Pages.continuousScan = function(params) {
         var savedCount=0;
 
         function mkPayload(row, extra) {
-          var rd=row.date?row.date.trim():recDate||new Date().toISOString().split('T')[0].replace(/-/g,'/');
+          // [20260421h] 行に date がなければ today を使う（デフォルト欄は削除済み）
+          var rd=row.date?row.date.trim():new Date().toISOString().split('T')[0].replace(/-/g,'/');
           if(rd&&rd.match(/^\d{1,2}\/\d{1,2}$/)) rd=new Date().getFullYear()+'/'+rd;
           var p=Object.assign({
             target_type:_savedTargetType, target_id:_savedTargetId,
@@ -882,27 +926,108 @@ Pages.continuousScan = function(params) {
           return p;
         }
 
+        // [20260421m] 仕様確定:
+        //   - 日付が入った行のみ保存対象 (体重なしでもOK → 追加交換ケース)
+        //   - 既存 growth_records と同じ日付なら update (既存行の修正)
+        //   - 日付がマッチしなければ create (新規行追加)
+        //   日付比較用に既存 records を日付→record_id マップ化
+        var _existingByDate = {};
+        try {
+          var _existing = (Store.getGrowthRecords && Store.getGrowthRecords(_savedTargetId)) || [];
+          _existing.forEach(function(r){
+            if (!r.record_date) return;
+            var _dkey = String(r.record_date).replace(/-/g,'/');
+            if (!_existingByDate[_dkey]) _existingByDate[_dkey] = [];
+            _existingByDate[_dkey].push(r);
+          });
+        } catch (_ebdErr) { console.warn('[CS] existing-by-date build error:', _ebdErr.message); }
+
+        function _normalizeDateStr(rd) {
+          if (!rd) return '';
+          var s = String(rd).trim().replace(/-/g,'/');
+          // MM/DD → YYYY/MM/DD
+          if (s.match(/^\d{1,2}\/\d{1,2}$/)) s = new Date().getFullYear() + '/' + s;
+          // YYYY/M/D → YYYY/MM/DD
+          var m = s.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
+          if (m) s = m[1] + '/' + String(parseInt(m[2],10)).padStart(2,'0') + '/' + String(parseInt(m[3],10)).padStart(2,'0');
+          return s;
+        }
+
+        // 既存記録を slot_no で検索するヘルパー
+        function _findExistingRecordId(dateStr, slotNo) {
+          var dkey = _normalizeDateStr(dateStr);
+          var list = _existingByDate[dkey] || [];
+          // ユニットの場合は unit_slot_no で絞り込み
+          if (isUnit && slotNo) {
+            var found = list.find(function(r){ return String(r.unit_slot_no||'') === String(slotNo); });
+            if (found) return found.record_id || null;
+          }
+          // 個体の場合 or ユニットで slot 絞り込み失敗時は最初のヒット
+          return list.length > 0 ? (list[0].record_id || null) : null;
+        }
+
+        // update / create を実行し、Store を更新する共通ヘルパー
+        async function _saveOne(payload, existingRecordId) {
+          if (existingRecordId) {
+            // 既存行の修正 → API.growth.update (直接呼び出し、apiCall を介さず)
+            await API.growth.update(Object.assign({ record_id: existingRecordId }, payload));
+            // Store の該当 record を上書き
+            var gm = Store.getDB('growthMap') || {};
+            Object.entries(gm).forEach(function(entry){
+              var tid = entry[0], recs = entry[1] || [];
+              var idx = recs.findIndex(function(r){ return r.record_id === existingRecordId; });
+              if (idx >= 0) {
+                Object.assign(recs[idx], payload, { record_id: existingRecordId });
+                Store.setGrowthRecords(tid, recs);
+              }
+            });
+            return { _updated: true, record_id: existingRecordId };
+          } else {
+            var _cres = await _createWithRetry(payload, 2);
+            if (_cres && _cres.record_id && Store.addDBItem) Store.addDBItem('growth_records', _cres);
+            return _cres;
+          }
+        }
+
         if(isUnit){
           for(var i=0;i<rows.length;i++){
-            var r=rows[i]; if(!r.weight1&&!r.weight2&&!r.date)continue;
-            var mbs=_state.members;
-            if(r.weight1!==''||mbs[0]){
-              // [20260418i] スロット1の size_category を追加
-              var extra1 = {unit_slot_no:1,weight_g:r.weight1?parseFloat(r.weight1):''};
+            var r=rows[i];
+            // [20260421m] 日付が入った行のみ保存対象 (体重なしでも可 = 追加交換)
+            if(!r.date) continue;
+            // スロット1
+            {
+              var extra1 = {unit_slot_no:1};
+              if (r.weight1 !== '' && r.weight1 !== null && r.weight1 !== undefined) {
+                extra1.weight_g = parseFloat(r.weight1);
+              }
               if (_savedSlotData[0] && _savedSlotData[0].size_category) extra1.size_category = _savedSlotData[0].size_category;
-              await _createWithRetry(mkPayload(r,extra1),2);savedCount++;
+              var _existing1 = _findExistingRecordId(r.date, 1);
+              await _saveOne(mkPayload(r, extra1), _existing1);
+              savedCount++;
             }
-            if(r.weight2!==''||mbs[1]){
-              // [20260418i] スロット2の size_category を追加
-              var extra2 = {unit_slot_no:2,weight_g:r.weight2?parseFloat(r.weight2):''};
+            // スロット2
+            {
+              var extra2 = {unit_slot_no:2};
+              if (r.weight2 !== '' && r.weight2 !== null && r.weight2 !== undefined) {
+                extra2.weight_g = parseFloat(r.weight2);
+              }
               if (_savedSlotData[1] && _savedSlotData[1].size_category) extra2.size_category = _savedSlotData[1].size_category;
-              await _createWithRetry(mkPayload(r,extra2),2);savedCount++;
+              var _existing2 = _findExistingRecordId(r.date, 2);
+              await _saveOne(mkPayload(r, extra2), _existing2);
+              savedCount++;
             }
           }
         } else {
           for(var k=0;k<rows.length;k++){
-            var row=rows[k]; if(!row.weight1&&!row.date)continue;
-            await _createWithRetry(mkPayload(row,{weight_g:row.weight1?parseFloat(row.weight1):''}),2);
+            var row=rows[k];
+            // [20260421m] 日付が入った行のみ保存対象
+            if(!row.date) continue;
+            var extraI = {};
+            if (row.weight1 !== '' && row.weight1 !== null && row.weight1 !== undefined) {
+              extraI.weight_g = parseFloat(row.weight1);
+            }
+            var _existingI = _findExistingRecordId(row.date, null);
+            await _saveOne(mkPayload(row, extraI), _existingI);
             savedCount++;
           }
         }
@@ -961,48 +1086,67 @@ Pages.continuousScan = function(params) {
           }
         }
 
-        // ── [20260421g] ユニットの場合、最終行の mat_type を見てユニット本体を更新 ──
-        //   継続読取りで T1 → T2 のようにマット交換した場合、
-        //   成長記録だけでなく unit.mat_type / unit.stage_phase も連動更新する。
-        //   これをしないと「基本情報」のマット種別が古いまま、
-        //   アクションボタンも「T2移行」のまま変わらない問題が発生していた。
+        // ── [20260421m] ユニットの mat_type / stage_phase 反映 ──
+        //   ラベルの M チェック (ocr.mat_type) を「現在のマット種別」として扱う。
+        //   これは「最新の書き込み行の mat_type」と等価だが、明示的にチェックされた値を
+        //   正とする。もし OCR が mat_type を読み取れなかった場合は、
+        //   行テーブルの最終行 mat_type でフォールバック。
         //   stage_phase マップ: T0/T1→T1, T2→T2, T3/MD→T3
+        //   St チェック (ocr.stage) も current_stage として補助的に反映。
+        //   容器は前回踏襲 (entity.container_size) のまま維持するため、
+        //   ユーザーが明示的に変更したときのみ更新。
         if (isUnit && _savedEntity && _savedEntity.unit_id) {
           try {
-            // 行中で mat_type が入っている最後の行を採用（新しい記録＝下の行が最新）
-            var lastMatRow = null;
+            var _ocrMat = (_state.ocrResult && _state.ocrResult.mat_type) ? String(_state.ocrResult.mat_type).trim() : '';
+            // フォールバック: OCR に無ければ記録行の最終行 mat_type
+            var fallbackMat = '';
             for (var mi = rows.length - 1; mi >= 0; mi--) {
-              if (rows[mi] && rows[mi].mat_type) { lastMatRow = rows[mi]; break; }
+              if (rows[mi] && rows[mi].mat_type) { fallbackMat = rows[mi].mat_type; break; }
             }
-            if (lastMatRow && lastMatRow.mat_type) {
-              var newMat = String(lastMatRow.mat_type).trim();
-              var curMat = String(_savedEntity.mat_type || '').trim();
-              if (newMat && newMat !== curMat) {
-                var _phaseMap = { T0:'T1', T1:'T1', T2:'T2', T3:'T3', MD:'T3' };
-                var newPhase = _phaseMap[newMat] || _savedEntity.stage_phase || '';
-                var _containerSize = lastMatRow.container || _savedEntity.container_size || '';
-                var _unitMatUpdate = {
-                  unit_id:    _savedEntity.unit_id,
-                  mat_type:   newMat,
-                  stage_phase: newPhase,
-                };
-                if (_containerSize) _unitMatUpdate.container_size = _containerSize;
-                await API.unit.update(_unitMatUpdate);
-                if (Store.patchDBItem) {
-                  var _patch = { mat_type: newMat, stage_phase: newPhase };
-                  if (_containerSize) _patch.container_size = _containerSize;
-                  Store.patchDBItem('breeding_units', 'unit_id', _savedEntity.unit_id, _patch);
-                }
-                console.log('[CS] unit mat/phase updated:', curMat, '→', newMat, '/ phase:', newPhase);
+            var newMat = _ocrMat || fallbackMat;
+            // 容器は記録テーブル最終行 (ユーザー修正済み値) または entity の既存値
+            var _lastContRow = null;
+            for (var ci = rows.length - 1; ci >= 0; ci--) {
+              if (rows[ci] && rows[ci].date && rows[ci].container) { _lastContRow = rows[ci]; break; }
+            }
+            var newCont = _lastContRow ? _lastContRow.container : (_savedEntity.container_size || '');
+
+            var unitPatch = {};
+            var curMat = String(_savedEntity.mat_type || '').trim();
+            if (newMat && newMat !== curMat) {
+              var _phaseMap = { T0:'T1', T1:'T1', T2:'T2', T3:'T3', MD:'T3' };
+              unitPatch.mat_type    = newMat;
+              unitPatch.stage_phase = _phaseMap[newMat] || _savedEntity.stage_phase || '';
+            }
+            if (newCont && newCont !== String(_savedEntity.container_size || '').trim()) {
+              unitPatch.container_size = newCont;
+            }
+            if (Object.keys(unitPatch).length > 0) {
+              await API.unit.update(Object.assign({ unit_id: _savedEntity.unit_id }, unitPatch));
+              if (Store.patchDBItem) {
+                Store.patchDBItem('breeding_units', 'unit_id', _savedEntity.unit_id, unitPatch);
               }
+              console.log('[CS] unit patched:', unitPatch);
             }
           } catch (matErr) {
             console.error('[CS] unit mat update error:', matErr);
-            UI.toast('⚠️ マット種別の反映に失敗: ' + (matErr.message || '通信エラー') + '（記録は保存済み）', 'error', 5000);
+            UI.toast('⚠️ ユニット情報の反映に失敗: ' + (matErr.message || '通信エラー') + '（記録は保存済み）', 'error', 5000);
           }
         }
 
         UI.toast('✅ '+savedCount+'件の記録を保存しました','success',3000);
+
+        // [20260421h] 保存完了後、現在のページが unit-detail / ind-detail なら再描画
+        //   Store.addDBItem で growth_records が追加されていても unit_detail は
+        //   変更を監視していないため画面が自動更新されない問題を解決
+        try {
+          var _curPage = (window.location.hash || '').replace(/^#/, '').split('?')[0];
+          if (_savedTargetType === 'UNIT' && _curPage === 'unit-detail' && typeof Pages.unitDetail === 'function') {
+            Pages.unitDetail({ unitDisplayId: _savedDisplayId });
+          } else if (_savedTargetType === 'IND' && _curPage === 'ind-detail' && typeof Pages.individualDetail === 'function') {
+            Pages.individualDetail(_savedTargetId);
+          }
+        } catch (_rerr) { console.warn('[CS] rerender failed (non-fatal):', _rerr.message); }
       } catch(err){
         console.error('[CS] bg save error (all retries failed):',err);
         UI.toast('⚠️ 保存失敗（リトライ2回）: '+(err.message||'通信エラー')+' — 手動で再入力してください','error',8000);
