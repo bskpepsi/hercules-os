@@ -2,17 +2,16 @@
 // individual.js
 // 役割: 個体の一覧・詳細・新規登録・編集・ステータス変更を担う。
 //       個体台帳の中心画面。ロット・成長記録・ラベルへの導線も持つ。
-// build: 20260422s
+// build: 20260422t
 //
-// 20260422s 修正:
-//   - Phase E: カード情報統一
-//     ① 個体カードに孵化日と最終マット交換日・経過日数を表示
-//     ② 経過日数のしきい値超過で赤字表示 (T0→60日超、T1/T2/T3/MD→90日超)
-//     ③ 右端に体重 (大型・緑色) + マット種別バッジ (T0-MD) を並べる
-//     ④ ユニットのバッジデザインと完全統一
-//   共通ヘルパー _resolveHatchDate / _getLastFullExchange / _formatAgeDate /
-//   _matBadgeHTML は lot.js 側で定義済み (lot.js は index.html で個体.js より
-//   先に読み込まれるため、グローバルに利用可能)。
+// 20260422t 修正:
+//   - カードデザインを手書き設計図に忠実に作り直し
+//     列構造 (個体2行):
+//       [①列: ライン + 性別] [②列: ID / 孵化日(経過) / 最終交換(経過)] [③列: 体重大型 / Tバッジ] [④列: 飼育中]
+//     - ①列は中央寄せ、固定幅 36px
+//     - ②列はフォント等幅、1段目ID, 2段目🐣孵化日, 3段目🔄最終交換
+//     - ③列は体重上、Tバッジ下の2段
+//     - ④列はステータス文字列だけ右端に細く
 //
 // 20260422p 修正:
 //   - 個体詳細の「体重推移（N件）」表記をユニットと統一:
@@ -101,7 +100,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] individual.js v20260422s loaded');
+console.log('[HerculesOS] individual.js v20260422t loaded');
 
 const Pages = window.Pages || {};
 
@@ -512,44 +511,54 @@ function _indCardHTML(ind) {
   if (!ind.hatch_date && !_hatch) subParts.push('<span style="color:var(--amber);font-size:.7rem">孵化日未設定</span>');
   const subHtml = subParts.join('<span style="font-size:.65rem;color:var(--border,rgba(255,255,255,.15));padding:0 2px">/</span>');
 
-  // 日付情報行
-  const dateLines = [];
-  if (_hatch)   dateLines.push('<span style="font-size:.68rem">🐣' + _fmtDate(_hatch, _indMat) + '</span>');
-  if (_lastExc) dateLines.push('<span style="font-size:.68rem">🔄' + _fmtDate(_lastExc, _indMat) + '</span>');
-  const dateBlock = dateLines.length
-    ? '<div style="display:flex;flex-direction:column;gap:1px;color:var(--text2);margin-top:2px">'
-      + dateLines.map(function(s){ return '<div>'+s+'</div>'; }).join('')
-      + '</div>'
+  // [20260422t] 日付情報行 (小さく)
+  const _dateRow = function(icon, obj, mat) {
+    if (!obj) return '';
+    return '<div style="font-size:.68rem;color:var(--text2);'
+      + 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
+      + icon + _fmtDate(obj, mat) + '</div>';
+  };
+
+  // ステージラベル (L1L2/L3/前蛹/蛹/成虫) 右上小バッジ用
+  const _stageBadge = stageLbl
+    ? '<span style="font-size:.68rem;font-weight:700;color:' + stageC + ';'
+      + 'border:1px solid ' + stageC + ';border-radius:4px;padding:0 5px;'
+      + 'line-height:1.4;white-space:nowrap">' + stageLbl + '</span>'
     : '';
 
-  return '<div class="card" style="padding:10px 12px;cursor:pointer;display:flex;align-items:center;gap:0;margin-bottom:8px"'
+  return '<div class="card" style="padding:10px 10px;cursor:pointer;display:flex;align-items:stretch;gap:0;margin-bottom:8px"'
     + " onclick=\"routeTo('ind-detail',{indId:'" + ind.ind_id + "'})\">"
 
-    // ①列: ライン + 性別
+    // ①列: ライン + 性別 (固定幅36px、中央寄せ、縦罫線付き)
     + '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;'
-    +   'min-width:34px;padding-right:8px;border-right:1px solid var(--border2);margin-right:8px;flex-shrink:0">'
-    +   '<span style="font-size:.88rem;font-weight:800;color:var(--gold);line-height:1.2">' + (lineStr || '—') + '</span>'
-    +   '<span style="font-size:.82rem;font-weight:700;color:' + sexColor + ';margin-top:2px">' + (ind.sex || '?') + '</span>'
+    +   'width:36px;padding-right:8px;border-right:1px solid var(--border2);margin-right:8px;flex-shrink:0">'
+    +   '<span style="font-size:.92rem;font-weight:800;color:var(--gold);line-height:1.2">' + (lineStr || '—') + '</span>'
+    +   '<span style="font-size:.9rem;font-weight:700;color:' + sexColor + ';margin-top:3px">' + (ind.sex || '?') + '</span>'
     + '</div>'
 
-    // ②列: ID + サブ情報 + 日付
-    + '<div style="flex:1;min-width:0">'
-    +   '<div style="display:flex;align-items:center;gap:4px;margin-bottom:2px">'
-    +     '<span style="font-family:var(--font-mono);font-weight:700;font-size:.85rem;color:var(--text1);'
+    // ②列: ID (1段目) + 🐣孵化日 (2段目) + 🔄最終交換 (3段目)
+    + '<div style="flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:1px">'
+    +   '<div style="display:flex;align-items:center;gap:4px">'
+    +     '<span style="font-family:var(--font-mono);font-weight:700;font-size:.88rem;color:var(--text1);'
     +       'overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + dispId + '</span>'
     +     (icons ? '<span style="font-size:.8rem;flex-shrink:0">' + icons + '</span>' : '')
     +   '</div>'
-    +   (subHtml ? '<div style="display:flex;align-items:center;gap:3px;flex-wrap:wrap;font-size:.76rem;color:var(--text2)">' + subHtml + '</div>' : '')
-    +   dateBlock
-    +   '<div style="font-size:.66rem;color:' + stClr + ';font-weight:700;margin-top:2px">' + stLbl + '</div>'
+    +   (_hatch    ? _dateRow('🐣', _hatch,   _indMat) : '')
+    +   (_lastExc  ? _dateRow('🔄', _lastExc, _indMat) : '')
+    +   (!ind.hatch_date && !_hatch ? '<div style="font-size:.68rem;color:var(--amber)">孵化日未設定</div>' : '')
     + '</div>'
 
-    // ③列: 体重 (大型) + マット種別バッジ + ›
-    + '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;margin-left:6px">'
-    +   (w_txt ? '<span style="font-size:1.15rem;font-weight:800;color:var(--green);line-height:1">' + w_txt + '</span>' : '')
+    // ③列: 体重 (大型) 上 + マット種別バッジ 下 (固定幅)
+    + '<div style="display:flex;flex-direction:column;align-items:flex-end;justify-content:center;gap:4px;flex-shrink:0;margin-left:6px;min-width:56px">'
+    +   (w_txt ? '<span style="font-size:1.25rem;font-weight:800;color:var(--green);line-height:1">' + w_txt + '</span>' : _stageBadge)
     +   (_matBadge ? '<div>' + _matBadge + '</div>' : '')
     + '</div>'
-    + '<span style="color:var(--text3);font-size:1.1rem;margin-left:4px;flex-shrink:0">›</span>'
+
+    // ④列: ステータス文字 + ›
+    + '<div style="display:flex;flex-direction:column;align-items:flex-end;justify-content:center;gap:2px;flex-shrink:0;margin-left:8px;min-width:50px">'
+    +   '<span style="font-size:.7rem;font-weight:700;color:' + stClr + ';white-space:nowrap">' + stLbl + '</span>'
+    +   '<span style="color:var(--text3);font-size:1rem">›</span>'
+    + '</div>'
     + '</div>';
 }
 

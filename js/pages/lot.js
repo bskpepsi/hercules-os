@@ -2,9 +2,13 @@
 // ════════════════════════════════════════════════════════════════
 // lot.js — Phase4-1 UI統一版
 // ロット一覧・詳細・分割・個体化を担う
-// カードUIを3列（コード | 頭数+ステージ | ›）に統一
-// build: 20260422s
+// build: 20260422t
 // 変更点:
+//   - [20260422t] 🎨 カードデザインを手書き案に忠実に整列
+//     全カードを4〜5列構造に統一:
+//       [①ライン+性別/頭数] [②ID+日付情報] [③ステージ+マットバッジ] [④ステータス]
+//     固定幅カラム (①=36px / ④=50px) で3タブのカードが縦一直線に揃う。
+//     個体: 体重を大型右表示、ユニット/ロット: ステージバッジ上 + マットバッジ下の2段。
 //   - [20260422s] カード情報の統一 (Phase E)
 //     ① 3種共通バッジ: マット種別 (T0/T1/T2/T3/MD) を右端に大きく表示
 //        (ユニットの T1/T2/T3 バッジと同じデザインを個体・ロットにも適用)
@@ -88,7 +92,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] lot.js v20260422s loaded');
+console.log('[HerculesOS] lot.js v20260422t loaded');
 
 // ────────────────────────────────────────────────────────────────
 // [20260418f] 血統・種親カードを生成（ロット詳細用）
@@ -611,40 +615,63 @@ Pages.lotList = function () {
         })();
 
         const uid = (u.display_id||u.unit_id||'').replace(/['"]/g,'');
-        return `<div class="ind-card" onclick="Pages._goUnitDetail('${uid}')"
-          style="padding:10px 12px;display:flex;align-items:center;gap:0">
+        // [20260422t] ステータス表示 (飼育中/個別化済)
+        const _uStatusLbl = st === 'individualized' ? '個別化済' : '飼育中';
+        const _uStatusColor = st === 'individualized' ? 'var(--amber)' : 'var(--green)';
+        // [20260422t] ステージバッジ (L1L2/L3 ... 右側上段用)
+        const _uStageLbl = _lotDisplayStageLabel(ph) || ph;
+        const _uStageColor = _uStageLbl === 'L1L2' ? 'var(--green)'
+          : _uStageLbl === 'L3' ? 'var(--blue)'
+          : _uStageLbl === '前蛹' ? '#e65100'
+          : _uStageLbl === '蛹' ? '#bf360c'
+          : 'var(--text3)';
+        const _uStageBadge = _uStageLbl && _uStageLbl !== '—'
+          ? '<span style="font-size:.72rem;font-weight:700;color:' + _uStageColor + ';'
+            + 'border:1px solid ' + _uStageColor + ';border-radius:4px;padding:0 6px;'
+            + 'line-height:1.5;white-space:nowrap">' + _uStageLbl + '</span>'
+          : '';
 
-          <!-- ①列: ライン + 頭数 -->
+        return `<div class="ind-card" onclick="Pages._goUnitDetail('${uid}')"
+          style="padding:10px 10px;display:flex;align-items:stretch;gap:0;margin-bottom:8px">
+
+          <!-- ①列: ライン + 頭数 (固定幅36px、縦罫線) -->
           <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;
-            min-width:34px;padding-right:8px;border-right:1px solid var(--border2);margin-right:8px;
+            width:36px;padding-right:8px;border-right:1px solid var(--border2);margin-right:8px;
             flex-shrink:0">
-            <span style="font-size:.88rem;font-weight:800;color:${phColor};line-height:1.2">${lc}</span>
-            <span style="font-size:.68rem;color:var(--text3);margin-top:2px">${hc}頭</span>
+            <span style="font-size:.92rem;font-weight:800;color:${phColor};line-height:1.2">${lc}</span>
+            <span style="font-size:.7rem;color:var(--text3);margin-top:3px">${hc}頭</span>
           </div>
 
-          <!-- ②列: ID + 由来 + 日付情報 -->
-          <div style="display:flex;flex-direction:column;justify-content:center;
-            min-width:0;flex:1.3;margin-right:6px">
+          <!-- ②列: ID + 孵化日 + 最終交換 -->
+          <div style="display:flex;flex-direction:column;justify-content:center;gap:1px;
+            min-width:0;flex:1.1;margin-right:6px">
             <div style="font-family:var(--font-mono);font-weight:700;font-size:.82rem;color:var(--gold);
               white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
               ${u.display_id||u.unit_id}${stBadge}
             </div>
             ${srcLotsText
-              ? `<div style="font-size:.63rem;color:var(--text3);margin-top:1px;
+              ? `<div style="font-size:.62rem;color:var(--text3);
                   white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${srcLotsText}</div>`
               : ''}
-            ${_dateBlock}
+            ${_uHatch   ? `<div style="font-size:.68rem;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">🐣${_formatAgeDate(_uHatch, _uMatType)}</div>`   : ''}
+            ${_uLastExc ? `<div style="font-size:.68rem;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">🔄${_formatAgeDate(_uLastExc, _uMatType)}</div>` : ''}
           </div>
 
-          <!-- ③列: 各頭情報 -->
+          <!-- ③列: 各頭情報 (①② 行) -->
           <div style="display:flex;flex-direction:column;justify-content:center;
             flex:1;min-width:0;margin-right:6px">
             ${memberBlock}
           </div>
 
-          <!-- ④列: マット種別バッジ + › -->
-          <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
+          <!-- ④列: ステージバッジ (上) + マット種別バッジ (下) -->
+          <div style="display:flex;flex-direction:column;align-items:flex-end;justify-content:center;gap:4px;flex-shrink:0;margin-right:6px;min-width:48px">
+            ${_uStageBadge}
             ${_matBadgeHTML(_uMatType || ph)}
+          </div>
+
+          <!-- ⑤列: ステータス + › -->
+          <div style="display:flex;flex-direction:column;align-items:flex-end;justify-content:center;gap:2px;flex-shrink:0;min-width:50px">
+            <span style="font-size:.68rem;font-weight:700;color:${_uStatusColor};white-space:nowrap">${_uStatusLbl}</span>
             <span style="color:var(--text3);font-size:1rem">›</span>
           </div>
         </div>`;
@@ -1083,52 +1110,57 @@ function _lotCardHTML(lot) {
     var matLbl  = rawMat === 'T2' && isMolt ? 'T2(M)' : rawMat;
 
     var count      = parseInt(lot.count, 10) || 0;
-    var container  = lot.container_size || (latestRec && latestRec.container) || '';
 
-    // [20260422s] 採卵日 / 孵化日 / 最終交換 を取得
+    // [20260422s] 採卵日 / 孵化日 / 最終交換
     var _lotCollect = _resolveCollectDate(lot);
     var _lotHatch   = _resolveHatchDate({ direct: lot.hatch_date });
     var _lotLastExc = _getLastFullExchange(lot.lot_id);
 
-    // 日付情報行 HTML (あるものだけ表示)
-    var dateLines = [];
-    if (_lotCollect) {
-      dateLines.push('<span style="font-size:.72rem">🥚採卵 ' + _formatAgeDate(_lotCollect, '') + '</span>');
-    }
-    if (_lotHatch) {
-      dateLines.push('<span style="font-size:.72rem">🐣孵化 ' + _formatAgeDate(_lotHatch, rawMat) + '</span>');
-    }
-    if (_lotLastExc) {
-      dateLines.push('<span style="font-size:.72rem">🔄交換 ' + _formatAgeDate(_lotLastExc, rawMat) + '</span>');
-    }
-    var dateBlock = dateLines.length
-      ? '<div style="display:flex;flex-direction:column;gap:1px;color:var(--text2);margin-top:2px">'
-        + dateLines.map(function(s){ return '<div>'+s+'</div>'; }).join('')
-        + '</div>'
+    // [20260422t] ステージバッジ (手書き案の右上 L1L2 位置)
+    var _stageBadge = stageLbl && stageLbl !== '—'
+      ? '<span style="font-size:.72rem;font-weight:700;color:' + sColor + ';'
+        + 'border:1px solid ' + sColor + ';border-radius:4px;padding:0 6px;'
+        + 'line-height:1.5;white-space:nowrap">' + stageLbl + '</span>'
       : '';
 
-    // ステージ + 容器 の簡易情報
-    var parts = [];
-    if (stageLbl) parts.push('<span style="font-weight:700;color:' + sColor + '">' + stageLbl + '</span>');
-    if (container)parts.push('<span>' + container + '</span>');
-    var subHtml = parts.join('<span style="font-size:.65rem;color:var(--border,rgba(255,255,255,.15));padding:0 2px">/</span>');
+    var _matBadge = matLbl ? _matBadgeHTML(matLbl) : '';
 
-    // [20260422s] 右端のマット種別バッジ
-    var matBadge = matLbl ? _matBadgeHTML(matLbl) : '';
+    // ロットステータス表示
+    var _lotStLbl, _lotStColor;
+    if (lot.status === 'dissolved' || lot.status === 'split') { _lotStLbl = '分割済'; _lotStColor = 'var(--text3)'; }
+    else if (lot.status === 'for_sale') { _lotStLbl = '販売候補'; _lotStColor = '#9c27b0'; }
+    else if (lot.status === 'listed')   { _lotStLbl = '出品中';   _lotStColor = '#ff9800'; }
+    else { _lotStLbl = '飼育中'; _lotStColor = 'var(--green)'; }
 
-    return '<div class="card" style="padding:10px 12px;cursor:pointer;display:flex;align-items:center;gap:8px;margin-bottom:8px"'
+    return '<div class="card" style="padding:10px 10px;cursor:pointer;display:flex;align-items:stretch;gap:0;margin-bottom:8px"'
       + ' onclick="routeTo(\'lot-detail\',{lotId:\'' + lot.lot_id + '\'})">'
-      + '<div style="min-width:40px;text-align:center;flex-shrink:0;padding-right:6px;border-right:1px solid var(--border2)">'
-      +   '<div style="font-family:var(--font-mono);font-size:1.1rem;font-weight:800;color:var(--gold);line-height:1">' + (lineCode || '—') + '</div>'
-      +   '<div style="font-size:.72rem;font-weight:700;color:var(--text2);margin-top:3px">' + count + '<span style="font-size:.6rem;color:var(--text3)">頭</span></div>'
+
+      // ①列: ライン + 頭数
+      + '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;'
+      +   'width:36px;padding-right:8px;border-right:1px solid var(--border2);margin-right:8px;flex-shrink:0">'
+      +   '<div style="font-family:var(--font-mono);font-size:.98rem;font-weight:800;color:var(--gold);line-height:1.2">' + (lineCode || '—') + '</div>'
+      +   '<div style="font-size:.7rem;font-weight:700;color:var(--text2);margin-top:3px">' + count + '<span style="font-size:.6rem;color:var(--text3)">頭</span></div>'
       + '</div>'
-      + '<div style="flex:1;min-width:0">'
-      +   '<div style="font-family:var(--font-mono);font-size:.85rem;font-weight:700;color:var(--text1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (lot.display_id || '') + '</div>'
-      +   (subHtml ? '<div style="display:flex;align-items:center;gap:3px;flex-wrap:wrap;font-size:.78rem;color:var(--text2);margin-top:2px">' + subHtml + '</div>' : '')
-      +   dateBlock
+
+      // ②列: ID + 採卵日 + 孵化日 + 最終交換 (3-4段)
+      + '<div style="display:flex;flex-direction:column;justify-content:center;gap:1px;min-width:0;flex:1;margin-right:6px">'
+      +   '<div style="font-family:var(--font-mono);font-size:.88rem;font-weight:700;color:var(--text1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
+      +     (lot.display_id || '')
+      +   '</div>'
+      +   (_lotCollect ? '<div style="font-size:.68rem;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">🥚採卵 ' + _formatAgeDate(_lotCollect, '') + '</div>' : '')
+      +   (_lotHatch   ? '<div style="font-size:.68rem;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">🐣孵化 ' + _formatAgeDate(_lotHatch, rawMat) + '</div>' : '')
+      +   (_lotLastExc ? '<div style="font-size:.68rem;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">🔄交換 ' + _formatAgeDate(_lotLastExc, rawMat) + '</div>' : '')
       + '</div>'
-      + '<div style="display:flex;align-items:center;gap:4px;flex-shrink:0">'
-      +   matBadge
+
+      // ③列: ステージバッジ (上) + マット種別バッジ (下)
+      + '<div style="display:flex;flex-direction:column;align-items:flex-end;justify-content:center;gap:4px;flex-shrink:0;margin-right:6px;min-width:48px">'
+      +   _stageBadge
+      +   _matBadge
+      + '</div>'
+
+      // ④列: ステータス + ›
+      + '<div style="display:flex;flex-direction:column;align-items:flex-end;justify-content:center;gap:2px;flex-shrink:0;min-width:50px">'
+      +   '<span style="font-size:.68rem;font-weight:700;color:' + _lotStColor + ';white-space:nowrap">' + _lotStLbl + '</span>'
       +   '<span style="color:var(--text3);font-size:1rem">›</span>'
       + '</div>'
       + '</div>';
