@@ -188,7 +188,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] lot.js v20260423l loaded');
+console.log('[HerculesOS] lot.js v20260423m loaded');
 
 // ────────────────────────────────────────────────────────────────
 // [20260418f] 血統・種親カードを生成（ロット詳細用）

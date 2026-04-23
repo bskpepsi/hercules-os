@@ -1,8 +1,13 @@
 // ════════════════════════════════════════════════════════════════
-// individual_analysis_patch.js  build: 20260423l
+// individual_analysis_patch.js  build: 20260423m
 // 個体詳細画面への成長分析カード追加パッチ
 // このファイルは individual.js の直後に読み込んでください
 //
+// [20260423m] 試算結果の表示を充実化 (予測カード本体と同じ情報量)
+//   - モード表示 (ライン特化/縮約/全体/経験則)
+//   - R² 精度
+//   - データ状態 (何頭データから)
+//   - 生存者バイアス警告
 // [20260423l] 成虫サイズ予測ロジック刷新 (Phase 1-A)
 //   - 性別別モデル: ♂ 対数回帰、♀ 線形回帰
 //   - ライン × 性別 縮約推定 (K=10)
@@ -686,6 +691,30 @@ Pages._indSimPrepupa = function(indId) {
     ? '<div style="font-size:.66rem;color:var(--text3);margin-top:4px">⚔️胸角 ' + pred.hornLength + 'mm / 📐胴体 ' + pred.bodyLength + 'mm</div>'
     : '';
 
+  // [20260423m] 試算結果にもモード・精度・バイアス警告を表示
+  var modeLabel = pred.mode === 'line_specific' ? 'ライン特化'
+                : pred.mode === 'shrinkage'     ? 'ライン縮約 ' + (pred.shrinkWeight ? '(' + Math.round(pred.shrinkWeight*100) + '%)' : '')
+                : pred.mode === 'global'        ? '全体性別別'
+                : '経験則 (データ蓄積で精度向上)';
+
+  var r2Str = pred.r2 ? pred.r2.toFixed(3) : '—';
+  var precisionColor = (pred.r2 && pred.r2 >= 0.9) ? 'var(--green)'
+                    : (pred.r2 && pred.r2 >= 0.7) ? 'var(--amber)'
+                    : 'var(--text3)';
+
+  var dataNote = pred.mode === 'line_specific' ? ('ライン内 ' + pred.sampleN + '頭データ')
+               : pred.mode === 'shrinkage'     ? ('ライン内 ' + pred.sampleN + '頭 + 全体 ' + pred.parentSampleN + '頭 を縮約')
+               : pred.mode === 'global'        ? ('性別全体 ' + pred.parentSampleN + '頭データ')
+               : '経験則ベース (データ蓄積で精度向上)';
+
+  var biasBlock = '';
+  if (pred.biasWarning.hasSoldData && pred.mode !== 'prior') {
+    biasBlock =
+      '<div style="font-size:.66rem;color:var(--amber);margin-top:6px;padding:6px 8px;background:rgba(224,144,64,.1);border-radius:6px;line-height:1.4">' +
+        '⚠️ 成虫計測まで完了した ' + pred.sampleN + ' 頭のデータで作成。販売済み ' + pred.biasWarning.soldN + ' 頭のデータは含まれていません。' +
+      '</div>';
+  }
+
   el.innerHTML =
     '<div style="background:var(--bg2);border-radius:8px;padding:10px">' +
       '<div style="display:flex;align-items:center;gap:10px">' +
@@ -698,6 +727,13 @@ Pages._indSimPrepupa = function(indId) {
         '<div style="font-size:.72rem;font-weight:700;color:' + sizeGrade.color + '">' + sizeGrade.label + '</div>' +
       '</div>' +
       hornPart +
+      // [20260423m] モード・R²・データ状態
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;font-size:.64rem">' +
+        '<span style="color:' + precisionColor + '">精度 R²=' + r2Str + '</span>' +
+        '<span style="color:var(--text3)">' + modeLabel + '</span>' +
+      '</div>' +
+      '<div style="font-size:.62rem;color:var(--text3);margin-top:2px;text-align:right">' + dataNote + '</div>' +
+      biasBlock +
     '</div>';
 };
 

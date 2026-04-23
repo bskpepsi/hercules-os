@@ -72,7 +72,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] individual.js v20260423l loaded');
+console.log('[HerculesOS] individual.js v20260423m loaded');
 
 const Pages = window.Pages || {};
 
