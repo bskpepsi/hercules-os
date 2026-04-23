@@ -1,15 +1,28 @@
 // FILE: js/pages/lot.js
 // ════════════════════════════════════════════════════════════════
 // lot.js
-// build: 20260423d
+// build: 20260423e
 // 変更点:
-//   - [20260423d] 🐛 バグ修正
-//     ① 飼育管理のユニットタブの右上＋ボタンを非表示に
-//        (従来は「ロット登録」へ遷移してしまっていた)
-//        ユニットは T1 移行セッションから作成されるのが正しい流れ。
-//     ② ロット登録画面の戻るボタンが必ず飼育管理の個体タブに戻る問題を修正
-//        backFn を明示して _tab=lot を保持した飼育管理へ戻すように。
-//   - [20260423c] ライン絞り込みピルのラベルに年度下2桁を追加
+//   - [20260423e] 🏷️ 階層フィルタ + 折りたたみUI 実装 (大規模改修)
+//     3タブ共通で以下の変更:
+//     ① 従来のライン絞り込みピルを、年度/記号/番号の3段階に分解
+//        年度: [全て][2025][2026]  ← データに存在する年度のみ
+//        記号: [全て][A][B][C]     ← 選択済み年度に存在する記号のみ
+//        番号: [全て][1][2][3]     ← 選択済み年度×記号に存在する番号のみ
+//        全て複数選択 (OR条件)
+//     ② 全てのフィルタ (階層/ステージ/性別/ステータス/マット) を折りたたみ内に
+//        格納。検索窓の下に「🏷️ フィルタ (選択中要約) ▼」が1行で表示され、
+//        タップで展開。折りたたみ状態は全タブ共通で Pages._lotListFilterOpen
+//        として保持される。
+//     ③ 個体タブの性別を複数選択に変更 (新: [全て][♂][♀][?])
+//     ④ ソートバーは折りたたみの外 (常時表示、頻繁な操作のため)
+//     ⑤ fixedLineId 指定時 (ライン詳細から遷移) は折りたたみUI自体を非表示
+//        (そのライン1件に固定で全て意味がないため)
+//     新ヘルパー: _parseLineParts, _uniqueYears, _uniqueSymbols,
+//        _uniqueNumbers, _resolveLineIdsByHierarchy, _filterSummary,
+//        _renderHierarchyBars, _renderCollapse, _toggleArrFilter
+//     既存 _lineFilterLabel は後方互換のため残存 (階層フィルタ導入後は未使用)。
+//   - [20260423d] バグ修正 (ユニットタブ＋ボタン非表示、ロット登録戻り先)
 //     例: A1 (25) / A1 (26) / B2 (26)
 //     2025年度のA1ラインと2026年度のA1ラインは全く別のラインなので、
 //     ユーザーが混同しないように区別表示。内部の line_id は元々ユニーク
@@ -135,7 +148,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] lot.js v20260423d loaded');
+console.log('[HerculesOS] lot.js v20260423e loaded');
 
 // ────────────────────────────────────────────────────────────────
 // [20260418f] 血統・種親カードを生成（ロット詳細用）
@@ -243,31 +256,118 @@ function _lotRenderParentageCard(line, backCtx) {
 }
 
 // ────────────────────────────────────────────────────────────────
-// [20260423c] _lineFilterLabel — フィルタピル専用のライン表示ラベル
-//   2025年度のA1と2026年度のA1を区別するため、年度下2桁を付けて表示。
-//   例: A1 (25) / A1 (26)
-//   ・line.hatch_year が無い場合は line.display_id や line.line_id から抽出を試みる
-//   ・全て失敗したら line_code のみを返す (後方互換)
+// [20260423e] 階層フィルタ用ヘルパー
 // ────────────────────────────────────────────────────────────────
-function _lineFilterLabel(line) {
-  if (!line) return '';
-  var code = line.line_code || line.display_id || '?';
-  // 年度の取得を複数経路で試行
+
+// ライン情報を { year, symbol, number } に分解
+//   - year: "2025" / "2026" ...
+//   - symbol: "A" / "B" / "AA" など文字部分
+//   - number: "1" / "2" / "10" など数字部分
+// line.hatch_year > line.display_id 年度部分 > line.line_id 年度部分 の順にフォールバック
+// symbol/number は line.line_code を /^([A-Za-z]+)(\d+)$/ で分解
+function _parseLineParts(line) {
+  if (!line) return { year: '', symbol: '', number: '' };
   var year = '';
   if (line.hatch_year) {
     year = String(line.hatch_year).trim();
   } else if (line.display_id) {
-    // "HM2025-A1" や "HM2026-B2-001" → 2025 / 2026
     var m = String(line.display_id).match(/[A-Za-z]{1,4}(\d{4})/);
     if (m) year = m[1];
   } else if (line.line_id) {
-    // "LINE-2025-A1" 等の可能性
     var m2 = String(line.line_id).match(/(\d{4})/);
     if (m2) year = m2[1];
   }
-  if (!year) return code;
-  // 下2桁のみ付与 ("2025" → "25")
-  var y2 = year.slice(-2);
+  var code = line.line_code || '';
+  var symMatch = code.match(/^([A-Za-z]+)(\d+)$/);
+  return {
+    year:   year,
+    symbol: symMatch ? symMatch[1].toUpperCase() : code,
+    number: symMatch ? symMatch[2] : '',
+  };
+}
+
+// 指定した line_id 集合 (Set) から、lines テーブルをフィルタして
+// 対応する Line オブジェクト配列を返す。
+function _linesByIds(allLines, idSet) {
+  if (!idSet) return allLines;
+  return allLines.filter(function(l){ return idSet.has(l.line_id); });
+}
+
+// 指定の line 群から、年度ユニーク配列を返す (昇順)
+function _uniqueYears(lines) {
+  var set = {};
+  lines.forEach(function(l){
+    var p = _parseLineParts(l);
+    if (p.year) set[p.year] = true;
+  });
+  return Object.keys(set).sort();
+}
+
+// 指定の line 群 + 年度フィルタで、記号ユニーク配列を返す (昇順)
+// years が空 (全年度選択相当) なら全 line を対象
+function _uniqueSymbols(lines, years) {
+  var filtered = years.length
+    ? lines.filter(function(l){ return years.includes(_parseLineParts(l).year); })
+    : lines;
+  var set = {};
+  filtered.forEach(function(l){
+    var p = _parseLineParts(l);
+    if (p.symbol) set[p.symbol] = true;
+  });
+  return Object.keys(set).sort();
+}
+
+// 指定の line 群 + 年度 + 記号フィルタで、番号ユニーク配列を返す (数値昇順)
+function _uniqueNumbers(lines, years, symbols) {
+  var filtered = lines;
+  if (years.length) filtered = filtered.filter(function(l){ return years.includes(_parseLineParts(l).year); });
+  if (symbols.length) filtered = filtered.filter(function(l){ return symbols.includes(_parseLineParts(l).symbol); });
+  var set = {};
+  filtered.forEach(function(l){
+    var p = _parseLineParts(l);
+    if (p.number) set[p.number] = true;
+  });
+  return Object.keys(set).sort(function(a,b){ return parseInt(a,10) - parseInt(b,10); });
+}
+
+// 年度×記号×番号のフィルタ条件から、対象の line_id 集合 (Set) を返す。
+// 空の条件は全選択相当。
+function _resolveLineIdsByHierarchy(lines, years, symbols, numbers) {
+  return new Set(lines.filter(function(l){
+    var p = _parseLineParts(l);
+    if (years.length   && !years.includes(p.year))     return false;
+    if (symbols.length && !symbols.includes(p.symbol)) return false;
+    if (numbers.length && !numbers.includes(p.number)) return false;
+    return true;
+  }).map(function(l){ return l.line_id; }));
+}
+
+// 選択中の要約テキストを生成 (折りたたみヘッダー用)
+// 例: "2025・A,C・1,3 | L3 | ♂ | 飼育中 | T2"
+function _filterSummary(opts) {
+  opts = opts || {};
+  var parts = [];
+  if (opts.years && opts.years.length)     parts.push(opts.years.join(','));
+  if (opts.symbols && opts.symbols.length) parts.push(opts.symbols.join(','));
+  if (opts.numbers && opts.numbers.length) parts.push(opts.numbers.join(','));
+  if (opts.stages && opts.stages.length)   parts.push(opts.stages.join(','));
+  if (opts.sex)                             parts.push(opts.sex);
+  if (opts.status && opts.status !== 'all' && opts.status !== 'active') parts.push(opts.status);
+  if (opts.mat)                             parts.push(opts.mat);
+  if (opts.phase)                           parts.push(opts.phase);
+  return parts.length ? parts.join(' · ') : '';
+}
+
+// ────────────────────────────────────────────────────────────────
+// [20260423c] _lineFilterLabel — (旧関数、階層フィルタ導入後は未使用の可能性)
+//   2025年度のA1と2026年度のA1を区別するため、年度下2桁を付けて表示。
+// ────────────────────────────────────────────────────────────────
+function _lineFilterLabel(line) {
+  if (!line) return '';
+  var parts = _parseLineParts(line);
+  var code = line.line_code || line.display_id || '?';
+  if (!parts.year) return code;
+  var y2 = parts.year.slice(-2);
   return code + ' (' + y2 + ')';
 }
 function _lotDisplayStageLabel(code) {
@@ -528,25 +628,124 @@ Pages.lotList = function () {
   // [20260422r] デフォルトタブを 'lot' → 'ind' に変更（ボトムナビ「飼育」の意図）
   let _activeTab = params._tab || 'ind';
   let _keyword = '';
-  // [20260423b] ロットタブのフィルタを複数選択対応: line_ids/stages は配列
-  //   配列空 = 全て、1件以上 = その値群に含まれるものだけ表示 (OR条件)
-  let filters = { status: 'active', stages: [], line_ids: fixedLineId ? [fixedLineId] : [], mat_type: '' };
+  // [20260423e] 階層フィルタ状態 (年度/記号/番号 × 各タブ独立)
+  //   fixedLineId が指定されているとき (ライン詳細から遷移) は階層フィルタを無効化し、
+  //   そのライン1件に固定する。
+  let _indYears    = [], _indSymbols    = [], _indNumbers    = [];
+  let _unitYears   = [], _unitSymbols   = [], _unitNumbers   = [];
+  let _lotYears    = [], _lotSymbols    = [], _lotNumbers    = [];
+  // [20260423b] ロットタブのステージも複数選択対応
+  //   line_ids は階層フィルタから動的算出するので状態としては保持しない
+  let filters = { status: 'active', stages: [], mat_type: '' };
   let _lotStatusMode = 'active';
   let _unitPhase  = '';
   let _unitStatus = 'active';
   let _unitMat    = '';
-  // [20260423b] ユニットのライン絞り込みも配列化
-  let _unitLines  = fixedLineId ? [fixedLineId] : [];
   // [20260422q] 個体タブ用ローカル状態
   let _indStatus  = 'alive';     // alive / for_sale / listed / sold / dead / all
-  // [20260423b] 個体のステージ・ラインも複数選択 (配列)
-  let _indStages  = [];          // [] = 全て, ['L1L2','L3'] = L1L2またはL3
-  let _indSex     = '';          // ♂ / ♀ / 不明 / ''
-  let _indLines   = fixedLineId ? [fixedLineId] : [];
+  let _indStages  = [];          // L1L2 / L3 / prepupa / pupa / adult 複数可
+  // [20260423e] 性別も複数選択に変更 (全て/♂/♀/?)
+  let _indSexes   = [];          // [] = 全て、'♂'/'♀'/'不明' を含む配列
   // [20260422s] ソート状態 (各タブ独立)
-  let _indSort    = 'id';        // id / hatch_new / hatch_old / exchange / weight_desc
-  let _unitSort   = 'id';        // id / hatch_new / hatch_old / exchange
-  let _lotSort    = 'id';        // id / hatch_new / hatch_old / collect_new / count_desc
+  let _indSort    = 'id';
+  let _unitSort   = 'id';
+  let _lotSort    = 'id';
+
+  // [20260423e] 折りたたみ状態 (全タブ共通)
+  //   Pages._lotListFilterOpen に永続化 (タブ切替・再描画で保持)
+  if (typeof Pages._lotListFilterOpen === 'undefined') Pages._lotListFilterOpen = false;
+
+  // 共通: 折りたたみトグル
+  function _toggleFilterPanel() {
+    Pages._lotListFilterOpen = !Pages._lotListFilterOpen;
+    render();
+  }
+  Pages._lotListToggleFilter = _toggleFilterPanel;
+
+  // 共通: タブのベースデータから利用可能な line 集合を得る
+  //   個体 → individuals, ユニット → breeding_units, ロット → lots
+  //   全体 → 個体 ∪ ユニット ∪ ロット の和集合
+  function _availableLineIds(tab) {
+    var ids = new Set();
+    if (tab === 'ind' || tab === 'all') {
+      (Store.getDB('individuals') || []).forEach(function(i){ if (i.line_id) ids.add(i.line_id); });
+    }
+    if (tab === 'unit' || tab === 'all') {
+      (Store.getDB('breeding_units') || []).forEach(function(u){ if (u.line_id) ids.add(u.line_id); });
+    }
+    if (tab === 'lot' || tab === 'all') {
+      (Store.getDB('lots') || []).forEach(function(l){ if (l.line_id) ids.add(l.line_id); });
+    }
+    return ids;
+  }
+
+  // 共通: 階層フィルタバー HTML を生成
+  //   opts: { years, symbols, numbers, tab, prefix }
+  //   prefix はイベントハンドラで区別するための ID プレフィクス (ind-/unit-/lot-)
+  function _renderHierarchyBars(opts) {
+    var allLines = Store.getDB('lines') || [];
+    var idSet = _availableLineIds(opts.tab);
+    var lines = _linesByIds(allLines, idSet);
+    var years    = _uniqueYears(lines);
+    var symbols  = _uniqueSymbols(lines, opts.years);
+    var numbers  = _uniqueNumbers(lines, opts.years, opts.symbols);
+
+    var yearHTML = '<div class="filter-bar" style="margin-bottom:4px" id="' + opts.prefix + 'year-bar">'
+      + '<span style="font-size:.72rem;color:var(--text3);padding:3px 4px 0 2px;flex-shrink:0">年:</span>'
+      + '<button class="pill ' + (!opts.years.length ? 'active' : '') + '" data-val="">全て</button>'
+      + years.map(function(y){
+          return '<button class="pill ' + (opts.years.includes(y) ? 'active' : '') + '" data-val="' + y + '">' + y + '</button>';
+        }).join('')
+      + '</div>';
+    var symHTML = '<div class="filter-bar" style="margin-bottom:4px" id="' + opts.prefix + 'symbol-bar">'
+      + '<span style="font-size:.72rem;color:var(--text3);padding:3px 4px 0 2px;flex-shrink:0">記号:</span>'
+      + '<button class="pill ' + (!opts.symbols.length ? 'active' : '') + '" data-val="">全て</button>'
+      + symbols.map(function(s){
+          return '<button class="pill ' + (opts.symbols.includes(s) ? 'active' : '') + '" data-val="' + s + '">' + s + '</button>';
+        }).join('')
+      + '</div>';
+    var numHTML = '<div class="filter-bar" style="margin-bottom:4px" id="' + opts.prefix + 'number-bar">'
+      + '<span style="font-size:.72rem;color:var(--text3);padding:3px 4px 0 2px;flex-shrink:0">番号:</span>'
+      + '<button class="pill ' + (!opts.numbers.length ? 'active' : '') + '" data-val="">全て</button>'
+      + numbers.map(function(n){
+          return '<button class="pill ' + (opts.numbers.includes(n) ? 'active' : '') + '" data-val="' + n + '">' + n + '</button>';
+        }).join('')
+      + '</div>';
+    return yearHTML + symHTML + numHTML;
+  }
+
+  // 共通: トグル配列操作 (ピルクリック時の処理)
+  //   v === '' なら配列を空に、それ以外ならトグル (含まれていれば外す、無ければ追加)
+  function _toggleArrFilter(arr, v) {
+    if (v === '') return [];
+    var idx = arr.indexOf(v);
+    if (idx >= 0) { arr.splice(idx, 1); return arr; }
+    arr.push(v);
+    return arr;
+  }
+
+  // 共通: 折りたたみコンテナ HTML
+  //   summary: 選択中要約文字列
+  //   bodyHTML: 中に入れるフィルタ群
+  function _renderCollapse(summary, bodyHTML) {
+    var isOpen = !!Pages._lotListFilterOpen;
+    var arrow  = isOpen ? '▲' : '▼';
+    var displayStyle = isOpen ? '' : 'display:none;';
+    return '<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:8px;overflow:hidden">'
+      + '<button id="filter-collapse-hdr" style="width:100%;display:flex;align-items:center;gap:8px;padding:10px 12px;'
+      +   'background:transparent;border:0;color:var(--text1);font-size:.82rem;cursor:pointer;text-align:left" '
+      +   'onclick="Pages._lotListToggleFilter()">'
+      +   '<span style="font-weight:700">🏷️ フィルタ</span>'
+      +   '<span style="flex:1;color:var(--text2);font-size:.75rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
+      +     (summary ? '(' + summary + ')' : '(全て)')
+      +   '</span>'
+      +   '<span style="color:var(--text3);font-size:.8rem">' + arrow + '</span>'
+      + '</button>'
+      + '<div id="filter-collapse-body" style="' + displayStyle + 'padding:8px 10px;border-top:1px solid var(--border)">'
+      +   bodyHTML
+      + '</div>'
+      + '</div>';
+  }
 
   function render() {
     if (_activeTab === 'unit') { renderUnit(); return; }
@@ -564,8 +763,13 @@ Pages.lotList = function () {
     if (_unitPhase)  units = units.filter(u => u.stage_phase === _unitPhase);
     if (_unitStatus) units = units.filter(u => (u.status||'active') === _unitStatus);
     if (_unitMat)    units = units.filter(u => (u.mat_type||'') === _unitMat);
-    // [20260423b] 複数ライン選択対応 (OR条件)
-    if (_unitLines.length) units = units.filter(u => _unitLines.includes(u.line_id));
+    // [20260423e] 階層フィルタで対象ラインIDを算出
+    if (isLineLimited) {
+      units = units.filter(u => u.line_id === fixedLineId);
+    } else if (_unitYears.length || _unitSymbols.length || _unitNumbers.length) {
+      const allowedLineIds = _resolveLineIdsByHierarchy(lines, _unitYears, _unitSymbols, _unitNumbers);
+      units = units.filter(u => allowedLineIds.has(u.line_id));
+    }
     if (_keyword) {
       const kw = _keyword.toLowerCase();
       units = units.filter(u =>
@@ -615,27 +819,32 @@ Pages.lotList = function () {
             background:var(--bg2);font-size:.88rem;color:var(--text1);box-sizing:border-box"
           oninput="Pages._lotUnitKw(this.value)">
       </div>` +
-      `<div class="filter-bar" style="margin-bottom:6px" id="unit-phase-filter">
-        ${['','T1','T2','T3'].map(p =>
-          `<button class="pill ${_unitPhase===p?'active':''}" data-phase="${p}">${p||'全て'}</button>`
-        ).join('')}
-      </div>` +
-      `<div class="filter-bar" style="margin-bottom:6px" id="unit-mat-filter">
-        ${['','T0','T1','T2','T3','MD'].map(m =>
-          `<button class="pill ${_unitMat===m?'active':''}" data-umat="${m}">${m||'M:全て'}</button>`
-        ).join('')}
-      </div>` +
-      (!isLineLimited ? `<div class="filter-bar" style="margin-bottom:6px" id="unit-line-filter">
-        <button class="pill ${!_unitLines.length?'active':''}" data-uline="">ライン全て</button>
-        ${lines.map(l =>
-          `<button class="pill ${_unitLines.includes(l.line_id)?'active':''}" data-uline="${l.line_id}">${_lineFilterLabel(l)}</button>`
-        ).join('')}
-      </div>` : '') +
-      `<div class="filter-bar" style="margin-bottom:8px" id="unit-status-filter">
-        ${[{v:'active',l:'飼育中'},{v:'',l:'全状態'},{v:'individualized',l:'個別化済'}].map(s =>
-          `<button class="pill ${_unitStatus===s.v?'active':''}" data-ustatus="${s.v}">${s.l}</button>`
-        ).join('')}
-      </div>` +
+      // [20260423e] 階層フィルタ + 既存フィルタを折りたたみ内に
+      (isLineLimited
+        ? ''  // ライン固定時はフィルタ不要
+        : _renderCollapse(
+            _filterSummary({ years:_unitYears, symbols:_unitSymbols, numbers:_unitNumbers, phase:_unitPhase, status: _unitStatus === 'active' ? '' : _unitStatus, mat: _unitMat }),
+            _renderHierarchyBars({ years:_unitYears, symbols:_unitSymbols, numbers:_unitNumbers, tab:'unit', prefix:'unit-' })
+            + `<div class="filter-bar" style="margin-bottom:4px" id="unit-phase-filter">
+                <span style="font-size:.72rem;color:var(--text3);padding:3px 4px 0 2px;flex-shrink:0">フェーズ:</span>
+                ${['','T1','T2','T3'].map(p =>
+                  `<button class="pill ${_unitPhase===p?'active':''}" data-phase="${p}">${p||'全て'}</button>`
+                ).join('')}
+              </div>`
+            + `<div class="filter-bar" style="margin-bottom:4px" id="unit-mat-filter">
+                <span style="font-size:.72rem;color:var(--text3);padding:3px 4px 0 2px;flex-shrink:0">マット:</span>
+                ${['','T0','T1','T2','T3','MD'].map(m =>
+                  `<button class="pill ${_unitMat===m?'active':''}" data-umat="${m}">${m||'全て'}</button>`
+                ).join('')}
+              </div>`
+            + `<div class="filter-bar" style="margin-bottom:4px" id="unit-status-filter">
+                <span style="font-size:.72rem;color:var(--text3);padding:3px 4px 0 2px;flex-shrink:0">状態:</span>
+                ${[{v:'active',l:'飼育中'},{v:'',l:'全状態'},{v:'individualized',l:'個別化済'}].map(s =>
+                  `<button class="pill ${_unitStatus===s.v?'active':''}" data-ustatus="${s.v}">${s.l}</button>`
+                ).join('')}
+              </div>`
+          )
+      ) +
       // [20260422s] ソートバー
       _sortBarHTML('unit', _unitSort, [
         { val:'id',        label:'ID' },
@@ -799,12 +1008,15 @@ Pages.lotList = function () {
       }).join('') : `<div style="color:var(--text3);text-align:center;padding:24px">該当するユニットがありません</div>`) +
       `</div></div>`;
 
-    document.getElementById('unit-phase-filter').addEventListener('click', e => {
+    // [20260423e] 階層フィルタバー (折りたたみ時は非存在なのでnullチェック)
+    const _uPhaseEl  = document.getElementById('unit-phase-filter');
+    if (_uPhaseEl) _uPhaseEl.addEventListener('click', e => {
       const p = e.target.closest('.pill'); if (!p) return;
       _unitPhase = p.dataset.phase;
       renderUnit();
     });
-    document.getElementById('unit-status-filter').addEventListener('click', e => {
+    const _uStatusEl = document.getElementById('unit-status-filter');
+    if (_uStatusEl) _uStatusEl.addEventListener('click', e => {
       const p = e.target.closest('.pill'); if (!p) return;
       _unitStatus = p.dataset.ustatus;
       renderUnit();
@@ -815,23 +1027,19 @@ Pages.lotList = function () {
       _unitMat = p.dataset.umat;
       renderUnit();
     });
-    if (!isLineLimited) {
-      const _uLineFilter = document.getElementById('unit-line-filter');
-      if (_uLineFilter) _uLineFilter.addEventListener('click', e => {
+    // [20260423e] 階層フィルタ (年度/記号/番号) のイベント
+    ['year','symbol','number'].forEach(kind => {
+      const el = document.getElementById('unit-' + kind + '-bar');
+      if (!el) return;
+      el.addEventListener('click', e => {
         const p = e.target.closest('.pill'); if (!p) return;
-        const v = p.dataset.uline;
-        if (v === '') {
-          // 「ライン全て」押下 → クリア
-          _unitLines = [];
-        } else {
-          // トグル: 含まれていれば外す、無ければ追加
-          const idx = _unitLines.indexOf(v);
-          if (idx >= 0) _unitLines.splice(idx, 1);
-          else _unitLines.push(v);
-        }
+        const v = p.dataset.val;
+        if (kind === 'year')   { _unitYears   = _toggleArrFilter(_unitYears,   v); _unitSymbols = []; _unitNumbers = []; }
+        if (kind === 'symbol') { _unitSymbols = _toggleArrFilter(_unitSymbols, v); _unitNumbers = []; }
+        if (kind === 'number') { _unitNumbers = _toggleArrFilter(_unitNumbers, v); }
         renderUnit();
       });
-    }
+    });
     // [20260422s] ソートバー
     const _uSortBar = document.getElementById('unit-sort-bar');
     if (_uSortBar) _uSortBar.addEventListener('click', e => {
@@ -851,13 +1059,15 @@ Pages.lotList = function () {
   // ══════════════════════════════════════════════════════════
   function renderInd() {
     const lines = Store.getDB('lines') || [];
-    // Store.filterIndividuals で status/sex のみ絞り込み、stage/line は自前で複数対応
+    // [20260423e] Store.filterIndividuals は status のみ絞り込み (性別/ライン/ステージは自前)
     let list = (typeof Store !== 'undefined' && typeof Store.filterIndividuals === 'function')
-      ? Store.filterIndividuals({ status: _indStatus, sex: _indSex })
+      ? Store.filterIndividuals({ status: _indStatus })
       : (Store.getDB('individuals') || []).slice();
+    // [20260423e] 性別複数選択 (OR条件)
+    if (_indSexes.length) {
+      list = list.filter(i => _indSexes.includes(i.sex || '不明'));
+    }
     // [20260423b] ステージ複数選択 (OR条件)
-    //   _indStages = ['L1L2','L3'] のようなキー配列。空なら絞らない。
-    //   Store.filterIndividuals と同じマッピングを自前で実施
     if (_indStages.length) {
       const _stageMap = {
         L1L2: ['L1L2','L1','L2_EARLY','L2_LATE','EGG','T0','T1'],
@@ -873,9 +1083,12 @@ Pages.lotList = function () {
       });
       list = list.filter(i => _expanded.includes(i.current_stage) || _expanded.includes(i.stage_life));
     }
-    // [20260423b] ライン複数選択 (OR条件)
-    if (_indLines.length) {
-      list = list.filter(i => _indLines.includes(i.line_id));
+    // [20260423e] 階層フィルタで対象ラインIDを算出
+    if (isLineLimited) {
+      list = list.filter(i => i.line_id === fixedLineId);
+    } else if (_indYears.length || _indSymbols.length || _indNumbers.length) {
+      const allowedLineIds = _resolveLineIdsByHierarchy(lines, _indYears, _indSymbols, _indNumbers);
+      list = list.filter(i => allowedLineIds.has(i.line_id));
     }
     // キーワード検索
     if (_keyword) {
@@ -919,6 +1132,7 @@ Pages.lotList = function () {
       : '飼育管理';
 
     // ステージフィルタピル (複数選択)
+    // [20260423e] 階層フィルタ + ステージ・性別・ステータス を折りたたみ内に統合
     const _stageDefs = [
       { val:'L1L2',   label:'L1L2' },
       { val:'L3',     label:'L3'   },
@@ -926,25 +1140,27 @@ Pages.lotList = function () {
       { val:'pupa',   label:'蛹'   },
       { val:'adult',  label:'成虫' },
     ];
-    const _stageBar = '<div class="filter-bar" style="margin-bottom:6px" id="ind-stage-filter">'
+    const _stageBar = '<div class="filter-bar" style="margin-bottom:4px" id="ind-stage-filter">'
+      + '<span style="font-size:.72rem;color:var(--text3);padding:3px 4px 0 2px;flex-shrink:0">ステージ:</span>'
       + '<button class="pill ' + (!_indStages.length?'active':'') + '" data-val="">全て</button>'
       + _stageDefs.map(s =>
           '<button class="pill ' + (_indStages.includes(s.val)?'active':'') + '" data-val="' + s.val + '">' + s.label + '</button>'
         ).join('') + '</div>';
 
-    // 性別フィルタピル
-    const _indSexes = [
-      { val:'',  label:'♂♀' },
+    // 性別フィルタピル (複数選択 + 全て)
+    const _sexDefs = [
       { val:'♂', label:'♂'  },
       { val:'♀', label:'♀'  },
       { val:'不明', label:'?' },
     ];
-    const _sexBar = '<div class="filter-bar" style="margin-bottom:6px" id="ind-sex-filter">'
-      + _indSexes.map(s =>
-          '<button class="pill ' + (_indSex===s.val?'active':'') + '" data-val="' + s.val + '">' + s.label + '</button>'
+    const _sexBar = '<div class="filter-bar" style="margin-bottom:4px" id="ind-sex-filter">'
+      + '<span style="font-size:.72rem;color:var(--text3);padding:3px 4px 0 2px;flex-shrink:0">性別:</span>'
+      + '<button class="pill ' + (!_indSexes.length?'active':'') + '" data-val="">全て</button>'
+      + _sexDefs.map(s =>
+          '<button class="pill ' + (_indSexes.includes(s.val)?'active':'') + '" data-val="' + s.val + '">' + s.label + '</button>'
         ).join('') + '</div>';
 
-    // ステータスフィルタピル
+    // ステータスフィルタピル (単一選択、既存通り)
     const _indStatuses = [
       { val:'all',     label:'全て'   },
       { val:'alive',   label:'飼育中' },
@@ -953,22 +1169,24 @@ Pages.lotList = function () {
       { val:'sold',    label:'売約済' },
       { val:'dead',    label:'死亡'   },
     ];
-    const _statusBar = '<div class="filter-bar" style="margin-bottom:6px" id="ind-status-filter">'
+    const _statusBar = '<div class="filter-bar" style="margin-bottom:4px" id="ind-status-filter">'
+      + '<span style="font-size:.72rem;color:var(--text3);padding:3px 4px 0 2px;flex-shrink:0">状態:</span>'
       + _indStatuses.map(s =>
           '<button class="pill ' + (_indStatus===s.val?'active':'') + '" data-val="' + s.val + '">' + s.label + '</button>'
         ).join('') + '</div>';
 
-    // [20260423b] ライン絞り込みバー: 複数選択、全ライン表示 (水平スクロール)
-    // [20260423c] 年度付きラベル (2025年のA1と2026年のA1を区別)
-    const _lineBar = !isLineLimited && lines.length > 0
-      ? '<div class="filter-bar" style="margin-bottom:6px;overflow-x:auto;white-space:nowrap" id="ind-line-filter">'
-        + '<button class="pill ' + (!_indLines.length?'active':'') + '" data-val="">全ライン</button>'
-        + lines.map(l =>
-            '<button class="pill ' + (_indLines.includes(l.line_id)?'active':'') + '" data-val="' + l.line_id + '">'
-            + _lineFilterLabel(l) + '</button>'
-          ).join('')
-        + '</div>'
-      : '';
+    // 折りたたみ内のフィルタ群 (ライン固定時は不要)
+    const _collapseBody = isLineLimited
+      ? ''
+      : _renderHierarchyBars({ years:_indYears, symbols:_indSymbols, numbers:_indNumbers, tab:'ind', prefix:'ind-' })
+        + _stageBar + _sexBar + _statusBar;
+
+    const _summary = _filterSummary({
+      years: _indYears, symbols: _indSymbols, numbers: _indNumbers,
+      stages: _indStages,
+      sex: _indSexes.join(','),
+      status: _indStatus === 'alive' ? '' : _indStatus,
+    });
 
     main.innerHTML =
       UI.header(title, isLineLimited
@@ -988,8 +1206,9 @@ Pages.lotList = function () {
         + 'background:var(--bg2);font-size:.88rem;color:var(--text1);box-sizing:border-box"'
         + ' oninput="Pages._lotUnitKw(this.value)">'
       + '</div>' +
-      _lineBar + _stageBar + _sexBar + _statusBar +
-      // [20260422s] ソートバー
+      // [20260423e] 全フィルタを折りたたみ内に (ライン固定時は折りたたみ不要)
+      (isLineLimited ? '' : _renderCollapse(_summary, _collapseBody)) +
+      // [20260422s] ソートバーは折りたたみの外 (常時表示)
       _sortBarHTML('ind', _indSort, [
         { val:'id',          label:'ID' },
         { val:'hatch_new',   label:'🐣新' },
@@ -1007,47 +1226,38 @@ Pages.lotList = function () {
       + '</div>' +
       '</div>';
 
-    // [20260423b] イベント: ステージ (複数選択トグル)
-    document.getElementById('ind-stage-filter').addEventListener('click', e => {
+    // [20260423e] 階層フィルタ + 既存フィルタのイベント (折りたたみ閉じてると要素存在しないのでnullチェック)
+    const _indStageEl = document.getElementById('ind-stage-filter');
+    if (_indStageEl) _indStageEl.addEventListener('click', e => {
       const p = e.target.closest('.pill'); if (!p) return;
-      const v = p.dataset.val;
-      if (v === '') {
-        _indStages = [];
-      } else {
-        const idx = _indStages.indexOf(v);
-        if (idx >= 0) _indStages.splice(idx, 1);
-        else _indStages.push(v);
-      }
+      _indStages = _toggleArrFilter(_indStages, p.dataset.val);
       renderInd();
     });
-    // イベント: 性別
-    document.getElementById('ind-sex-filter').addEventListener('click', e => {
+    const _indSexEl = document.getElementById('ind-sex-filter');
+    if (_indSexEl) _indSexEl.addEventListener('click', e => {
       const p = e.target.closest('.pill'); if (!p) return;
-      _indSex = (p.dataset.val === _indSex ? '' : p.dataset.val);
+      _indSexes = _toggleArrFilter(_indSexes, p.dataset.val);
       renderInd();
     });
-    // イベント: ステータス
-    document.getElementById('ind-status-filter').addEventListener('click', e => {
+    const _indStatusEl = document.getElementById('ind-status-filter');
+    if (_indStatusEl) _indStatusEl.addEventListener('click', e => {
       const p = e.target.closest('.pill'); if (!p) return;
       _indStatus = p.dataset.val;
       renderInd();
     });
-    // [20260423b] イベント: ライン絞り込み (複数選択トグル)
-    if (!isLineLimited) {
-      const _indLineFilter = document.getElementById('ind-line-filter');
-      if (_indLineFilter) _indLineFilter.addEventListener('click', e => {
+    // [20260423e] 階層フィルタ (年度/記号/番号)
+    ['year','symbol','number'].forEach(kind => {
+      const el = document.getElementById('ind-' + kind + '-bar');
+      if (!el) return;
+      el.addEventListener('click', e => {
         const p = e.target.closest('.pill'); if (!p) return;
         const v = p.dataset.val;
-        if (v === '') {
-          _indLines = [];
-        } else {
-          const idx = _indLines.indexOf(v);
-          if (idx >= 0) _indLines.splice(idx, 1);
-          else _indLines.push(v);
-        }
+        if (kind === 'year')   { _indYears   = _toggleArrFilter(_indYears,   v); _indSymbols = []; _indNumbers = []; }
+        if (kind === 'symbol') { _indSymbols = _toggleArrFilter(_indSymbols, v); _indNumbers = []; }
+        if (kind === 'number') { _indNumbers = _toggleArrFilter(_indNumbers, v); }
         renderInd();
       });
-    }
+    });
     // [20260422s] ソートバー
     const _indSortBar = document.getElementById('ind-sort-bar');
     if (_indSortBar) _indSortBar.addEventListener('click', e => {
@@ -1069,11 +1279,9 @@ Pages.lotList = function () {
   // ロット一覧タブ（既存機能 + キーワード検索）
   // ══════════════════════════════════════════════════════════
   function renderLot() {
-    // [20260423b] 複数ライン対応: filterLots は単一のみ受け付けるため、
-    //   ラインなし (line_ids空) または単独なら従来通り、2件以上なら全ラインで取って自前絞り込み
     let lots = [];
-    const _singleLineForStore = (filters.line_ids.length === 1) ? filters.line_ids[0] : '';
-    const _baseFilter = { line_id: _singleLineForStore };
+    // [20260423e] 階層フィルタから対象 line_ids 集合を算出、filterLots は基本 status で取得
+    const _baseFilter = { line_id: isLineLimited ? fixedLineId : '' };
     if (_lotStatusMode === 'all') {
       lots = Store.filterLots({ ..._baseFilter, status: 'all' });
     } else if (_lotStatusMode === 'selling') {
@@ -1086,16 +1294,17 @@ Pages.lotList = function () {
       const li = Store.filterLots({ ..._baseFilter, status: 'listed' });
       lots = [...ac, ...fs, ...li];
     }
-    // [20260423b] ライン2件以上時は自前絞り込み (OR条件)
-    if (filters.line_ids.length > 1) {
-      lots = lots.filter(l => filters.line_ids.includes(l.line_id));
+    // [20260423e] 階層フィルタで絞り込み (ライン固定時は既に fixedLineId でフィルタ済)
+    if (!isLineLimited && (_lotYears.length || _lotSymbols.length || _lotNumbers.length)) {
+      const _linesAll = Store.getDB('lines') || [];
+      const allowedLineIds = _resolveLineIdsByHierarchy(_linesAll, _lotYears, _lotSymbols, _lotNumbers);
+      lots = lots.filter(l => allowedLineIds.has(l.line_id));
     }
     // [20260423b] ステージ複数選択 (OR条件)
     if (filters.stages.length) {
       lots = lots.filter(l => {
         const s = l.stage_life || l.stage || '';
         const lbl = _lotDisplayStageLabel(s);
-        // filters.stages の各値を _lotDisplayStageLabel マップと比較
         return filters.stages.some(fs => _lotDisplayStageLabel(fs) === lbl);
       });
     }
@@ -1151,20 +1360,20 @@ Pages.lotList = function () {
               background:var(--bg2);font-size:.88rem;color:var(--text1);box-sizing:border-box"
             oninput="Pages._lotUnitKw(this.value)">
         </div>
-        <div class="filter-bar" id="lot-stage-filter">
-          ${_lotStageFilters(filters.stages)}
-        </div>
-        <div class="filter-bar" style="margin-bottom:4px" id="lot-mat-filter">
-          ${['','T0','T1','T2','T3','MD'].map(m =>
-            `<button class="pill ${filters.mat_type===m?'active':''}" data-mval="${m}">${m||'M:全て'}</button>`
-          ).join('')}
-        </div>
-        ${!isLineLimited ? `<div class="filter-bar" id="lot-line-filter">
-          <button class="pill ${!filters.line_ids.length ? 'active' : ''}" data-val="">ライン全て</button>
-          ${lines.map(l =>
-            '<button class="pill ' + (filters.line_ids.includes(l.line_id) ? 'active' : '') + '" data-val="' + l.line_id + '">' + _lineFilterLabel(l) + '</button>'
-          ).join('')}
-        </div>` : ''}
+        ${isLineLimited ? '' : _renderCollapse(
+          _filterSummary({ years:_lotYears, symbols:_lotSymbols, numbers:_lotNumbers, stages: filters.stages, mat: filters.mat_type }),
+          _renderHierarchyBars({ years:_lotYears, symbols:_lotSymbols, numbers:_lotNumbers, tab:'lot', prefix:'lot-' })
+          + `<div class="filter-bar" style="margin-bottom:4px" id="lot-stage-filter">
+              <span style="font-size:.72rem;color:var(--text3);padding:3px 4px 0 2px;flex-shrink:0">ステージ:</span>
+              ${_lotStageFilters(filters.stages)}
+            </div>`
+          + `<div class="filter-bar" style="margin-bottom:4px" id="lot-mat-filter">
+              <span style="font-size:.72rem;color:var(--text3);padding:3px 4px 0 2px;flex-shrink:0">マット:</span>
+              ${['','T0','T1','T2','T3','MD'].map(m =>
+                `<button class="pill ${filters.mat_type===m?'active':''}" data-mval="${m}">${m||'全て'}</button>`
+              ).join('')}
+            </div>`
+        )}
         ${_sortBarHTML('lot', _lotSort, [
           { val:'id',          label:'ID' },
           { val:'hatch_new',   label:'🐣新' },
@@ -1185,17 +1394,11 @@ Pages.lotList = function () {
         </div>
       </div>`;
 
-    // [20260423b] ステージ複数選択トグル
-    document.getElementById('lot-stage-filter').addEventListener('click', e => {
+    // [20260423e] ステージ・マット・階層フィルタのイベント (折りたたみ閉時は要素不在なのでnullチェック)
+    const _lotStageEl = document.getElementById('lot-stage-filter');
+    if (_lotStageEl) _lotStageEl.addEventListener('click', e => {
       const p = e.target.closest('.pill'); if (!p) return;
-      const v = p.dataset.val;
-      if (v === '') {
-        filters.stages = [];
-      } else {
-        const idx = filters.stages.indexOf(v);
-        if (idx >= 0) filters.stages.splice(idx, 1);
-        else filters.stages.push(v);
-      }
+      filters.stages = _toggleArrFilter(filters.stages, p.dataset.val);
       render();
     });
     const _lotMatFilter = document.getElementById('lot-mat-filter');
@@ -1204,22 +1407,19 @@ Pages.lotList = function () {
       filters.mat_type = p.dataset.mval === filters.mat_type ? '' : p.dataset.mval;
       render();
     });
-    // [20260423b] ライン複数選択トグル
-    if (!isLineLimited) {
-      const lineFilter = document.getElementById('lot-line-filter');
-      if (lineFilter) lineFilter.addEventListener('click', e => {
+    // [20260423e] 階層フィルタ (年度/記号/番号)
+    ['year','symbol','number'].forEach(kind => {
+      const el = document.getElementById('lot-' + kind + '-bar');
+      if (!el) return;
+      el.addEventListener('click', e => {
         const p = e.target.closest('.pill'); if (!p) return;
         const v = p.dataset.val;
-        if (v === '') {
-          filters.line_ids = [];
-        } else {
-          const idx = filters.line_ids.indexOf(v);
-          if (idx >= 0) filters.line_ids.splice(idx, 1);
-          else filters.line_ids.push(v);
-        }
+        if (kind === 'year')   { _lotYears   = _toggleArrFilter(_lotYears,   v); _lotSymbols = []; _lotNumbers = []; }
+        if (kind === 'symbol') { _lotSymbols = _toggleArrFilter(_lotSymbols, v); _lotNumbers = []; }
+        if (kind === 'number') { _lotNumbers = _toggleArrFilter(_lotNumbers, v); }
         render();
       });
-    }
+    });
     // [20260422s] ソートバー
     const _lSortBar = document.getElementById('lot-sort-bar');
     if (_lSortBar) _lSortBar.addEventListener('click', e => {
