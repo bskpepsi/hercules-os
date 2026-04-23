@@ -1,9 +1,24 @@
 // FILE: js/pages/lot.js
 // ════════════════════════════════════════════════════════════════
 // lot.js
-// build: 20260423e
+// build: 20260423f
 // 変更点:
-//   - [20260423e] 🏷️ 階層フィルタ + 折りたたみUI 実装 (大規模改修)
+//   - [20260423f] 🌐 全体タブ追加 (個体 ∪ ユニット ∪ ロット)
+//     3つの表示モードを切替可能:
+//       📂 種別 (デフォルト): ロット・ユニット・個体をセクション分け
+//       🏷️ ライン: ライン毎にグループ化し、サマリ (性別/フェーズ/マット) 表示
+//       🔀 混在: display_id 昇順で全種フラット
+//     表示モードは全タブ共通で記憶 (Pages._lotListAllMode)
+//     階層フィルタ (年度/記号/番号)、ステージ、性別、キーワード検索、ソートに対応。
+//     ソート軸は 4つ (ID / 🐣新 / 🐣古 / 🔄経過) — 3種共通の軸のみ。
+//   - [20260423f] 🐛 ユニットタブのフィルタ「フェーズ」→「ステージ」に変更
+//     u.stage_phase (T1/T2/T3) は飼育フェーズであってステージではないため、
+//     メンバー個体の current_stage から推論するロジックに統一。
+//     ステージ選択肢: 全て / L1L2 / L3 / 前蛹 / 蛹 / 成虫（未後食）/ 成虫（活動開始）
+//     複数選択 (OR条件)、他タブのステージ定義と完全統一。
+//   - [20260423f] 個体タブのステージ「成虫」を「成虫（未後食）」「成虫（活動開始）」
+//     に分離 (ユニット/ロットタブと統一)。
+//   - [20260423e] 🏷️ 階層フィルタ + 折りたたみUI 実装
 //     3タブ共通で以下の変更:
 //     ① 従来のライン絞り込みピルを、年度/記号/番号の3段階に分解
 //        年度: [全て][2025][2026]  ← データに存在する年度のみ
@@ -148,7 +163,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] lot.js v20260423e loaded');
+console.log('[HerculesOS] lot.js v20260423f loaded');
 
 // ────────────────────────────────────────────────────────────────
 // [20260418f] 血統・種親カードを生成（ロット詳細用）
@@ -638,7 +653,9 @@ Pages.lotList = function () {
   //   line_ids は階層フィルタから動的算出するので状態としては保持しない
   let filters = { status: 'active', stages: [], mat_type: '' };
   let _lotStatusMode = 'active';
-  let _unitPhase  = '';
+  // [20260423f] ユニットのフェーズ → ステージに変更 (複数選択)
+  //   メンバーの current_stage ベースで絞り込み (1人でも該当ステージに該当すれば OR表示)
+  let _unitStages = [];
   let _unitStatus = 'active';
   let _unitMat    = '';
   // [20260422q] 個体タブ用ローカル状態
@@ -650,10 +667,17 @@ Pages.lotList = function () {
   let _indSort    = 'id';
   let _unitSort   = 'id';
   let _lotSort    = 'id';
+  // [20260423f] 全体タブ用状態 (個体/ユニット/ロット の統合フィルタ)
+  let _allYears   = [], _allSymbols   = [], _allNumbers   = [];
+  let _allStages  = [];          // 全体タブのステージ (個体・ユニット・ロットに共通適用)
+  let _allSexes   = [];
+  let _allSort    = 'id';        // id / hatch_new / hatch_old / exchange
 
   // [20260423e] 折りたたみ状態 (全タブ共通)
   //   Pages._lotListFilterOpen に永続化 (タブ切替・再描画で保持)
   if (typeof Pages._lotListFilterOpen === 'undefined') Pages._lotListFilterOpen = false;
+  // [20260423f] 全体タブ表示モード (section/line/mixed)、全タブ共通で記憶
+  if (typeof Pages._lotListAllMode === 'undefined') Pages._lotListAllMode = 'section';
 
   // 共通: 折りたたみトグル
   function _toggleFilterPanel() {
@@ -750,6 +774,7 @@ Pages.lotList = function () {
   function render() {
     if (_activeTab === 'unit') { renderUnit(); return; }
     if (_activeTab === 'ind')  { renderInd();  return; }
+    if (_activeTab === 'all')  { renderAll();  return; }
     renderLot();
   }
 
@@ -760,7 +785,37 @@ Pages.lotList = function () {
     const lines = Store.getDB('lines') || [];
     const allUnits = Store.getDB('breeding_units') || [];
     let units = allUnits.slice();
-    if (_unitPhase)  units = units.filter(u => u.stage_phase === _unitPhase);
+    // [20260423f] ステージ複数選択 (メンバー個体の current_stage ベース)
+    //   ユニットのメンバーに指定ステージの個体が1人でも含まれていれば表示
+    if (_unitStages.length) {
+      const _stageMap = {
+        L1L2: ['L1L2','L1','L2_EARLY','L2_LATE','EGG','T0','T1'],
+        L3: ['L3','L3_EARLY','L3_MID','L3_LATE','T2','T2A','T2B','T3'],
+        prepupa: ['PREPUPA','前蛹'],
+        pupa: ['PUPA','蛹'],
+        adult_pre: ['ADULT_PRE','成虫（未後食）'],
+        adult: ['ADULT','成虫','成虫（活動開始）'],
+      };
+      const _expanded = new Set();
+      _unitStages.forEach(s => {
+        (_stageMap[s] || [s]).forEach(v => _expanded.add(v));
+      });
+      units = units.filter(u => {
+        var membersArr = [];
+        try {
+          membersArr = Array.isArray(u.members) ? u.members
+            : (typeof u.members === 'string' && u.members.trim()) ? JSON.parse(u.members) : [];
+        } catch(_){}
+        // メンバーに指定ステージが含まれるか
+        var hit = membersArr.some(m => _expanded.has(m.current_stage) || _expanded.has(m.stage_life));
+        if (hit) return true;
+        // フォールバック: stage_phase から推論 (T1→L1L2, T2/T3→L3)
+        var ph = u.stage_phase;
+        if (ph === 'T1' && _unitStages.includes('L1L2')) return true;
+        if ((ph === 'T2' || ph === 'T3') && _unitStages.includes('L3')) return true;
+        return false;
+      });
+    }
     if (_unitStatus) units = units.filter(u => (u.status||'active') === _unitStatus);
     if (_unitMat)    units = units.filter(u => (u.mat_type||'') === _unitMat);
     // [20260423e] 階層フィルタで対象ラインIDを算出
@@ -811,6 +866,12 @@ Pages.lotList = function () {
           const fs=Store.filterLots({status:'for_sale',line_id:fixedLineId});
           return ac.length+fs.length;
         })()})</button>
+        <button class="pill" onclick="Pages._lotUnitTabSwitch('all')">🌐 全体 (${(()=>{
+          const acL=Store.filterLots({status:'active',line_id:fixedLineId});
+          const fsL=Store.filterLots({status:'for_sale',line_id:fixedLineId});
+          const uc = allUnits.filter(u=>(u.status||'active')==='active').length;
+          return _activeIndCount + uc + acL.length + fsL.length;
+        })()})</button>
       </div>` +
       `<div style="margin-bottom:8px;position:relative">
         <input type="text" placeholder="🔍 ID・ステージで検索..." value="${_keyword}"
@@ -823,13 +884,16 @@ Pages.lotList = function () {
       (isLineLimited
         ? ''  // ライン固定時はフィルタ不要
         : _renderCollapse(
-            _filterSummary({ years:_unitYears, symbols:_unitSymbols, numbers:_unitNumbers, phase:_unitPhase, status: _unitStatus === 'active' ? '' : _unitStatus, mat: _unitMat }),
+            _filterSummary({ years:_unitYears, symbols:_unitSymbols, numbers:_unitNumbers, stages:_unitStages, status: _unitStatus === 'active' ? '' : _unitStatus, mat: _unitMat }),
             _renderHierarchyBars({ years:_unitYears, symbols:_unitSymbols, numbers:_unitNumbers, tab:'unit', prefix:'unit-' })
-            + `<div class="filter-bar" style="margin-bottom:4px" id="unit-phase-filter">
-                <span style="font-size:.72rem;color:var(--text3);padding:3px 4px 0 2px;flex-shrink:0">フェーズ:</span>
-                ${['','T1','T2','T3'].map(p =>
-                  `<button class="pill ${_unitPhase===p?'active':''}" data-phase="${p}">${p||'全て'}</button>`
-                ).join('')}
+            + `<div class="filter-bar" style="margin-bottom:4px" id="unit-stage-filter">
+                <span style="font-size:.72rem;color:var(--text3);padding:3px 4px 0 2px;flex-shrink:0">ステージ:</span>
+                <button class="pill ${!_unitStages.length?'active':''}" data-val="">全て</button>
+                ${[
+                  {val:'L1L2',label:'L1L2'},{val:'L3',label:'L3'},
+                  {val:'prepupa',label:'前蛹'},{val:'pupa',label:'蛹'},
+                  {val:'adult_pre',label:'成虫（未後食）'},{val:'adult',label:'成虫（活動開始）'},
+                ].map(s => `<button class="pill ${_unitStages.includes(s.val)?'active':''}" data-val="${s.val}">${s.label}</button>`).join('')}
               </div>`
             + `<div class="filter-bar" style="margin-bottom:4px" id="unit-mat-filter">
                 <span style="font-size:.72rem;color:var(--text3);padding:3px 4px 0 2px;flex-shrink:0">マット:</span>
@@ -1009,10 +1073,11 @@ Pages.lotList = function () {
       `</div></div>`;
 
     // [20260423e] 階層フィルタバー (折りたたみ時は非存在なのでnullチェック)
-    const _uPhaseEl  = document.getElementById('unit-phase-filter');
-    if (_uPhaseEl) _uPhaseEl.addEventListener('click', e => {
+    // [20260423f] ユニットのフェーズフィルタ → ステージ複数選択フィルタに変更
+    const _uStageEl  = document.getElementById('unit-stage-filter');
+    if (_uStageEl) _uStageEl.addEventListener('click', e => {
       const p = e.target.closest('.pill'); if (!p) return;
-      _unitPhase = p.dataset.phase;
+      _unitStages = _toggleArrFilter(_unitStages, p.dataset.val);
       renderUnit();
     });
     const _uStatusEl = document.getElementById('unit-status-filter');
@@ -1050,6 +1115,455 @@ Pages.lotList = function () {
   }
 
   // ══════════════════════════════════════════════════════════
+  // [20260423f] 全体タブ (個体 ∪ ユニット ∪ ロット)
+  // ══════════════════════════════════════════════════════════
+  function renderAll() {
+    const lines = Store.getDB('lines') || [];
+    const allInds = Store.getDB('individuals') || [];
+    const allUnits = Store.getDB('breeding_units') || [];
+
+    // active のみ絞り込み
+    let inds = allInds.filter(i => {
+      const s = i.status || 'alive';
+      return s === 'alive' || s === 'larva' || s === 'prepupa' || s === 'pupa' || s === 'adult'
+          || i.for_sale === true || i.for_sale === 'true' || i.for_sale === 1 || i.for_sale === '1'
+          || i.status === 'for_sale' || i.status === 'listed';
+    });
+    let units = allUnits.filter(u => (u.status || 'active') === 'active');
+    let lots = [
+      ...Store.filterLots({ status: 'active'  }),
+      ...Store.filterLots({ status: 'for_sale' }),
+      ...Store.filterLots({ status: 'listed'  }),
+    ];
+
+    // 階層フィルタ (線ID集合)
+    if (isLineLimited) {
+      inds  = inds.filter(i => i.line_id === fixedLineId);
+      units = units.filter(u => u.line_id === fixedLineId);
+      lots  = lots.filter(l => l.line_id === fixedLineId);
+    } else if (_allYears.length || _allSymbols.length || _allNumbers.length) {
+      const allowedLineIds = _resolveLineIdsByHierarchy(lines, _allYears, _allSymbols, _allNumbers);
+      inds  = inds.filter(i => allowedLineIds.has(i.line_id));
+      units = units.filter(u => allowedLineIds.has(u.line_id));
+      lots  = lots.filter(l => allowedLineIds.has(l.line_id));
+    }
+
+    // ステージ (共通マップで適用)
+    if (_allStages.length) {
+      const _stageMap = {
+        L1L2: ['L1L2','L1','L2_EARLY','L2_LATE','EGG','T0','T1'],
+        L3: ['L3','L3_EARLY','L3_MID','L3_LATE','T2','T2A','T2B','T3'],
+        prepupa: ['PREPUPA','前蛹'],
+        pupa: ['PUPA','蛹'],
+        adult_pre: ['ADULT_PRE','成虫（未後食）'],
+        adult: ['ADULT','成虫','成虫（活動開始）'],
+      };
+      const _expanded = new Set();
+      _allStages.forEach(s => {
+        (_stageMap[s] || [s]).forEach(v => _expanded.add(v));
+      });
+      // 個体: current_stage / stage_life
+      inds = inds.filter(i => _expanded.has(i.current_stage) || _expanded.has(i.stage_life));
+      // ユニット: メンバーに該当があれば OR、無ければ phase から推論
+      units = units.filter(u => {
+        var membersArr = [];
+        try {
+          membersArr = Array.isArray(u.members) ? u.members
+            : (typeof u.members === 'string' && u.members.trim()) ? JSON.parse(u.members) : [];
+        } catch(_){}
+        var hit = membersArr.some(m => _expanded.has(m.current_stage) || _expanded.has(m.stage_life));
+        if (hit) return true;
+        var ph = u.stage_phase;
+        if (ph === 'T1' && _allStages.includes('L1L2')) return true;
+        if ((ph === 'T2' || ph === 'T3') && _allStages.includes('L3')) return true;
+        return false;
+      });
+      // ロット: stage_life / stage
+      lots = lots.filter(l => _expanded.has(l.stage_life) || _expanded.has(l.stage));
+    }
+
+    // 性別 (個体のみに適用、ユニット・ロットは無関係なので残す)
+    if (_allSexes.length) {
+      inds = inds.filter(i => _allSexes.includes(i.sex || '不明'));
+    }
+
+    // キーワード検索 (全種共通)
+    if (_keyword) {
+      const kw = _keyword.toLowerCase();
+      inds = inds.filter(i =>
+        (i.display_id||'').toLowerCase().includes(kw) ||
+        (i.ind_id||'').toLowerCase().includes(kw));
+      units = units.filter(u =>
+        (u.display_id||'').toLowerCase().includes(kw) ||
+        (u.unit_id||'').toLowerCase().includes(kw));
+      lots = lots.filter(l =>
+        (l.display_id||'').toLowerCase().includes(kw) ||
+        (l.lot_id||'').toLowerCase().includes(kw));
+    }
+
+    // ソート関数 (3種共通の軸)
+    const _sortHatchInd = i => { var h = _resolveHatchDate({ direct: i.hatch_date, lotId: i.lot_id, originLotId: i.origin_lot_id }); return h?h.days:null; };
+    const _sortHatchUnit = u => { var h = _resolveHatchDate({ direct: u.hatch_date, originLotId: u.origin_lot_id, sourceLots: u.source_lots }); return h?h.days:null; };
+    const _sortHatchLot = l => { var h = _resolveHatchDate({ direct: l.hatch_date }); return h?h.days:null; };
+    const _sortExchInd = i => { var e = _getLastFullExchange(i.ind_id); return e?e.days:null; };
+    const _sortExchUnit = u => { var e = _getLastFullExchange(u.unit_id); return e?e.days:null; };
+    const _sortExchLot = l => { var e = _getLastFullExchange(l.lot_id); return e?e.days:null; };
+
+    inds.sort(_makeSortComparator(_allSort, {
+      hatchDays: _sortHatchInd, exchDays: _sortExchInd,
+      weight: i => +i.latest_weight_g || 0,
+      displayId: i => String(i.display_id || i.ind_id || ''),
+    }));
+    units.sort(_makeSortComparator(_allSort, {
+      hatchDays: _sortHatchUnit, exchDays: _sortExchUnit,
+      displayId: u => String(u.display_id || u.unit_id || ''),
+    }));
+    lots.sort(_makeSortComparator(_allSort, {
+      hatchDays: _sortHatchLot, exchDays: _sortExchLot,
+      collectDays: l => { var c = _resolveCollectDate(l); return c?c.days:null; },
+      count: l => +l.count || 0,
+      displayId: l => String(l.display_id || l.lot_id || ''),
+    }));
+
+    const title = isLineLimited
+      ? ((fixedLine ? (fixedLine.line_code||fixedLine.display_id) : '') + ' の飼育管理')
+      : '飼育管理';
+
+    // 表示モード (section/line/mixed)
+    const mode = Pages._lotListAllMode;
+    let bodyHTML = '';
+    if (mode === 'line') {
+      bodyHTML = _renderAllByLine(lines, inds, units, lots);
+    } else if (mode === 'mixed') {
+      bodyHTML = _renderAllMixed(inds, units, lots);
+    } else {
+      // section (default)
+      bodyHTML = _renderAllBySection(inds, units, lots);
+    }
+
+    // 折りたたみ内のフィルタ群
+    const _collapseBody = isLineLimited ? '' :
+      _renderHierarchyBars({ years:_allYears, symbols:_allSymbols, numbers:_allNumbers, tab:'all', prefix:'all-' })
+      + `<div class="filter-bar" style="margin-bottom:4px" id="all-stage-filter">
+          <span style="font-size:.72rem;color:var(--text3);padding:3px 4px 0 2px;flex-shrink:0">ステージ:</span>
+          <button class="pill ${!_allStages.length?'active':''}" data-val="">全て</button>
+          ${[
+            {val:'L1L2',label:'L1L2'},{val:'L3',label:'L3'},
+            {val:'prepupa',label:'前蛹'},{val:'pupa',label:'蛹'},
+            {val:'adult_pre',label:'成虫（未後食）'},{val:'adult',label:'成虫（活動開始）'},
+          ].map(s => `<button class="pill ${_allStages.includes(s.val)?'active':''}" data-val="${s.val}">${s.label}</button>`).join('')}
+        </div>`
+      + `<div class="filter-bar" style="margin-bottom:4px" id="all-sex-filter">
+          <span style="font-size:.72rem;color:var(--text3);padding:3px 4px 0 2px;flex-shrink:0">性別:</span>
+          <button class="pill ${!_allSexes.length?'active':''}" data-val="">全て</button>
+          ${[{v:'♂',l:'♂'},{v:'♀',l:'♀'},{v:'不明',l:'?'}].map(s =>
+            `<button class="pill ${_allSexes.includes(s.v)?'active':''}" data-val="${s.v}">${s.l}</button>`
+          ).join('')}
+        </div>`;
+
+    const _summary = _filterSummary({
+      years: _allYears, symbols: _allSymbols, numbers: _allNumbers,
+      stages: _allStages,
+      sex: _allSexes.join(','),
+    });
+
+    const totalCount = inds.length + units.length + lots.length;
+
+    main.innerHTML =
+      UI.header(title, isLineLimited ? {back:true} : {}) +
+      `<div class="page-body">` +
+      `<div class="filter-bar" style="margin-bottom:8px">
+        <button class="pill" onclick="Pages._lotUnitTabSwitch('ind')">🐛 個体 (${inds.length})</button>
+        <button class="pill" onclick="Pages._lotUnitTabSwitch('unit')">📦 ユニット (${units.length})</button>
+        <button class="pill" onclick="Pages._lotUnitTabSwitch('lot')">🥚 ロット (${lots.length})</button>
+        <button class="pill active" onclick="Pages._lotUnitTabSwitch('all')">🌐 全体 (${totalCount})</button>
+      </div>` +
+      `<div style="margin-bottom:8px">
+        <input type="text" placeholder="🔍 IDで検索..." id="all-kw-input"
+          value="${_keyword}"
+          style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--border);
+            background:var(--bg2);font-size:.88rem;color:var(--text1);box-sizing:border-box"
+          oninput="Pages._lotUnitKw(this.value)">
+      </div>` +
+      (isLineLimited ? '' : _renderCollapse(_summary, _collapseBody)) +
+      // ソートバー
+      _sortBarHTML('all', _allSort, [
+        { val:'id',        label:'ID' },
+        { val:'hatch_new', label:'🐣新' },
+        { val:'hatch_old', label:'🐣古' },
+        { val:'exchange',  label:'🔄経過' },
+      ]) +
+      // 表示モードトグル
+      `<div class="filter-bar" style="margin-bottom:8px" id="all-mode-bar">
+        <span style="font-size:.72rem;color:var(--text3);padding:3px 4px 0 2px;flex-shrink:0">表示:</span>
+        <button class="pill ${mode==='section'?'active':''}" data-mode="section">📂 種別</button>
+        <button class="pill ${mode==='line'?'active':''}" data-mode="line">🏷️ ライン</button>
+        <button class="pill ${mode==='mixed'?'active':''}" data-mode="mixed">🔀 混在</button>
+      </div>` +
+      `<div style="font-size:.75rem;color:var(--text3);margin-bottom:6px">計 ${totalCount}件 (🐛${inds.length} 📦${units.length} 🥚${lots.length})</div>` +
+      `<div id="all-list-body">` + bodyHTML + `</div>` +
+      `</div>`;
+
+    // イベント: 表示モード
+    const _modeBar = document.getElementById('all-mode-bar');
+    if (_modeBar) _modeBar.addEventListener('click', e => {
+      const p = e.target.closest('.pill'); if (!p) return;
+      Pages._lotListAllMode = p.dataset.mode;
+      renderAll();
+    });
+    // イベント: 階層
+    ['year','symbol','number'].forEach(kind => {
+      const el = document.getElementById('all-' + kind + '-bar');
+      if (!el) return;
+      el.addEventListener('click', e => {
+        const p = e.target.closest('.pill'); if (!p) return;
+        const v = p.dataset.val;
+        if (kind === 'year')   { _allYears   = _toggleArrFilter(_allYears,   v); _allSymbols = []; _allNumbers = []; }
+        if (kind === 'symbol') { _allSymbols = _toggleArrFilter(_allSymbols, v); _allNumbers = []; }
+        if (kind === 'number') { _allNumbers = _toggleArrFilter(_allNumbers, v); }
+        renderAll();
+      });
+    });
+    // イベント: ステージ
+    const _allStageEl = document.getElementById('all-stage-filter');
+    if (_allStageEl) _allStageEl.addEventListener('click', e => {
+      const p = e.target.closest('.pill'); if (!p) return;
+      _allStages = _toggleArrFilter(_allStages, p.dataset.val);
+      renderAll();
+    });
+    // イベント: 性別
+    const _allSexEl = document.getElementById('all-sex-filter');
+    if (_allSexEl) _allSexEl.addEventListener('click', e => {
+      const p = e.target.closest('.pill'); if (!p) return;
+      _allSexes = _toggleArrFilter(_allSexes, p.dataset.val);
+      renderAll();
+    });
+    // イベント: ソート
+    const _allSortEl = document.getElementById('all-sort-bar');
+    if (_allSortEl) _allSortEl.addEventListener('click', e => {
+      const p = e.target.closest('.pill'); if (!p) return;
+      _allSort = p.dataset.sort;
+      renderAll();
+    });
+    // キーワードフォーカス保持
+    setTimeout(() => {
+      const inp = document.getElementById('all-kw-input');
+      if (inp && _keyword) { inp.focus(); try { inp.setSelectionRange(_keyword.length, _keyword.length); } catch(_){} }
+    }, 0);
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // 全体タブ 表示モード別レンダリング
+  // ══════════════════════════════════════════════════════════
+  // B案: 種別セクション
+  function _renderAllBySection(inds, units, lots) {
+    const sectionHdr = (icon, title, count) =>
+      '<div class="sec-hdr" style="margin-top:10px;margin-bottom:6px;padding:4px 8px;background:var(--bg2);border-radius:6px">'
+      + '<span class="sec-title" style="font-size:.82rem">' + icon + ' ' + title + ' <span style="color:var(--text3)">(' + count + ')</span></span>'
+      + '</div>';
+    return ''
+      + sectionHdr('🥚', 'ロット', lots.length)
+      + (lots.length ? lots.map(_lotCardHTML).join('') : '<div style="color:var(--text3);text-align:center;padding:12px;font-size:.78rem">該当なし</div>')
+      + sectionHdr('📦', 'ユニット', units.length)
+      + (units.length ? units.map(_allUnitCardHTML).join('') : '<div style="color:var(--text3);text-align:center;padding:12px;font-size:.78rem">該当なし</div>')
+      + sectionHdr('🐛', '個体', inds.length)
+      + (inds.length ? inds.map(_indCardHTML).join('') : '<div style="color:var(--text3);text-align:center;padding:12px;font-size:.78rem">該当なし</div>');
+  }
+
+  // C案: ラインセクション
+  function _renderAllByLine(lines, inds, units, lots) {
+    // line_id ごとにグループ化
+    const groups = {};
+    const ensure = (lid) => { if (!groups[lid]) groups[lid] = { inds:[], units:[], lots:[] }; };
+    inds.forEach(i  => { ensure(i.line_id);  groups[i.line_id].inds.push(i); });
+    units.forEach(u => { ensure(u.line_id); groups[u.line_id].units.push(u); });
+    lots.forEach(l  => { ensure(l.line_id); groups[l.line_id].lots.push(l); });
+
+    // ラインを表示順にソート (line.line_id → 年度 → 記号 → 番号)
+    const lineIds = Object.keys(groups);
+    lineIds.sort((a,b) => {
+      const la = lines.find(l => l.line_id === a) || {};
+      const lb = lines.find(l => l.line_id === b) || {};
+      const pa = _parseLineParts(la);
+      const pb = _parseLineParts(lb);
+      if (pa.year !== pb.year) return pa.year.localeCompare(pb.year);
+      if (pa.symbol !== pb.symbol) return pa.symbol.localeCompare(pb.symbol);
+      return parseInt(pa.number||'0',10) - parseInt(pb.number||'0',10);
+    });
+
+    let html = '';
+    lineIds.forEach(lid => {
+      const line = lines.find(l => l.line_id === lid);
+      const grp = groups[lid];
+      const total = grp.inds.length + grp.units.length + grp.lots.length;
+      if (total === 0) return;
+      // サマリ: 性別/フェーズ/マット
+      const sexCounts = { '♂':0, '♀':0, '?':0 };
+      grp.inds.forEach(i => {
+        const s = i.sex;
+        if (s === '♂') sexCounts['♂']++;
+        else if (s === '♀') sexCounts['♀']++;
+        else sexCounts['?']++;
+      });
+      const matCounts = {};
+      grp.units.forEach(u => {
+        const m = (u.mat_type||'').toUpperCase() || '—';
+        matCounts[m] = (matCounts[m]||0) + 1;
+      });
+      grp.lots.forEach(l => {
+        const m = (l.mat_type||'').toUpperCase() || '—';
+        matCounts[m] = (matCounts[m]||0) + 1;
+      });
+      const phaseCounts = {};
+      grp.units.forEach(u => {
+        const p = u.stage_phase || '—';
+        phaseCounts[p] = (phaseCounts[p]||0) + 1;
+      });
+      // サマリ文字列
+      const sexParts = [];
+      if (sexCounts['♂']) sexParts.push('♂' + sexCounts['♂']);
+      if (sexCounts['♀']) sexParts.push('♀' + sexCounts['♀']);
+      if (sexCounts['?']) sexParts.push('?' + sexCounts['?']);
+      const matParts = Object.keys(matCounts).sort().map(k => k + ':' + matCounts[k]);
+      const phaseParts = Object.keys(phaseCounts).sort().map(k => k + ':' + phaseCounts[k]);
+
+      const lineLabel = line ? _lineFilterLabel(line) : lid;
+      html += '<div class="sec-hdr" style="margin-top:10px;margin-bottom:6px;padding:6px 8px;background:var(--bg2);border-radius:6px;flex-wrap:wrap">'
+        + '<span class="sec-title" style="font-size:.82rem;font-weight:700">' + lineLabel + '</span>'
+        + '<span style="font-size:.72rem;color:var(--text3);margin-left:8px">'
+        + '🥚' + grp.lots.length + ' / 📦' + grp.units.length + ' / 🐛' + grp.inds.length
+        + '</span>'
+        + '</div>'
+        + (sexParts.length || matParts.length || phaseParts.length
+          ? '<div style="font-size:.68rem;color:var(--text3);margin:-2px 8px 6px 8px;display:flex;gap:10px;flex-wrap:wrap">'
+            + (sexParts.length ? '<span>性別: ' + sexParts.join(' ') + '</span>' : '')
+            + (phaseParts.length ? '<span>フェーズ: ' + phaseParts.join(' ') + '</span>' : '')
+            + (matParts.length ? '<span>マット: ' + matParts.join(' ') + '</span>' : '')
+            + '</div>'
+          : '');
+      // カード並び: ロット → ユニット → 個体 (各々ソート済の順序)
+      html += grp.lots.map(_lotCardHTML).join('');
+      html += grp.units.map(_allUnitCardHTML).join('');
+      html += grp.inds.map(_indCardHTML).join('');
+    });
+    if (!html) html = '<div style="color:var(--text3);text-align:center;padding:24px">該当がありません</div>';
+    return html;
+  }
+
+  // A案: 完全混在 (display_id または指定ソート順でフラット)
+  function _renderAllMixed(inds, units, lots) {
+    // 各要素に種別タグを付けて結合 → 再ソート
+    const all = []
+      .concat(lots.map(l => ({ _kind:'lot', data:l, sortKey: l.display_id || l.lot_id || '' })))
+      .concat(units.map(u => ({ _kind:'unit', data:u, sortKey: u.display_id || u.unit_id || '' })))
+      .concat(inds.map(i => ({ _kind:'ind', data:i, sortKey: i.display_id || i.ind_id || '' })));
+    // _allSort で指定されているソート軸は各タブでソート済なので、ここでは種別をまたいだ
+    // ID 順の結合 (hatch/exchange 系のソートを全種で統一適用する場合はここで再計算)
+    // シンプルに display_id 昇順でマージ
+    if (_allSort === 'id') {
+      all.sort((a,b) => String(a.sortKey).localeCompare(String(b.sortKey)));
+    } else {
+      // hatch/exchange 系は各タブで既にソートされているので、そのまま結合 (種別内の順序は維持)
+      // ただし全種をまたぐグローバルソートは未対応 → シンプルに結合順で表示
+    }
+    if (!all.length) return '<div style="color:var(--text3);text-align:center;padding:24px">該当がありません</div>';
+    return all.map(item => {
+      if (item._kind === 'lot')  return _lotCardHTML(item.data);
+      if (item._kind === 'unit') return _allUnitCardHTML(item.data);
+      return _indCardHTML(item.data);
+    }).join('');
+  }
+
+  // 全体タブ用ユニットカード (renderUnit 内の匿名カードを再利用可能な形で切り出し)
+  function _allUnitCardHTML(u) {
+    const lines = Store.getDB('lines') || [];
+    const lc = (() => {
+      const l = lines.find(x => x.line_id === u.line_id);
+      if (l) return l.line_code || l.display_id || '';
+      const dm = (u.display_id || '').match(/^[A-Za-z0-9]+-([A-Za-z][0-9]+)-[A-Za-z]/);
+      return dm ? dm[1] : '';
+    })();
+    const ph = u.stage_phase || '—';
+    const hc = u.head_count || 2;
+    const st = u.status || 'active';
+    const stBadge = st === 'individualized'
+      ? `<span style="font-size:.62rem;color:var(--amber);background:rgba(224,144,64,.15);padding:1px 5px;border-radius:4px;margin-left:4px">個別化済</span>` : '';
+    const phColor = ph === 'T1' ? 'var(--green)' : ph === 'T2' ? 'var(--blue)' : ph === 'T3' ? 'var(--amber)' : 'var(--text3)';
+    const _uHatch = _resolveHatchDate({ direct: u.hatch_date, originLotId: u.origin_lot_id, sourceLots: u.source_lots });
+    const _uLastExc = _getLastFullExchange(u.unit_id);
+    const _uMatType = (u.mat_type || '').toUpperCase();
+    let membersArr = [];
+    try {
+      membersArr = Array.isArray(u.members) ? u.members
+        : (typeof u.members === 'string' && u.members.trim()) ? JSON.parse(u.members) : [];
+    } catch(_){}
+    const sexColor = sx => sx === '♂' ? '#3366cc' : sx === '♀' ? '#cc3366' : 'var(--text3)';
+    const memberLines = membersArr.slice(0,2).map((m,mi) => {
+      const mw = m.weight_g ? m.weight_g + 'g' : '—';
+      const msc = m.size_category || '—';
+      const msx = (m.sex && m.sex !== '不明') ? m.sex : '?';
+      return `<div style="font-size:.76rem;display:flex;align-items:center;gap:4px;margin-bottom:1px">
+        <span style="color:var(--text3);font-size:.65rem;min-width:14px">${mi===0?'①':'②'}</span>
+        <span style="font-weight:700;color:${sexColor(msx)}">${msx}</span>
+        <span style="font-weight:700;color:var(--text1)">${msc}</span>
+        <span style="color:var(--text2);font-weight:700">${mw}</span>
+      </div>`;
+    }).join('');
+    const memberBlock = membersArr.length > 0 ? memberLines
+      : `<div style="font-size:.76rem;color:var(--text2)">${hc}頭</div>`;
+    const _inferStageFromMembers = () => {
+      for (let i = 0; i < membersArr.length; i++) {
+        const m = membersArr[i];
+        const ms = m.current_stage || m.stage_life || m.stage;
+        if (ms) return _lotDisplayStageLabel(ms);
+      }
+      return '';
+    };
+    const _inferStageFromPhase = ph => {
+      if (ph === 'T1') return 'L1L2';
+      if (ph === 'T2') return 'L3';
+      if (ph === 'T3') return 'L3';
+      return '';
+    };
+    const _uStageLbl = _inferStageFromMembers() || _inferStageFromPhase(ph) || '';
+    const _uStageColor = _uStageLbl === 'L1L2' ? 'var(--green)'
+      : _uStageLbl === 'L3' ? 'var(--blue)'
+      : _uStageLbl === '前蛹' ? '#e65100'
+      : _uStageLbl === '蛹' ? '#bf360c' : 'var(--text3)';
+    const _uStageBadge = _uStageLbl
+      ? '<span style="font-size:.72rem;font-weight:700;color:' + _uStageColor
+        + ';border:1px solid ' + _uStageColor + ';border-radius:4px;padding:0 6px;line-height:1.5;white-space:nowrap">' + _uStageLbl + '</span>'
+      : '';
+    const _uStatusLbl = st === 'individualized' ? '個別化済' : '飼育中';
+    const _uStatusColor = st === 'individualized' ? 'var(--amber)' : 'var(--green)';
+    const uid = (u.display_id || u.unit_id || '').replace(/['"]/g, '');
+    return `<div class="ind-card" onclick="Pages._goUnitDetail('${uid}')"
+      style="padding:10px 10px;display:flex;align-items:stretch;gap:0;margin-bottom:8px">
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;
+        width:36px;padding-right:8px;border-right:1px solid var(--border2);margin-right:8px;flex-shrink:0">
+        <span style="font-size:.92rem;font-weight:800;color:${phColor};line-height:1.2">${lc}</span>
+        <span style="font-size:.7rem;color:var(--text3);margin-top:3px">${hc}頭</span>
+      </div>
+      <div style="display:flex;flex-direction:column;justify-content:center;gap:1px;min-width:0;flex:1.5;margin-right:6px">
+        <div style="font-family:var(--font-mono);font-weight:700;font-size:.82rem;color:var(--gold);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${u.display_id||u.unit_id}${stBadge}</div>
+        ${_uHatch ? `<div style="font-size:.66rem;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">🐣${_formatHatchDate(_uHatch)}</div>` : ''}
+        ${_uLastExc ? `<div style="font-size:.66rem;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">🔄${_formatAgeDate(_uLastExc, _uMatType)}</div>` : ''}
+      </div>
+      <div style="display:flex;flex-direction:column;justify-content:center;flex:0.8;min-width:0;margin-right:6px">
+        ${memberBlock}
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;flex-shrink:0;margin-right:6px;min-width:48px">
+        ${_uStageBadge}
+        ${_matBadgeHTML(_uMatType || ph)}
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;justify-content:center;gap:2px;flex-shrink:0;min-width:50px">
+        <span style="font-size:.68rem;font-weight:700;color:${_uStatusColor};white-space:nowrap">${_uStatusLbl}</span>
+        <span style="color:var(--text3);font-size:1rem">›</span>
+      </div>
+    </div>`;
+  }
+
+  // ══════════════════════════════════════════════════════════
   // [20260422q] 個体一覧タブ
   //   Pages.individualList のロジックを飼育管理ページに統合したもの。
   //   ・ライン絞り込み・キーワード検索は他タブと共通 (_keyword, _indLine)
@@ -1068,13 +1582,15 @@ Pages.lotList = function () {
       list = list.filter(i => _indSexes.includes(i.sex || '不明'));
     }
     // [20260423b] ステージ複数選択 (OR条件)
+    // [20260423f] adult を adult_pre / adult に分離
     if (_indStages.length) {
       const _stageMap = {
         L1L2: ['L1L2','L1','L2_EARLY','L2_LATE','EGG','T0','T1'],
         L3: ['L3','L3_EARLY','L3_MID','L3_LATE','T2','T2A','T2B','T3'],
         prepupa: ['PREPUPA','前蛹'],
         pupa: ['PUPA','蛹'],
-        adult: ['ADULT','ADULT_PRE','成虫'],
+        adult_pre: ['ADULT_PRE','成虫（未後食）'],
+        adult: ['ADULT','成虫','成虫（活動開始）'],
       };
       const _expanded = [];
       _indStages.forEach(s => {
@@ -1133,12 +1649,14 @@ Pages.lotList = function () {
 
     // ステージフィルタピル (複数選択)
     // [20260423e] 階層フィルタ + ステージ・性別・ステータス を折りたたみ内に統合
+    // [20260423f] 成虫を「未後食」「活動開始」に分離
     const _stageDefs = [
-      { val:'L1L2',   label:'L1L2' },
-      { val:'L3',     label:'L3'   },
-      { val:'prepupa',label:'前蛹' },
-      { val:'pupa',   label:'蛹'   },
-      { val:'adult',  label:'成虫' },
+      { val:'L1L2',    label:'L1L2'         },
+      { val:'L3',      label:'L3'           },
+      { val:'prepupa', label:'前蛹'          },
+      { val:'pupa',    label:'蛹'           },
+      { val:'adult_pre',label:'成虫（未後食）' },
+      { val:'adult',   label:'成虫（活動開始）'},
     ];
     const _stageBar = '<div class="filter-bar" style="margin-bottom:4px" id="ind-stage-filter">'
       + '<span style="font-size:.72rem;color:var(--text3);padding:3px 4px 0 2px;flex-shrink:0">ステージ:</span>'
@@ -1198,6 +1716,7 @@ Pages.lotList = function () {
         + '<button class="pill active" onclick="Pages._lotUnitTabSwitch(\'ind\')">🐛 個体 (' + _activeIndCount + ')</button>'
         + '<button class="pill" onclick="Pages._lotUnitTabSwitch(\'unit\')">📦 ユニット (' + activeUnitCount + ')</button>'
         + '<button class="pill" onclick="Pages._lotUnitTabSwitch(\'lot\')">🥚 ロット (' + _lotCountActive + ')</button>'
+        + '<button class="pill" onclick="Pages._lotUnitTabSwitch(\'all\')">🌐 全体 (' + (_activeIndCount + activeUnitCount + _lotCountActive) + ')</button>'
       + '</div>' +
       '<div style="margin-bottom:8px;position:relative">'
         + '<input type="text" placeholder="🔍 ID・メモで検索..." value="' + _keyword + '"'
@@ -1352,6 +1871,7 @@ Pages.lotList = function () {
           <button class="pill" onclick="Pages._lotUnitTabSwitch('ind')">🐛 個体 (${_activeIndCount})</button>
           <button class="pill" onclick="Pages._lotUnitTabSwitch('unit')">📦 ユニット (${activeUnitCount})</button>
           <button class="pill active" onclick="Pages._lotUnitTabSwitch('lot')">🥚 ロット (${lots.length})</button>
+          <button class="pill" onclick="Pages._lotUnitTabSwitch('all')">🌐 全体 (${_activeIndCount + activeUnitCount + lots.length})</button>
         </div>
         <div style="margin-bottom:8px">
           <input type="text" placeholder="🔍 ロットID・ラインで検索..." id="lot-kw-input"
