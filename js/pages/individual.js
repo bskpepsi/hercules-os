@@ -2,7 +2,20 @@
 // individual.js
 // 役割: 個体の一覧・詳細・新規登録・編集・ステータス変更を担う。
 //       個体台帳の中心画面。ロット・成長記録・ラベルへの導線も持つ。
-// build: 20260423j
+// build: 20260423k
+//
+// 20260423k 修正:
+//   - 「次のステップ（ワンタップ記録）」に「🍽️ 後食開始」ボタンを追加
+//     羽化日記録後の次のステップとして表示される。後食開始日が入ると消える。
+//   - ワンタップ記録時に current_stage も自動遷移 (退行しない)
+//     prepupa_date       → PREPUPA
+//     pupa_check_date    → PUPA
+//     eclosion_date      → ADULT_PRE
+//     feeding_start_date → ADULT
+//     個体編集フォームの自動遷移ロジックと統一。
+//   - 種親昇格ボタン (🌟 種親に昇格する) を発育日程の直下に移動
+//     → 後食開始ボタンと2行で並ぶ形になり、羽化後のアクションが一箇所に集約。
+//     従来は画面下部の販売情報の後ろに配置されていた。
 //
 // 20260423j 修正:
 //   - 個体編集フォームに「成虫体長 (mm)」欄を復活
@@ -59,7 +72,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] individual.js v20260423j loaded');
+console.log('[HerculesOS] individual.js v20260423k loaded');
 
 const Pages = window.Pages || {};
 
@@ -878,7 +891,45 @@ function _renderDetail(ind, main) {
       </div>
 
       <!-- 🥈② 発育日付クイック記録ボタン（20260418b）-->
+      <!-- [20260423k] 羽化後は「🍽 後食開始」ボタンと「🌟 種親に昇格」ボタンが並んで表示される -->
       ${_renderQuickDateButtons(ind)}
+
+      ${(() => {
+        // [20260423k] 種親昇格ボタンを発育日程の直下に移動
+        //   → 次のステップ「後食開始」ボタンと並んで表示される
+        const _stageStr = String(ind.current_stage || '').toUpperCase();
+        const _isAdult  = _stageStr === 'ADULT' || _stageStr === 'ADULT_PRE';
+        const _pfStr    = String(ind.parent_flag || '').toUpperCase();
+        const _hasFlag  = _pfStr === 'TRUE' || _pfStr === '1';
+        const _canPromote = !ind.promoted_par_id && (_isAdult || ind.eclosion_date || _hasFlag);
+        return _canPromote ? `
+      <button class="btn btn-gold btn-full" style="margin-bottom:10px"
+        onclick="Pages._indPromoteModal('${ind.ind_id}')">
+        🌟 種親に昇格する
+      </button>` : '';
+      })()}
+      ${ind.promoted_par_id ? `
+      <div style="background:rgba(200,168,75,.1);border:1px solid rgba(200,168,75,.3);
+        border-radius:10px;padding:10px 14px;font-size:.82rem;margin-bottom:10px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <span style="font-size:1.1rem">👑</span>
+          <div style="font-weight:700;color:var(--gold)">種親昇格済み</div>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <div style="color:var(--text3);font-size:.72rem">
+            ${promotedParent ? `
+            <span style="cursor:pointer;color:var(--blue)"
+              onclick="routeTo('parent-detail',{parId:'${ind.promoted_par_id}'})">
+              ${promotedParent.parent_display_id || promotedParent.display_name || '種親詳細を開く'}
+            </span>` : `<span style="color:var(--text3)">種親情報を読み込み中...</span>`}
+          </div>
+          <button class="btn btn-ghost btn-sm" style="font-size:.72rem;color:var(--red,#e05050);
+            border-color:rgba(224,80,80,.3);white-space:nowrap"
+            onclick="Pages._indRevokePromotion('${ind.ind_id}')">
+            取りやめる
+          </button>
+        </div>
+      </div>` : ''}
 
       ${String(ind.is_defective) === 'true' ? `
       <div class="card" style="border-color:rgba(231,76,60,.4);background:rgba(231,76,60,.05)">
@@ -912,40 +963,8 @@ function _renderDetail(ind, main) {
         最大体重記録: <strong>${ind.max_weight_g}g</strong>
       </div>` : ''}
 
-      ${(() => {
-        const _stageStr = String(ind.current_stage || '').toUpperCase();
-        const _isAdult  = _stageStr === 'ADULT' || _stageStr === 'ADULT_PRE';
-        const _pfStr    = String(ind.parent_flag || '').toUpperCase();
-        const _hasFlag  = _pfStr === 'TRUE' || _pfStr === '1';
-        const _canPromote = !ind.promoted_par_id && (_isAdult || ind.eclosion_date || _hasFlag);
-        return _canPromote ? `
-      <button class="btn btn-gold btn-full"
-        onclick="Pages._indPromoteModal('${ind.ind_id}')">
-        🌟 種親に昇格する
-      </button>` : '';
-      })()}
-      ${ind.promoted_par_id ? `
-      <div style="background:rgba(200,168,75,.1);border:1px solid rgba(200,168,75,.3);
-        border-radius:10px;padding:10px 14px;font-size:.82rem">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-          <span style="font-size:1.1rem">👑</span>
-          <div style="font-weight:700;color:var(--gold)">種親昇格済み</div>
-        </div>
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-          <div style="color:var(--text3);font-size:.72rem">
-            ${promotedParent ? `
-            <span style="cursor:pointer;color:var(--blue)"
-              onclick="routeTo('parent-detail',{parId:'${ind.promoted_par_id}'})">
-              ${promotedParent.parent_display_id || promotedParent.display_name || '種親詳細を開く'}
-            </span>` : `<span style="color:var(--text3)">種親情報を読み込み中...</span>`}
-          </div>
-          <button class="btn btn-ghost btn-sm" style="font-size:.72rem;color:var(--red,#e05050);
-            border-color:rgba(224,80,80,.3);white-space:nowrap"
-            onclick="Pages._indRevokePromotion('${ind.ind_id}')">
-            取りやめる
-          </button>
-        </div>
-      </div>` : ''}
+      <!-- [20260423k] 種親昇格ボタンは発育日程セクションの直下に移動済み -->
+
 
       ${statusButtons}
 
@@ -1155,9 +1174,23 @@ Pages._indDateSave = async function (indId) {
 //   - 前蛹確認済 / 蛹未確認   → 蛹確認ボタン
 //   - 蛹確認済 / 羽化未確認   → 羽化ボタン
 // ────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────
+// [20260423k] 次のステップカード拡張
+//   従来: 蛹室→前蛹→蛹→羽化 までの4ステップ
+//   今回: 羽化後に「🍽 後食開始」ボタンを追加 (feeding_start_date 記録)
+//         完全に後食まで終わったら何も表示しない
+//   また _indQuickDateSave 側で日付記録と同時にステージを自動遷移:
+//     artificial_cell_date (蛹室) → (ステージ変化なし、形態上 L3 相当のまま)
+//     prepupa_date         → PREPUPA
+//     pupa_check_date      → PUPA
+//     eclosion_date        → ADULT_PRE
+//     feeding_start_date   → ADULT
+//   個体編集フォームの自動遷移ロジックと統一。
+// ────────────────────────────────────────────────────────────────
 function _renderQuickDateButtons(ind) {
   if (!ind || !ind.ind_id) return '';
-  if (ind.eclosion_date) return '';  // 羽化済みは何も出さない
+  // [20260423k] 後食開始まで完了していれば何も出さない
+  if (ind.feeding_start_date) return '';
 
   const btns = [];
 
@@ -1190,12 +1223,21 @@ function _renderQuickDateButtons(ind) {
       field:  'pupa_check_date',
       color:  '#b07bc8',
     });
-  } else {
+  } else if (!ind.eclosion_date) {
     btns.push({
       label:  '🦋 羽化',
       hint:   '成虫として羽化した日を記録',
       field:  'eclosion_date',
       color:  'var(--gold)',
+    });
+  } else {
+    // [20260423k] 羽化後 → 後食開始ボタン
+    //   羽化日〜後食開始日の目安: ♂は30〜60日、♀は20〜40日が一般的
+    btns.push({
+      label:  '🍽️ 後食開始',
+      hint:   '成虫が後食（ゼリーを食べ始めた）を開始した日。活動開始の判定',
+      field:  'feeding_start_date',
+      color:  '#e88c4d',
     });
   }
 
@@ -1215,7 +1257,7 @@ function _renderQuickDateButtons(ind) {
         </button>
       `).join('')}
       <div style="font-size:.7rem;color:var(--text3);margin-top:8px;padding:4px">
-        💡 別の日付で記録したい場合は「✏️ 編集」→「発育日付」から入力してください
+        💡 別の日付で記録したい場合は「✏️ 編集」→「発育日程」から入力してください
       </div>
     </div>`;
 }
@@ -1239,8 +1281,31 @@ Pages._indQuickDateSave = async function (indId, field, label, warnBeforeSave) {
   const updates = { ind_id: indId };
   updates[field] = todayStr;
 
+  // [20260423k] フィールドに応じてステージを自動遷移 (退行しない)
+  //   個体編集フォームの _indSave と同じロジック
+  const _stageOrder = { L1L2:1, L3:2, PREPUPA:3, PUPA:4, ADULT_PRE:5, ADULT:6 };
+  const _stageByField = {
+    prepupa_date:      'PREPUPA',
+    pupa_check_date:   'PUPA',
+    eclosion_date:     'ADULT_PRE',
+    feeding_start_date:'ADULT',
+  };
+  const targetStage = _stageByField[field];
+  if (targetStage) {
+    const ind = Store.getIndividual(indId);
+    const currentStage = (ind && ind.current_stage) || 'L1L2';
+    const ra = _stageOrder[currentStage] || 0;
+    const rb = _stageOrder[targetStage]  || 0;
+    if (rb > ra) {
+      updates.current_stage = targetStage;
+    }
+  }
+
   try {
-    await apiCall(() => API.individual.update(updates), (label || '日付') + ' を記録しました 📅');
+    const msg = updates.current_stage
+      ? (label || '日付') + ' を記録 → ステージ更新 📅'
+      : (label || '日付') + ' を記録しました 📅';
+    await apiCall(() => API.individual.update(updates), msg);
     Store.patchDBItem('individuals', 'ind_id', indId, updates);
     Pages.individualDetail(indId);
   } catch (e) {
