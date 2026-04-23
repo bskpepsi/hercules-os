@@ -2,8 +2,18 @@
 // individual.js
 // 役割: 個体の一覧・詳細・新規登録・編集・ステータス変更を担う。
 //       個体台帳の中心画面。ロット・成長記録・ラベルへの導線も持つ。
-// build: 20260423B
+// build: 20260424a
 //
+// 20260424a 修正: 個体詳細 UX 3件
+//   (1) アクション（マット交換）カードを T1/T2 でも非表示に変更
+//       → 個別飼育の個体はマット交換セッション(分割/継続判断)を伴わないため不要
+//       → マット交換/体重更新は「📷 成長記録」から記録する運用に統一
+//       Pages._indStartT2/_indStartT3 関数自体は将来用に残置(どこからも呼ばれない)
+//   (2) Pages.individualDetail で window._skipNextIndividualRefresh フラグをチェック
+//       → continuous-scan 保存直後の flash (古いAPI応答で楽観値が上書きされる) を防ぐ
+//       フラグが立っている場合は API.individual.get をスキップし、Store の楽観値で
+//       表示を維持。次回遷移時は通常通りリフレッシュされる。
+//   (3) (個体詳細のボタン行 [Row1/Row2] の実装は build 20260423B のまま保持)
 //
 // 20260423B 修正: 保守性改善
 //   - 全ファイルの build 番号を統一 (`20260423B`)
@@ -21,8 +31,7 @@
 //   - 📷 成長記録 の遷移先: routeTo('continuous-scan', {..., mode:'growth'})
 //     (ユニット詳細と同じ継続読取り画面に統一、data-ind-growth-btn="1" 付き)
 //   - アクション（マット交換）カード: T1→[🔄 T2移行] / T2→[⭐ T3移行] のみ
-//     **T3フェーズではカード自体を非表示** (T3 Mx/体重更新ボタンは削除、
-//     マット交換/体重更新は「📷 成長記録」から行う仕様)
+//     ※ 20260424a で全フェーズ非表示に変更
 //   - 成長記録アコーディオンのタイトルを「体重推移(N件)」→「成長記録(N回分)」に
 //     (ユニット側と表記統一、件数もユニーク日付数でカウント - 20260422p 仕様)
 //
@@ -777,6 +786,20 @@ Pages.individualDetail = async function (indId) {
   if (ind) _renderDetail(ind, main);
   else main.innerHTML = UI.header('個体詳細', {}) + UI.spinner();
 
+  // [20260424a] continuous-scan 保存直後の refresh スキップ
+  //   continuous-scan で成長記録を保存した直後、background で API.growth.create が
+  //   走る間に本メソッドの API.individual.get が先行して完了すると、まだ更新前の
+  //   古い個体スナップショットで Store.patchDBItem が走り、せっかく楽観更新した
+  //   latest_weight_g / current_stage / current_mat / current_container が消える。
+  //   continuous-scan 側で window._skipNextIndividualRefresh = ind_id を立てているので、
+  //   このフラグが現在開いている個体と一致する場合のみ API 取得を1回だけスキップし、
+  //   楽観値を温存する。次回個体詳細に遷移した際は通常通り fresh fetch される。
+  if (window._skipNextIndividualRefresh && window._skipNextIndividualRefresh === indId) {
+    console.log('[HerculesOS] individualDetail: skip initial API refresh (continuous-scan just saved)', indId);
+    window._skipNextIndividualRefresh = false;
+    return;
+  }
+
   try {
     const res = await API.individual.get(indId);
     if (Store.getPage() !== 'ind-detail') return;
@@ -917,34 +940,12 @@ function _renderDetail(ind, main) {
         </button>
       </div>
 
-      <!-- [20260422g/k 復元] アクション（マット交換）カード: T1→T2, T2→T3 のみ (T3 は非表示) -->
-      ${(() => {
-        const _ALIVE_SET_LOCAL = new Set(['alive','larva','prepupa','pupa','adult','seed_candidate','seed_reserved']);
-        const _isAlive = _ALIVE_SET_LOCAL.has(ind.status) || !ind.status;
-        if (!_isAlive) return '';
-        const t2Btn = _indPhase === 'T1' ? `
-          <button class="btn btn-primary" style="background:var(--blue)"
-            onclick="Pages._indStartT2('${ind.ind_id}')">
-            🔄 T2移行
-          </button>` : '';
-        const t3Btn = _indPhase === 'T2' ? `
-          <button class="btn btn-primary" style="background:var(--amber);color:#1a1a1a"
-            onclick="Pages._indStartT3('${ind.ind_id}')">
-            ⭐ T3移行
-          </button>` : '';
-        // T-フェーズボタンが何も該当しない場合 (T3 等) はカード自体を出さない
-        if (!t2Btn && !t3Btn) return '';
-        return `
-      <div class="card" style="margin-top:10px;margin-bottom:10px">
-        <div class="card-title">アクション（マット交換）</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          ${t2Btn}${t3Btn}
-        </div>
-        <div style="font-size:.7rem;color:var(--text3);margin-top:6px">
-          現在フェーズ: <b>${_indPhase}</b> ／ 継続中のマット交換は上の「📷 成長記録」から記録できます
-        </div>
-      </div>`;
-      })()}
+      <!-- [20260424a] アクション（マット交換）カード除去
+           個別飼育の個体はマット交換セッション(分割/継続判断)を伴わないため、
+           T2/T3 移行ボタンは不要。マット交換・体重更新は「📷 成長記録」から記録する。
+           過去は T1→[🔄 T2移行] / T2→[⭐ T3移行] / T3→非表示 の仕様だったが、
+           全フェーズでカードごと非表示に変更。
+           Pages._indStartT2 / Pages._indStartT3 の関数本体はファイル前半に残置。 -->
 
       ${_fromNew ? `
       <div style="background:rgba(200,168,75,.12);border:1px solid rgba(200,168,75,.35);

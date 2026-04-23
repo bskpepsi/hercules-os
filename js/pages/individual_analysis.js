@@ -1,7 +1,15 @@
 // ════════════════════════════════════════════════════════════════
-// individual_analysis_patch.js  build: 20260423B
+// individual_analysis_patch.js  build: 20260424a
 // 個体詳細画面への成長分析カード追加パッチ
 // このファイルは individual.js の直後に読み込んでください
+//
+// [20260424a] 環境記録ボタン挿入を MutationObserver 方式に変更
+//   旧方式(20260423B)の queueMicrotask は、Pages.individualDetail の async ラップが
+//   `await API.individual.get(indId)` の完了を待つため、API が 20-30 秒かかる間
+//   挿入も遅延していた (initial render で DOM には既に row2 が存在するにも関わらず)。
+//   新方式: #main への MutationObserver で [data-ind-btn-row2="1"] の出現を検出し
+//   即座に挿入。初回同期描画でも API 応答後の再描画でも自動追従する。
+//   Pages.individualDetail のラップは廃止 (他の2つのラップ: 分析カード/前蛹予測は残す)。
 //
 // [20260423B] 保守性改善
 //   - build 番号を全ファイル統一 (`20260423B`)
@@ -35,7 +43,7 @@
 //   - サイズ段階判定を現代基準に更新 (全長170mm+でギネス候補)
 // ════════════════════════════════════════════════════════════════
 
-console.log('[HerculesOS] individual_analysis.js v20260423B loaded');
+console.log('[HerculesOS] individual_analysis.js v20260424a loaded');
 
 // ── _growthAnalysisHTML: 成長分析カードのHTML生成 ────────────────
 // records: GrowthRecordsの配列 [{record_date, weight_g, stage, ...}]
@@ -848,55 +856,103 @@ var _origInjectAnalysis = null;
 })();
 
 // ── 個体詳細に「環境記録」ボタンを追加 ────────────────────────
-// [20260423B] setTimeout 300ms を削除 (queueMicrotask で即時挿入)
-//   → 画像1で見られた「編集単独行」の一瞬を解消
-// [20260423B] 挿入位置の確実化: row2.firstChild (空白ノードの可能性) ではなく
-//   実際の最初の button 要素を取得して insertBefore することで
-//   常に「🌡️ 環境記録 → 編集」の順になるように保証
-// [20260423y 復元] Row2 (data-ind-btn-row2) に挿入、成長記録ボタンは continuous-scan に遷移するため
-// セレクタを data-ind-growth-btn にも対応させた
+// [20260424a] MutationObserver 方式に切替 (queueMicrotask 方式を廃止)
+//   旧方式は Pages.individualDetail をラップし、await _prevWithPrepupa.call(...) の
+//   後で queueMicrotask を走らせていた。しかしこの await は内部で
+//   `await API.individual.get(indId)` を含むため、GAS 応答が20-30秒かかる間
+//   環境記録ボタンも挿入されなかった (initial render では既に row2 が DOM に
+//   生成されているにも関わらず)。
+//
+//   新方式: #main を MutationObserver で常時監視し、[data-ind-btn-row2="1"] が
+//   DOM に出現した瞬間 (= initial render / post-API re-render のどちらでも) に
+//   環境記録ボタンを挿入する。requestAnimationFrame で 1フレームあたり最大1回に
+//   スロットル、存在チェックで二重挿入も防止、個体詳細以外のページでは no-op。
 (function(){
-  var _prevWithPrepupa = Pages.individualDetail;
-  Pages.individualDetail = async function(indId) {
-    await _prevWithPrepupa.call(this, indId);
+  if (typeof MutationObserver === 'undefined') {
+    // 極めて古いブラウザのみフォールバック (setTimeout ループ)
+    console.warn('[HerculesOS] MutationObserver unavailable; env-btn uses setTimeout fallback');
+    (function _fallback(){
+      try { _tryInsertEnvBtn(); } catch(_) {}
+      setTimeout(_fallback, 500);
+    })();
+    return;
+  }
 
-    var _insertEnvBtn = function() {
-      var realId = (typeof indId === 'object') ? (indId.id || indId.indId || '') : indId;
-      // Row2 を取得 (20260422k 以降の新レイアウト)
-      var row2 = document.querySelector('[data-ind-btn-row2="1"]');
-      // 古いレイアウトでのフォールバック
-      if (!row2) {
-        var qaArea = document.querySelector('[data-ind-growth-btn="1"]')
-                  || document.querySelector('[onclick*="continuous-scan"]')
-                  || document.querySelector('[onclick*="growth-rec"]');
-        if (qaArea) row2 = qaArea.parentNode;
-      }
-      if (!row2) return;
-      // 二重追加防止
-      if (row2.querySelector('[data-env-btn]')) return;
-      // ボタン生成
-      var envBtn = document.createElement('button');
-      envBtn.className = 'btn btn-ghost';
-      envBtn.style.cssText = 'flex:1';
-      envBtn.setAttribute('data-env-btn', '1');
-      envBtn.innerHTML = '🌡️ 環境記録';
-      envBtn.onclick = function(){ routeTo('env-record', {indId: realId}); };
-      // [20260423B] 最初の実要素 (button) を特定して、その前に挿入
-      //   row2.firstChild はテキストノード (空白・改行) の可能性があるため信頼できない
-      var firstBtn = row2.querySelector('button');
-      if (firstBtn) {
-        row2.insertBefore(envBtn, firstBtn);
-      } else {
-        row2.appendChild(envBtn);
-      }
-    };
+  function _buildEnvBtn(realId) {
+    var envBtn = document.createElement('button');
+    envBtn.className = 'btn btn-ghost';
+    envBtn.style.cssText = 'flex:1';
+    envBtn.setAttribute('data-env-btn', '1');
+    envBtn.innerHTML = '🌡️ 環境記録';
+    envBtn.onclick = function(){ routeTo('env-record', {indId: realId}); };
+    return envBtn;
+  }
 
-    // [20260423B] queueMicrotask で DOM 反映直後に即時挿入 (300ms遅延を廃止)
-    //   queueMicrotask が利用できない古い環境では Promise.resolve().then にフォールバック
-    if (typeof queueMicrotask === 'function') {
-      queueMicrotask(_insertEnvBtn);
-    } else {
-      Promise.resolve().then(_insertEnvBtn);
+  function _tryInsertEnvBtn() {
+    // 個体詳細ページでなければ挿入しない
+    try {
+      if (Store && Store.getPage && Store.getPage() !== 'ind-detail') return;
+    } catch(_){ /* Store 未初期化時は挿入せず早期return */ return; }
+
+    // 新レイアウト (20260422k 以降) の Row2 を取得
+    var row2 = document.querySelector('[data-ind-btn-row2="1"]');
+    // 旧レイアウトのフォールバック (data-ind-growth-btn / continuous-scan / growth-rec)
+    if (!row2) {
+      var qaArea = document.querySelector('[data-ind-growth-btn="1"]')
+                || document.querySelector('[onclick*="continuous-scan"]')
+                || document.querySelector('[onclick*="growth-rec"]');
+      if (qaArea) row2 = qaArea.parentNode;
     }
-  };
+    if (!row2) return;
+    // 二重挿入防止
+    if (row2.querySelector('[data-env-btn]')) return;
+
+    // 対象個体IDを Store.getParams から取得
+    var realId = '';
+    try {
+      var params = (Store && Store.getParams) ? Store.getParams() : {};
+      realId = params.indId || params.id || '';
+    } catch(_){ return; }
+    if (!realId) return;
+
+    var envBtn = _buildEnvBtn(realId);
+    // 最初の button 要素の前に挿入 (テキストノードが firstChild の場合を回避)
+    var firstBtn = row2.querySelector('button');
+    if (firstBtn) {
+      row2.insertBefore(envBtn, firstBtn);
+    } else {
+      row2.appendChild(envBtn);
+    }
+  }
+
+  // requestAnimationFrame によるスロットル (同一フレーム内で複数回呼ばない)
+  var _rafScheduled = false;
+  function _schedule(){
+    if (_rafScheduled) return;
+    _rafScheduled = true;
+    (typeof requestAnimationFrame === 'function' ? requestAnimationFrame : function(cb){ setTimeout(cb, 16); })(function(){
+      _rafScheduled = false;
+      try { _tryInsertEnvBtn(); } catch(e){ console.warn('[HerculesOS] env-btn insert error:', e.message); }
+    });
+  }
+
+  function _startObserver(){
+    var main = document.getElementById('main');
+    if (!main) {
+      // #main がまだ無ければ少し待って再試行
+      setTimeout(_startObserver, 100);
+      return;
+    }
+    var mo = new MutationObserver(_schedule);
+    mo.observe(main, { childList: true, subtree: true });
+    // 初回即時試行 (既に ind-detail が描画済みのケース)
+    _schedule();
+    console.log('[HerculesOS] env-btn MutationObserver started');
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _startObserver);
+  } else {
+    _startObserver();
+  }
 })();

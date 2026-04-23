@@ -1,4 +1,33 @@
-// FILE: js/pages/continuous_scan.js  build: 20260422j
+// FILE: js/pages/continuous_scan.js  build: 20260424a
+// 変更点(20260422j→20260424a):
+//   [20260424a-1] 🔥 UPDATE 時の `stage` 保護 (過去ステージL3上書き問題の修正)
+//     症状: 個体詳細の成長記録テーブルで、新しく 4/23 を L3 で保存すると
+//           過去の 4/20 / 4/21 レコードのステージも L3 に書き換わる。
+//     原因: 画面上部の単一 stage セレクタ (cs-stage) の値を mkPayload が全行の
+//           payload に乗せ、_saveOne の UPDATE パスでそのまま GAS に送信していた。
+//           GAS updateGrowthRecord は `data[k] !== undefined` の全フィールドを
+//           無条件で上書きするため、既存レコードの stage (L1L2) が L3 に
+//           置き換わっていた。
+//     修正: _saveOne の UPDATE 分岐で payload から `stage` フィールドを剥がして
+//           API.growth.update に渡す。新規 CREATE では従来通り stage を送信。
+//           これで「継続読取りの stage セレクタは新規行のみに適用」という
+//           期待仕様に一致し、過去行の stage はシート側の値が保持される。
+//
+//   [20260424a-2] 🔥 個体パスにも楽観 Store 更新を追加 (保存直後の flash 修正)
+//     症状: continuous-scan 保存直後、個体詳細ヘッダの体重が一瞬古い値になり
+//           数秒後に正しい値に差し替わる。
+//     原因: ユニット側には既に optimistic Store.patchDBItem があったが、
+//           個体側には存在せず、routeTo 直後の initial render が Store 古値で
+//           描画されていた。加えて Pages.individualDetail の
+//           await API.individual.get が保存前のサーバスナップショットを返し、
+//           Store.patchDBItem で楽観値を古値に再上書きしてしまうケースがある。
+//     修正: (a) 個体の場合も routeTo 前に Store.patchDBItem で
+//               latest_weight_g / current_stage / current_mat / current_container
+//               を楽観更新。最新日付の行を「確定値」として使用。
+//           (b) window._skipNextIndividualRefresh = ind_id を立てて、
+//               individual.js 側で初回 API.individual.get を1回スキップ。
+//           (c) 保存失敗時は _rollbackIndPatch で Store を元に戻す。
+//
 // 変更点(20260422i→20260422j): ★★★ 個体の重複・反映不具合の根本修正 ★★★
 //   [20260422j-1] 🔥 _existingByDate を両キーから構築 (ind_id/unit_id + display_id)
 //     症状: 個体保存時に既存 04/20 record が見つからず UPDATE→CREATE に
@@ -1052,6 +1081,91 @@ Pages.continuousScan = function(params) {
       }
     }
 
+    // [20260424a-2] 個体の楽観 Store 更新 (ユニット側と対称)
+    //   routeTo('ind-detail') 直後の initial render を "最新" データで描画するため、
+    //   継続読取りで決定した latest_weight_g / current_stage / current_mat /
+    //   current_container を Store に先行反映する。これで保存直後の flash
+    //   (古い体重が一瞬表示される) を解消。
+    //   同時に window._skipNextIndividualRefresh を立てて individual.js 側で
+    //   初回 API.individual.get を1回だけスキップさせる (保存完了前のサーバ
+    //   スナップショットで楽観値が上書きされるレースを防ぐ)。
+    //   API 失敗時はこの _rollbackIndPatch を Store にあてて元の値に戻す。
+    var _optimisticIndPatch = null;
+    var _rollbackIndPatch   = null;
+    if (!isUnit && _savedTargetId) {
+      try {
+        // 参照用の現在値 (ind) を取得。無ければ空オブジェクトで代用し rollback は no-op化。
+        var _curInd = (Store.getIndividual ? Store.getIndividual(_savedTargetId) : null) || {};
+
+        // 日付が入った行のうち最新日付の行を「確定値」として採用
+        //   rows[i].date は YYYY-MM-DD 等の素の文字列なので localeCompare で比較可能
+        //   (フォーマット差があっても _normalizeDateStr が後段で行うため、比較だけなら粗くてOK)
+        var _latestRow = null;
+        var _latestDate = '';
+        for (var ri = 0; ri < rows.length; ri++) {
+          var rr = rows[ri];
+          if (!rr || !rr.date) continue;
+          var rd = String(rr.date).replace(/-/g,'/').trim();
+          if (!_latestRow || rd.localeCompare(_latestDate) > 0) {
+            _latestRow = rr;
+            _latestDate = rd;
+          }
+        }
+
+        var _indOptPatch = {}, _indRbPatch = {};
+
+        // 体重: 最新行の weight1 (個体は slot1 のみ使用)
+        if (_latestRow && _latestRow.weight1 !== '' && _latestRow.weight1 !== null && _latestRow.weight1 !== undefined) {
+          var _newW = parseFloat(_latestRow.weight1);
+          if (!isNaN(_newW) && _newW > 0) {
+            var _curW = parseFloat(_curInd.latest_weight_g);
+            // 既存値と違う場合のみパッチ対象に
+            if (isNaN(_curW) || _curW !== _newW) {
+              _indOptPatch.latest_weight_g = _newW;
+              _indRbPatch.latest_weight_g = (_curInd.latest_weight_g !== undefined) ? _curInd.latest_weight_g : '';
+            }
+            // max_weight_g も上回っていれば更新 (GAS と同じロジックを先行適用)
+            var _curMax = parseFloat(_curInd.max_weight_g) || 0;
+            if (_newW > _curMax) {
+              _indOptPatch.max_weight_g = _newW;
+              _indRbPatch.max_weight_g = (_curInd.max_weight_g !== undefined) ? _curInd.max_weight_g : '';
+            }
+          }
+        }
+
+        // ステージ: 画面上部のセレクタ値 (stage) を適用
+        if (stage && stage !== _curInd.current_stage) {
+          _indOptPatch.current_stage = stage;
+          _indRbPatch.current_stage = _curInd.current_stage || '';
+        }
+
+        // マット: 最新行の mat_type (入力があれば)
+        if (_latestRow && _latestRow.mat_type && _latestRow.mat_type !== _curInd.current_mat) {
+          _indOptPatch.current_mat = _latestRow.mat_type;
+          _indRbPatch.current_mat = _curInd.current_mat || '';
+        }
+
+        // 容器: 最新行の container (入力があれば)
+        if (_latestRow && _latestRow.container && _latestRow.container !== _curInd.current_container) {
+          _indOptPatch.current_container = _latestRow.container;
+          _indRbPatch.current_container = _curInd.current_container || '';
+        }
+
+        if (Object.keys(_indOptPatch).length > 0 && Store.patchDBItem) {
+          Store.patchDBItem('individuals', 'ind_id', _savedTargetId, _indOptPatch);
+          _optimisticIndPatch = _indOptPatch;
+          _rollbackIndPatch   = _indRbPatch;
+          console.log('[CS] optimistic IND patch applied (before route):', _indOptPatch);
+        }
+
+        // individual.js 側で初回 API.individual.get をスキップさせるフラグ
+        // 値として ind_id を保持し、遷移先が同じ個体の場合のみマッチするよう individual.js 側で確認
+        window._skipNextIndividualRefresh = _savedTargetId;
+      } catch (_indOptErr) {
+        console.warn('[CS] optimistic IND patch failed (non-fatal):', _indOptErr.message);
+      }
+    }
+
     // 即座に詳細画面へ遷移（すでに Store は新しい値なので T2/4.8L で表示される）
     UI.toast('💾 保存中...','info',1500);
     // [20260422e] レース条件防止: routeTo の前に skip フラグを立てる
@@ -1185,14 +1299,23 @@ Pages.continuousScan = function(params) {
         async function _saveOne(payload, existingRecordId) {
           if (existingRecordId) {
             // 既存行の修正 → API.growth.update (直接呼び出し、apiCall を介さず)
-            await API.growth.update(Object.assign({ record_id: existingRecordId }, payload));
-            // Store の該当 record を上書き
+            // [20260424a-1] 🔥 UPDATE 時は payload から `stage` を剥がす
+            //   画面上部の単一 stage セレクタは「新規行に適用する値」であって
+            //   既存行のステージを遡及上書きする意図ではない。GAS updateGrowthRecord は
+            //   undefined でないフィールドを全て書き換えるため、stage を送ってしまうと
+            //   過去レコードの stage が意図せず今の値に置き換わる。
+            //   stage を消しておけば GAS 側は stage 列に触れず、既存値が保持される。
+            //   (過去レコードのステージを直す正規経路は Pages._grEditRecord)
+            var _updatePayload = Object.assign({}, payload);
+            delete _updatePayload.stage;
+            await API.growth.update(Object.assign({ record_id: existingRecordId }, _updatePayload));
+            // Store の該当 record を上書き (stage を除いた payload をマージ)
             var gm = Store.getDB('growthMap') || {};
             Object.entries(gm).forEach(function(entry){
               var tid = entry[0], recs = entry[1] || [];
               var idx = recs.findIndex(function(r){ return r.record_id === existingRecordId; });
               if (idx >= 0) {
-                Object.assign(recs[idx], payload, { record_id: existingRecordId });
+                Object.assign(recs[idx], _updatePayload, { record_id: existingRecordId });
                 Store.setGrowthRecords(tid, recs);
               }
             });
@@ -1439,7 +1562,7 @@ Pages.continuousScan = function(params) {
         } catch (_rerr) { console.warn('[CS] rerender failed (non-fatal):', _rerr.message); }
       } catch(err){
         console.error('[CS] bg save error (all retries failed):',err);
-        // ── [20260422c-2] 楽観更新のロールバック ──
+        // ── [20260422c-2] 楽観更新のロールバック (ユニット) ──
         if (_rollbackUnitPatch && _savedEntity && _savedEntity.unit_id && Store.patchDBItem) {
           try {
             Store.patchDBItem('breeding_units', 'unit_id', _savedEntity.unit_id, _rollbackUnitPatch);
@@ -1451,6 +1574,21 @@ Pages.continuousScan = function(params) {
               Pages.unitDetail({ unitDisplayId: _savedDisplayId });
             }
           } catch (_rbErr) { console.warn('[CS] rollback failed:', _rbErr.message); }
+        }
+        // ── [20260424a-2] 楽観更新のロールバック (個体) ──
+        if (_rollbackIndPatch && _savedTargetId && Store.patchDBItem) {
+          try {
+            Store.patchDBItem('individuals', 'ind_id', _savedTargetId, _rollbackIndPatch);
+            console.log('[CS] optimistic IND rolled back:', _rollbackIndPatch);
+            // スキップフラグも解除 (失敗したので次の遷移では fresh 取得させる)
+            if (window._skipNextIndividualRefresh === _savedTargetId) {
+              window._skipNextIndividualRefresh = false;
+            }
+            var _curPage3 = (typeof Store !== 'undefined' && Store.getPage) ? Store.getPage() : '';
+            if (_savedTargetType === 'IND' && _curPage3 === 'ind-detail' && typeof Pages.individualDetail === 'function') {
+              Pages.individualDetail(_savedTargetId);
+            }
+          } catch (_indRbErr) { console.warn('[CS] IND rollback failed:', _indRbErr.message); }
         }
         UI.toast('⚠️ 保存失敗: '+(err.message||'通信エラー')+' — 画面を元に戻しました。再入力してください','error',8000);
       }
