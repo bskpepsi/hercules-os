@@ -1,6 +1,11 @@
 // FILE: js/pages/manage.js
-// build: 20260423n
+// build: 20260423o
 // 変更点:
+//   - [20260423o] ライン特性情報をGAS未対応フィールド回避のため hypothesis_tags に埋め込む方式に変更
+//     _extractLineProps() / _stripLinePropsMarker() / _embedLineProps() 新設
+//     hypothesis_tags の末尾に #LP:{"tags":[...],"horn_rate":60,"size":175} として埋め込み
+//     既存の仮説タグテキストと共存できる。編集時はマーカー部を自動除去して表示。
+//     _lineSave で保存時に埋め込み処理。_renderLineStatsDashboard で読み取り処理。
 //   - [20260423n] ライン統計ダッシュボード (Phase 1-B) + ライン特性タグ (Phase 1-D)
 //     _renderLineStatsDashboard 関数を追加。ライン詳細ページに以下を表示:
 //       ・実績統計 (成虫 ♂♀別 平均全長、最大/最小、胸角率、還元率、前蛹体重)
@@ -580,12 +585,11 @@ function _renderLineStatsDashboard(line, allInds) {
   const stdReduction = _stdDev(reductions);
   const avgPrepupa = _mean(allPrepupa);
 
-  // ライン特性タグを配列化
-  const tags = (() => {
-    const raw = line.line_tags || '';
-    if (Array.isArray(raw)) return raw;
-    return String(raw).split(',').map(s => s.trim()).filter(Boolean);
-  })();
+  // [20260423o] ライン特性情報を hypothesis_tags マーカーからも取得
+  const _lineProps = _extractLineProps(line);
+  const tags = _lineProps.tags;
+  const _expHornRate = _lineProps.expected_horn_rate;
+  const _expSizeMm = _lineProps.expected_size_mm;
   const tagDefs = {
     large:    { label:'🏆 大型血統',  color:'var(--gold)' },
     horn:     { label:'⚔️ 胸角型',    color:'var(--amber)' },
@@ -752,11 +756,11 @@ function _renderLineStatsDashboard(line, allInds) {
           </button>
         </div>
         <div>${tagBadges}</div>
-        ${line.expected_horn_rate || line.expected_size_mm ? `
+        ${_expHornRate || _expSizeMm ? `
           <div style="font-size:.66rem;color:var(--text3);margin-top:6px">
-            ${line.expected_horn_rate ? '期待胸角率: ' + line.expected_horn_rate + '%' : ''}
-            ${line.expected_horn_rate && line.expected_size_mm ? ' / ' : ''}
-            ${line.expected_size_mm ? '期待最大全長: ' + line.expected_size_mm + 'mm' : ''}
+            ${_expHornRate ? '期待胸角率: ' + _expHornRate + '%' : ''}
+            ${_expHornRate && _expSizeMm ? ' / ' : ''}
+            ${_expSizeMm ? '期待最大全長: ' + _expSizeMm + 'mm' : ''}
           </div>` : ''}
       </div>
 
@@ -789,12 +793,15 @@ Pages.lineNew = function (params = {}) {
   const curYear = new Date().getFullYear();
 
   // [20260423n] ライン特性タグ (既存値を配列化)
-  const curTags = (() => {
-    const raw = v('line_tags', '');
-    if (!raw) return [];
-    if (Array.isArray(raw)) return raw;
-    return String(raw).split(',').map(s => s.trim()).filter(Boolean);
-  })();
+  // [20260423o] GAS未対応フィールドのため、hypothesis_tags の末尾に #LP:{json} として埋め込む方式に変更
+  //   既存の hypothesis_tags の値と共存できる
+  const lineProps = _extractLineProps(line);
+  const curTags = lineProps.tags;
+  const curExpectedHornRate = lineProps.expected_horn_rate;
+  const curExpectedSize = lineProps.expected_size_mm;
+  // hypothesis_tags から #LP:... を除去した純粋なタグ文字列
+  const cleanHypothesisTags = _stripLinePropsMarker(v('hypothesis_tags', ''));
+
   const tagDefs = [
     { key:'large',       label:'🏆 大型血統',  hint:'全長170mm+ 期待' },
     { key:'horn',        label:'⚔️ 胸角型',    hint:'胸角率60%+' },
@@ -810,7 +817,7 @@ Pages.lineNew = function (params = {}) {
           + 'onclick="Pages._lineToggleTag(this)" '
           + 'title="' + t.hint + '">' + t.label + '</button>';
       }).join('')
-    + '<input type="hidden" name="line_tags" id="line-tags-hidden" value="' + curTags.join(',') + '">'
+    + '<input type="hidden" name="_line_tags_tmp" id="line-tags-hidden" value="' + curTags.join(',') + '">'
     + '</div>';
 
   main.innerHTML = `
@@ -836,13 +843,13 @@ Pages.lineNew = function (params = {}) {
         </div>
         ${UI.field('特性タグ (複数選択可)', tagsHTML)}
         <div class="form-row-2">
-          ${UI.field('期待胸角率 (%)', UI.input('expected_horn_rate', 'number', v('expected_horn_rate'), '例: 60 (空=タグから自動)'))}
-          ${UI.field('期待最大全長 (mm)', UI.input('expected_size_mm', 'number', v('expected_size_mm'), '例: 175 (空=タグから自動)'))}
+          ${UI.field('期待胸角率 (%)', UI.input('_expected_horn_rate_tmp', 'number', curExpectedHornRate || '', '例: 60 (空=タグから自動)'))}
+          ${UI.field('期待最大全長 (mm)', UI.input('_expected_size_mm_tmp', 'number', curExpectedSize || '', '例: 175 (空=タグから自動)'))}
         </div>
 
         <div class="form-title">メモ</div>
         ${UI.field('特徴', UI.textarea('characteristics', v('characteristics'), 2, '例: 父175mm × 母大型系'))}
-        ${UI.field('仮説タグ', UI.input('hypothesis_tags', 'text', v('hypothesis_tags'), '例: 高タンパク,pH6.2'))}
+        ${UI.field('仮説タグ', UI.input('hypothesis_tags', 'text', cleanHypothesisTags, '例: 高タンパク,pH6.2'))}
         ${UI.field('内部メモ', UI.textarea('note_private', v('note_private'), 2, ''))}
         ${isEdit ? UI.field('ステータス',
           UI.select('status', [
@@ -861,6 +868,60 @@ Pages.lineNew = function (params = {}) {
     </div>`;
 };
 
+// [20260423o] ラインの特性情報を hypothesis_tags から抽出
+//   形式: "任意テキスト | #LP:{...json...}" または純JSON部分
+//   戻り値: { tags:[], expected_horn_rate:null, expected_size_mm:null }
+function _extractLineProps(line) {
+  var defaults = { tags: [], expected_horn_rate: null, expected_size_mm: null };
+  if (!line) return defaults;
+
+  // 優先1: 直接フィールド (将来 GAS が対応したら使える)
+  if (line.line_tags || line.expected_horn_rate || line.expected_size_mm) {
+    var tags = [];
+    if (Array.isArray(line.line_tags)) tags = line.line_tags;
+    else if (line.line_tags) tags = String(line.line_tags).split(',').map(function(s){return s.trim();}).filter(Boolean);
+    return {
+      tags: tags,
+      expected_horn_rate: +line.expected_horn_rate || null,
+      expected_size_mm: +line.expected_size_mm || null,
+    };
+  }
+
+  // 優先2: hypothesis_tags の末尾マーカー #LP:{json}
+  var raw = String(line.hypothesis_tags || '');
+  var m = raw.match(/#LP:(\{[^\}]*\})/);
+  if (!m) return defaults;
+  try {
+    var parsed = JSON.parse(m[1]);
+    return {
+      tags: Array.isArray(parsed.tags) ? parsed.tags : [],
+      expected_horn_rate: +parsed.horn_rate || null,
+      expected_size_mm: +parsed.size || null,
+    };
+  } catch(e) {
+    return defaults;
+  }
+}
+
+// [20260423o] hypothesis_tags から #LP:... マーカー部分を除去
+function _stripLinePropsMarker(raw) {
+  if (!raw) return '';
+  return String(raw).replace(/\s*\|\s*#LP:\{[^\}]*\}\s*$/, '').replace(/\s*#LP:\{[^\}]*\}\s*$/, '').trim();
+}
+
+// [20260423o] ライン特性情報を hypothesis_tags マーカーに埋め込む
+function _embedLineProps(cleanHypothesisTags, tags, hornRate, sizeMm) {
+  var hasAny = (tags && tags.length) || hornRate || sizeMm;
+  if (!hasAny) return cleanHypothesisTags || '';
+  var obj = {};
+  if (tags && tags.length) obj.tags = tags;
+  if (hornRate) obj.horn_rate = +hornRate;
+  if (sizeMm) obj.size = +sizeMm;
+  var marker = '#LP:' + JSON.stringify(obj);
+  if (!cleanHypothesisTags) return marker;
+  return cleanHypothesisTags + ' | ' + marker;
+}
+
 // [20260423n] 特性タグピルのトグル処理
 Pages._lineToggleTag = function(btn) {
   if (!btn) return;
@@ -869,7 +930,6 @@ Pages._lineToggleTag = function(btn) {
   // 胸角型/胴太型/標準型は排他
   const exclusiveGroup = ['horn','body','standard'];
   if (!active && exclusiveGroup.includes(tag)) {
-    // 他の排他タグを外す
     const picker = document.getElementById('line-tags-picker');
     if (picker) {
       picker.querySelectorAll('button.pill').forEach(b => {
@@ -879,7 +939,6 @@ Pages._lineToggleTag = function(btn) {
     }
   }
   btn.classList.toggle('active');
-  // hidden input を更新
   const picker = document.getElementById('line-tags-picker');
   const hidden = document.getElementById('line-tags-hidden');
   if (picker && hidden) {
@@ -896,6 +955,20 @@ Pages._lineSave = async function (editId) {
   const data = UI.collectForm(form);
   if (!data.hatch_year) { UI.toast('孵化年を入力してください', 'error'); return; }
   if (!data.line_code)  { UI.toast('ラインコードを入力してください', 'error'); return; }
+
+  // [20260423o] ライン特性情報を hypothesis_tags に埋め込む
+  //   _line_tags_tmp / _expected_horn_rate_tmp / _expected_size_mm_tmp はUI専用のtmpフィールドなので、
+  //   最終的には hypothesis_tags に #LP:{...} として埋め込んで GAS に送る。
+  const tmpTags = (data._line_tags_tmp || '').split(',').map(s=>s.trim()).filter(Boolean);
+  const tmpHornRate = +data._expected_horn_rate_tmp || null;
+  const tmpSizeMm = +data._expected_size_mm_tmp || null;
+  const cleanHypothesisTags = _stripLinePropsMarker(data.hypothesis_tags || '');
+  data.hypothesis_tags = _embedLineProps(cleanHypothesisTags, tmpTags, tmpHornRate, tmpSizeMm);
+  // tmp フィールドは削除 (GAS に送らない)
+  delete data._line_tags_tmp;
+  delete data._expected_horn_rate_tmp;
+  delete data._expected_size_mm_tmp;
+
   try {
     if (editId) {
       data.line_id = editId;

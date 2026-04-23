@@ -1,8 +1,11 @@
 // ════════════════════════════════════════════════════════════════
-// individual_analysis_patch.js  build: 20260423n
+// individual_analysis_patch.js  build: 20260423o
 // 個体詳細画面への成長分析カード追加パッチ
 // このファイルは individual.js の直後に読み込んでください
 //
+// [20260423o] ライン特性情報を hypothesis_tags の #LP:{...} マーカーからも読み取り
+//   GAS 未対応フィールド line_tags / expected_horn_rate / expected_size_mm 回避のため。
+//   manage.js 側と連携して永続化問題を解消。
 // [20260423n] ライン特性タグを予測に反映 (Phase 1-D 連携)
 //   - line.line_tags から胸角型/胴太型/標準型を読み取り胸角率priorを上書き
 //     胸角型 → 0.60、胴太型 → 0.40、標準型 → 0.50
@@ -443,16 +446,38 @@ function _predictAdultSizeV2(prepupaG, sex, lineId) {
     hornRate: basePrior.hornRate,
   };
   if (line) {
-    var tags = (function(){
-      var raw = line.line_tags;
-      if (Array.isArray(raw)) return raw;
-      if (!raw) return [];
-      return String(raw).split(',').map(function(s){ return s.trim(); }).filter(Boolean);
-    })();
+    // [20260423o] ライン特性情報を取得
+    //   優先1: 直接フィールド (line_tags / expected_horn_rate / expected_size_mm)
+    //   優先2: hypothesis_tags の末尾 #LP:{json} マーカー
+    //   (GAS未対応フィールドのため manage.js 側で hypothesis_tags に埋め込み)
+    var tags = [];
+    var expectedHornRate = null;
+    var expectedSizeMm = null;
+
+    if (line.line_tags || line.expected_horn_rate || line.expected_size_mm) {
+      // 優先1: 直接フィールドがあればそれを使う
+      if (Array.isArray(line.line_tags)) tags = line.line_tags;
+      else if (line.line_tags) tags = String(line.line_tags).split(',').map(function(s){return s.trim();}).filter(Boolean);
+      expectedHornRate = +line.expected_horn_rate || null;
+      expectedSizeMm = +line.expected_size_mm || null;
+    } else {
+      // 優先2: hypothesis_tags 末尾の #LP:{json} を抽出
+      var rawHT = String(line.hypothesis_tags || '');
+      var m = rawHT.match(/#LP:(\{[^\}]*\})/);
+      if (m) {
+        try {
+          var parsed = JSON.parse(m[1]);
+          tags = Array.isArray(parsed.tags) ? parsed.tags : [];
+          expectedHornRate = +parsed.horn_rate || null;
+          expectedSizeMm = +parsed.size || null;
+        } catch(e) { /* ignore */ }
+      }
+    }
+
     // 期待胸角率 (♂のみ)
     if (sex === '♂') {
-      if (+line.expected_horn_rate > 0) {
-        prior.hornRate = +line.expected_horn_rate / 100;
+      if (expectedHornRate && expectedHornRate > 0) {
+        prior.hornRate = expectedHornRate / 100;
       } else if (tags.includes('horn')) {
         prior.hornRate = 0.60;
       } else if (tags.includes('body')) {
