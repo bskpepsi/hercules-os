@@ -1,85 +1,21 @@
 // ════════════════════════════════════════════════════════════════
 // individual.js
 // 役割: 個体の一覧・詳細・新規登録・編集・ステータス変更を担う。
-// build: 20260422x
+//       個体台帳の中心画面。ロット・成長記録・ラベルへの導線も持つ。
+// build: 20260423j
 //
-// 20260422x 修正:
-//   - 孵化日の経過表示を常に全単位で (112日 / 16週 / 3.7ヶ月)、色は薄い白
-//   (実装は lot.js の _formatHatchAge / _formatHatchDate を使用)
-//
-// 20260422w 修正:
-//   - 🐣 孵化日の経過表示形式を変更 (ユーザー要望)
-//     旧: (112日) 赤字 → 警告と誤認される問題
-//     新: (112日 / 3.7ヶ月) グレー (情報色)
-//     日数に応じて自動単位切替: 日/週/ヶ月/年
-//   - 🔄 最終交換は 3段階の色分け:
-//     通常 → 黄色 (しきい値の80%) → 赤 (超過)
-//   ヘルパー _formatHatchDate / _formatHatchAge は lot.js 側 (グローバル)
-//
-// 20260422v 修正:
-//   - カード ④列 (ステージ+マット) を中揃えに変更
-//     旧: align-items: flex-end (右寄せでL1L2とT1がズレていた)
-//     新: align-items: center (バッジ幅が違っても中央で揃う)
-//
-// 20260422u 修正:
-//   - 個体カードの体重を独立列に分離
-//     旧: ③列内で [体重 上 / マットバッジ 下] の2段配置
-//     新: ③列=体重のみ / ④列=ステージバッジ上+マットバッジ下 / ⑤列=ステータス
-//     手書き案の「体重とTバッジが別列」の要件に対応
-//
-// 20260422t 修正:
-//   - カードデザインを手書き設計図に忠実に作り直し
-//     列構造 (個体2行):
-//       [①列: ライン + 性別] [②列: ID / 孵化日(経過) / 最終交換(経過)] [③列: 体重大型 / Tバッジ] [④列: 飼育中]
-//     - ①列は中央寄せ、固定幅 36px
-//     - ②列はフォント等幅、1段目ID, 2段目🐣孵化日, 3段目🔄最終交換
-//     - ③列は体重上、Tバッジ下の2段
-//     - ④列はステータス文字列だけ右端に細く
-//
-// 20260422p 修正:
-//   - 個体詳細の「体重推移（N件）」表記をユニットと統一:
-//     「成長記録（N回分）」に変更。件数もユニークな日付数 (記録回数) で数える。
-//   - 空状態メッセージを「体重記録」→「📷 成長記録」に合わせる
-//
-// 20260422k 修正:
-//   - T3フェーズではアクションカード自体を非表示に変更
-//     (T3は原則すべての個体が個別飼育済みなので、分割アクションは不要。
-//      マット交換/体重更新は「📷 成長記録」ボタンから直接行える)
-//     → T1:🔄 T2移行 / T2:⭐ T3移行 のみ表示、T3ではカード無し
-//   - 「📷 成長記録」ボタンの遷移先を変更: growth-rec → continuous-scan
-//     (ユニット詳細と同じ継続読取り画面。ラベル全体をOCR→表形式で記録)
-//     個体側でも targetType:'IND' + mode:'growth' で動作
-//   - ボタン行のレイアウト再構成 (ユーザー要望通り):
-//       旧: Row1=[📷 成長記録][編集][🏷] / Row2=[🌡️ 環境記録]
-//       新: Row1=[📷 成長記録][🏷️ ラベル発行] / Row2=[🌡️ 環境記録][編集]
-//     環境記録は individual_analysis.js が後付けで挿入するため、Row2 には
-//     data-ind-btn-row2 属性を付けて挿入先として使えるようにした。
-//     (individual_analysis.js 側も併せて修正済み)
-//
-// 20260422h 修正:
-//   🔥 個体の成長記録保存後にリロードしないと反映しないバグの根本修正
-//     原因: Pages.individualDetail が API.individual.get のレスポンスで
-//       Store.setGrowthRecords(indId, ind._growthRecords) を無条件で行い、
-//       バックグラウンド保存中の _tmp_ レコード (growth.js で作成)を
-//       上書き消去していた。消えた _tmp_ は growth.js の swap 処理で
-//       「findIndex=-1」となり何も追加されず、記録が Store から完全消失。
-//       リロードで初めてサーバーから再取得されて表示される症状が出ていた。
-//     修正: サーバーレスポンスで上書きする前に、Store に残る _tmp_ レコードを
-//       退避。サーバーレスポンスに同一 record_date + weight_g の記録が無ければ
-//       tmp を保持してマージ (あれば重複防止のため tmp 破棄)。
-//
-// 20260422g 修正:
-//   - 個体詳細画面にユニットと同じ T1/T2/T3 フェーズ表示と
-//     T2移行/T3移行 アクションボタンを追加（UI統一）
-//     ① _indComputePhase: ind.current_mat を優先、未設定なら最新成長記録の
-//        mat_type からフォールバック推定 (T0/T1→T1, T2→T2, T3/MD→T3)
-//     ② ヘッダーのバッジ行にユニットと同スタイルのフェーズピル表示
-//     ③ 画面末尾に「アクション」カードを追加（unit_detail と同構成）
-//        - T1: 🔄 T2移行 / T2: ⭐ T3移行 / T3: 🔄 T3 Mx/体重更新
-//        - 🏷️ ラベル発行 / 📷 成長記録 (常時表示)
-//     ④ Pages._indStartT2 / _indStartT3 ハンドラ追加
-//        内部で既存の Pages.t2SessionStartFromInd / t3SessionStartFromInd を呼ぶ
-//        （これらは t2_session.js / t3_session.js に既に実装済み）
+// 20260423j 修正:
+//   - 個体編集フォームに「成虫体長 (mm)」欄を復活
+//     (詳細表示には残っていたが編集フォームから消えていたため値を登録できない状態だった)
+//   - 個体編集フォームに「後食開始日 (feeding_start_date)」欄を新設
+//     親個体で使用していたフィールド名と統一。活動開始日として機能。
+//   - 発育日程の日付入力で current_stage を自動遷移
+//     前蛹確認日 → PREPUPA
+//     蛹確認日   → PUPA
+//     羽化日     → ADULT_PRE (成虫（未後食）)
+//     後食開始日 → ADULT     (成虫（活動開始）)
+//     既存ステージが進んでいる場合は退行せず最大値を採用。
+//     保存時に UI.toast でステージ切替を通知。
 //
 // 20260421f 修正:
 //   - 一覧カード表示で for_sale フラグを優先判定
@@ -123,7 +59,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] individual.js v20260422x loaded');
+console.log('[HerculesOS] individual.js v20260423j loaded');
 
 const Pages = window.Pages || {};
 
@@ -420,56 +356,14 @@ function _toDisplayStageBadgeShort(code) {
 }
 
 // ────────────────────────────────────────────────────────────────
-// [20260422g] _indComputePhase — 個体の飼育フェーズ (T1/T2/T3) 判定
-//   ユニットの stage_phase と同等の概念を個体に導入。
-//   優先順位:
-//     ① ind.current_mat (T0/T1/T2/T3/MD)
-//     ② 最新成長記録の mat_type
-//   マッピング: T0/T1 → 'T1', T2 → 'T2', T3/MD → 'T3'
-// ────────────────────────────────────────────────────────────────
-function _indComputePhase(ind, records) {
-  const _map = function (v) {
-    const u = String(v || '').toUpperCase();
-    if (u === 'T0' || u === 'T1') return 'T1';
-    if (u === 'T2') return 'T2';
-    if (u === 'T3' || u === 'MD') return 'T3';
-    return '';
-  };
-  const fromInd = _map(ind && ind.current_mat);
-  if (fromInd) return fromInd;
-  if (records && records.length > 0) {
-    const latest = [].concat(records).sort(function (a, b) {
-      return String(b.record_date || '').localeCompare(String(a.record_date || ''));
-    })[0];
-    if (latest) return _map(latest.mat_type);
-  }
-  return '';
-}
-
-// ────────────────────────────────────────────────────────────────
-// [20260422g] _indPhaseBadgeHTML — T1/T2/T3 フェーズピルバッジのHTML
-//   ユニット詳細 (unit_detail.js L489) と同スタイル
-// ────────────────────────────────────────────────────────────────
-function _indPhaseBadgeHTML(phase) {
-  if (!phase) return '';
-  return '<span style="background:rgba(91,168,232,.15);color:var(--blue);'
-    + 'padding:2px 8px;border-radius:5px;font-weight:700;font-size:.72rem;'
-    + 'border:1px solid rgba(91,168,232,.35)">' + phase + '</span>';
-}
-
-// ────────────────────────────────────────────────────────────────
 // _indCardHTML — 個体一覧カード
-// [20260422s] Phase E: 情報統一
-//   - 孵化日・最終マット交換日・経過日数 (色分け) を表示
-//   - 右端にマット種別バッジ (T0/T1/T2/T3/MD) を大きく表示
-//   - 体重を右端に大型表示 (ユニット互換)
-//   ヘルパー関数は lot.js のグローバル _resolveHatchDate / _getLastFullExchange /
-//   _formatAgeDate / _matBadgeHTML を利用 (lot.js が先に読み込まれる前提)
 // ────────────────────────────────────────────────────────────────
 function _indCardHTML(ind) {
-  const w_num = +ind.latest_weight_g || 0;
-  const w_txt = w_num ? w_num + 'g' : null;
-  const sz    = ind.adult_size_mm   ? ind.adult_size_mm + 'mm'  : null;
+  const ageObj     = ind.hatch_date ? Store.calcAge(ind.hatch_date) : null;
+  const ageDaysStr = ageObj ? ageObj.days : null;
+
+  const w  = ind.latest_weight_g ? ind.latest_weight_g + 'g' : null;
+  const sz = ind.adult_size_mm   ? ind.adult_size_mm + 'mm'  : null;
 
   // ── Bug fix: line_id で見つからない場合は display_id から抽出 ──
   const line    = ind.line_id ? Store.getLine(ind.line_id) : null;
@@ -492,6 +386,9 @@ function _indCardHTML(ind) {
     seed_candidate:'飼育中', seed_reserved:'飼育中',
     for_sale:'販売候補', listed:'出品中', sold:'販売済み', dead:'死亡',
   };
+  // [20260421f] for_sale フラグが立っていれば、status に関わらず「販売候補」として表示
+  //   T2移行で作成された販売候補個体は status='larva' のまま for_sale=true になるため、
+  //   status のみで判定すると「飼育中」として表示されてしまう
   const _isTerminalInd = (ind.status === 'sold' || ind.status === 'dead');
   const _isForSaleInd  = (!_isTerminalInd) && (
     ind.for_sale === true || ind.for_sale === 'true' ||
@@ -517,79 +414,40 @@ function _indCardHTML(ind) {
   };
   const stageC = stageColorMap[stageLbl] || 'var(--text3)';
 
-  // [20260422s] 日付情報取得 (lot.js のグローバルヘルパー使用、未定義ならフォールバック)
-  const _hasGlobalHelpers = (typeof _resolveHatchDate === 'function');
-  const _hatch = _hasGlobalHelpers
-    ? _resolveHatchDate({ direct: ind.hatch_date, lotId: ind.lot_id, originLotId: ind.origin_lot_id })
-    : (ind.hatch_date ? { value: String(ind.hatch_date).replace(/-/g,'/'), days: null } : null);
-  const _lastExc = _hasGlobalHelpers ? _getLastFullExchange(ind.ind_id) : null;
-  const _indMat = String(ind.current_mat || '').toUpperCase();
-  const _fmtHatch = _hasGlobalHelpers ? _formatHatchDate : function(d){ return d && d.value ? d.value : ''; };
-  const _fmtExch  = _hasGlobalHelpers ? _formatAgeDate   : function(d,m){ return d && d.value ? d.value : ''; };
-  const _matBadge = _hasGlobalHelpers ? _matBadgeHTML(_indMat) : '';
-
-  // サブ情報行 (ステージ + サイズなど簡易情報のみ)
   const subParts = [];
   if (stageLbl) subParts.push('<span style="font-weight:700;color:' + stageC + '">' + stageLbl + '</span>');
-  if (sz)       subParts.push('<span style="color:var(--gold);font-weight:700">' + sz + '</span>');
-  if (!ind.hatch_date && !_hatch) subParts.push('<span style="color:var(--amber);font-size:.7rem">孵化日未設定</span>');
+  if (ageDaysStr) subParts.push('<span>' + ageDaysStr + '</span>');
+  else if (!ind.hatch_date) subParts.push('<span style="color:var(--amber);font-size:.7rem">孵化日未設定</span>');
+  if (w)  subParts.push('<span style="color:var(--green);font-weight:700">' + w + '</span>');
+  if (sz) subParts.push('<span style="color:var(--gold);font-weight:700">' + sz + '</span>');
   const subHtml = subParts.join('<span style="font-size:.65rem;color:var(--border,rgba(255,255,255,.15));padding:0 2px">/</span>');
 
-  // [20260422w] 日付情報行:
-  //   🐣 孵化日は情報色 (グレー) で N日/N週/Nヶ月/N年 形式
-  //   🔄 最終交換は警告色 (通常/黄/赤) で (N日) 形式
-  const _hatchRow = _hatch
-    ? '<div style="font-size:.68rem;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">🐣' + _fmtHatch(_hatch) + '</div>'
-    : '';
-  const _exchRow = _lastExc
-    ? '<div style="font-size:.68rem;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">🔄' + _fmtExch(_lastExc, _indMat) + '</div>'
-    : '';
-
-  // ステージラベル (L1L2/L3/前蛹/蛹/成虫) 右上小バッジ用
-  const _stageBadge = stageLbl
-    ? '<span style="font-size:.68rem;font-weight:700;color:' + stageC + ';'
-      + 'border:1px solid ' + stageC + ';border-radius:4px;padding:0 5px;'
-      + 'line-height:1.4;white-space:nowrap">' + stageLbl + '</span>'
-    : '';
-
-  return '<div class="card" style="padding:10px 10px;cursor:pointer;display:flex;align-items:stretch;gap:0;margin-bottom:8px"'
+  return '<div class="card" style="padding:12px 14px;cursor:pointer;display:flex;align-items:center;gap:0;margin-bottom:8px"'
     + " onclick=\"routeTo('ind-detail',{indId:'" + ind.ind_id + "'})\">"
 
-    // ①列: ライン + 性別 (固定幅36px、中央寄せ、縦罫線付き)
+    // ①列: ライン + 性別
     + '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;'
-    +   'width:36px;padding-right:8px;border-right:1px solid var(--border2);margin-right:8px;flex-shrink:0">'
-    +   '<span style="font-size:.92rem;font-weight:800;color:var(--gold);line-height:1.2">' + (lineStr || '—') + '</span>'
-    +   '<span style="font-size:.9rem;font-weight:700;color:' + sexColor + ';margin-top:3px">' + (ind.sex || '?') + '</span>'
+    +   'min-width:34px;padding-right:8px;border-right:1px solid var(--border2);margin-right:8px;flex-shrink:0">'
+    +   '<span style="font-size:.88rem;font-weight:800;color:var(--gold);line-height:1.2">' + (lineStr || '—') + '</span>'
+    +   '<span style="font-size:.82rem;font-weight:700;color:' + sexColor + ';margin-top:2px">' + (ind.sex || '?') + '</span>'
     + '</div>'
 
-    // ②列: ID (1段目) + 🐣孵化日 (2段目) + 🔄最終交換 (3段目)
-    + '<div style="flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:1px">'
-    +   '<div style="display:flex;align-items:center;gap:4px">'
-    +     '<span style="font-family:var(--font-mono);font-weight:700;font-size:.88rem;color:var(--text1);'
+    // ②列: ID + サブ情報
+    + '<div style="flex:1;min-width:0">'
+    +   '<div style="display:flex;align-items:center;gap:4px;margin-bottom:3px">'
+    +     '<span style="font-family:var(--font-mono);font-weight:700;font-size:.85rem;color:var(--text1);'
     +       'overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + dispId + '</span>'
     +     (icons ? '<span style="font-size:.8rem;flex-shrink:0">' + icons + '</span>' : '')
     +   '</div>'
-    +   _hatchRow
-    +   _exchRow
-    +   (!ind.hatch_date && !_hatch ? '<div style="font-size:.68rem;color:var(--amber)">孵化日未設定</div>' : '')
+    +   (subHtml ? '<div style="display:flex;align-items:center;gap:3px;flex-wrap:wrap;font-size:.78rem;color:var(--text2)">' + subHtml + '</div>' : '')
     + '</div>'
 
-    // ③列: 体重のみ (独立した列)
-    + '<div style="display:flex;flex-direction:column;align-items:flex-end;justify-content:center;flex-shrink:0;margin-left:6px;min-width:48px">'
-    +   (w_txt ? '<span style="font-size:1.2rem;font-weight:800;color:var(--green);line-height:1">' + w_txt + '</span>' : '')
+    // ③列: ステータス + ›
+    + '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px;flex-shrink:0;margin-left:6px">'
+    +   '<span style="font-size:.72rem;font-weight:700;color:' + stClr + ';white-space:nowrap">' + stLbl + '</span>'
+    +   '<span style="color:var(--text3);font-size:1.1rem">›</span>'
     + '</div>'
 
-    // ④列: ステージバッジ (上) + マット種別バッジ (下) - 中揃え
-    + '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;flex-shrink:0;margin-left:6px;min-width:48px">'
-    +   _stageBadge
-    +   (_matBadge ? _matBadge : '')
-    + '</div>'
-
-    // ⑤列: ステータス文字 + ›
-    + '<div style="display:flex;flex-direction:column;align-items:flex-end;justify-content:center;gap:2px;flex-shrink:0;margin-left:8px;min-width:50px">'
-    +   '<span style="font-size:.7rem;font-weight:700;color:' + stClr + ';white-space:nowrap">' + stLbl + '</span>'
-    +   '<span style="color:var(--text3);font-size:1rem">›</span>'
-    + '</div>'
     + '</div>';
 }
 
@@ -662,31 +520,7 @@ Pages.individualDetail = async function (indId) {
     if (Store.getParams().indId !== indId && Store.getParams().id !== indId) return;
     ind = res.individual;
     Store.patchDBItem('individuals', 'ind_id', indId, ind);
-    // [20260422h] 🔥 race condition 修正: _tmp_ レコードを退避してマージ
-    //   以前: Store.setGrowthRecords(indId, ind._growthRecords) で無条件上書き
-    //   → growth.js でバックグラウンド保存中の _tmp_XXX レコードが消されて
-    //      swap処理が失敗 (findIndex=-1 で黙殺) → 記録が Store から完全消失
-    //   新: 現在 Store に残る _tmp_ レコードのうち、
-    //       サーバーに同日+同体重の記録がまだ無いものだけ保持してマージ
-    if (ind._growthRecords) {
-      var _serverRecs  = ind._growthRecords || [];
-      var _currentRecs = Store.getGrowthRecords(indId) || [];
-      var _inflightTmps = _currentRecs.filter(function (r) {
-        return r.record_id && String(r.record_id).indexOf('_tmp_') === 0;
-      });
-      var _keepTmps = _inflightTmps.filter(function (t) {
-        // サーバーに同一 record_date + weight_g の記録がすでにあれば破棄（重複防止）
-        var _tDate = String(t.record_date || '').replace(/-/g, '/');
-        return !_serverRecs.some(function (s) {
-          return String(s.record_date || '').replace(/-/g, '/') === _tDate
-            && String(s.weight_g || '') === String(t.weight_g || '');
-        });
-      });
-      Store.setGrowthRecords(indId, _serverRecs.concat(_keepTmps));
-      if (_keepTmps.length > 0) {
-        console.log('[IND] preserved', _keepTmps.length, 'in-flight _tmp_ record(s) during merge');
-      }
-    }
+    if (ind._growthRecords) Store.setGrowthRecords(indId, ind._growthRecords);
     if (ind.status === 'sold') {
       try {
         const saleRes = await API.sale.list({ ind_id: indId });
@@ -715,8 +549,6 @@ function _renderDetail(ind, main) {
   const promotedParent = ind.promoted_par_id ? Store.getParent(ind.promoted_par_id) : null;
   const line    = Store.getLine(ind.line_id);
   const dispId  = _safeDisplayId(ind);
-  // [20260422g] T1/T2/T3 飼育フェーズ (ユニットの stage_phase と同等)
-  const _indPhase = _indComputePhase(ind, records);
 
   const icons = [
     (String(ind.guinness_flag||'').toUpperCase()==='TRUE'||ind.guinness_flag===1||ind.guinness_flag===true) ? '<span title="ギネス候補">🏆</span>' : '',
@@ -779,7 +611,6 @@ function _renderDetail(ind, main) {
             <div style="font-family:var(--font-mono);font-size:.85rem;color:var(--gold)">${dispId}</div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
               ${_toDisplayStageBadge(ind.current_stage)}
-              ${_indPhaseBadgeHTML(_indPhase)}
               ${UI.statusBadge(ind.status)}
               ${icons}
             </div>
@@ -797,63 +628,17 @@ function _renderDetail(ind, main) {
         </div>` : '<div style="color:var(--amber);font-size:.8rem">⚠️ 孵化日未設定（設定すると日齢が表示されます）</div>'}
       </div>
 
-      <!-- [20260422k] ボタン行レイアウト再構成
-           旧: Row1=[📷 成長記録 flex:2][編集 flex:1][🏷 flex:1] / Row2=[🌡️ 環境記録]
-           新: Row1=[📷 成長記録][🏷️ ラベル発行] / Row2=[🌡️ 環境記録][編集]
-           📷 成長記録 の遷移先は continuous-scan (ユニット詳細と統一) -->
-      <div style="display:flex;gap:8px" data-ind-btn-row1="1">
-        <button class="btn btn-primary" style="flex:1"
-          data-ind-growth-btn="1"
-          onclick="routeTo('continuous-scan',{targetType:'IND',targetId:'${ind.ind_id}',displayId:'${ind.display_id||ind.ind_id}',mode:'growth'})"
-          title="成長記録を入力（ラベル撮影）">
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-primary" style="flex:2"
+          onclick="routeTo('growth-rec',{targetType:'IND',targetId:'${ind.ind_id}',displayId:'${ind.display_id||ind.ind_id}'})"
+          title="成長記録を入力">
           📷 成長記録
         </button>
         <button class="btn btn-ghost" style="flex:1"
-          onclick="routeTo('label-gen',{targetType:'IND',targetId:'${ind.ind_id}'})">
-          🏷️ ラベル発行
-        </button>
-      </div>
-      <!-- Row2: 🌡️ 環境記録ボタンは individual_analysis.js が挿入 -->
-      <div style="display:flex;gap:8px;margin-top:8px" data-ind-btn-row2="1">
+          onclick="routeTo('ind-new',{editId:'${ind.ind_id}'})">編集</button>
         <button class="btn btn-ghost" style="flex:1"
-          onclick="routeTo('ind-new',{editId:'${ind.ind_id}'})">
-          編集
-        </button>
+          onclick="routeTo('label-gen',{targetType:'IND',targetId:'${ind.ind_id}'})">🏷</button>
       </div>
-
-      ${(() => {
-        // [20260422g/k] T-フェーズ移行アクションカード (ユニット詳細と同構成)
-        //   _ALIVE_SET に該当する個体のみ T2移行/T3移行ボタンを表示。
-        //   判定は _indPhase (current_mat もしくは最新成長記録の mat_type から推定)。
-        //
-        // [20260422k] T3フェーズではカード自体を非表示。
-        //   T3は原則すべての個体が個別飼育済みで、分割を伴うアクションは不要。
-        //   マット交換/体重更新は「📷 成長記録」ボタンから直接行える。
-        const _isAlive = _ALIVE_SET.has(ind.status) || !ind.status;
-        if (!_isAlive) return '';
-        const t2Btn = _indPhase === 'T1' ? `
-          <button class="btn btn-primary" style="background:var(--blue)"
-            onclick="Pages._indStartT2('${ind.ind_id}')">
-            🔄 T2移行
-          </button>` : '';
-        const t3Btn = _indPhase === 'T2' ? `
-          <button class="btn btn-primary" style="background:var(--amber);color:#1a1a1a"
-            onclick="Pages._indStartT3('${ind.ind_id}')">
-            ⭐ T3移行
-          </button>` : '';
-        // T-フェーズボタンが何も該当しない場合 (T3 等) はカード自体を出さない
-        if (!t2Btn && !t3Btn) return '';
-        return `
-      <div class="card" style="margin-top:10px;margin-bottom:10px">
-        <div class="card-title">アクション（マット交換）</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          ${t2Btn}${t3Btn}
-        </div>
-        <div style="font-size:.7rem;color:var(--text3);margin-top:6px">
-          現在フェーズ: <b>${_indPhase}</b> ／ 継続中のマット交換は上の「📷 成長記録」から記録できます
-        </div>
-      </div>`;
-      })()}
 
       ${_fromNew ? `
       <div style="background:rgba(200,168,75,.12);border:1px solid rgba(200,168,75,.35);
@@ -994,17 +779,10 @@ function _renderDetail(ind, main) {
 
       <div class="accordion" id="acc-growth">
         <div class="acc-hdr open" onclick="_toggleAcc('acc-growth')">
-          ${(() => {
-            // [20260422p] ユニット側と表記統一: 「体重推移(N件)」→「成長記録(N回分)」
-            //   件数もユニークな日付数（記録回数）で数える (ユニットと同仕様)
-            const _uniqDates = {};
-            records.forEach(r => { if (r.record_date) _uniqDates[r.record_date] = true; });
-            const _recCount = Object.keys(_uniqDates).length;
-            return `成長記録（${_recCount}回分）`;
-          })()}<span class="acc-arrow">▼</span>
+          体重推移（${records.filter(r=>r.weight_g).length}件）<span class="acc-arrow">▼</span>
         </div>
         <div class="acc-body open">
-          ${records.length ? _weightChartBlock(ind.ind_id, records) : UI.empty('記録なし', '「📷 成長記録」ボタンから追加できます')}
+          ${records.length ? _weightChartBlock(ind.ind_id, records) : UI.empty('記録なし', '「体重記録」ボタンから追加できます')}
         </div>
       </div>
 
@@ -1177,29 +955,6 @@ function _renderDetail(ind, main) {
     setTimeout(() => _drawWeightChart(ind.ind_id, records), 100);
   }
 }
-
-// ────────────────────────────────────────────────────────────────
-// [20260422g] T2/T3 移行アクション (ユニット詳細の _udStartT2/_udStartT3 と同等)
-//   t2_session.js / t3_session.js に既に実装されている個体起点のセッション開始関数
-//   (Pages.t2SessionStartFromInd / Pages.t3SessionStartFromInd) を呼び出すだけ。
-//   UI起点が個体詳細でもユニット詳細でも同じ t2-session / t3-session 画面に遷移し、
-//   マット交換フローが統一される。
-// ────────────────────────────────────────────────────────────────
-Pages._indStartT2 = function (indId) {
-  if (typeof Pages.t2SessionStartFromInd === 'function') {
-    Pages.t2SessionStartFromInd(indId);
-  } else {
-    UI.toast('T2移行機能が読み込まれていません', 'error');
-  }
-};
-
-Pages._indStartT3 = function (indId) {
-  if (typeof Pages.t3SessionStartFromInd === 'function') {
-    Pages.t3SessionStartFromInd(indId);
-  } else {
-    UI.toast('T3移行機能が読み込まれていません', 'error');
-  }
-};
 
 // ────────────────────────────────────────────────────────────────
 // ステータス変更アクション
@@ -1680,10 +1435,16 @@ Pages.individualNew = function (params = {}) {
           ${UI.field('蛹サイズ (mm)', UI.input('pupa_length_mm', 'number', v('pupa_length_mm'), '例: 90.0'))}
           ${UI.field('胸角長 (mm)',   UI.input('horn_length_mm', 'number', v('horn_length_mm'), '例: 65.0'))}
         </div>
+        <!-- [20260423j] 成虫体長 (adult_size_mm) を復活。旧フォームから消えていたため -->
+        <div class="form-row-2">
+          ${UI.field('成虫体長 (mm)', UI.input('adult_size_mm', 'number', v('adult_size_mm'), '例: 150.0'))}
+          <div></div>
+        </div>
 
         <div class="form-title">発育日程</div>
         <div style="font-size:.75rem;color:var(--text3);margin:-4px 0 8px;line-height:1.5">
-          🏠 蛹室確認日から+18日が人工蛹室移行目安（♂のみ）。蛹確認日から+50〜70日が羽化目安。
+          🏠 蛹室確認日から+18日が人工蛹室移行目安（♂のみ）。蛹確認日から+50〜70日が羽化目安。<br>
+          ✨ 羽化日を入れると「成虫（未後食）」、後食開始日を入れると「成虫（活動開始）」に自動切替されます。
         </div>
         <div class="form-row-2">
           ${UI.field('蛹室確認日', UI.input('artificial_cell_date', 'date', v('artificial_cell_date','').replace(/\//g,'-')))}
@@ -1692,6 +1453,11 @@ Pages.individualNew = function (params = {}) {
         <div class="form-row-2">
           ${UI.field('蛹確認日', UI.input('pupa_check_date', 'date', v('pupa_check_date','').replace(/\//g,'-')))}
           ${UI.field('羽化日',   UI.input('eclosion_date',   'date', v('eclosion_date','').replace(/\//g,'-')))}
+        </div>
+        <!-- [20260423j] 後食開始日 (活動開始日) を追加 -->
+        <div class="form-row-2">
+          ${UI.field('後食開始日', UI.input('feeding_start_date', 'date', v('feeding_start_date','').replace(/\//g,'-')))}
+          <div></div>
         </div>
 
         <div class="form-title">メモ</div>
@@ -1717,12 +1483,32 @@ Pages._indSave = async function (editId) {
   const data = UI.collectForm(form);
 
   ['hatch_date','individual_date','artificial_cell_date',
-   'prepupa_date','pupa_check_date','eclosion_date'].forEach(k => {
+   'prepupa_date','pupa_check_date','eclosion_date','feeding_start_date'].forEach(k => {
     if (data[k]) data[k] = data[k].replace(/-/g, '/');
   });
 
   if (!editId && !data.line_id) { UI.toast('ラインを選択してください', 'error'); return; }
   if (!data.current_stage)      { UI.toast('ステージを選択してください', 'error'); return; }
+
+  // [20260423j] 発育日程からステージ自動遷移
+  //   日付が入力されていれば対応するステージに進める。
+  //   既に先のステージに進んでいる場合は退行しない (current_stage の順序を尊重)。
+  //   順序: L1L2 < L3 < PREPUPA < PUPA < ADULT_PRE < ADULT
+  const _stageOrder = { L1L2:1, L3:2, PREPUPA:3, PUPA:4, ADULT_PRE:5, ADULT:6 };
+  const _maxStage = (a, b) => {
+    const ra = _stageOrder[a] || 0;
+    const rb = _stageOrder[b] || 0;
+    return ra >= rb ? a : b;
+  };
+  let autoStage = data.current_stage;
+  if (data.prepupa_date)           autoStage = _maxStage(autoStage, 'PREPUPA');
+  if (data.pupa_check_date)        autoStage = _maxStage(autoStage, 'PUPA');
+  if (data.eclosion_date)          autoStage = _maxStage(autoStage, 'ADULT_PRE');
+  if (data.feeding_start_date)     autoStage = _maxStage(autoStage, 'ADULT');
+  if (autoStage !== data.current_stage) {
+    data.current_stage = autoStage;
+    UI.toast('ステージを「' + (autoStage === 'ADULT_PRE' ? '成虫（未後食）' : autoStage === 'ADULT' ? '成虫（活動開始）' : autoStage === 'PUPA' ? '蛹' : autoStage === 'PREPUPA' ? '前蛹' : autoStage) + '」に更新', 'success');
+  }
 
   try {
     if (editId) {
