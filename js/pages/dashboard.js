@@ -1,6 +1,6 @@
 // ════════════════════════════════════════════════════════════════
 // dashboard.js  v4 — Phase6 交換アラート新仕様対応
-// build: 20260423p
+// build: 20260423B
 // 変更点:
 //   - [20260423p] 今日のタスクに「成虫サイズ計測リマインド」追加 (Phase 1-C)
 //     羽化後21日超の未計測個体を yellow タスク、30日超を red タスクとして表示
@@ -10,7 +10,7 @@
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-console.log('[HerculesOS] dashboard.js v20260423A loaded');
+console.log('[HerculesOS] dashboard.js v20260423B loaded');
 
 Pages.dashboard = async function () {
   const main = document.getElementById('main');

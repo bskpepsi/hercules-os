@@ -2,7 +2,14 @@
 // individual.js
 // 役割: 個体の一覧・詳細・新規登録・編集・ステータス変更を担う。
 //       個体台帳の中心画面。ロット・成長記録・ラベルへの導線も持つ。
-// build: 20260423y
+// build: 20260423B
+//
+//
+// 20260423B 修正: 保守性改善
+//   - 全ファイルの build 番号を統一 (`20260423B`)
+//   - `JSON.stringify` を onclick で使う箇所を安全化
+//     _renderQuickDateButtons: 動的にイベントを登録する方式に変更
+//     (values を閉じた配列に格納し、onclick では index だけ渡す)
 //
 // 20260423y 修正: 4/22 22:52時点の正しい実装 (build 20260422k/p) を完全復元
 //   zipでアップロードいただいた manage.js (build 20260423o) と整合し、
@@ -164,7 +171,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] individual.js v20260423A loaded');
+console.log('[HerculesOS] individual.js v20260423B loaded');
 
 const Pages = window.Pages || {};
 
@@ -1677,12 +1684,18 @@ function _renderQuickDateButtons(ind) {
 
   if (!btns.length) return '';
 
+  // [20260423B] JSON.stringify を onclick に埋め込む方式を廃止し、
+  //   グローバル一時配列 (window._hcos_qdBtns) に値を保持、onclick では index のみ渡す方式に変更。
+  //   → HTMLエスケープ漏れやラベル内の特殊文字によるXSS懸念を根本排除。
+  //   ボタンデータは個体詳細を再描画するたびに上書きされる (個体ごとのスコープ)。
+  window._hcos_qdBtns = btns.map(function(b){ return { label: b.label, field: b.field, warn: !!b.warn }; });
+
   return `
     <div class="card" style="margin-bottom:10px;border-color:rgba(202,164,48,.25)">
       <div class="card-title">⏭️ 次のステップ（ワンタップ記録）</div>
-      ${btns.map(b => `
+      ${btns.map((b, i) => `
         <button type="button"
-          onclick="Pages._indQuickDateSave('${ind.ind_id}', '${b.field}', ${JSON.stringify(b.label).replace(/"/g,'&quot;')}, ${b.warn ? 'true' : 'false'})"
+          onclick="Pages._indQuickDateSaveByIndex('${ind.ind_id}', ${i})"
           style="display:block;width:100%;padding:14px 12px;margin-top:4px;
             border:1px solid ${b.color};background:var(--surface2);color:var(--text1);
             border-radius:10px;cursor:pointer;text-align:left;font-size:.95rem">
@@ -1695,6 +1708,15 @@ function _renderQuickDateButtons(ind) {
       </div>
     </div>`;
 }
+
+// [20260423B] 安全なワンタップ記録呼び出し (index 経由)
+//   グローバル _hcos_qdBtns からボタンデータを取得して実処理に委譲。
+Pages._indQuickDateSaveByIndex = function(indId, index) {
+  var btns = window._hcos_qdBtns || [];
+  var b = btns[index];
+  if (!b) { UI.toast && UI.toast('ボタンデータが見つかりません', 'error'); return; }
+  return Pages._indQuickDateSave(indId, b.field, b.label, b.warn);
+};
 
 Pages._indQuickDateSave = async function (indId, field, label, warnBeforeSave) {
   if (!indId || !field) return;

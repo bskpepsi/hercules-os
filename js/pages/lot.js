@@ -1,8 +1,10 @@
 // FILE: js/pages/lot.js
 // ════════════════════════════════════════════════════════════════
 // lot.js
-// build: 20260423l
+// build: 20260423B
 // 変更点:
+//   - [20260423B] 保守性改善
+//     * build 番号を全ファイル統一 (`20260423B`)
 //   - [20260423l] build 番号のみ更新 (統一)
 //   - [20260423k] build 番号のみ更新
 //   - [20260423i] 全体タブのフィルタにステータス追加
@@ -188,7 +190,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] lot.js v20260423A loaded');
+console.log('[HerculesOS] lot.js v20260423B loaded');
 
 // ────────────────────────────────────────────────────────────────
 // [20260418f] 血統・種親カードを生成（ロット詳細用）
@@ -3252,9 +3254,13 @@ Pages._blkSave = async function () {
           <button class="btn btn-ghost" style="flex:1"
             onclick="routeTo('lot-list',{line_id:'${lineId}',_tab:'lot'})">ロット一覧へ</button>
           <button class="btn btn-primary" style="flex:1"
-            onclick="Pages._blkQrBatch(${JSON.stringify(created).replace(/"/g,'&quot;')})">🏷 QR一括発行</button>
+            onclick="Pages._blkQrBatch()">🏷 QR一括発行</button>
         </div>
       </div>`;
+
+    // [20260423B] 作成済みロット配列をグローバル保持 (JSON.stringify onclick 廃止)
+    //   Pages._blkQrBatch 側で window.__blkCreatedLots を参照する
+    window.__blkCreatedLots = created;
 
   } catch (e) {
     UI.toast('作成失敗: ' + (e.message || '不明なエラー'), 'error');
@@ -3263,6 +3269,10 @@ Pages._blkSave = async function () {
 };
 
 Pages._blkQrBatch = function (createdLots) {
+  // [20260423B] 引数なしで呼び出された場合は window.__blkCreatedLots から取得
+  if (!createdLots || !createdLots.length) {
+    createdLots = window.__blkCreatedLots;
+  }
   if (!createdLots || !createdLots.length) { UI.toast('ロット情報がありません', 'error'); return; }
   window.__blkCreatedLots = createdLots;
   const main = document.getElementById('main');

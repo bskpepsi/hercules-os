@@ -1,8 +1,14 @@
 // ════════════════════════════════════════════════════════════════
-// individual_analysis_patch.js  build: 20260423y
+// individual_analysis_patch.js  build: 20260423B
 // 個体詳細画面への成長分析カード追加パッチ
 // このファイルは individual.js の直後に読み込んでください
 //
+// [20260423B] 保守性改善
+//   - build 番号を全ファイル統一 (`20260423B`)
+//   - 起動確認ログ `console.log` を追加
+//   - 環境記録ボタン挿入の setTimeout 300ms 遅延を削除 (queueMicrotask に変更)
+//   - Row2 への insertBefore を `row2.querySelector('button')` で確実にする
+//     (テキストノードが firstChild になる問題を回避)
 // [20260423y] 環境記録ボタン挿入処理を Row2 (data-ind-btn-row2) に対応
 //   individual.js 側で build 20260422k の 2段ボタンレイアウトを復元したため。
 //   新レイアウト: Row1=[📷 成長記録][🏷️ ラベル発行] / Row2=[🌡️ 環境記録][編集]
@@ -28,6 +34,8 @@
 //       ♀: 全長 = 0.45 × 前蛹体重 + 35.0
 //   - サイズ段階判定を現代基準に更新 (全長170mm+でギネス候補)
 // ════════════════════════════════════════════════════════════════
+
+console.log('[HerculesOS] individual_analysis.js v20260423B loaded');
 
 // ── _growthAnalysisHTML: 成長分析カードのHTML生成 ────────────────
 // records: GrowthRecordsの配列 [{record_date, weight_g, stage, ...}]
@@ -840,13 +848,19 @@ var _origInjectAnalysis = null;
 })();
 
 // ── 個体詳細に「環境記録」ボタンを追加 ────────────────────────
+// [20260423B] setTimeout 300ms を削除 (queueMicrotask で即時挿入)
+//   → 画像1で見られた「編集単独行」の一瞬を解消
+// [20260423B] 挿入位置の確実化: row2.firstChild (空白ノードの可能性) ではなく
+//   実際の最初の button 要素を取得して insertBefore することで
+//   常に「🌡️ 環境記録 → 編集」の順になるように保証
 // [20260423y 復元] Row2 (data-ind-btn-row2) に挿入、成長記録ボタンは continuous-scan に遷移するため
 // セレクタを data-ind-growth-btn にも対応させた
 (function(){
   var _prevWithPrepupa = Pages.individualDetail;
   Pages.individualDetail = async function(indId) {
     await _prevWithPrepupa.call(this, indId);
-    setTimeout(function(){
+
+    var _insertEnvBtn = function() {
       var realId = (typeof indId === 'object') ? (indId.id || indId.indId || '') : indId;
       // Row2 を取得 (20260422k 以降の新レイアウト)
       var row2 = document.querySelector('[data-ind-btn-row2="1"]');
@@ -867,12 +881,22 @@ var _origInjectAnalysis = null;
       envBtn.setAttribute('data-env-btn', '1');
       envBtn.innerHTML = '🌡️ 環境記録';
       envBtn.onclick = function(){ routeTo('env-record', {indId: realId}); };
-      // Row2 の先頭に挿入 (編集ボタンの左側)
-      if (row2.firstChild) {
-        row2.insertBefore(envBtn, row2.firstChild);
+      // [20260423B] 最初の実要素 (button) を特定して、その前に挿入
+      //   row2.firstChild はテキストノード (空白・改行) の可能性があるため信頼できない
+      var firstBtn = row2.querySelector('button');
+      if (firstBtn) {
+        row2.insertBefore(envBtn, firstBtn);
       } else {
         row2.appendChild(envBtn);
       }
-    }, 300);
+    };
+
+    // [20260423B] queueMicrotask で DOM 反映直後に即時挿入 (300ms遅延を廃止)
+    //   queueMicrotask が利用できない古い環境では Promise.resolve().then にフォールバック
+    if (typeof queueMicrotask === 'function') {
+      queueMicrotask(_insertEnvBtn);
+    } else {
+      Promise.resolve().then(_insertEnvBtn);
+    }
   };
 })();
