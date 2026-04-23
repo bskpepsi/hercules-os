@@ -2,7 +2,24 @@
 // individual.js
 // 役割: 個体の一覧・詳細・新規登録・編集・ステータス変更を担う。
 //       個体台帳の中心画面。ロット・成長記録・ラベルへの導線も持つ。
-// build: 20260423u
+// build: 20260423w
+//
+// 20260423w 修正: 個体詳細画面のレイアウト復元 (重要バグ修正)
+//   セッション中の作業で失われていた要素を 4/22 の実装から復元:
+//   - ボタン行: [📷 成長記録][🏷 ラベル発行] (2ボタン均等) + 単独の [編集]
+//   - アクション（マット交換）カード: T1→[🔄 T2移行] / T2→[⭐ T3移行] /
+//     T3→[⭐ T3 Mx/体重更新] (ステータスに応じて1つ表示)
+//   - ヘッダのバッジ行にフェーズピル [T1]/[T2]/[T3] を追加
+//   関連関数 _indComputePhase, _indPhaseBadgeHTML, Pages._indStartT2/T3
+//   もすべて追加 (過去のトランスクリプトから完全復元)
+//
+// 20260423v 修正: 販売API呼び出しのバグ修正 (Phase 1-E)
+//   - API.individual.sell は存在しないため API.phase2.sellIndividual に変更
+//   - sellIndividual は ind_id, sold_date, sold_weight, sold_stage, sold_reason を
+//     単一APIで受け付けるため、update との2段呼び出しは不要に
+//   - prepupa_weight_g のみ別途 API.individual.update で送信 (これは動作確認済API)
+//   - 販売価格・経路・購入者は現行GASでは記録されないため、UIに注釈追加
+//   - エラー時は console.error に出力するよう改善
 //
 // 20260423u 修正: 個体カード表示の微調整
 //   - 「活動中」ステージバッジ表示を元に戻す (ステージ列として必要)
@@ -127,7 +144,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] individual.js v20260423u loaded');
+console.log('[HerculesOS] individual.js v20260423w loaded');
 
 const Pages = window.Pages || {};
 
@@ -463,6 +480,38 @@ function _toDisplayStageBadgeShort(code) {
 // ────────────────────────────────────────────────────────────────
 
 // [20260423s] 個体用ステージバッジ (lot.js の _matBadgeHTML と同じスタイル)
+// [20260423w 復元] _indComputePhase — 個体のマットフェーズ (T1/T2/T3) を決定
+//   ① ind.current_mat を優先
+//   ② 最新成長記録の mat_type を使用
+//   T0/T1 → 'T1', T2 → 'T2', T3/MD → 'T3'
+function _indComputePhase(ind, records) {
+  const _map = function (v) {
+    const u = String(v || '').toUpperCase();
+    if (u === 'T0' || u === 'T1') return 'T1';
+    if (u === 'T2') return 'T2';
+    if (u === 'T3' || u === 'MD') return 'T3';
+    return '';
+  };
+  const fromInd = _map(ind && ind.current_mat);
+  if (fromInd) return fromInd;
+  if (records && records.length > 0) {
+    const latest = [].concat(records).sort(function (a, b) {
+      return String(b.record_date || '').localeCompare(String(a.record_date || ''));
+    })[0];
+    if (latest) return _map(latest.mat_type);
+  }
+  return '';
+}
+
+// [20260423w 復元] _indPhaseBadgeHTML — T1/T2/T3 フェーズピルバッジ
+function _indPhaseBadgeHTML(phase) {
+  if (!phase) return '';
+  return '<span style="background:rgba(91,168,232,.15);color:var(--blue);'
+    + 'padding:2px 8px;border-radius:5px;font-weight:700;font-size:.72rem;'
+    + 'border:1px solid rgba(91,168,232,.35)">' + phase + '</span>';
+}
+
+// ────────────────────────────────────────────────────────────────
 function _indStageBadgeHTML(stageLbl) {
   if (!stageLbl) return '';
   const colorMap = {
@@ -620,6 +669,24 @@ function _indCardHTML(ind) {
     + '</div>';
 }
 
+// [20260423w 復元] Pages._indStartT2 / Pages._indStartT3
+//   個体詳細画面の「アクション（マット交換）」カードから呼ばれる
+//   T2/T3 セッションを個体IDから開始
+Pages._indStartT2 = function (indId) {
+  if (Pages.t2SessionStartFromInd) {
+    Pages.t2SessionStartFromInd(indId);
+  } else {
+    UI.toast && UI.toast('T2セッション機能が利用できません', 'error');
+  }
+};
+Pages._indStartT3 = function (indId) {
+  if (Pages.t3SessionStartFromInd) {
+    Pages.t3SessionStartFromInd(indId);
+  } else {
+    UI.toast && UI.toast('T3セッション機能が利用できません', 'error');
+  }
+};
+
 // QRスキャン
 Pages._indQrScan = function () {
   const input = prompt('個体ID（IND-xxxxx）または表示ID（HM2025-A1-001）:');
@@ -718,6 +785,8 @@ function _renderDetail(ind, main) {
   const promotedParent = ind.promoted_par_id ? Store.getParent(ind.promoted_par_id) : null;
   const line    = Store.getLine(ind.line_id);
   const dispId  = _safeDisplayId(ind);
+  // [20260423w 復元] マットフェーズを冒頭で算出 (ヘッダバッジ行とアクションカードの両方で使用)
+  const _indPhase = _indComputePhase(ind, records);
 
   const icons = [
     (String(ind.guinness_flag||'').toUpperCase()==='TRUE'||ind.guinness_flag===1||ind.guinness_flag===true) ? '<span title="ギネス候補">🏆</span>' : '',
@@ -780,6 +849,7 @@ function _renderDetail(ind, main) {
             <div style="font-family:var(--font-mono);font-size:.85rem;color:var(--gold)">${dispId}</div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
               ${_toDisplayStageBadge(ind.current_stage)}
+              ${_indPhaseBadgeHTML(_indPhase)}
               ${UI.statusBadge(ind.status)}
               ${icons}
             </div>
@@ -797,17 +867,52 @@ function _renderDetail(ind, main) {
         </div>` : '<div style="color:var(--amber);font-size:.8rem">⚠️ 孵化日未設定（設定すると日齢が表示されます）</div>'}
       </div>
 
+      <!-- [20260423w] 画像1復元: 成長記録+ラベル発行を1行、編集を単独行、T2/T3移行アクションカード -->
       <div style="display:flex;gap:8px">
-        <button class="btn btn-primary" style="flex:2"
+        <button class="btn btn-primary" style="flex:1"
           onclick="routeTo('growth-rec',{targetType:'IND',targetId:'${ind.ind_id}',displayId:'${ind.display_id||ind.ind_id}'})"
           title="成長記録を入力">
           📷 成長記録
         </button>
         <button class="btn btn-ghost" style="flex:1"
-          onclick="routeTo('ind-new',{editId:'${ind.ind_id}'})">編集</button>
-        <button class="btn btn-ghost" style="flex:1"
-          onclick="routeTo('label-gen',{targetType:'IND',targetId:'${ind.ind_id}'})">🏷</button>
+          onclick="routeTo('label-gen',{targetType:'IND',targetId:'${ind.ind_id}'})">🏷 ラベル発行</button>
       </div>
+
+      <button class="btn btn-ghost" style="width:100%"
+        onclick="routeTo('ind-new',{editId:'${ind.ind_id}'})">編集</button>
+
+      <!-- [20260422g 復元] アクション（マット交換）カード: T2/T3 移行ボタン -->
+      ${(() => {
+        const _ALIVE_SET_LOCAL = new Set(['alive','larva','prepupa','pupa','adult','seed_candidate','seed_reserved']);
+        const _isAlive = _ALIVE_SET_LOCAL.has(ind.status) || !ind.status;
+        if (!_isAlive) return '';
+        const t2Btn = _indPhase === 'T1' ? `
+          <button class="btn btn-primary" style="background:var(--blue)"
+            onclick="Pages._indStartT2('${ind.ind_id}')">
+            🔄 T2移行
+          </button>` : '';
+        const t3Btn = _indPhase === 'T2' ? `
+          <button class="btn btn-primary" style="background:var(--amber);color:#1a1a1a"
+            onclick="Pages._indStartT3('${ind.ind_id}')">
+            ⭐ T3移行
+          </button>` : '';
+        const t3MxBtn = _indPhase === 'T3' ? `
+          <button class="btn btn-primary" style="background:rgba(224,144,64,.15);border:2px solid var(--amber);color:var(--amber)"
+            onclick="Pages._indStartT3('${ind.ind_id}')">
+            ⭐ T3 Mx/体重更新
+          </button>` : '';
+        if (!t2Btn && !t3Btn && !t3MxBtn) return '';
+        return `
+      <div class="card" style="margin-top:10px;margin-bottom:10px">
+        <div class="card-title">アクション（マット交換）</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          ${t2Btn}${t3Btn}${t3MxBtn}
+        </div>
+        <div style="font-size:.7rem;color:var(--text3);margin-top:6px">
+          現在フェーズ: <b>${_indPhase}</b> ／ 継続中のマット交換は上の「📷 成長記録」から記録できます
+        </div>
+      </div>`;
+      })()}
 
       ${_fromNew ? `
       <div style="background:rgba(200,168,75,.12);border:1px solid rgba(200,168,75,.35);
@@ -1289,6 +1394,9 @@ Pages._indMarkSold = function (id) {
 
       <div class="form-title" style="font-size:.82rem;color:var(--gold)">販売情報</div>
       ${UI.field('販売日 *', `<input type="date" id="sell-date" class="input" value="${today}">`)}
+      <div style="font-size:.66rem;color:var(--text3);line-height:1.4;margin-top:4px;margin-bottom:4px">
+        💡 以下の価格・経路・購入者情報は今後のアップデートで販売履歴として記録される予定です（現在は個体詳細には反映されません）。
+      </div>
       ${UI.field('販売価格（円）', `<input type="number" id="sell-price" class="input" placeholder="例: 8000">`)}
       ${UI.field('販売経路', `<select id="sell-platform" class="input">
         ${PLATFORMS.map(p => `<option value="${p}">${p}</option>`).join('')}
@@ -1341,46 +1449,49 @@ Pages._indSellExec = async function (id) {
 
   _closeModal();
   try {
-    // 販売APIへは販売情報のみ送信
+    // [20260423v] API.phase2.sellIndividual を使う (API.individual.sell は存在しない)
+    //   sellIndividual は ind_id, sold_date, sold_weight, sold_stage, sold_reason を受け付ける
+    //   (GAS側の仕様: extraUpdates で個体レコードに反映)
+    //   actual_price / platform / buyer_name / buyer_note は現行GASでは販売時に記録されない
+    //   (SALE_HIST APIがまだ存在しないため。将来拡張予定の項目としてフロントだけ入力可能)
+    const sellPayload = {
+      ind_id:    id,
+      sold_date: date.replace(/-/g, '/'),
+    };
+    if (soldWeight)  sellPayload.sold_weight = +soldWeight;
+    if (soldStage)   sellPayload.sold_stage = soldStage;
+    if (soldReason)  sellPayload.sold_reason = soldReason;
+
     await apiCall(
-      () => API.individual.sell({
-        ind_id:       id,
-        sold_date:    date.replace(/-/g, '/'),
-        actual_price: price ? Number(price) : '',
-        platform,
-        buyer_name:   buyer,
-        buyer_note:   note,
-      }),
+      () => API.phase2.sellIndividual(sellPayload),
       '販売済みとして登録しました 💰'
     );
 
-    // [20260423r] 販売時データを個体レコードに更新 (別 API)
-    const indUpdates = { ind_id: id };
-    if (soldWeight)    indUpdates.sold_weight = +soldWeight;
-    if (soldStage)     indUpdates.sold_stage = soldStage;
-    if (soldReason)    indUpdates.sold_reason = soldReason;
-    if (sellPrepupaG && +sellPrepupaG > 0)  indUpdates.prepupa_weight_g = +sellPrepupaG;
-
-    if (Object.keys(indUpdates).length > 1) { // ind_id 以外に何かあれば
+    // 前蛹体重のみ個別に update (sellIndividual では受け付けないため)
+    if (sellPrepupaG && +sellPrepupaG > 0) {
       try {
-        await API.individual.update(indUpdates);
-        UI.toast && UI.toast('販売時データを記録しました 📊', 'success');
+        await API.individual.update({
+          ind_id: id,
+          prepupa_weight_g: +sellPrepupaG,
+        });
       } catch(e) {
-        console.warn('[_indSellExec] 販売時データ更新失敗:', e);
-        // 販売自体は成功してるのでエラーにはしない
+        console.warn('[_indSellExec] 前蛹体重更新失敗:', e && e.message);
       }
     }
 
     // ローカルStoreも更新
-    Store.patchDBItem('individuals', 'ind_id', id, Object.assign(
-      { status: 'sold' },
+    const localPatch = Object.assign(
+      { status: 'sold', sold_date: date.replace(/-/g, '/') },
       soldWeight ? { sold_weight: +soldWeight } : {},
       soldStage ? { sold_stage: soldStage } : {},
       soldReason ? { sold_reason: soldReason } : {},
       (sellPrepupaG && +sellPrepupaG > 0) ? { prepupa_weight_g: +sellPrepupaG } : {}
-    ));
+    );
+    Store.patchDBItem('individuals', 'ind_id', id, localPatch);
     Pages.individualDetail(id);
-  } catch (e) {}
+  } catch (e) {
+    console.error('[_indSellExec] 販売登録エラー:', e);
+  }
 };
 
 Pages._indDateModal = function (indId) {
