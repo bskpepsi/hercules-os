@@ -1,23 +1,16 @@
 // FILE: js/pages/manage.js
-// build: 20260422q
+// build: 20260423n
 // 変更点:
-//   - [20260422q] 販売管理のアイコンを 👑 → 💰 に変更（種親候補の 👑 と重複回避）
-//   - [20260422p] 管理画面のアイコン・並び替え（ユーザー要望）
-//     新しい並び順:
-//       🔗 ライン管理 / 🥚 産卵セット / 🐛 飼育管理 /
-//       ♂♀ 種親管理 / 👑 種親候補 / 🧬 血統管理 / 💰 販売管理
-//     変更内容:
-//       ① 「🥚🔗 ロット・ユニット管理」→「🐛 飼育管理」にリネーム
-//          (既存 lot-list ページはロット/ユニットタブを持つので当面このままで OK。
-//           将来は 飼育管理 ページで個体タブも追加予定)
-//       ② 「🌿 産卵セット」のアイコンを 🥚 に変更
-//       ③ 「📦 ユニット管理」エントリを削除 (lot-list のユニットタブと重複)
-//       ④ 「飼育管理」の sub に個体件数も表示（ロット/ユニット/個体の統一ビュー準備）
-//     既存リンク (line-list, pairing-list, lot-list, parent-list,
-//       parent-candidate, bloodline-list, sale-list) はすべてそのまま維持。
-//     既存のブックマーク・QRコード・各ページからのリンクはすべて動作継続。
-//   - [20260420b] ページ先頭に未確定セッションバナー追加（UI.pendingBanner()）
-//   - [20260416c] 管理画面クイック登録に「✨ ヤフオク出品文AIジェネレーター」ボタンを追加
+//   - [20260423n] ライン統計ダッシュボード (Phase 1-B) + ライン特性タグ (Phase 1-D)
+//     _renderLineStatsDashboard 関数を追加。ライン詳細ページに以下を表示:
+//       ・実績統計 (成虫 ♂♀別 平均全長、最大/最小、胸角率、還元率、前蛹体重)
+//       ・予測モデル精度 (ライン特化度プログレスバー、K=10で100%)
+//       ・ライン特性タグ (大型血統/胸角型/胴太型/標準型/近交系)
+//       ・生存者バイアス警告 (販売済み前蛹データが含まれていない旨)
+//     Pages.lineNew (ライン編集) に特性タグ選択UI + 期待胸角率/期待最大全長を追加。
+//     Pages._lineToggleTag で胸角型/胴太型/標準型を排他選択に。
+//   - [20260420b] ページ先頭に未確定セッションバナー追加
+//   - [20260416c] 管理画面クイック登録に「✨ ヤフオク出品文AIジェネレーター」ボタン追加
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
@@ -33,17 +26,7 @@ Pages.manage = function () {
   const actLots  = lots.filter(l => l.status === 'active');
   const actPars  = pars.filter(p => !p.status || p.status === 'active');
   const actPairs = pairs.filter(p => p.status === 'active');
-  // [20260422p] 飼育管理セクションの集計用に個体・ユニット件数も先に計算
-  const activeUnits = (Store.getDB('breeding_units') || []).filter(u => u.status === 'active').length;
-  const allInds     = Store.getDB('individuals') || [];
-  const activeInds  = allInds.filter(i => {
-    const s = i.status || 'alive';
-    return s === 'alive' || s === 'larva' || s === 'prepupa' || s === 'pupa' || s === 'adult';
-  }).length;
 
-  // [20260422p] 並び順・アイコンをユーザー要望通りに変更:
-  //   ① ライン管理   ② 産卵セット   ③ 飼育管理   ④ 種親管理
-  //   ⑤ 種親候補     ⑥ 血統管理    ⑦ 販売管理
   const sections = [
     {
       icon: '🔗', label: 'ライン管理', count: lines.length, unit: 'ライン',
@@ -52,20 +35,11 @@ Pages.manage = function () {
       color: 'var(--gold)',
     },
     {
-      icon: '🥚', label: '産卵セット', count: actPairs.length, unit: 'セット',
-      page: 'pairing-list', newPage: 'pairing-new',
-      sub: `完了 ${pairs.filter(p=>p.status==='completed').length}件`,
-      color: '#a0c878',
-    },
-    {
-      // [20260422p] 🐛 飼育管理 = 旧「ロット・ユニット管理」のリネーム
-      //   lot-list ページは既にロット/ユニット2タブを持つ。
-      //   将来的に「個体」タブも追加して完全統合予定。
-      icon: '🐛', label: '飼育管理',
-      count: actLots.length + activeUnits + activeInds,
+      icon: '🥚🔗', label: 'ロット・ユニット管理',
+      count: actLots.length + ((Store.getDB('breeding_units')||[]).filter(u=>u.status==='active').length),
       unit: '件',
       page: 'lot-list', newPage: 'lot-new',
-      sub: `ロット${actLots.length} / ユニット${activeUnits} / 個体${activeInds}`,
+      sub: `ロット${actLots.length}件 / ユニット${(Store.getDB('breeding_units')||[]).filter(u=>u.status==='active').length}件`,
       color: 'var(--green)',
     },
     {
@@ -75,27 +49,47 @@ Pages.manage = function () {
       color: 'var(--blue)',
     },
     {
-      icon: '👑', label: '種親候補',
-      count: allInds.filter(i=>String(i.parent_flag||'').toLowerCase()==='true'||i.parent_flag===true).length,
-      unit: '頭',
+      icon: '👑', label: '種親候補', count: ((Store.getDB('individuals')||[]).filter(i=>String(i.parent_flag||'').toLowerCase()==='true'||i.parent_flag===true).length), unit: '頭',
       page: 'parent-candidate', newPage: null,
       sub: '昇格候補個体',
       color: 'var(--gold)',
     },
     {
-      icon: '🧬', label: '血統管理',
-      count: blds.filter(b=>b.bloodline_id!=='BLD-UNKNOWN').length, unit: '血統',
+      icon: '🧬', label: '血統管理', count: blds.filter(b=>b.bloodline_id!=='BLD-UNKNOWN').length, unit: '血統',
       page: 'bloodline-list', newPage: 'bloodline-new',
       sub: `確定 ${blds.filter(b=>b.bloodline_status==='confirmed').length}件${blds.some(b=>b.bloodline_id==='BLD-UNKNOWN') ? ' / うち不明1件' : ''}`,
       color: 'var(--amber)',
     },
     {
-      icon: '💰', label: '販売管理',
-      count: allInds.filter(i => i.status === 'sold').length,
-      unit: '頭販売済み',
+      icon: '🌿', label: '産卵セット', count: actPairs.length, unit: 'セット',
+      page: 'pairing-list', newPage: 'pairing-new',
+      sub: `完了 ${pairs.filter(p=>p.status==='completed').length}件`,
+      color: '#a0c878',
+    },
+    {
+      icon: '📦', label: 'ユニット管理', count: (() => {
+        const units = Store.getDB('breeding_units') || [];
+        return units.filter(u => u.status === 'active').length;
+      })(), unit: '件',
+      page: 'unit-list', newPage: null,
+      sub: (() => {
+        const units = Store.getDB('breeding_units') || [];
+        const t1 = units.filter(u => u.stage_phase === 'T1' && u.status === 'active').length;
+        const t2 = units.filter(u => u.stage_phase === 'T2' && u.status === 'active').length;
+        const t3 = units.filter(u => u.stage_phase === 'T3' && u.status === 'active').length;
+        return `T1:${t1} / T2:${t2} / T3:${t3}`;
+      })(),
+      color: 'var(--blue)',
+    },
+    {
+      icon: '💰', label: '販売管理', count: (() => {
+        const inds = Store.getDB('individuals') || [];
+        return inds.filter(i => i.status === 'sold').length;
+      })(), unit: '頭販売済み',
       page: 'sale-list', newPage: null,
       sub: (() => {
-        const selling = allInds.filter(i => i.status === 'for_sale' || i.status === 'listed').length;
+        const inds = Store.getDB('individuals') || [];
+        const selling = inds.filter(i => i.status === 'for_sale' || i.status === 'listed').length;
         return selling ? `販売候補・出品中 ${selling}頭` : '販売候補なし';
       })(),
       color: 'var(--green)',
@@ -442,6 +436,9 @@ function _renderLineDetail(line, main) {
             <span style="font-size:.78rem">${p.total_eggs ? p.total_eggs + '卵' : ''}</span>
           </div>`).join('')}
       </div>` : ''}
+
+      <!-- [20260423n] ライン統計ダッシュボード (Phase 1-B) -->
+      ${_renderLineStatsDashboard(line, allInds)}
       <div class="card">
         <div class="card-title">親情報</div>
         <div class="info-list">
@@ -526,6 +523,247 @@ function _lnRow(key, val) {
   </div>`;
 }
 
+// ════════════════════════════════════════════════════════════════
+// [20260423n] ライン統計ダッシュボード (Phase 1-B)
+//   - 実績統計 (n, 平均全長, 胸角率, 還元率, 前蛹体重)
+//   - 予測モデル精度 (ライン特化度、予測式)
+//   - ライン特性タグ表示
+//   - バイアス情報 (販売済み前蛹データ数)
+// ════════════════════════════════════════════════════════════════
+function _renderLineStatsDashboard(line, allInds) {
+  if (!line) return '';
+
+  // 羽化まで到達した個体 (成虫体長 あり)
+  const adultInds = allInds.filter(i => +i.adult_size_mm > 0);
+  // 前蛹体重のみでもデータがある個体 (中途退場個体)
+  const prepupaInds = allInds.filter(i => +i.prepupa_weight_g > 0);
+  // 販売済みで前蛹体重あり、成虫計測なし = バイアス源
+  const soldBiasInds = allInds.filter(i =>
+    (i.status === 'sold' || i.status === 'dead') &&
+    +i.prepupa_weight_g > 0 &&
+    (!i.adult_size_mm || +i.adult_size_mm === 0)
+  );
+
+  const males   = adultInds.filter(i => i.sex === '♂');
+  const females = adultInds.filter(i => i.sex === '♀');
+
+  // 統計計算
+  function _mean(arr) {
+    if (!arr.length) return null;
+    return arr.reduce((a,b) => a+b, 0) / arr.length;
+  }
+  function _stdDev(arr) {
+    if (arr.length < 2) return null;
+    const m = _mean(arr);
+    const v = arr.reduce((s,x) => s + (x-m)*(x-m), 0) / arr.length;
+    return Math.sqrt(v);
+  }
+
+  const allSizes = adultInds.map(i => +i.adult_size_mm);
+  const allPrepupa = prepupaInds.map(i => +i.prepupa_weight_g);
+  const hornRatios = males
+    .filter(i => +i.horn_length_mm > 0 && +i.adult_size_mm > 0)
+    .map(i => +i.horn_length_mm / +i.adult_size_mm);
+  const reductions = adultInds
+    .filter(i => +i.pupa_length_mm > 0 && +i.adult_size_mm > 0)
+    .map(i => +i.adult_size_mm / +i.pupa_length_mm);
+  const hornLengths = males
+    .filter(i => +i.horn_length_mm > 0)
+    .map(i => +i.horn_length_mm);
+
+  const avgSize    = _mean(allSizes);
+  const maxSize    = allSizes.length ? Math.max.apply(null, allSizes) : null;
+  const minSize    = allSizes.length ? Math.min.apply(null, allSizes) : null;
+  const avgHorn    = _mean(hornLengths);
+  const avgHornRatio = _mean(hornRatios);
+  const avgReduction = _mean(reductions);
+  const stdReduction = _stdDev(reductions);
+  const avgPrepupa = _mean(allPrepupa);
+
+  // ライン特性タグを配列化
+  const tags = (() => {
+    const raw = line.line_tags || '';
+    if (Array.isArray(raw)) return raw;
+    return String(raw).split(',').map(s => s.trim()).filter(Boolean);
+  })();
+  const tagDefs = {
+    large:    { label:'🏆 大型血統',  color:'var(--gold)' },
+    horn:     { label:'⚔️ 胸角型',    color:'var(--amber)' },
+    body:     { label:'💪 胴太型',    color:'var(--green)' },
+    standard: { label:'📏 標準型',    color:'var(--text2)' },
+    inbred:   { label:'🧬 近交系',    color:'#b07bc8' },
+  };
+  const tagBadges = tags.length
+    ? tags.map(t => {
+        const def = tagDefs[t];
+        if (!def) return '';
+        return '<span style="display:inline-block;padding:3px 8px;border-radius:6px;'
+          + 'background:' + def.color + '33;color:' + def.color + ';font-size:.72rem;font-weight:700;margin-right:4px">'
+          + def.label + '</span>';
+      }).join('')
+    : '<span style="color:var(--text3);font-size:.75rem">未設定 (ライン編集から設定可)</span>';
+
+  // 予測モデル精度: 性別ごとに縮約重みを計算
+  const K = 10;
+  const maleAdultN = males.length;
+  const femaleAdultN = females.length;
+  const maleShrinkW = maleAdultN / (maleAdultN + K);
+  const femaleShrinkW = femaleAdultN / (femaleAdultN + K);
+
+  // 予測モード表示
+  function _modeLabel(n) {
+    if (n >= K) return { label:'ライン特化', color:'var(--green)' };
+    if (n >= 3) return { label:'ライン縮約 (' + Math.round(n/(n+K)*100) + '%)', color:'var(--amber)' };
+    if (n >= 1) return { label:'縮約開始', color:'var(--amber)' };
+    return { label:'経験則 (データなし)', color:'var(--text3)' };
+  }
+  const maleMode = _modeLabel(maleAdultN);
+  const femaleMode = _modeLabel(femaleAdultN);
+
+  // プログレスバー生成
+  function _progressBar(current, target, color) {
+    const pct = Math.min(100, (current / target) * 100);
+    return '<div style="background:var(--bg2);border-radius:4px;height:6px;overflow:hidden">'
+      + '<div style="background:' + color + ';width:' + pct + '%;height:100%;transition:width 0.3s"></div>'
+      + '</div>';
+  }
+
+  // 生存者バイアス警告
+  const biasHTML = soldBiasInds.length > 0
+    ? '<div style="margin-top:8px;padding:8px 10px;background:rgba(224,144,64,.08);'
+      + 'border-left:3px solid var(--amber);border-radius:4px;font-size:.7rem;line-height:1.5;color:var(--text2)">'
+      + '⚠️ <strong>生存者バイアス警告:</strong> このラインでは販売済み '
+      + soldBiasInds.length + ' 頭の前蛹データが蓄積されていますが、成虫サイズ未計測のため予測モデルに含まれていません。'
+      + '軽量前蛹域の予測精度は限定的です。'
+      + '</div>'
+    : '';
+
+  // 統計なし時の表示
+  if (!adultInds.length && !prepupaInds.length) {
+    return '<div class="card">'
+      + '<div class="card-title">📊 実績統計</div>'
+      + '<div style="font-size:.78rem;color:var(--text3);text-align:center;padding:20px">'
+      + 'このラインの成虫・前蛹データがまだありません<br>'
+      + '<span style="font-size:.68rem">羽化した個体のサイズを計測すると統計が表示されます</span>'
+      + '</div>'
+      + '<div style="margin-top:10px;padding:10px;background:var(--bg2);border-radius:6px">'
+      + '<div style="font-size:.75rem;color:var(--text2);margin-bottom:6px">🏷️ ライン特性タグ</div>'
+      + tagBadges
+      + '</div>'
+      + '</div>';
+  }
+
+  // ステータス別カウント
+  const statusCounts = {};
+  allInds.forEach(i => {
+    const s = i.status || 'alive';
+    statusCounts[s] = (statusCounts[s] || 0) + 1;
+  });
+
+  // 胸角率判定
+  let hornRatioLabel = '';
+  if (avgHornRatio) {
+    const hr = avgHornRatio * 100;
+    if (hr >= 60) hornRatioLabel = '<span style="color:var(--amber);font-size:.68rem;margin-left:6px">⚔️ 胸角型</span>';
+    else if (hr < 45) hornRatioLabel = '<span style="color:var(--green);font-size:.68rem;margin-left:6px">💪 胴太型</span>';
+    else hornRatioLabel = '<span style="color:var(--text2);font-size:.68rem;margin-left:6px">📏 標準型</span>';
+  }
+
+  return `
+    <div class="card">
+      <div class="card-title">📊 実績統計 <span style="font-size:.7rem;color:var(--text3);margin-left:6px">(成虫 ${adultInds.length}頭 / 前蛹 ${prepupaInds.length}頭)</span></div>
+
+      <!-- 実績統計値 -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+        <div style="background:var(--bg2);border-radius:6px;padding:8px 10px">
+          <div style="font-size:.64rem;color:var(--text3);margin-bottom:2px">平均全長 (♂)</div>
+          <div style="font-size:1rem;font-weight:700;color:${males.length ? 'var(--gold)' : 'var(--text3)'}">
+            ${males.length ? _mean(males.map(i=>+i.adult_size_mm)).toFixed(1) + 'mm' : '—'}
+          </div>
+          ${males.length ? '<div style="font-size:.6rem;color:var(--text3)">最大 ' + Math.max.apply(null, males.map(i=>+i.adult_size_mm)).toFixed(1) + 'mm / 最小 ' + Math.min.apply(null, males.map(i=>+i.adult_size_mm)).toFixed(1) + 'mm</div>' : ''}
+        </div>
+        <div style="background:var(--bg2);border-radius:6px;padding:8px 10px">
+          <div style="font-size:.64rem;color:var(--text3);margin-bottom:2px">平均全長 (♀)</div>
+          <div style="font-size:1rem;font-weight:700;color:${females.length ? '#e87fa0' : 'var(--text3)'}">
+            ${females.length ? _mean(females.map(i=>+i.adult_size_mm)).toFixed(1) + 'mm' : '—'}
+          </div>
+          ${females.length ? '<div style="font-size:.6rem;color:var(--text3)">最大 ' + Math.max.apply(null, females.map(i=>+i.adult_size_mm)).toFixed(1) + 'mm</div>' : ''}
+        </div>
+        <div style="background:var(--bg2);border-radius:6px;padding:8px 10px">
+          <div style="font-size:.64rem;color:var(--text3);margin-bottom:2px">平均胸角 (♂)</div>
+          <div style="font-size:1rem;font-weight:700;color:var(--text1)">
+            ${avgHorn ? avgHorn.toFixed(1) + 'mm' : '—'}
+          </div>
+          ${avgHornRatio ? '<div style="font-size:.6rem;color:var(--text3)">胸角率 ' + (avgHornRatio*100).toFixed(1) + '%' + hornRatioLabel + '</div>' : ''}
+        </div>
+        <div style="background:var(--bg2);border-radius:6px;padding:8px 10px">
+          <div style="font-size:.64rem;color:var(--text3);margin-bottom:2px">平均還元率</div>
+          <div style="font-size:1rem;font-weight:700;color:var(--text1)">
+            ${avgReduction ? (avgReduction*100).toFixed(1) + '%' : '—'}
+          </div>
+          ${stdReduction ? '<div style="font-size:.6rem;color:var(--text3)">± ' + (stdReduction*100).toFixed(1) + '%</div>' : ''}
+        </div>
+        <div style="background:var(--bg2);border-radius:6px;padding:8px 10px;grid-column:1/-1">
+          <div style="font-size:.64rem;color:var(--text3);margin-bottom:2px">平均前蛹体重 (成虫到達 + 販売含む)</div>
+          <div style="display:flex;align-items:baseline;gap:10px">
+            <div style="font-size:1rem;font-weight:700;color:var(--text1)">
+              ${avgPrepupa ? avgPrepupa.toFixed(1) + 'g' : '—'}
+            </div>
+            <div style="font-size:.66rem;color:var(--text3)">
+              成虫到達組: ${allSizes.length ? _mean(adultInds.filter(i=>+i.prepupa_weight_g>0).map(i=>+i.prepupa_weight_g)).toFixed(1) + 'g' : '—'}
+              ${soldBiasInds.length ? ' / 販売組: ' + _mean(soldBiasInds.map(i=>+i.prepupa_weight_g)).toFixed(1) + 'g' : ''}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 予測モデル精度 -->
+      <div style="background:var(--surface2);border-radius:6px;padding:10px;margin-bottom:10px">
+        <div style="font-size:.72rem;color:var(--text2);font-weight:700;margin-bottom:8px">🎯 予測モデル精度</div>
+
+        <div style="margin-bottom:8px">
+          <div style="display:flex;justify-content:space-between;font-size:.7rem;margin-bottom:3px">
+            <span style="color:var(--male,#5ba8e8)">♂ ライン特化度</span>
+            <span style="color:${maleMode.color};font-weight:700">${maleMode.label} (${maleAdultN}/${K}頭)</span>
+          </div>
+          ${_progressBar(Math.min(maleAdultN, K), K, 'var(--male,#5ba8e8)')}
+        </div>
+
+        <div>
+          <div style="display:flex;justify-content:space-between;font-size:.7rem;margin-bottom:3px">
+            <span style="color:#e87fa0">♀ ライン特化度</span>
+            <span style="color:${femaleMode.color};font-weight:700">${femaleMode.label} (${femaleAdultN}/${K}頭)</span>
+          </div>
+          ${_progressBar(Math.min(femaleAdultN, K), K, '#e87fa0')}
+        </div>
+
+        <div style="font-size:.65rem;color:var(--text3);margin-top:8px;line-height:1.5">
+          💡 成虫計測まで完了した個体が10頭蓄積すると、このライン専用の予測モデルに完全移行します。
+        </div>
+      </div>
+
+      <!-- ライン特性タグ -->
+      <div style="background:var(--bg2);border-radius:6px;padding:10px;margin-bottom:4px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <div style="font-size:.75rem;color:var(--text2);font-weight:700">🏷️ ライン特性タグ</div>
+          <button class="btn btn-ghost btn-sm" style="font-size:.68rem;padding:4px 8px"
+            onclick="routeTo('line-new',{editId:'${line.line_id}'})">
+            ✏️ 編集
+          </button>
+        </div>
+        <div>${tagBadges}</div>
+        ${line.expected_horn_rate || line.expected_size_mm ? `
+          <div style="font-size:.66rem;color:var(--text3);margin-top:6px">
+            ${line.expected_horn_rate ? '期待胸角率: ' + line.expected_horn_rate + '%' : ''}
+            ${line.expected_horn_rate && line.expected_size_mm ? ' / ' : ''}
+            ${line.expected_size_mm ? '期待最大全長: ' + line.expected_size_mm + 'mm' : ''}
+          </div>` : ''}
+      </div>
+
+      ${biasHTML}
+    </div>`;
+}
+
 Pages._lineExpandCharts = function(lineId) {
   var body = document.getElementById('line-chart-body-' + lineId);
   if (!body) return;
@@ -550,6 +788,31 @@ Pages.lineNew = function (params = {}) {
   const v = (f, d = '') => line ? (line[f] !== undefined ? line[f] : d) : (params[f] || d);
   const curYear = new Date().getFullYear();
 
+  // [20260423n] ライン特性タグ (既存値を配列化)
+  const curTags = (() => {
+    const raw = v('line_tags', '');
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw;
+    return String(raw).split(',').map(s => s.trim()).filter(Boolean);
+  })();
+  const tagDefs = [
+    { key:'large',       label:'🏆 大型血統',  hint:'全長170mm+ 期待' },
+    { key:'horn',        label:'⚔️ 胸角型',    hint:'胸角率60%+' },
+    { key:'body',        label:'💪 胴太型',    hint:'胸角率45%未満' },
+    { key:'standard',    label:'📏 標準型',    hint:'胸角率45-60%' },
+    { key:'inbred',      label:'🧬 近交系',    hint:'累代5世代+' },
+  ];
+  const tagsHTML = '<div style="display:flex;flex-wrap:wrap;gap:6px;padding:6px 0" id="line-tags-picker">'
+    + tagDefs.map(t => {
+        const active = curTags.includes(t.key);
+        return '<button type="button" class="pill ' + (active ? 'active' : '') + '" '
+          + 'data-tag="' + t.key + '" '
+          + 'onclick="Pages._lineToggleTag(this)" '
+          + 'title="' + t.hint + '">' + t.label + '</button>';
+      }).join('')
+    + '<input type="hidden" name="line_tags" id="line-tags-hidden" value="' + curTags.join(',') + '">'
+    + '</div>';
+
   main.innerHTML = `
     ${UI.header(isEdit ? 'ライン編集' : 'ライン登録', { back: true })}
     <div class="page-body">
@@ -565,6 +828,18 @@ Pages.lineNew = function (params = {}) {
           ${UI.field('産地', UI.input('locality', 'text', v('locality', 'Guadeloupe')))}
           ${UI.field('累代', UI.input('generation', 'text', v('generation'), '例: WF1 / CBF2'))}
         </div>
+
+        <!-- [20260423n] ライン特性タグ + 期待値 (サイズ予測に反映) -->
+        <div class="form-title">ライン特性 (予測に反映)</div>
+        <div style="font-size:.72rem;color:var(--text3);margin-bottom:4px;line-height:1.5">
+          タグは成虫サイズ予測の初期値として使用されます。データ蓄積で自動的に実測値へ移行。
+        </div>
+        ${UI.field('特性タグ (複数選択可)', tagsHTML)}
+        <div class="form-row-2">
+          ${UI.field('期待胸角率 (%)', UI.input('expected_horn_rate', 'number', v('expected_horn_rate'), '例: 60 (空=タグから自動)'))}
+          ${UI.field('期待最大全長 (mm)', UI.input('expected_size_mm', 'number', v('expected_size_mm'), '例: 175 (空=タグから自動)'))}
+        </div>
+
         <div class="form-title">メモ</div>
         ${UI.field('特徴', UI.textarea('characteristics', v('characteristics'), 2, '例: 父175mm × 母大型系'))}
         ${UI.field('仮説タグ', UI.input('hypothesis_tags', 'text', v('hypothesis_tags'), '例: 高タンパク,pH6.2'))}
@@ -584,6 +859,34 @@ Pages.lineNew = function (params = {}) {
         </div>
       </form>
     </div>`;
+};
+
+// [20260423n] 特性タグピルのトグル処理
+Pages._lineToggleTag = function(btn) {
+  if (!btn) return;
+  const tag = btn.getAttribute('data-tag');
+  const active = btn.classList.contains('active');
+  // 胸角型/胴太型/標準型は排他
+  const exclusiveGroup = ['horn','body','standard'];
+  if (!active && exclusiveGroup.includes(tag)) {
+    // 他の排他タグを外す
+    const picker = document.getElementById('line-tags-picker');
+    if (picker) {
+      picker.querySelectorAll('button.pill').forEach(b => {
+        const t = b.getAttribute('data-tag');
+        if (exclusiveGroup.includes(t) && t !== tag) b.classList.remove('active');
+      });
+    }
+  }
+  btn.classList.toggle('active');
+  // hidden input を更新
+  const picker = document.getElementById('line-tags-picker');
+  const hidden = document.getElementById('line-tags-hidden');
+  if (picker && hidden) {
+    const actives = Array.from(picker.querySelectorAll('button.pill.active'))
+      .map(b => b.getAttribute('data-tag'));
+    hidden.value = actives.join(',');
+  }
 };
 
 Pages._lineSave = async function (editId) {

@@ -1,13 +1,14 @@
 // ════════════════════════════════════════════════════════════════
-// individual_analysis_patch.js  build: 20260423m
+// individual_analysis_patch.js  build: 20260423n
 // 個体詳細画面への成長分析カード追加パッチ
 // このファイルは individual.js の直後に読み込んでください
 //
-// [20260423m] 試算結果の表示を充実化 (予測カード本体と同じ情報量)
-//   - モード表示 (ライン特化/縮約/全体/経験則)
-//   - R² 精度
-//   - データ状態 (何頭データから)
-//   - 生存者バイアス警告
+// [20260423n] ライン特性タグを予測に反映 (Phase 1-D 連携)
+//   - line.line_tags から胸角型/胴太型/標準型を読み取り胸角率priorを上書き
+//     胸角型 → 0.60、胴太型 → 0.40、標準型 → 0.50
+//   - line.expected_horn_rate が手動入力されていれば最優先で使用
+//   - 大型血統タグがあれば切片を +5mm 底上げ
+// [20260423m] 試算結果の表示を充実化
 // [20260423l] 成虫サイズ予測ロジック刷新 (Phase 1-A)
 //   - 性別別モデル: ♂ 対数回帰、♀ 線形回帰
 //   - ライン × 性別 縮約推定 (K=10)
@@ -424,9 +425,47 @@ function _predictAdultSizeV2(prepupaG, sex, lineId) {
   if (!sex) sex = '♂'; // デフォルト
 
   var inds = (Store.getDB('individuals') || []);
+  var line = lineId ? Store.getLine(lineId) : null;
 
-  // 事前分布 (経験則)
-  var prior = SIZE_PRIORS[sex] || SIZE_PRIORS['♂'];
+  // [20260423n] ライン特性タグから事前分布をカスタマイズ
+  //   大型血統 → 初期予測を +5mm 底上げ
+  //   胸角型   → 初期胸角率 0.60
+  //   胴太型   → 初期胸角率 0.40
+  //   標準型   → 初期胸角率 0.50 (既定通り)
+  //   expected_horn_rate / expected_size_mm が手動入力されていれば優先
+  var basePrior = SIZE_PRIORS[sex] || SIZE_PRIORS['♂'];
+  var prior = {
+    model: basePrior.model,
+    a: basePrior.a,
+    b: basePrior.b,
+    r2: basePrior.r2,
+    reduction: basePrior.reduction,
+    hornRate: basePrior.hornRate,
+  };
+  if (line) {
+    var tags = (function(){
+      var raw = line.line_tags;
+      if (Array.isArray(raw)) return raw;
+      if (!raw) return [];
+      return String(raw).split(',').map(function(s){ return s.trim(); }).filter(Boolean);
+    })();
+    // 期待胸角率 (♂のみ)
+    if (sex === '♂') {
+      if (+line.expected_horn_rate > 0) {
+        prior.hornRate = +line.expected_horn_rate / 100;
+      } else if (tags.includes('horn')) {
+        prior.hornRate = 0.60;
+      } else if (tags.includes('body')) {
+        prior.hornRate = 0.40;
+      } else if (tags.includes('standard')) {
+        prior.hornRate = 0.50;
+      }
+    }
+    // 大型血統タグは切片を +5mm
+    if (tags.includes('large')) {
+      prior.b = prior.b + 5;
+    }
+  }
 
   // 性別全体データ (生存者のみ: adult_size_mm 実測値)
   var sexPool = inds.filter(function(i){
@@ -466,7 +505,6 @@ function _predictAdultSizeV2(prepupaG, sex, lineId) {
   var reductionUsed = null;
   if (lineReduction && globalReduction) {
     var correction = lineReduction / globalReduction;
-    // 補正は ±5% 以内に制限 (極端な値を防ぐ)
     correction = Math.max(0.95, Math.min(1.05, correction));
     predicted *= correction;
     reductionUsed = lineReduction;
@@ -474,19 +512,25 @@ function _predictAdultSizeV2(prepupaG, sex, lineId) {
     reductionUsed = globalReduction || prior.reduction;
   }
 
-  // 胸角率 (♂のみ、縮約込み)
+  // 胸角率 (♂のみ、縮約込み、ライン特性タグの事前分布あり)
   var hornRateUsed = null;
   var hornLength = null;
   var bodyLength = null;
   if (sex === '♂') {
     var lineHornRate = _averageHornRatio(linePool);
     var globalHornRate = _averageHornRatio(sexPool);
-    if (lineHornRate && globalHornRate) {
+    if (lineHornRate) {
+      // ライン実測値がある → 縮約: ライン実測 vs 全体 or prior
+      var baselineHornRate = globalHornRate || prior.hornRate;
       var wH = n / (n + K);
-      hornRateUsed = wH * lineHornRate + (1 - wH) * globalHornRate;
+      hornRateUsed = wH * lineHornRate + (1 - wH) * baselineHornRate;
     } else if (globalHornRate) {
-      hornRateUsed = globalHornRate;
+      // ラインデータなしだが全体データあり → 縮約: 全体 vs prior (タグ反映済)
+      // prior.hornRate はタグで既に 0.4〜0.6 のいずれかになっている可能性あり
+      var wG = sexPool.length / (sexPool.length + K);
+      hornRateUsed = wG * globalHornRate + (1 - wG) * prior.hornRate;
     } else {
+      // データなし → priorをそのまま使用 (タグ反映済)
       hornRateUsed = prior.hornRate;
     }
     hornLength = Math.round(predicted * hornRateUsed * 10) / 10;
@@ -494,7 +538,6 @@ function _predictAdultSizeV2(prepupaG, sex, lineId) {
   }
 
   // 予測区間 (サンプル数から動的に)
-  //   サンプル多い → ±5mm、少ない → ±10mm
   var intervalWidth = n >= 30 ? 4 : n >= 15 ? 5 : n >= 5 ? 7 : 10;
 
   // モード判定
@@ -503,8 +546,7 @@ function _predictAdultSizeV2(prepupaG, sex, lineId) {
   else if (n >= 3) mode = 'shrinkage';
   else if (sexPool.length >= 3) mode = 'global';
 
-  // バイアス警告: 販売済み個体のデータ有無
-  //   販売済みの個体は成虫サイズ計測なしで消えている可能性高い
+  // バイアス警告
   var soldInds = inds.filter(function(i){
     return i.sex === sex
         && (lineId ? i.line_id === lineId : true)
@@ -536,6 +578,7 @@ function _predictAdultSizeV2(prepupaG, sex, lineId) {
     biasWarning: biasWarning,
     modelType: useModel.model,
     sex: sex,
+    lineTags: line ? (line.line_tags || '') : '',
   };
 }
 
