@@ -2,9 +2,21 @@
 // individual.js
 // 役割: 個体の一覧・詳細・新規登録・編集・ステータス変更を担う。
 //       個体台帳の中心画面。ロット・成長記録・ラベルへの導線も持つ。
-// build: 20260423s
+// build: 20260423u
 //
-// 20260423s 修正: 個体カードデザインを画像1基準に再調整
+// 20260423u 修正: 個体カード表示の微調整
+//   - 「活動中」ステージバッジ表示を元に戻す (ステージ列として必要)
+//   - 体重の表示位置をステージ/マット列の左側に移動
+//     (以前: ステータスの上 → 新: ステージバッジの左)
+//
+// 20260423t 修正: 個体カード表示を画像2の仕様に完全一致
+//   - 孵化日を _formatHatchDate (text2 色、日/週/月併記) で表示
+//     → 「2025/12/05 (139日 / 19週 / 4.6ヶ月)」のような詳細表記
+//   - 最終交換日は _formatAgeDate (経過日数色分け)
+//   - 「活動中」ステージのバッジは表示しない (画像2準拠)
+//   - ユニットカードと同一スタイルで日付行を整形
+//
+// 20260423s 修正: 個体カードデザインを画像基準に再調整
 //   - _indStageBadgeHTML 追加 (L1L2/L3/前蛹/蛹/未後食/活動中 を右側にバッジ表示)
 //   - ID列下に「🐣 孵化日(日齢/週/月)」「🔄 最終交換日(N日)」を2行で表示
 //   - ③列: ステージバッジ + マットバッジ を上下に並べて中央寄せ
@@ -115,7 +127,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] individual.js v20260423s loaded');
+console.log('[HerculesOS] individual.js v20260423u loaded');
 
 const Pages = window.Pages || {};
 
@@ -543,23 +555,24 @@ function _indCardHTML(ind) {
     : (ind.hatch_date ? { value: String(ind.hatch_date).replace(/-/g,'/'), days: null } : null);
   const _lastExc = _hasGlobalHelpers ? _getLastFullExchange(ind.ind_id) : null;
   const _indMat = String(ind.current_mat || '').toUpperCase();
-  const _fmtDate = _hasGlobalHelpers ? _formatAgeDate : function(d,m){ return d && d.value ? d.value : ''; };
+  // [20260423t] 孵化日は _formatHatchDate (text2 色、日/週/月併記) を使う (ユニットカードと同じ方式)
+  //   最終交換日は _formatAgeDate (経過日数に応じて色分け) を使う
+  const _fmtHatch  = (_hasGlobalHelpers && typeof _formatHatchDate === 'function') ? _formatHatchDate : function(d){ return d && d.value ? d.value : ''; };
+  const _fmtExc    = _hasGlobalHelpers ? _formatAgeDate : function(d,m){ return d && d.value ? d.value : ''; };
   const _matBadge = _hasGlobalHelpers ? _matBadgeHTML(_indMat) : '';
   const _stageBadge = _indStageBadgeHTML(stageLbl);
 
-  // 日付情報行 (🐣孵化日 + 🔄最終交換日) — 詳細日齢付き
-  //   _formatAgeDate(h, mat) は「YYYY/MM/DD (Nd)」形式で日齢 (週/月) を色分けで返す
+  // 日付情報行 (🐣孵化日 + 🔄最終交換日) — ユニットカードと同じスタイル
   const dateLines = [];
-  if (_hatch)   dateLines.push('<span style="font-size:.66rem">🐣' + _fmtDate(_hatch, _indMat) + '</span>');
-  if (_lastExc) dateLines.push('<span style="font-size:.66rem">🔄' + _fmtDate(_lastExc, _indMat) + '</span>');
-  // 孵化日も交換日も解決できない場合のフォールバック (孵化日未設定警告)
+  if (_hatch)   dateLines.push('<div style="font-size:.66rem;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">🐣' + _fmtHatch(_hatch) + '</div>');
+  if (_lastExc) dateLines.push('<div style="font-size:.66rem;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">🔄' + _fmtExc(_lastExc, _indMat) + '</div>');
   const hasAnyDate = dateLines.length > 0;
   const noHatchWarn = !hasAnyDate && !ind.hatch_date
-    ? '<span style="color:var(--amber);font-size:.66rem">🐣孵化日未設定</span>'
+    ? '<div style="color:var(--amber);font-size:.66rem">🐣孵化日未設定</div>'
     : '';
   const dateBlock = dateLines.length || noHatchWarn
-    ? '<div style="display:flex;flex-direction:column;gap:1px;color:var(--text2);margin-top:2px">'
-      + (dateLines.length ? dateLines.map(function(s){ return '<div>'+s+'</div>'; }).join('') : '<div>' + noHatchWarn + '</div>')
+    ? '<div style="display:flex;flex-direction:column;gap:1px;margin-top:2px">'
+      + (dateLines.length ? dateLines.join('') : noHatchWarn)
       + '</div>'
     : '';
 
@@ -588,15 +601,19 @@ function _indCardHTML(ind) {
     +   szPart
     + '</div>'
 
-    // ③列: ステージバッジ + マット種別バッジ (上下に並べて表示)
-    + '<div style="display:flex;flex-direction:column;align-items:center;gap:3px;flex-shrink:0;margin-left:6px">'
+    // ③列: 体重 (ステージ/マットの左側)
+    +   (w_txt ? '<div style="display:flex;flex-direction:column;align-items:flex-end;flex-shrink:0;margin-left:6px">'
+    +     '<span style="font-size:1rem;font-weight:800;color:var(--green);line-height:1">' + w_txt + '</span>'
+    +   '</div>' : '')
+
+    // ④列: ステージバッジ + マット種別バッジ (上下に並べて表示)
+    + '<div style="display:flex;flex-direction:column;align-items:center;gap:3px;flex-shrink:0;margin-left:8px">'
     +   (_stageBadge ? '<div>' + _stageBadge + '</div>' : '')
     +   (_matBadge ? '<div>' + _matBadge + '</div>' : '')
     + '</div>'
 
-    // ④列: 体重 (あれば) + ステータス + ›
+    // ⑤列: ステータスラベル + ›
     + '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px;flex-shrink:0;margin-left:8px">'
-    +   (w_txt ? '<span style="font-size:1rem;font-weight:800;color:var(--green);line-height:1">' + w_txt + '</span>' : '')
     +   '<span style="font-size:.68rem;font-weight:700;color:' + stClr + ';white-space:nowrap">' + stLbl + '</span>'
     + '</div>'
     + '<span style="color:var(--text3);font-size:1.1rem;margin-left:4px;flex-shrink:0">›</span>'
