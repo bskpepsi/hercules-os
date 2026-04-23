@@ -1,14 +1,16 @@
 // ════════════════════════════════════════════════════════════════
 // dashboard.js  v4 — Phase6 交換アラート新仕様対応
-// build: 20260420b
+// build: 20260423p
 // 変更点:
-//   - [20260420b] ページ先頭に未確定セッションバナー追加（UI.pendingBanner()）
-//   - [20260418a] Step2 ③ 性別集計サマリーカード追加（KPIバー直下）
-//                 Store.getSexStats() の結果を種親/個体/ユニット別に表示
+//   - [20260423p] 今日のタスクに「成虫サイズ計測リマインド」追加 (Phase 1-C)
+//     羽化後21日超の未計測個体を yellow タスク、30日超を red タスクとして表示
+//     タップで ind-list に eclosionReminder フィルタ付き遷移
+//   - [20260420b] ページ先頭に未確定セッションバナー追加
+//   - [20260418a] Step2 ③ 性別集計サマリーカード追加
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-console.log('[HerculesOS] dashboard.js v20260420b loaded');
+console.log('[HerculesOS] dashboard.js v20260423p loaded');
 
 Pages.dashboard = async function () {
   const main = document.getElementById('main');
@@ -100,6 +102,41 @@ function _renderDashboard(main) {
 
   const over150 = alive.filter(i => +i.latest_weight_g >= 150);
   if (over150.length) tasks.green.push({ icon: '🏆', text: `150g超え ${over150.length}頭`, fn: "routeTo('ind-list')" });
+
+  // [20260423p] 羽化後リマインド (Phase 1-C)
+  //   羽化日あり + adult_size_mm 未記録 で 21日超: yellow、30日超: red
+  const eclosionNotMeasured = alive.filter(i => {
+    if (!i.eclosion_date) return false;
+    if (+i.adult_size_mm > 0) return false;
+    if (i.status === 'dead' || i.status === 'sold') return false;
+    return true;
+  });
+  let reminderRed = 0, reminderYellow = 0;
+  const _tod = new Date(); _tod.setHours(0,0,0,0);
+  eclosionNotMeasured.forEach(i => {
+    try {
+      const p = String(i.eclosion_date).replace(/\//g,'-').split('-');
+      if (p.length < 3) return;
+      const eclD = new Date(+p[0], +p[1]-1, +p[2]);
+      const d = Math.round((_tod - eclD) / 86400000);
+      if (d >= 30) reminderRed++;
+      else if (d >= 21) reminderYellow++;
+    } catch(e) {}
+  });
+  if (reminderRed > 0) {
+    tasks.red.push({
+      icon: '📏',
+      text: `成虫サイズ計測 ${reminderRed}頭 (羽化後30日超)`,
+      fn: `routeTo('ind-list',{eclosionReminder:'red'})`,
+    });
+  }
+  if (reminderYellow > 0) {
+    tasks.yellow.push({
+      icon: '📏',
+      text: `成虫サイズ未計測 ${reminderYellow}頭 (羽化後21日超)`,
+      fn: `routeTo('ind-list',{eclosionReminder:'yellow'})`,
+    });
+  }
 
   // カテゴリ別集計
   const catEgg     = [...tasks.red, ...tasks.yellow].filter(t => t.fn.includes('pairing-detail'));

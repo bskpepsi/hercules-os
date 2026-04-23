@@ -2,7 +2,19 @@
 // individual.js
 // 役割: 個体の一覧・詳細・新規登録・編集・ステータス変更を担う。
 //       個体台帳の中心画面。ロット・成長記録・ラベルへの導線も持つ。
-// build: 20260423k
+// build: 20260423p
+//
+// 20260423p 修正: 羽化後リマインド機能 (Phase 1-C)
+//   - 個体詳細の発育日程セクションに羽化後の計測リマインドを追加
+//     ・羽化日あり + adult_size_mm 未記録 かつ経過日数に応じて:
+//       21日超 → ⚠️ 黄色バッジ「成虫サイズ未計測」
+//       30日超 → 🔴 赤色バッジ「成虫サイズ計測をお願いします」
+//     ・「📏 計測して記録」ボタンで編集画面へ直接遷移
+//   - 個体一覧カードに小さなバッジを追加 (「⚠️ 未計測Nd」「🔴 要計測Nd」)
+//   - 個体一覧に eclosionReminder パラメータフィルタ追加
+//     ?eclosionReminder=red / yellow / any で絞り込み可能
+//     タイトルも状況に応じて変化
+//   - 発育日程に「後食開始日」行を追加 (既存で表示されていなかったため)
 //
 // 20260423k 修正:
 //   - 「次のステップ（ワンタップ記録）」に「🍽️ 後食開始」ボタンを追加
@@ -72,7 +84,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] individual.js v20260423o loaded');
+console.log('[HerculesOS] individual.js v20260423p loaded');
 
 const Pages = window.Pages || {};
 
@@ -140,6 +152,28 @@ Pages.individualList = function () {
     if (!isLineLimited && filters.line_filter) {
       list = list.filter(i => i.line_id === filters.line_filter);
     }
+    // [20260423p] 羽化後リマインドフィルタ (Phase 1-C)
+    //   ?eclosionReminder=red  → 30日超
+    //   ?eclosionReminder=yellow → 21日超 30日未満
+    //   ?eclosionReminder=any → 21日超 全て
+    if (params.eclosionReminder) {
+      const mode = params.eclosionReminder;
+      const _tod2 = new Date(); _tod2.setHours(0,0,0,0);
+      list = list.filter(i => {
+        if (!i.eclosion_date) return false;
+        if (+i.adult_size_mm > 0) return false;
+        if (i.status === 'dead' || i.status === 'sold') return false;
+        try {
+          const p = String(i.eclosion_date).replace(/\//g,'-').split('-');
+          if (p.length < 3) return false;
+          const eclD = new Date(+p[0], +p[1]-1, +p[2]);
+          const d = Math.round((_tod2 - eclD) / 86400000);
+          if (mode === 'red') return d >= 30;
+          if (mode === 'yellow') return d >= 21 && d < 30;
+          return d >= 21; // any
+        } catch(e) { return false; }
+      });
+    }
     return list;
   }
 
@@ -150,6 +184,10 @@ Pages.individualList = function () {
 
     const title = filters.parent_flag
       ? '👑 種親候補一覧'
+      : params.eclosionReminder
+        ? (params.eclosionReminder === 'red' ? '🔴 成虫サイズ要計測 (30日超)'
+          : params.eclosionReminder === 'yellow' ? '⚠️ 成虫サイズ未計測 (21日超)'
+          : '📏 羽化後サイズ未計測')
       : (isLineLimited
         ? (fixedLine ? fixedLine.display_id + ' の個体' : '個体一覧')
         : '個体一覧');
@@ -417,6 +455,31 @@ function _indCardHTML(ind) {
     (String(ind.g200_flag||'').toUpperCase()==='TRUE'||ind.g200_flag===1||ind.g200_flag===true) ? '💪' : '',
   ].filter(Boolean).join('');
 
+  // [20260423p] 羽化後リマインドバッジ (Phase 1-C)
+  //   羽化日あり + adult_size_mm 未記録 で経過日数に応じて 21日/30日バッジ
+  let eclosionReminderBadge = '';
+  if (ind.eclosion_date && (!ind.adult_size_mm || +ind.adult_size_mm === 0)) {
+    try {
+      const p = String(ind.eclosion_date).replace(/\//g,'-').split('-');
+      if (p.length >= 3) {
+        const eclD = new Date(+p[0], +p[1]-1, +p[2]);
+        const today = new Date(); today.setHours(0,0,0,0);
+        const daysSince = Math.round((today - eclD) / 86400000);
+        if (daysSince >= 30) {
+          eclosionReminderBadge = '<span title="羽化後' + daysSince + '日、成虫サイズ未計測" '
+            + 'style="display:inline-block;background:rgba(224,80,80,.2);color:var(--red,#e05050);'
+            + 'font-size:.6rem;font-weight:700;padding:1px 5px;border-radius:8px;margin-left:3px;'
+            + 'border:1px solid rgba(224,80,80,.4)">🔴 要計測' + daysSince + 'd</span>';
+        } else if (daysSince >= 21) {
+          eclosionReminderBadge = '<span title="羽化後' + daysSince + '日、成虫サイズ未計測" '
+            + 'style="display:inline-block;background:rgba(224,144,64,.2);color:var(--amber);'
+            + 'font-size:.6rem;font-weight:700;padding:1px 5px;border-radius:8px;margin-left:3px;'
+            + 'border:1px solid rgba(224,144,64,.4)">⚠️ 未計測' + daysSince + 'd</span>';
+        }
+      }
+    } catch(e) { /* ignore */ }
+  }
+
   const sexColor = ind.sex === '♂' ? 'var(--male,#5ba8e8)' : ind.sex === '♀' ? 'var(--female,#e87fa0)' : 'var(--text3)';
   const dispId   = _safeDisplayId(ind);
 
@@ -447,10 +510,11 @@ function _indCardHTML(ind) {
 
     // ②列: ID + サブ情報
     + '<div style="flex:1;min-width:0">'
-    +   '<div style="display:flex;align-items:center;gap:4px;margin-bottom:3px">'
+    +   '<div style="display:flex;align-items:center;gap:4px;margin-bottom:3px;flex-wrap:wrap">'
     +     '<span style="font-family:var(--font-mono);font-weight:700;font-size:.85rem;color:var(--text1);'
     +       'overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + dispId + '</span>'
     +     (icons ? '<span style="font-size:.8rem;flex-shrink:0">' + icons + '</span>' : '')
+    +     eclosionReminderBadge
     +   '</div>'
     +   (subHtml ? '<div style="display:flex;align-items:center;gap:3px;flex-wrap:wrap;font-size:.78rem;color:var(--text2)">' + subHtml + '</div>' : '')
     + '</div>'
@@ -877,15 +941,54 @@ function _renderDetail(ind, main) {
               }
             }
 
+            // [20260423p] 羽化後リマインド (Phase 1-C)
+            //   羽化日あり + 成虫体長未記録 かつ経過日数に応じてバッジ表示
+            //   21日超: ⚠️ 黄色バッジ「成虫サイズ未計測」
+            //   30日超: 🔴 赤色バッジ (強調)
+            let eclosionReminderHint = '';
+            if (ind.eclosion_date && (!ind.adult_size_mm || +ind.adult_size_mm === 0)) {
+              const eclD = _parseDate(ind.eclosion_date);
+              if (eclD) {
+                const daysSince = _diffDays(eclD, _today);
+                if (daysSince >= 30) {
+                  eclosionReminderHint =
+                    '<div style="margin-top:6px;padding:8px 10px;background:rgba(224,80,80,.12);border:1px solid rgba(224,80,80,.4);border-radius:6px;font-size:.76rem">' +
+                      '<div style="display:flex;align-items:center;gap:6px;color:var(--red,#e05050);font-weight:700;margin-bottom:2px">' +
+                        '🔴 成虫サイズ計測をお願いします (羽化後' + daysSince + '日経過)' +
+                      '</div>' +
+                      '<div style="color:var(--text3);font-size:.7rem;line-height:1.4">' +
+                        '羽化後3〜4週間で成虫体長の計測が可能です。予測モデルの精度向上にも必須データです。' +
+                      '</div>' +
+                      '<button type="button" class="btn btn-ghost btn-sm" style="margin-top:6px;font-size:.72rem"' +
+                        ' onclick="routeTo(\'ind-edit\',{indId:\'' + ind.ind_id + '\'})">📏 計測して記録</button>' +
+                    '</div>';
+                } else if (daysSince >= 21) {
+                  eclosionReminderHint =
+                    '<div style="margin-top:6px;padding:8px 10px;background:rgba(224,144,64,.08);border:1px solid rgba(224,144,64,.3);border-radius:6px;font-size:.74rem">' +
+                      '<div style="display:flex;align-items:center;gap:6px;color:var(--amber);font-weight:700;margin-bottom:2px">' +
+                        '⚠️ 成虫サイズ未計測 (羽化後' + daysSince + '日経過)' +
+                      '</div>' +
+                      '<div style="color:var(--text3);font-size:.7rem;line-height:1.4">' +
+                        '計測可能な時期です。全長・胸角長を記録すると予測モデルの精度が向上します。' +
+                      '</div>' +
+                      '<button type="button" class="btn btn-ghost btn-sm" style="margin-top:6px;font-size:.72rem"' +
+                        ' onclick="routeTo(\'ind-edit\',{indId:\'' + ind.ind_id + '\'})">📏 計測して記録</button>' +
+                    '</div>';
+                }
+              }
+            }
+
             const rows = [
               ind.artificial_cell_date ? `${_infoRow('蛹室確認日', ind.artificial_cell_date + pupaChamberHint)}` : '',
               ind.prepupa_date ? `${_infoRow('前蛹確認日（人工蛹室移動日）', ind.prepupa_date + prepupaHint)}` : '',
               ind.pupa_check_date ? `${_infoRow('蛹確認日', ind.pupa_check_date + eclosionHint)}` : '',
               ind.eclosion_date ? `${_infoRow('羽化日', ind.eclosion_date)}` : '',
+              ind.feeding_start_date ? `${_infoRow('後食開始日', ind.feeding_start_date)}` : '',
             ].filter(Boolean).join('');
 
-            const hasDates = ind.prepupa_date || ind.pupa_check_date || ind.artificial_cell_date || ind.eclosion_date;
-            return '<div class="info-list">' + (hasDates ? rows : '<div style="font-size:.82rem;color:var(--text3);padding:4px 0">日付未記録</div>') + '</div>';
+            const hasDates = ind.prepupa_date || ind.pupa_check_date || ind.artificial_cell_date || ind.eclosion_date || ind.feeding_start_date;
+            return '<div class="info-list">' + (hasDates ? rows : '<div style="font-size:.82rem;color:var(--text3);padding:4px 0">日付未記録</div>') + '</div>'
+              + eclosionReminderHint;
           })()}
         </div>
       </div>
