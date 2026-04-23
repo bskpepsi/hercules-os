@@ -2,7 +2,22 @@
 // individual.js
 // 役割: 個体の一覧・詳細・新規登録・編集・ステータス変更を担う。
 //       個体台帳の中心画面。ロット・成長記録・ラベルへの導線も持つ。
-// build: 20260423x
+// build: 20260423y
+//
+// 20260423y 修正: 4/22 22:52時点の正しい実装 (build 20260422k/p) を完全復元
+//   zipでアップロードいただいた manage.js (build 20260423o) と整合し、
+//   けいとさんが「14時時点で正しく動いていた」と言われる状態に戻した:
+//   - ボタン行: 2段レイアウト
+//     Row1=[📷 成長記録][🏷️ ラベル発行] (data-ind-btn-row1="1")
+//     Row2=[🌡️ 環境記録][編集]          (data-ind-btn-row2="1")
+//     🌡️ 環境記録ボタンは individual_analysis.js が Row2 の先頭に挿入
+//   - 📷 成長記録 の遷移先: routeTo('continuous-scan', {..., mode:'growth'})
+//     (ユニット詳細と同じ継続読取り画面に統一、data-ind-growth-btn="1" 付き)
+//   - アクション（マット交換）カード: T1→[🔄 T2移行] / T2→[⭐ T3移行] のみ
+//     **T3フェーズではカード自体を非表示** (T3 Mx/体重更新ボタンは削除、
+//     マット交換/体重更新は「📷 成長記録」から行う仕様)
+//   - 成長記録アコーディオンのタイトルを「体重推移(N件)」→「成長記録(N回分)」に
+//     (ユニット側と表記統一、件数もユニーク日付数でカウント - 20260422p 仕様)
 //
 // 20260423x 修正: フェーズバッジのスタイル統一
 //   - ヘッダのフェーズバッジを _matBadgeHTML に変更
@@ -149,7 +164,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] individual.js v20260423x loaded');
+console.log('[HerculesOS] individual.js v20260423y loaded');
 
 const Pages = window.Pages || {};
 
@@ -872,21 +887,30 @@ function _renderDetail(ind, main) {
         </div>` : '<div style="color:var(--amber);font-size:.8rem">⚠️ 孵化日未設定（設定すると日齢が表示されます）</div>'}
       </div>
 
-      <!-- [20260423w] 画像1復元: 成長記録+ラベル発行を1行、編集を単独行、T2/T3移行アクションカード -->
-      <div style="display:flex;gap:8px">
+      <!-- [20260422k 復元] 画像1準拠: Row1=[📷 成長記録][🏷️ ラベル発行] / Row2=[(🌡️ 環境記録)][編集]
+           📷 成長記録 の遷移先は continuous-scan (ユニット詳細と統一)
+           🌡️ 環境記録は individual_analysis.js が後付けで Row2 に挿入する -->
+      <div style="display:flex;gap:8px" data-ind-btn-row1="1">
         <button class="btn btn-primary" style="flex:1"
-          onclick="routeTo('growth-rec',{targetType:'IND',targetId:'${ind.ind_id}',displayId:'${ind.display_id||ind.ind_id}'})"
-          title="成長記録を入力">
+          data-ind-growth-btn="1"
+          onclick="routeTo('continuous-scan',{targetType:'IND',targetId:'${ind.ind_id}',displayId:'${ind.display_id||ind.ind_id}',mode:'growth'})"
+          title="成長記録を入力（ラベル撮影）">
           📷 成長記録
         </button>
         <button class="btn btn-ghost" style="flex:1"
-          onclick="routeTo('label-gen',{targetType:'IND',targetId:'${ind.ind_id}'})">🏷 ラベル発行</button>
+          onclick="routeTo('label-gen',{targetType:'IND',targetId:'${ind.ind_id}'})">
+          🏷️ ラベル発行
+        </button>
+      </div>
+      <!-- Row2: 🌡️ 環境記録ボタンは individual_analysis.js が挿入 -->
+      <div style="display:flex;gap:8px;margin-top:8px" data-ind-btn-row2="1">
+        <button class="btn btn-ghost" style="flex:1"
+          onclick="routeTo('ind-new',{editId:'${ind.ind_id}'})">
+          編集
+        </button>
       </div>
 
-      <button class="btn btn-ghost" style="width:100%"
-        onclick="routeTo('ind-new',{editId:'${ind.ind_id}'})">編集</button>
-
-      <!-- [20260422g 復元] アクション（マット交換）カード: T2/T3 移行ボタン -->
+      <!-- [20260422g/k 復元] アクション（マット交換）カード: T1→T2, T2→T3 のみ (T3 は非表示) -->
       ${(() => {
         const _ALIVE_SET_LOCAL = new Set(['alive','larva','prepupa','pupa','adult','seed_candidate','seed_reserved']);
         const _isAlive = _ALIVE_SET_LOCAL.has(ind.status) || !ind.status;
@@ -901,17 +925,13 @@ function _renderDetail(ind, main) {
             onclick="Pages._indStartT3('${ind.ind_id}')">
             ⭐ T3移行
           </button>` : '';
-        const t3MxBtn = _indPhase === 'T3' ? `
-          <button class="btn btn-primary" style="background:rgba(224,144,64,.15);border:2px solid var(--amber);color:var(--amber)"
-            onclick="Pages._indStartT3('${ind.ind_id}')">
-            ⭐ T3 Mx/体重更新
-          </button>` : '';
-        if (!t2Btn && !t3Btn && !t3MxBtn) return '';
+        // T-フェーズボタンが何も該当しない場合 (T3 等) はカード自体を出さない
+        if (!t2Btn && !t3Btn) return '';
         return `
       <div class="card" style="margin-top:10px;margin-bottom:10px">
         <div class="card-title">アクション（マット交換）</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          ${t2Btn}${t3Btn}${t3MxBtn}
+          ${t2Btn}${t3Btn}
         </div>
         <div style="font-size:.7rem;color:var(--text3);margin-top:6px">
           現在フェーズ: <b>${_indPhase}</b> ／ 継続中のマット交換は上の「📷 成長記録」から記録できます
@@ -1058,7 +1078,14 @@ function _renderDetail(ind, main) {
 
       <div class="accordion" id="acc-growth">
         <div class="acc-hdr open" onclick="_toggleAcc('acc-growth')">
-          体重推移（${records.filter(r=>r.weight_g).length}件）<span class="acc-arrow">▼</span>
+          ${(() => {
+            // [20260422p 復元] ユニット側と表記統一: 「体重推移(N件)」→「成長記録(N回分)」
+            //   件数もユニークな日付数（記録回数）で数える (ユニットと同仕様)
+            const _uniqDates = {};
+            records.forEach(r => { if (r.record_date) _uniqDates[r.record_date] = true; });
+            const _recCount = Object.keys(_uniqDates).length;
+            return `成長記録（${_recCount}回分）`;
+          })()}<span class="acc-arrow">▼</span>
         </div>
         <div class="acc-body open">
           ${records.length ? _weightChartBlock(ind.ind_id, records) : UI.empty('記録なし', '「体重記録」ボタンから追加できます')}

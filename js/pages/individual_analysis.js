@@ -1,8 +1,13 @@
 // ════════════════════════════════════════════════════════════════
-// individual_analysis_patch.js  build: 20260423o
+// individual_analysis_patch.js  build: 20260423y
 // 個体詳細画面への成長分析カード追加パッチ
 // このファイルは individual.js の直後に読み込んでください
 //
+// [20260423y] 環境記録ボタン挿入処理を Row2 (data-ind-btn-row2) に対応
+//   individual.js 側で build 20260422k の 2段ボタンレイアウトを復元したため。
+//   新レイアウト: Row1=[📷 成長記録][🏷️ ラベル発行] / Row2=[🌡️ 環境記録][編集]
+//   新レイアウトが無い場合は旧セレクタ (data-ind-growth-btn / continuous-scan /
+//   growth-rec) にフォールバックする。
 // [20260423o] ライン特性情報を hypothesis_tags の #LP:{...} マーカーからも読み取り
 //   GAS 未対応フィールド line_tags / expected_horn_rate / expected_size_mm 回避のため。
 //   manage.js 側と連携して永続化問題を解消。
@@ -835,29 +840,39 @@ var _origInjectAnalysis = null;
 })();
 
 // ── 個体詳細に「環境記録」ボタンを追加 ────────────────────────
-// Pages.individualDetail ラップにさらにフック（env_record.jsより後に読み込まれる想定）
+// [20260423y 復元] Row2 (data-ind-btn-row2) に挿入、成長記録ボタンは continuous-scan に遷移するため
+// セレクタを data-ind-growth-btn にも対応させた
 (function(){
   var _prevWithPrepupa = Pages.individualDetail;
   Pages.individualDetail = async function(indId) {
     await _prevWithPrepupa.call(this, indId);
     setTimeout(function(){
       var realId = (typeof indId === 'object') ? (indId.id || indId.indId || '') : indId;
-      // クイックアクションエリアに環境記録ボタンを追加（既存ボタン行の後）
-      var qaArea = document.querySelector('[onclick*="growth-rec"]');
-      if (!qaArea) return;
-      var row = qaArea.parentNode;
-      if (!row || row.querySelector('[data-env-btn]')) return; // 二重追加防止
+      // Row2 を取得 (20260422k 以降の新レイアウト)
+      var row2 = document.querySelector('[data-ind-btn-row2="1"]');
+      // 古いレイアウトでのフォールバック
+      if (!row2) {
+        var qaArea = document.querySelector('[data-ind-growth-btn="1"]')
+                  || document.querySelector('[onclick*="continuous-scan"]')
+                  || document.querySelector('[onclick*="growth-rec"]');
+        if (qaArea) row2 = qaArea.parentNode;
+      }
+      if (!row2) return;
+      // 二重追加防止
+      if (row2.querySelector('[data-env-btn]')) return;
+      // ボタン生成
       var envBtn = document.createElement('button');
       envBtn.className = 'btn btn-ghost';
-      envBtn.style.cssText = 'flex:1;margin-top:6px';
+      envBtn.style.cssText = 'flex:1';
       envBtn.setAttribute('data-env-btn', '1');
       envBtn.innerHTML = '🌡️ 環境記録';
       envBtn.onclick = function(){ routeTo('env-record', {indId: realId}); };
-      // ボタン行の後ろに追加
-      var wrapper = document.createElement('div');
-      wrapper.style.cssText = 'display:flex;gap:8px;margin-top:0';
-      wrapper.appendChild(envBtn);
-      row.parentNode.insertBefore(wrapper, row.nextSibling);
+      // Row2 の先頭に挿入 (編集ボタンの左側)
+      if (row2.firstChild) {
+        row2.insertBefore(envBtn, row2.firstChild);
+      } else {
+        row2.appendChild(envBtn);
+      }
     }, 300);
   };
 })();
