@@ -2,9 +2,14 @@
 // individual.js
 // 役割: 個体の一覧・詳細・新規登録・編集・ステータス変更を担う。
 //       個体台帳の中心画面。ロット・成長記録・ラベルへの導線も持つ。
-// build: 20260423w
+// build: 20260423x
 //
-// 20260423w 修正: 個体詳細画面のレイアウト復元 (重要バグ修正)
+// 20260423x 修正: フェーズバッジのスタイル統一
+//   - ヘッダのフェーズバッジを _matBadgeHTML に変更
+//     (画像1の「[T1]」が緑枠線の見た目になるよう修正、ロット/ユニットカードと統一)
+//   - _indPhaseBadgeHTML も残してある (青色の方が必要な箇所で使える)
+//
+// 20260423w 修正: 個体詳細画面のレイアウト復元
 //   セッション中の作業で失われていた要素を 4/22 の実装から復元:
 //   - ボタン行: [📷 成長記録][🏷 ラベル発行] (2ボタン均等) + 単独の [編集]
 //   - アクション（マット交換）カード: T1→[🔄 T2移行] / T2→[⭐ T3移行] /
@@ -144,7 +149,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] individual.js v20260423w loaded');
+console.log('[HerculesOS] individual.js v20260423x loaded');
 
 const Pages = window.Pages || {};
 
@@ -847,9 +852,9 @@ function _renderDetail(ind, main) {
           <span style="font-size:1.8rem;font-weight:700;color:${ind.sex==='♂'?'var(--male,#5ba8e8)':ind.sex==='♀'?'var(--female,#f06292)':'var(--text3)'}">${ind.sex || '?'}</span>
           <div>
             <div style="font-family:var(--font-mono);font-size:.85rem;color:var(--gold)">${dispId}</div>
-            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
+            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:4px">
               ${_toDisplayStageBadge(ind.current_stage)}
-              ${_indPhaseBadgeHTML(_indPhase)}
+              ${(typeof _matBadgeHTML === 'function' && _indPhase) ? _matBadgeHTML(_indPhase) : _indPhaseBadgeHTML(_indPhase)}
               ${UI.statusBadge(ind.status)}
               ${icons}
             </div>
