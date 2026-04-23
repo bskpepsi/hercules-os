@@ -1,4 +1,22 @@
-// FILE: js/pages/continuous_scan.js  build: 20260424a
+// FILE: js/pages/continuous_scan.js  build: 20260424b
+// 変更点(20260424a→20260424b):
+//   [20260424b] 🔥 保存直後の成長記録即時反映 (pre-save _tmp_ レコード追加)
+//     症状: 継続読取りで測定登録すると、成長記録テーブルに反映されるまで20-30秒かかる。
+//     原因: 旧実装では _tmp_ レコードの Store.addGrowthRecord が background IIFE 内で
+//           走っていたため、routeTo → Pages.individualDetail の initial render 時点では
+//           まだ Store に新規レコードが無かった。結局、API.growth.create の完了
+//           (20-30秒) を待ってから Pages.individualDetail の再呼び出しで描画されていた。
+//     修正: routeTo の "前" に _tmp_ レコードを synchronous に Store.addGrowthRecord
+//           する pre-save ブロックを追加。initial render 時点で Store に既に
+//           新規レコードがあるため即座にテーブルに表示される。
+//           (a) 事前に _existingByDate マップを構築して CREATE 対象行を特定
+//           (b) CREATE 対象行に _tmpId を割り当てて Store に先行登録
+//           (c) IIFE 内の _saveOne は 3rd 引数 preTmpId を受け取り、既に割り当て
+//               済みなら同じ _tmpId を使って swap、無ければ従来通り新規生成
+//           UPDATE 対象行は tmp 不要 (既存行の上書きのため) なのでスキップ。
+//           API 失敗時の rollback パス (_tmpId で filter 除去) は _tmpId が共通
+//           なのでそのまま動作する。
+//
 // 変更点(20260422j→20260424a):
 //   [20260424a-1] 🔥 UPDATE 時の `stage` 保護 (過去ステージL3上書き問題の修正)
 //     症状: 個体詳細の成長記録テーブルで、新しく 4/23 を L3 で保存すると
@@ -1166,6 +1184,129 @@ Pages.continuousScan = function(params) {
       }
     }
 
+    // ══════════════════════════════════════════════════════════════
+    // [20260424b] pre-save _tmp_ レコード追加 (routeTo の前に同期的に Store 反映)
+    //   routeTo → Pages.individualDetail の initial render が Store.getGrowthRecords
+    //   を読むタイミングで、まだ新規レコードが Store に無いと20-30秒の体感遅延になる。
+    //   事前に _tmp_ レコードを push しておけば初回描画で即テーブルに表示される。
+    //   UPDATE 対象行は tmp 不要。IIFE 内の _saveOne に preTmpId を渡して swap を
+    //   引き継がせる。
+    // ══════════════════════════════════════════════════════════════
+    var _preAssignedTmpIds = {};  // { rowIdx: tmpId }   (個体)
+                                  // { rowIdx+'::'+slot: tmpId }  (ユニット)
+
+    if (_savedTargetId) {
+      try {
+        // 日付正規化 (IIFE 内の _normalizeDateStr と同じロジックを複製)
+        var _preNormDate = function(rd) {
+          if (!rd) return '';
+          var s = String(rd).trim().replace(/-/g,'/');
+          if (s.match(/^\d{1,2}\/\d{1,2}$/)) s = new Date().getFullYear() + '/' + s;
+          var m = s.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
+          if (m) s = m[1] + '/' + String(parseInt(m[2],10)).padStart(2,'0') + '/' + String(parseInt(m[3],10)).padStart(2,'0');
+          return s;
+        };
+
+        // 既存レコード (date[+slot] → record_id) のマップを構築
+        //   _tmp_ は UPDATE 対象外、ind_id/display_id の両キーをマージ
+        var _preExist = {};
+        var _preKeys = [_savedTargetId];
+        if (_savedDisplayId && _savedDisplayId !== _savedTargetId) _preKeys.push(_savedDisplayId);
+        _preKeys.forEach(function(_key){
+          if (!_key) return;
+          var _list = (Store.getGrowthRecords && Store.getGrowthRecords(_key)) || [];
+          _list.forEach(function(r){
+            if (!r || !r.record_id) return;
+            if (String(r.record_id).indexOf('_tmp_') === 0) return;
+            var _rd = _preNormDate(r.record_date);
+            if (!_rd) return;
+            if (isUnit && r.unit_slot_no != null && r.unit_slot_no !== '') {
+              _preExist[_rd + '::' + String(r.unit_slot_no)] = r.record_id;
+            } else {
+              _preExist[_rd] = r.record_id;
+            }
+          });
+        });
+
+        // tmp レコード構築ヘルパー (mkPayload とほぼ同等の出力)
+        var _preBuildTmpRec = function(prerow, prerd, weightVal, slot) {
+          var _tid = '_tmp_cs_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+          var _rec = {
+            record_id:     _tid,
+            target_type:   _savedTargetType,
+            target_id:     _savedTargetId,
+            record_date:   prerd,
+            stage:         stage,
+            mat_type:      prerow.mat_type || '',
+            container:     prerow.container || '',
+            container_size:prerow.container || '',
+            exchange_type: prerow.exchange || 'NONE',
+            event_type:    'WEIGHT_ONLY',
+            note_private:  note,
+            has_malt:      false,
+            age_days:      null,
+          };
+          if (weightVal !== '' && weightVal !== null && weightVal !== undefined) {
+            var _w = parseFloat(weightVal);
+            if (!isNaN(_w)) _rec.weight_g = _w;
+          }
+          if (slot != null) _rec.unit_slot_no = slot;
+          if (isUnit) {
+            var _sd = _savedSlotData && _savedSlotData[(slot || 1) - 1];
+            if (_sd && _sd.size_category) _rec.size_category = _sd.size_category;
+          } else {
+            if (_savedDetectedSex && _savedDetectedSex !== '不明') _rec.sex = _savedDetectedSex;
+            if (_savedDetectedSize) _rec.size_category = _savedDetectedSize;
+          }
+          return _rec;
+        };
+
+        // 各行について、CREATE 対象なら tmp を Store に先行追加
+        for (var _prei = 0; _prei < rows.length; _prei++) {
+          var _prerow = rows[_prei];
+          if (!_prerow || !_prerow.date) continue;
+          var _prerd = _preNormDate(_prerow.date);
+          if (!_prerd) continue;
+
+          if (isUnit) {
+            // スロット1
+            var _keyS1 = _prerd + '::1';
+            if (!_preExist[_keyS1]) {
+              var _rec1 = _preBuildTmpRec(_prerow, _prerd, _prerow.weight1, 1);
+              try {
+                Store.addGrowthRecord(_savedTargetId, _rec1);
+                _preAssignedTmpIds[_prei + '::1'] = _rec1.record_id;
+              } catch(_e1){ console.warn('[CS] pre-tmp slot1 addGrowthRecord failed:', _e1.message); }
+            }
+            // スロット2
+            var _keyS2 = _prerd + '::2';
+            if (!_preExist[_keyS2]) {
+              var _rec2 = _preBuildTmpRec(_prerow, _prerd, _prerow.weight2, 2);
+              try {
+                Store.addGrowthRecord(_savedTargetId, _rec2);
+                _preAssignedTmpIds[_prei + '::2'] = _rec2.record_id;
+              } catch(_e2){ console.warn('[CS] pre-tmp slot2 addGrowthRecord failed:', _e2.message); }
+            }
+          } else {
+            // 個体: UPDATE 対象ならスキップ
+            if (_preExist[_prerd]) continue;
+            var _recI = _preBuildTmpRec(_prerow, _prerd, _prerow.weight1, null);
+            try {
+              Store.addGrowthRecord(_savedTargetId, _recI);
+              _preAssignedTmpIds[_prei] = _recI.record_id;
+            } catch(_eI){ console.warn('[CS] pre-tmp ind addGrowthRecord failed:', _eI.message); }
+          }
+        }
+        var _preCount = Object.keys(_preAssignedTmpIds).length;
+        if (_preCount > 0) {
+          console.log('[CS] pre-save tmp records added before routeTo:', _preCount);
+        }
+      } catch (_preErr) {
+        console.warn('[CS] pre-save tmp build failed (non-fatal):', _preErr.message);
+        _preAssignedTmpIds = {};  // フォールバック: IIFE 側で従来通り tmp 生成される
+      }
+    }
+
     // 即座に詳細画面へ遷移（すでに Store は新しい値なので T2/4.8L で表示される）
     UI.toast('💾 保存中...','info',1500);
     // [20260422e] レース条件防止: routeTo の前に skip フラグを立てる
@@ -1296,7 +1437,9 @@ Pages.continuousScan = function(params) {
         }
 
         // update / create を実行し、Store を更新する共通ヘルパー
-        async function _saveOne(payload, existingRecordId) {
+        // [20260424b] 第3引数 preTmpId: pre-save で既に Store に追加済みの _tmp_ ID。
+        //   存在すれば同じ ID を使って API 応答後の swap を行う (重複 _tmp_ を防止)。
+        async function _saveOne(payload, existingRecordId, preTmpId) {
           if (existingRecordId) {
             // 既存行の修正 → API.growth.update (直接呼び出し、apiCall を介さず)
             // [20260424a-1] 🔥 UPDATE 時は payload から `stage` を剥がす
@@ -1332,12 +1475,20 @@ Pages.continuousScan = function(params) {
             //       → API 成功で _tmp_ を real record_id に swap
             //       → API 失敗で _tmp_ をロールバック除去
             //   race 時のフォールバック: _tmp_ が消えていたら real record を重複確認して push
+            // [20260424b] preTmpId が渡されていれば pre-save で既に Store に入った _tmp_ を流用し
+            //   重複追加を回避する。渡されていなければ従来通り新規生成 (後方互換)。
             // ═══════════════════════════════════════════════════════════
-            var _tmpId = '_tmp_cs_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
-            var _tmpRec = Object.assign({}, payload, { record_id: _tmpId, age_days: null });
-            if (Store.addGrowthRecord && _savedTargetId) {
-              try { Store.addGrowthRecord(_savedTargetId, _tmpRec); }
-              catch (_agrErr) { console.warn('[CS] addGrowthRecord (tmp) failed:', _agrErr.message); }
+            var _tmpId;
+            if (preTmpId) {
+              _tmpId = preTmpId;
+              // pre-save 済みのため Store 追加は不要。swap 時にこの _tmpId で findIndex する。
+            } else {
+              _tmpId = '_tmp_cs_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+              var _tmpRec = Object.assign({}, payload, { record_id: _tmpId, age_days: null });
+              if (Store.addGrowthRecord && _savedTargetId) {
+                try { Store.addGrowthRecord(_savedTargetId, _tmpRec); }
+                catch (_agrErr) { console.warn('[CS] addGrowthRecord (tmp) failed:', _agrErr.message); }
+              }
             }
 
             var _cres;
@@ -1393,42 +1544,46 @@ Pages.continuousScan = function(params) {
             // [20260421m] 日付が入った行のみ保存対象 (体重なしでも可 = 追加交換)
             if(!r.date) continue;
             // スロット1
-            (function(rr){
+            // [20260424b] 第2引数で行indexを受け取り、pre-save で割り当てた preTmpId を参照
+            (function(rr, rrIdx){
               var extra1 = {unit_slot_no:1};
               if (rr.weight1 !== '' && rr.weight1 !== null && rr.weight1 !== undefined) {
                 extra1.weight_g = parseFloat(rr.weight1);
               }
               if (_savedSlotData[0] && _savedSlotData[0].size_category) extra1.size_category = _savedSlotData[0].size_category;
               var _existing1 = _findExistingRecordId(rr.date, 1);
-              savePromises.push(_saveOne(mkPayload(rr, extra1), _existing1));
+              var _preTmp1 = _preAssignedTmpIds[rrIdx + '::1'];
+              savePromises.push(_saveOne(mkPayload(rr, extra1), _existing1, _preTmp1));
               savedCount++;
-            })(r);
+            })(r, i);
             // スロット2
-            (function(rr){
+            (function(rr, rrIdx){
               var extra2 = {unit_slot_no:2};
               if (rr.weight2 !== '' && rr.weight2 !== null && rr.weight2 !== undefined) {
                 extra2.weight_g = parseFloat(rr.weight2);
               }
               if (_savedSlotData[1] && _savedSlotData[1].size_category) extra2.size_category = _savedSlotData[1].size_category;
               var _existing2 = _findExistingRecordId(rr.date, 2);
-              savePromises.push(_saveOne(mkPayload(rr, extra2), _existing2));
+              var _preTmp2 = _preAssignedTmpIds[rrIdx + '::2'];
+              savePromises.push(_saveOne(mkPayload(rr, extra2), _existing2, _preTmp2));
               savedCount++;
-            })(r);
+            })(r, i);
           }
         } else {
           for(var k=0;k<rows.length;k++){
             var row=rows[k];
             // [20260421m] 日付が入った行のみ保存対象
             if(!row.date) continue;
-            (function(rr){
+            (function(rr, rrIdx){
               var extraI = {};
               if (rr.weight1 !== '' && rr.weight1 !== null && rr.weight1 !== undefined) {
                 extraI.weight_g = parseFloat(rr.weight1);
               }
               var _existingI = _findExistingRecordId(rr.date, null);
-              savePromises.push(_saveOne(mkPayload(rr, extraI), _existingI));
+              var _preTmpI = _preAssignedTmpIds[rrIdx];
+              savePromises.push(_saveOne(mkPayload(rr, extraI), _existingI, _preTmpI));
               savedCount++;
-            })(row);
+            })(row, k);
           }
         }
 
