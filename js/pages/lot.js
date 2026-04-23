@@ -1,8 +1,25 @@
 // FILE: js/pages/lot.js
 // ════════════════════════════════════════════════════════════════
 // lot.js
-// build: 20260423f
+// build: 20260423h
 // 変更点:
+//   - [20260423h] 全体タブ ラインモードのサマリ: ステータス → ステージ に修正
+//     L1L2 / L3 / 前蛹 / 蛹 / 成虫（未後食）/ 成虫（活動開始）の6区分で集計
+//     対象: 個体 (current_stage) + ユニット (メンバー推論) + ロット (stage_life)
+//     ユニットは代表ステージ1つを計上 (メンバー最初の有効 current_stage、
+//     なければ stage_phase から T1→L1L2 / T2/T3→L3 と推論)
+//     表示順は L1L2→L3→前蛹→蛹→未後食→活動開始 で固定。
+//   - [20260423g] 全体タブ ラインモードのサマリ改善
+//     ① フェーズ → ステータス に変更 (飼育中/販売候補/出品中/売約済/死亡)
+//     ② マットカウントに個体も含める (current_mat / mat_type)
+//        - 従来はユニット・ロットのみだったので T1 等が漏れていた
+//     ③ ライン見出しに頭数を追加 🥚3件=25頭 / 📦1件=2頭 / 🐛5頭
+//     ④ 種別モードのセクション見出しにも頭数を追加
+//        🥚 ロット (3 / 計25頭) / 📦 ユニット (1 / 計2頭)
+//     ⑤ ユニットタブの件数表示を "2件" → "2件 / 計4頭" に変更
+//        (ロットタブと統一)
+//     ⑥ マット表示順を T0→T1→T2→T3→MD に固定 (従来はアルファベット順)
+//     ⑦ ステータス表示順を固定 (飼育中→販売候補→出品中→売約済→死亡)
 //   - [20260423f] 🌐 全体タブ追加 (個体 ∪ ユニット ∪ ロット)
 //     3つの表示モードを切替可能:
 //       📂 種別 (デフォルト): ロット・ユニット・個体をセクション分け
@@ -163,7 +180,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] lot.js v20260423f loaded');
+console.log('[HerculesOS] lot.js v20260423h loaded');
 
 // ────────────────────────────────────────────────────────────────
 // [20260418f] 血統・種親カードを生成（ロット詳細用）
@@ -916,7 +933,8 @@ Pages.lotList = function () {
         { val:'hatch_old', label:'🐣古' },
         { val:'exchange',  label:'🔄経過' },
       ]) +
-      `<div style="font-size:.75rem;color:var(--text3);margin-bottom:6px">${units.length}件</div>` +
+      // [20260423g] 件数 + 合計頭数を表示 (ロットタブと統一)
+      `<div style="font-size:.75rem;color:var(--text3);margin-bottom:6px">${units.length}件 / 計<strong>${units.reduce((s,u) => s + (+u.head_count || 2), 0)}</strong>頭</div>` +
       `<div id="unit-list-body">` +
       (units.length ? units.map(u => {
         const lc = (() => {
@@ -1300,7 +1318,12 @@ Pages.lotList = function () {
         <button class="pill ${mode==='line'?'active':''}" data-mode="line">🏷️ ライン</button>
         <button class="pill ${mode==='mixed'?'active':''}" data-mode="mixed">🔀 混在</button>
       </div>` +
-      `<div style="font-size:.75rem;color:var(--text3);margin-bottom:6px">計 ${totalCount}件 (🐛${inds.length} 📦${units.length} 🥚${lots.length})</div>` +
+      // [20260423g] 件数 + 頭数 (各種別ごとに)
+      (()=>{
+        const unitHeads = units.reduce((s,u) => s + (+u.head_count || 2), 0);
+        const lotHeads  = lots.reduce((s,l) => s + (+l.count || 0), 0);
+        return `<div style="font-size:.75rem;color:var(--text3);margin-bottom:6px">計 ${totalCount}件 (🐛${inds.length} / 📦${units.length}件=${unitHeads}頭 / 🥚${lots.length}件=${lotHeads}頭)</div>`;
+      })() +
       `<div id="all-list-body">` + bodyHTML + `</div>` +
       `</div>`;
 
@@ -1357,14 +1380,16 @@ Pages.lotList = function () {
   // ══════════════════════════════════════════════════════════
   // B案: 種別セクション
   function _renderAllBySection(inds, units, lots) {
-    const sectionHdr = (icon, title, count) =>
+    const unitHeads = units.reduce((s,u) => s + (+u.head_count || 2), 0);
+    const lotHeads  = lots.reduce((s,l) => s + (+l.count || 0), 0);
+    const sectionHdr = (icon, title, count, extra) =>
       '<div class="sec-hdr" style="margin-top:10px;margin-bottom:6px;padding:4px 8px;background:var(--bg2);border-radius:6px">'
-      + '<span class="sec-title" style="font-size:.82rem">' + icon + ' ' + title + ' <span style="color:var(--text3)">(' + count + ')</span></span>'
+      + '<span class="sec-title" style="font-size:.82rem">' + icon + ' ' + title + ' <span style="color:var(--text3)">(' + count + (extra ? ' / ' + extra : '') + ')</span></span>'
       + '</div>';
     return ''
-      + sectionHdr('🥚', 'ロット', lots.length)
+      + sectionHdr('🥚', 'ロット', lots.length, '計' + lotHeads + '頭')
       + (lots.length ? lots.map(_lotCardHTML).join('') : '<div style="color:var(--text3);text-align:center;padding:12px;font-size:.78rem">該当なし</div>')
-      + sectionHdr('📦', 'ユニット', units.length)
+      + sectionHdr('📦', 'ユニット', units.length, '計' + unitHeads + '頭')
       + (units.length ? units.map(_allUnitCardHTML).join('') : '<div style="color:var(--text3);text-align:center;padding:12px;font-size:.78rem">該当なし</div>')
       + sectionHdr('🐛', '個体', inds.length)
       + (inds.length ? inds.map(_indCardHTML).join('') : '<div style="color:var(--text3);text-align:center;padding:12px;font-size:.78rem">該当なし</div>');
@@ -1397,7 +1422,10 @@ Pages.lotList = function () {
       const grp = groups[lid];
       const total = grp.inds.length + grp.units.length + grp.lots.length;
       if (total === 0) return;
-      // サマリ: 性別/フェーズ/マット
+      // [20260423h] サマリ: 性別 / ステージ / マット
+      //   性別: 個体のみ
+      //   ステージ: 個体 + ユニット (メンバーから推論) + ロット すべて
+      //   マット: 個体 + ユニット + ロット すべて (current_mat / mat_type)
       const sexCounts = { '♂':0, '♀':0, '?':0 };
       grp.inds.forEach(i => {
         const s = i.sex;
@@ -1405,39 +1433,85 @@ Pages.lotList = function () {
         else if (s === '♀') sexCounts['♀']++;
         else sexCounts['?']++;
       });
+      // ステージ集計 (6区分にまとめる)
+      //   L1L2 / L3 / 前蛹 / 蛹 / 成虫（未後食）/ 成虫（活動開始）
+      const stageCounts = {};
+      // ステージコードを6区分のキーに変換
+      const _stageKey = (code) => {
+        if (!code) return null;
+        const c = String(code).toUpperCase();
+        if (c === 'L1L2' || c === 'L1' || c === 'L2_EARLY' || c === 'L2_LATE'
+            || c === 'EGG' || c === 'T0' || c === 'T1') return 'L1L2';
+        if (c === 'L3' || c === 'L3_EARLY' || c === 'L3_MID' || c === 'L3_LATE'
+            || c === 'T2' || c === 'T2A' || c === 'T2B' || c === 'T3') return 'L3';
+        if (c === 'PREPUPA' || code === '前蛹') return '前蛹';
+        if (c === 'PUPA' || code === '蛹') return '蛹';
+        if (c === 'ADULT_PRE' || code === '成虫（未後食）') return '成虫（未後食）';
+        if (c === 'ADULT' || code === '成虫' || code === '成虫（活動開始）') return '成虫（活動開始）';
+        return null;
+      };
+      const addStage = (code) => {
+        const key = _stageKey(code);
+        if (!key) return;
+        stageCounts[key] = (stageCounts[key]||0) + 1;
+      };
+      grp.inds.forEach(i  => addStage(i.current_stage || i.stage_life || i.stage));
+      grp.lots.forEach(l  => addStage(l.stage_life || l.stage));
+      // ユニットはメンバーから推論
+      grp.units.forEach(u => {
+        let membersArr = [];
+        try {
+          membersArr = Array.isArray(u.members) ? u.members
+            : (typeof u.members === 'string' && u.members.trim()) ? JSON.parse(u.members) : [];
+        } catch(_){}
+        // ユニット単位で代表ステージを1つ決定 (最も若いステージ優先、なければ phase から推論)
+        const memberStages = membersArr.map(m => _stageKey(m.current_stage || m.stage_life));
+        let stage = memberStages.find(s => s);
+        if (!stage) {
+          // phase フォールバック
+          if (u.stage_phase === 'T1') stage = 'L1L2';
+          else if (u.stage_phase === 'T2' || u.stage_phase === 'T3') stage = 'L3';
+        }
+        if (stage) stageCounts[stage] = (stageCounts[stage]||0) + 1;
+      });
+      // マット集計 (個体 + ユニット + ロット)
       const matCounts = {};
-      grp.units.forEach(u => {
-        const m = (u.mat_type||'').toUpperCase() || '—';
+      const addMat = (v) => {
+        const m = String(v||'').toUpperCase() || '—';
         matCounts[m] = (matCounts[m]||0) + 1;
-      });
-      grp.lots.forEach(l => {
-        const m = (l.mat_type||'').toUpperCase() || '—';
-        matCounts[m] = (matCounts[m]||0) + 1;
-      });
-      const phaseCounts = {};
-      grp.units.forEach(u => {
-        const p = u.stage_phase || '—';
-        phaseCounts[p] = (phaseCounts[p]||0) + 1;
-      });
+      };
+      grp.inds.forEach(i => addMat(i.current_mat || i.mat_type));
+      grp.units.forEach(u => addMat(u.mat_type));
+      grp.lots.forEach(l => addMat(l.mat_type));
       // サマリ文字列
       const sexParts = [];
       if (sexCounts['♂']) sexParts.push('♂' + sexCounts['♂']);
       if (sexCounts['♀']) sexParts.push('♀' + sexCounts['♀']);
       if (sexCounts['?']) sexParts.push('?' + sexCounts['?']);
-      const matParts = Object.keys(matCounts).sort().map(k => k + ':' + matCounts[k]);
-      const phaseParts = Object.keys(phaseCounts).sort().map(k => k + ':' + phaseCounts[k]);
+      // ステージ: 表示順 (L1L2→L3→前蛹→蛹→成虫（未後食）→成虫（活動開始）)
+      const _stageOrder = ['L1L2','L3','前蛹','蛹','成虫（未後食）','成虫（活動開始）'];
+      const stageParts = _stageOrder
+        .filter(k => stageCounts[k])
+        .map(k => k + ':' + stageCounts[k]);
+      // マット: T0→T1→T2→T3→MD の順
+      const _matOrder = ['T0','T1','T2','T3','MD'];
+      const matParts = []
+        .concat(_matOrder.filter(k => matCounts[k]).map(k => k + ':' + matCounts[k]))
+        .concat(Object.keys(matCounts).filter(k => !_matOrder.includes(k)).sort().map(k => k + ':' + matCounts[k]));
 
       const lineLabel = line ? _lineFilterLabel(line) : lid;
+      const _unitHeads = grp.units.reduce((s,u) => s + (+u.head_count || 2), 0);
+      const _lotHeads = grp.lots.reduce((s,l) => s + (+l.count || 0), 0);
       html += '<div class="sec-hdr" style="margin-top:10px;margin-bottom:6px;padding:6px 8px;background:var(--bg2);border-radius:6px;flex-wrap:wrap">'
         + '<span class="sec-title" style="font-size:.82rem;font-weight:700">' + lineLabel + '</span>'
         + '<span style="font-size:.72rem;color:var(--text3);margin-left:8px">'
-        + '🥚' + grp.lots.length + ' / 📦' + grp.units.length + ' / 🐛' + grp.inds.length
+        + '🥚' + grp.lots.length + '件=' + _lotHeads + '頭 / 📦' + grp.units.length + '件=' + _unitHeads + '頭 / 🐛' + grp.inds.length + '頭'
         + '</span>'
         + '</div>'
-        + (sexParts.length || matParts.length || phaseParts.length
+        + (sexParts.length || matParts.length || stageParts.length
           ? '<div style="font-size:.68rem;color:var(--text3);margin:-2px 8px 6px 8px;display:flex;gap:10px;flex-wrap:wrap">'
             + (sexParts.length ? '<span>性別: ' + sexParts.join(' ') + '</span>' : '')
-            + (phaseParts.length ? '<span>フェーズ: ' + phaseParts.join(' ') + '</span>' : '')
+            + (stageParts.length ? '<span>ステージ: ' + stageParts.join(' ') + '</span>' : '')
             + (matParts.length ? '<span>マット: ' + matParts.join(' ') + '</span>' : '')
             + '</div>'
           : '');
