@@ -1,9 +1,15 @@
 // FILE: js/pages/lot.js
 // ════════════════════════════════════════════════════════════════
 // lot.js — Phase4-1 UI統一版
-// ロット一覧・詳細・分割・個体化を担う
-// build: 20260422t
+// build: 20260422u
 // 変更点:
+//   - [20260422u] ユニットカードのステージバッジのバグ修正
+//     症状: A1 ユニットが "T1 / T1" (ステージ列もマット列もT1) と表示
+//     原因: _uStageLbl = _lotDisplayStageLabel(u.stage_phase) としていたが、
+//           u.stage_phase は T1/T2/T3 (飼育フェーズ) でありマップに無いキーは
+//           そのまま返るため T2 ユニットでは "T2" がステージ欄に残っていた。
+//     修正: ステージはメンバーの current_stage から取得。無ければ phase から
+//           T1→L1L2 / T2/T3→L3 と推論する _inferStageFromPhase を使う。
 //   - [20260422t] 🎨 カードデザインを手書き案に忠実に整列
 //     全カードを4〜5列構造に統一:
 //       [①ライン+性別/頭数] [②ID+日付情報] [③ステージ+マットバッジ] [④ステータス]
@@ -92,7 +98,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] lot.js v20260422t loaded');
+console.log('[HerculesOS] lot.js v20260422u loaded');
 
 // ────────────────────────────────────────────────────────────────
 // [20260418f] 血統・種親カードを生成（ロット詳細用）
@@ -618,14 +624,33 @@ Pages.lotList = function () {
         // [20260422t] ステータス表示 (飼育中/個別化済)
         const _uStatusLbl = st === 'individualized' ? '個別化済' : '飼育中';
         const _uStatusColor = st === 'individualized' ? 'var(--amber)' : 'var(--green)';
-        // [20260422t] ステージバッジ (L1L2/L3 ... 右側上段用)
-        const _uStageLbl = _lotDisplayStageLabel(ph) || ph;
+        // [20260422u] ステージバッジはメンバー個体の current_stage または stage_phase から推論
+        //   ※ u.stage_phase は T1/T2/T3 の飼育フェーズでステージではない。
+        //     members から current_stage を取るか、phase から推論する。
+        const _inferStageFromMembers = () => {
+          if (!membersArr.length) return '';
+          // メンバーの current_stage 優先、無ければ stage_life
+          for (let i = 0; i < membersArr.length; i++) {
+            const m = membersArr[i];
+            const ms = m.current_stage || m.stage_life || m.stage;
+            if (ms) return _lotDisplayStageLabel(ms);
+          }
+          return '';
+        };
+        // phase→ステージの想定マップ: T1→L1L2 / T2→L3 / T3→L3
+        const _inferStageFromPhase = (ph) => {
+          if (ph === 'T1') return 'L1L2';
+          if (ph === 'T2') return 'L3';
+          if (ph === 'T3') return 'L3';
+          return '';
+        };
+        const _uStageLbl = _inferStageFromMembers() || _inferStageFromPhase(ph) || '';
         const _uStageColor = _uStageLbl === 'L1L2' ? 'var(--green)'
           : _uStageLbl === 'L3' ? 'var(--blue)'
           : _uStageLbl === '前蛹' ? '#e65100'
           : _uStageLbl === '蛹' ? '#bf360c'
           : 'var(--text3)';
-        const _uStageBadge = _uStageLbl && _uStageLbl !== '—'
+        const _uStageBadge = _uStageLbl
           ? '<span style="font-size:.72rem;font-weight:700;color:' + _uStageColor + ';'
             + 'border:1px solid ' + _uStageColor + ';border-radius:4px;padding:0 6px;'
             + 'line-height:1.5;white-space:nowrap">' + _uStageLbl + '</span>'

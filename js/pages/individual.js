@@ -1,8 +1,13 @@
 // ════════════════════════════════════════════════════════════════
 // individual.js
 // 役割: 個体の一覧・詳細・新規登録・編集・ステータス変更を担う。
-//       個体台帳の中心画面。ロット・成長記録・ラベルへの導線も持つ。
-// build: 20260422t
+// build: 20260422u
+//
+// 20260422u 修正:
+//   - 個体カードの体重を独立列に分離
+//     旧: ③列内で [体重 上 / マットバッジ 下] の2段配置
+//     新: ③列=体重のみ / ④列=ステージバッジ上+マットバッジ下 / ⑤列=ステータス
+//     手書き案の「体重とTバッジが別列」の要件に対応
 //
 // 20260422t 修正:
 //   - カードデザインを手書き設計図に忠実に作り直し
@@ -100,7 +105,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] individual.js v20260422t loaded');
+console.log('[HerculesOS] individual.js v20260422u loaded');
 
 const Pages = window.Pages || {};
 
@@ -548,13 +553,18 @@ function _indCardHTML(ind) {
     +   (!ind.hatch_date && !_hatch ? '<div style="font-size:.68rem;color:var(--amber)">孵化日未設定</div>' : '')
     + '</div>'
 
-    // ③列: 体重 (大型) 上 + マット種別バッジ 下 (固定幅)
-    + '<div style="display:flex;flex-direction:column;align-items:flex-end;justify-content:center;gap:4px;flex-shrink:0;margin-left:6px;min-width:56px">'
-    +   (w_txt ? '<span style="font-size:1.25rem;font-weight:800;color:var(--green);line-height:1">' + w_txt + '</span>' : _stageBadge)
-    +   (_matBadge ? '<div>' + _matBadge + '</div>' : '')
+    // ③列: 体重のみ (独立した列)
+    + '<div style="display:flex;flex-direction:column;align-items:flex-end;justify-content:center;flex-shrink:0;margin-left:6px;min-width:48px">'
+    +   (w_txt ? '<span style="font-size:1.2rem;font-weight:800;color:var(--green);line-height:1">' + w_txt + '</span>' : '')
     + '</div>'
 
-    // ④列: ステータス文字 + ›
+    // ④列: ステージバッジ (上) + マット種別バッジ (下)
+    + '<div style="display:flex;flex-direction:column;align-items:flex-end;justify-content:center;gap:4px;flex-shrink:0;margin-left:6px;min-width:48px">'
+    +   _stageBadge
+    +   (_matBadge ? _matBadge : '')
+    + '</div>'
+
+    // ⑤列: ステータス文字 + ›
     + '<div style="display:flex;flex-direction:column;align-items:flex-end;justify-content:center;gap:2px;flex-shrink:0;margin-left:8px;min-width:50px">'
     +   '<span style="font-size:.7rem;font-weight:700;color:' + stClr + ';white-space:nowrap">' + stLbl + '</span>'
     +   '<span style="color:var(--text3);font-size:1rem">›</span>'
