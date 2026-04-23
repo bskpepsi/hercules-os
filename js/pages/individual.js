@@ -2,9 +2,28 @@
 // individual.js
 // 役割: 個体の一覧・詳細・新規登録・編集・ステータス変更を担う。
 //       個体台帳の中心画面。ロット・成長記録・ラベルへの導線も持つ。
-// build: 20260423q
+// build: 20260423s
 //
-// 20260423q 修正:
+// 20260423s 修正: 個体カードデザインを画像1基準に再調整
+//   - _indStageBadgeHTML 追加 (L1L2/L3/前蛹/蛹/未後食/活動中 を右側にバッジ表示)
+//   - ID列下に「🐣 孵化日(日齢/週/月)」「🔄 最終交換日(N日)」を2行で表示
+//   - ③列: ステージバッジ + マットバッジ を上下に並べて中央寄せ
+//   - ④列: 体重 + ステータスラベル (飼育中/販売候補など)
+//   - ⑤: ›
+//   画像1のレイアウトに完全準拠
+//
+// 20260423r 修正: 販売時データ記録UI (Phase 1-E、バイアス補正)
+//   - 販売モーダル (_indMarkSold) に以下のフィールド追加:
+//     ・販売時体重 (sold_weight)   ... 現在の latest_weight_g を初期値に
+//     ・販売時ステージ (sold_stage) ... 現在の current_stage を初期値に
+//     ・販売理由 (sold_reason)      ... 小型のため/カラーリング/成長遅延等
+//     ・前蛹体重 (prepupa_weight_g) ... 未記録時のみ表示、任意入力
+//   - _indSellExec で販売API + 個体update API の2段実行
+//   - 個体詳細の「💰 販売済み」カードに前蛹体重と販売理由ラベルを追加
+//   - 目的: 生存者バイアス補正のため、販売された個体の体重・ステージ
+//     分布を予測モデルに統合可能にする
+//
+// 20260423q 修正: 個体カード表示を Phase E 新デザインに復元
 //   - 個体一覧カードの表示を Phase E 新デザインに復元
 //     (前回のセッションで実装した 20260422s の情報統一デザインが
 //      本セッションの編集過程で失われていたため再適用)
@@ -96,7 +115,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] individual.js v20260423q loaded');
+console.log('[HerculesOS] individual.js v20260423s loaded');
 
 const Pages = window.Pages || {};
 
@@ -420,14 +439,34 @@ function _toDisplayStageBadgeShort(code) {
 
 // ────────────────────────────────────────────────────────────────
 // _indCardHTML — 個体一覧カード
-// [20260422s] Phase E: 情報統一 (2026-04-22 に作成した新デザイン)
-//   - 孵化日・最終マット交換日・経過日数 (色分け) を表示
-//   - 右端にマット種別バッジ (T0/T1/T2/T3/MD) を大きく表示
-//   - 体重を右端に大型表示 (ユニット互換)
+// [20260422s→20260423s] Phase E 情報統一デザイン
+//   - 孵化日・最終マット交換日 (詳細日齢付き) を中央に表示
+//   - 右側上段にステージバッジ [L1L2]/[L3]/[前蛹]/[蛹]/[成虫(未後食)]/[成虫(活動中)]
+//   - 右側下段にマット種別バッジ [T0]/[T1]/[T2]/[T3]/[MD]
+//   - さらに右に体重 + ステータス
 //   ヘルパー関数は lot.js のグローバル _resolveHatchDate / _getLastFullExchange /
 //   _formatAgeDate / _matBadgeHTML を利用 (lot.js が先に読み込まれる前提)
 // [20260423p] 羽化後リマインドバッジを追加
+// [20260423s] ステージバッジを右側に枠線付きで表示
 // ────────────────────────────────────────────────────────────────
+
+// [20260423s] 個体用ステージバッジ (lot.js の _matBadgeHTML と同じスタイル)
+function _indStageBadgeHTML(stageLbl) {
+  if (!stageLbl) return '';
+  const colorMap = {
+    'L1L2':   { bg:'rgba(76,175,80,.15)',  fg:'#4caf50', bd:'rgba(76,175,80,.45)' },
+    'L3':     { bg:'rgba(33,150,243,.15)', fg:'#2196f3', bd:'rgba(33,150,243,.45)' },
+    '前蛹':   { bg:'rgba(230,81,0,.15)',   fg:'#e65100', bd:'rgba(230,81,0,.45)' },
+    '蛹':     { bg:'rgba(191,54,12,.15)',  fg:'#bf360c', bd:'rgba(191,54,12,.45)' },
+    '未後食': { bg:'rgba(156,39,176,.15)', fg:'#9c27b0', bd:'rgba(156,39,176,.45)' },
+    '活動中': { bg:'rgba(200,168,75,.15)', fg:'var(--gold)', bd:'rgba(200,168,75,.45)' },
+  };
+  const c = colorMap[stageLbl] || { bg:'rgba(128,128,128,.15)', fg:'#888', bd:'rgba(128,128,128,.4)' };
+  return '<span style="display:inline-block;background:' + c.bg + ';color:' + c.fg + ';'
+    + 'padding:2px 8px;border-radius:5px;font-weight:700;font-size:.72rem;'
+    + 'border:1px solid ' + c.bd + ';white-space:nowrap">' + stageLbl + '</span>';
+}
+
 function _indCardHTML(ind) {
   const w_num = +ind.latest_weight_g || 0;
   const w_txt = w_num ? w_num + 'g' : null;
@@ -496,11 +535,6 @@ function _indCardHTML(ind) {
   const dispId   = _safeDisplayId(ind);
 
   const stageLbl = _toDisplayStageLabelShort(ind.current_stage);
-  const stageColorMap = {
-    'L1L2':'var(--green)', 'L3':'var(--blue)', '前蛹':'#e65100',
-    '蛹':'#bf360c', '未後食':'#9c27b0', '活動中':'var(--gold)',
-  };
-  const stageC = stageColorMap[stageLbl] || 'var(--text3)';
 
   // [20260422s] 日付情報取得 (lot.js のグローバルヘルパー使用、未定義ならフォールバック)
   const _hasGlobalHelpers = (typeof _resolveHatchDate === 'function');
@@ -511,23 +545,26 @@ function _indCardHTML(ind) {
   const _indMat = String(ind.current_mat || '').toUpperCase();
   const _fmtDate = _hasGlobalHelpers ? _formatAgeDate : function(d,m){ return d && d.value ? d.value : ''; };
   const _matBadge = _hasGlobalHelpers ? _matBadgeHTML(_indMat) : '';
+  const _stageBadge = _indStageBadgeHTML(stageLbl);
 
-  // サブ情報行 (ステージ + サイズなど簡易情報のみ)
-  const subParts = [];
-  if (stageLbl) subParts.push('<span style="font-weight:700;color:' + stageC + '">' + stageLbl + '</span>');
-  if (sz)       subParts.push('<span style="color:var(--gold);font-weight:700">' + sz + '</span>');
-  if (!ind.hatch_date && !_hatch) subParts.push('<span style="color:var(--amber);font-size:.7rem">孵化日未設定</span>');
-  const subHtml = subParts.join('<span style="font-size:.65rem;color:var(--border,rgba(255,255,255,.15));padding:0 2px">/</span>');
-
-  // 日付情報行 (🐣孵化日 + 🔄最終交換日)
+  // 日付情報行 (🐣孵化日 + 🔄最終交換日) — 詳細日齢付き
+  //   _formatAgeDate(h, mat) は「YYYY/MM/DD (Nd)」形式で日齢 (週/月) を色分けで返す
   const dateLines = [];
-  if (_hatch)   dateLines.push('<span style="font-size:.68rem">🐣' + _fmtDate(_hatch, _indMat) + '</span>');
-  if (_lastExc) dateLines.push('<span style="font-size:.68rem">🔄' + _fmtDate(_lastExc, _indMat) + '</span>');
-  const dateBlock = dateLines.length
+  if (_hatch)   dateLines.push('<span style="font-size:.66rem">🐣' + _fmtDate(_hatch, _indMat) + '</span>');
+  if (_lastExc) dateLines.push('<span style="font-size:.66rem">🔄' + _fmtDate(_lastExc, _indMat) + '</span>');
+  // 孵化日も交換日も解決できない場合のフォールバック (孵化日未設定警告)
+  const hasAnyDate = dateLines.length > 0;
+  const noHatchWarn = !hasAnyDate && !ind.hatch_date
+    ? '<span style="color:var(--amber);font-size:.66rem">🐣孵化日未設定</span>'
+    : '';
+  const dateBlock = dateLines.length || noHatchWarn
     ? '<div style="display:flex;flex-direction:column;gap:1px;color:var(--text2);margin-top:2px">'
-      + dateLines.map(function(s){ return '<div>'+s+'</div>'; }).join('')
+      + (dateLines.length ? dateLines.map(function(s){ return '<div>'+s+'</div>'; }).join('') : '<div>' + noHatchWarn + '</div>')
       + '</div>'
     : '';
+
+  // 成虫サイズだけ (大人の個体用) はサブ情報として小さく
+  const szPart = sz ? '<div style="font-size:.72rem;color:var(--gold);font-weight:700;margin-top:2px">' + sz + '</div>' : '';
 
   return '<div class="card" style="padding:10px 12px;cursor:pointer;display:flex;align-items:center;gap:0;margin-bottom:8px"'
     + " onclick=\"routeTo('ind-detail',{indId:'" + ind.ind_id + "'})\">"
@@ -539,7 +576,7 @@ function _indCardHTML(ind) {
     +   '<span style="font-size:.82rem;font-weight:700;color:' + sexColor + ';margin-top:2px">' + (ind.sex || '?') + '</span>'
     + '</div>'
 
-    // ②列: ID + サブ情報 + 日付情報 + ステータス
+    // ②列: ID + アイコン + 日付情報 (メイン情報領域)
     + '<div style="flex:1;min-width:0">'
     +   '<div style="display:flex;align-items:center;gap:4px;margin-bottom:2px;flex-wrap:wrap">'
     +     '<span style="font-family:var(--font-mono);font-weight:700;font-size:.85rem;color:var(--text1);'
@@ -547,15 +584,20 @@ function _indCardHTML(ind) {
     +     (icons ? '<span style="font-size:.8rem;flex-shrink:0">' + icons + '</span>' : '')
     +     eclosionReminderBadge
     +   '</div>'
-    +   (subHtml ? '<div style="display:flex;align-items:center;gap:3px;flex-wrap:wrap;font-size:.76rem;color:var(--text2)">' + subHtml + '</div>' : '')
     +   dateBlock
-    +   '<div style="font-size:.66rem;color:' + stClr + ';font-weight:700;margin-top:2px">' + stLbl + '</div>'
+    +   szPart
     + '</div>'
 
-    // ③列: 体重 (大型) + マット種別バッジ
-    + '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;margin-left:6px">'
-    +   (w_txt ? '<span style="font-size:1.15rem;font-weight:800;color:var(--green);line-height:1">' + w_txt + '</span>' : '')
+    // ③列: ステージバッジ + マット種別バッジ (上下に並べて表示)
+    + '<div style="display:flex;flex-direction:column;align-items:center;gap:3px;flex-shrink:0;margin-left:6px">'
+    +   (_stageBadge ? '<div>' + _stageBadge + '</div>' : '')
     +   (_matBadge ? '<div>' + _matBadge + '</div>' : '')
+    + '</div>'
+
+    // ④列: 体重 (あれば) + ステータス + ›
+    + '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px;flex-shrink:0;margin-left:8px">'
+    +   (w_txt ? '<span style="font-size:1rem;font-weight:800;color:var(--green);line-height:1">' + w_txt + '</span>' : '')
+    +   '<span style="font-size:.68rem;font-weight:700;color:' + stClr + ';white-space:nowrap">' + stLbl + '</span>'
     + '</div>'
     + '<span style="color:var(--text3);font-size:1.1rem;margin-left:4px;flex-shrink:0">›</span>'
     + '</div>';
@@ -1080,6 +1122,19 @@ function _renderDetail(ind, main) {
       ${ind.status === 'sold' ? (() => {
         const sh = ind._saleHist || {};
         const priceStr = sh.actual_price ? '¥' + Number(sh.actual_price).toLocaleString() : '—';
+        // [20260423r] 販売理由のコード→ラベル変換
+        const _reasonMap = {
+          'small':'小型のため', 'color':'カラーリング', 'slow':'成長遅延',
+          'health':'健康状態',  'species':'品種固定のため',
+          'price':'市場需要',    'other':'その他',
+        };
+        const _reasonLbl = ind.sold_reason ? (_reasonMap[ind.sold_reason] || ind.sold_reason) : '';
+        // 販売時ステージもラベル化
+        const _stageMap = {
+          'L1L2':'L1L2 (初〜2齢)','L3':'L3 (3齢)','PREPUPA':'前蛹','PUPA':'蛹',
+          'ADULT_PRE':'成虫 (未後食)','ADULT':'成虫 (活動開始)',
+        };
+        const _stageLbl = ind.sold_stage ? (_stageMap[String(ind.sold_stage).toUpperCase()] || ind.sold_stage) : '';
         return `
       <div class="card" style="border-color:rgba(52,152,219,.4)">
         <div class="card-title" style="color:var(--blue)">💰 販売済み</div>
@@ -1089,8 +1144,9 @@ function _renderDetail(ind, main) {
           ${_infoRow('販売経路',       sh.platform     || '—')}
           ${_infoRow('購入者名',       sh.buyer_name   || '—')}
           ${_infoRow('販売時体重',     ind.sold_weight ? ind.sold_weight + 'g' : '—')}
-          ${_infoRow('販売時ステージ', ind.sold_stage  || '—')}
-          ${ind.sold_reason ? _infoRow('理由', ind.sold_reason) : ''}
+          ${_infoRow('販売時ステージ', _stageLbl || '—')}
+          ${_reasonLbl ? _infoRow('理由', _reasonLbl) : ''}
+          ${ind.prepupa_weight_g ? _infoRow('前蛹体重',   ind.prepupa_weight_g + 'g') : ''}
         </div>
       </div>`; })() : ''}
 
@@ -1183,11 +1239,38 @@ Pages._indMarkSold = function (id) {
   const PLATFORMS = ['ヤフオク', 'メルカリ', 'イベント', '直接', 'その他'];
   const dispLabel = _safeDisplayId(ind);
 
+  // [20260423r] Phase 1-E: 販売時データ記録UI
+  //   販売時体重、販売時ステージ、販売理由を記録 (バイアス補正用)
+  //   前蛹体重が未記録なら入力を促す
+  const SALE_REASONS = [
+    { code: '',         label: '—' },
+    { code: 'small',    label: '小型のため' },
+    { code: 'color',    label: 'カラーリング' },
+    { code: 'slow',     label: '成長遅延' },
+    { code: 'health',   label: '健康状態' },
+    { code: 'species',  label: '品種固定のため' },
+    { code: 'price',    label: '市場需要' },
+    { code: 'other',    label: 'その他' },
+  ];
+  const STAGES = [
+    { code: 'L1L2',      label: 'L1L2 (初〜2齢)' },
+    { code: 'L3',        label: 'L3 (3齢)' },
+    { code: 'PREPUPA',   label: '前蛹' },
+    { code: 'PUPA',      label: '蛹' },
+    { code: 'ADULT_PRE', label: '成虫 (未後食)' },
+    { code: 'ADULT',     label: '成虫 (活動開始)' },
+  ];
+  const curStage = String(ind.current_stage || 'L3').toUpperCase();
+  const curWeight = ind.latest_weight_g ? +ind.latest_weight_g : '';
+  const hasPrepupaG = ind.prepupa_weight_g && +ind.prepupa_weight_g > 0;
+
   _showModal('💰 販売登録', `
-    <div class="form-section">
+    <div class="form-section" style="max-height:75vh;overflow-y:auto">
       <div style="font-size:.8rem;color:var(--text3);margin-bottom:12px">
         個体: <strong>${dispLabel}</strong>
       </div>
+
+      <div class="form-title" style="font-size:.82rem;color:var(--gold)">販売情報</div>
       ${UI.field('販売日 *', `<input type="date" id="sell-date" class="input" value="${today}">`)}
       ${UI.field('販売価格（円）', `<input type="number" id="sell-price" class="input" placeholder="例: 8000">`)}
       ${UI.field('販売経路', `<select id="sell-platform" class="input">
@@ -1195,6 +1278,28 @@ Pages._indMarkSold = function (id) {
       </select>`)}
       ${UI.field('購入者名（任意）', `<input type="text" id="sell-buyer" class="input" placeholder="例: 山田 太郎">`)}
       ${UI.field('備考（任意）', `<input type="text" id="sell-note" class="input" placeholder="例: 即決">`)}
+
+      <!-- [20260423r] 販売時データ記録セクション (バイアス補正用) -->
+      <div class="form-title" style="font-size:.82rem;color:var(--amber);margin-top:14px">📊 販売時データ（予測精度向上用）</div>
+      <div style="font-size:.68rem;color:var(--text3);line-height:1.5;margin-bottom:6px">
+        これらのデータは販売時点の個体情報として保存され、ライン統計・予測モデルの生存者バイアス補正に使われます。
+      </div>
+      ${UI.field('販売時体重 (g)', `<input type="number" id="sell-weight" class="input" placeholder="例: 85" min="0" max="250" step="0.1" value="${curWeight}">`)}
+      ${UI.field('販売時ステージ', `<select id="sell-stage" class="input">
+        ${STAGES.map(s => `<option value="${s.code}" ${s.code === curStage ? 'selected' : ''}>${s.label}</option>`).join('')}
+      </select>`)}
+      ${UI.field('販売理由', `<select id="sell-reason" class="input">
+        ${SALE_REASONS.map(r => `<option value="${r.code}">${r.label}</option>`).join('')}
+      </select>`)}
+      ${!hasPrepupaG ? `
+      <div style="background:rgba(224,144,64,.08);border:1px solid rgba(224,144,64,.3);border-radius:6px;padding:8px 10px;margin-top:8px">
+        <div style="font-size:.72rem;color:var(--amber);font-weight:700;margin-bottom:3px">💡 前蛹体重が未記録</div>
+        <div style="font-size:.66rem;color:var(--text3);line-height:1.5;margin-bottom:6px">
+          この個体が前蛹段階に達していた場合は入力をお願いします。ラインの予測モデル精度向上に必須のデータです。
+        </div>
+        ${UI.field('前蛹体重 (g)', `<input type="number" id="sell-prepupa-g" class="input" placeholder="例: 95 (未記録ならスキップ可)" min="0" max="250" step="0.1">`)}
+      </div>` : ''}
+
       <div class="modal-footer" style="margin-top:16px">
         <button class="btn btn-ghost" style="flex:1" type="button" onclick="_closeModal()">キャンセル</button>
         <button class="btn btn-primary" style="flex:2" type="button"
@@ -1210,8 +1315,16 @@ Pages._indSellExec = async function (id) {
   const buyer   = document.getElementById('sell-buyer')?.value?.trim() || '';
   const note    = document.getElementById('sell-note')?.value?.trim() || '';
   if (!date) { UI.toast('販売日を入力してください', 'error'); return; }
+
+  // [20260423r] Phase 1-E: 販売時データ取得
+  const soldWeight = document.getElementById('sell-weight')?.value;
+  const soldStage  = document.getElementById('sell-stage')?.value || '';
+  const soldReason = document.getElementById('sell-reason')?.value || '';
+  const sellPrepupaG = document.getElementById('sell-prepupa-g')?.value;
+
   _closeModal();
   try {
+    // 販売APIへは販売情報のみ送信
     await apiCall(
       () => API.individual.sell({
         ind_id:       id,
@@ -1223,7 +1336,32 @@ Pages._indSellExec = async function (id) {
       }),
       '販売済みとして登録しました 💰'
     );
-    Store.patchDBItem('individuals', 'ind_id', id, { status: 'sold' });
+
+    // [20260423r] 販売時データを個体レコードに更新 (別 API)
+    const indUpdates = { ind_id: id };
+    if (soldWeight)    indUpdates.sold_weight = +soldWeight;
+    if (soldStage)     indUpdates.sold_stage = soldStage;
+    if (soldReason)    indUpdates.sold_reason = soldReason;
+    if (sellPrepupaG && +sellPrepupaG > 0)  indUpdates.prepupa_weight_g = +sellPrepupaG;
+
+    if (Object.keys(indUpdates).length > 1) { // ind_id 以外に何かあれば
+      try {
+        await API.individual.update(indUpdates);
+        UI.toast && UI.toast('販売時データを記録しました 📊', 'success');
+      } catch(e) {
+        console.warn('[_indSellExec] 販売時データ更新失敗:', e);
+        // 販売自体は成功してるのでエラーにはしない
+      }
+    }
+
+    // ローカルStoreも更新
+    Store.patchDBItem('individuals', 'ind_id', id, Object.assign(
+      { status: 'sold' },
+      soldWeight ? { sold_weight: +soldWeight } : {},
+      soldStage ? { sold_stage: soldStage } : {},
+      soldReason ? { sold_reason: soldReason } : {},
+      (sellPrepupaG && +sellPrepupaG > 0) ? { prepupa_weight_g: +sellPrepupaG } : {}
+    ));
     Pages.individualDetail(id);
   } catch (e) {}
 };
