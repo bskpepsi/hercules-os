@@ -10,7 +10,7 @@
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-console.log('[HerculesOS] dashboard.js v20260423p loaded');
+console.log('[HerculesOS] dashboard.js v20260423q loaded');
 
 Pages.dashboard = async function () {
   const main = document.getElementById('main');

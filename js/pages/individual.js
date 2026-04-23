@@ -2,7 +2,19 @@
 // individual.js
 // 役割: 個体の一覧・詳細・新規登録・編集・ステータス変更を担う。
 //       個体台帳の中心画面。ロット・成長記録・ラベルへの導線も持つ。
-// build: 20260423p
+// build: 20260423q
+//
+// 20260423q 修正:
+//   - 個体一覧カードの表示を Phase E 新デザインに復元
+//     (前回のセッションで実装した 20260422s の情報統一デザインが
+//      本セッションの編集過程で失われていたため再適用)
+//     ・🐣 孵化日 + 経過日数 (色分け、親ロットからの継承にも対応)
+//     ・🔄 最終マット交換日 + 経過日数 (色分け)
+//     ・右端に体重 (大型表示、1.15rem 緑色太字) を表示
+//     ・右端にマット種別バッジ (T0/T1/T2/T3/MD)
+//     lot.js のグローバルヘルパー (_resolveHatchDate / _getLastFullExchange /
+//     _formatAgeDate / _matBadgeHTML) を利用。
+//   - 羽化後リマインドバッジは Phase 1-C の機能として継続
 //
 // 20260423p 修正: 羽化後リマインド機能 (Phase 1-C)
 //   - 個体詳細の発育日程セクションに羽化後の計測リマインドを追加
@@ -84,7 +96,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] individual.js v20260423p loaded');
+console.log('[HerculesOS] individual.js v20260423q loaded');
 
 const Pages = window.Pages || {};
 
@@ -408,19 +420,23 @@ function _toDisplayStageBadgeShort(code) {
 
 // ────────────────────────────────────────────────────────────────
 // _indCardHTML — 個体一覧カード
+// [20260422s] Phase E: 情報統一 (2026-04-22 に作成した新デザイン)
+//   - 孵化日・最終マット交換日・経過日数 (色分け) を表示
+//   - 右端にマット種別バッジ (T0/T1/T2/T3/MD) を大きく表示
+//   - 体重を右端に大型表示 (ユニット互換)
+//   ヘルパー関数は lot.js のグローバル _resolveHatchDate / _getLastFullExchange /
+//   _formatAgeDate / _matBadgeHTML を利用 (lot.js が先に読み込まれる前提)
+// [20260423p] 羽化後リマインドバッジを追加
 // ────────────────────────────────────────────────────────────────
 function _indCardHTML(ind) {
-  const ageObj     = ind.hatch_date ? Store.calcAge(ind.hatch_date) : null;
-  const ageDaysStr = ageObj ? ageObj.days : null;
-
-  const w  = ind.latest_weight_g ? ind.latest_weight_g + 'g' : null;
-  const sz = ind.adult_size_mm   ? ind.adult_size_mm + 'mm'  : null;
+  const w_num = +ind.latest_weight_g || 0;
+  const w_txt = w_num ? w_num + 'g' : null;
+  const sz    = ind.adult_size_mm   ? ind.adult_size_mm + 'mm'  : null;
 
   // ── Bug fix: line_id で見つからない場合は display_id から抽出 ──
   const line    = ind.line_id ? Store.getLine(ind.line_id) : null;
   const lineStr = (() => {
     if (line) return line.line_code || line.display_id || '';
-    // フォールバック: "HM2025-A1-001" → "A1" を抽出
     const dm = (ind.display_id || '').match(/^[A-Za-z0-9]+-([A-Za-z][0-9]+)-\d+/);
     return dm ? dm[1] : '';
   })();
@@ -437,9 +453,6 @@ function _indCardHTML(ind) {
     seed_candidate:'飼育中', seed_reserved:'飼育中',
     for_sale:'販売候補', listed:'出品中', sold:'販売済み', dead:'死亡',
   };
-  // [20260421f] for_sale フラグが立っていれば、status に関わらず「販売候補」として表示
-  //   T2移行で作成された販売候補個体は status='larva' のまま for_sale=true になるため、
-  //   status のみで判定すると「飼育中」として表示されてしまう
   const _isTerminalInd = (ind.status === 'sold' || ind.status === 'dead');
   const _isForSaleInd  = (!_isTerminalInd) && (
     ind.for_sale === true || ind.for_sale === 'true' ||
@@ -456,7 +469,6 @@ function _indCardHTML(ind) {
   ].filter(Boolean).join('');
 
   // [20260423p] 羽化後リマインドバッジ (Phase 1-C)
-  //   羽化日あり + adult_size_mm 未記録 で経過日数に応じて 21日/30日バッジ
   let eclosionReminderBadge = '';
   if (ind.eclosion_date && (!ind.adult_size_mm || +ind.adult_size_mm === 0)) {
     try {
@@ -490,15 +502,34 @@ function _indCardHTML(ind) {
   };
   const stageC = stageColorMap[stageLbl] || 'var(--text3)';
 
+  // [20260422s] 日付情報取得 (lot.js のグローバルヘルパー使用、未定義ならフォールバック)
+  const _hasGlobalHelpers = (typeof _resolveHatchDate === 'function');
+  const _hatch = _hasGlobalHelpers
+    ? _resolveHatchDate({ direct: ind.hatch_date, lotId: ind.lot_id, originLotId: ind.origin_lot_id })
+    : (ind.hatch_date ? { value: String(ind.hatch_date).replace(/-/g,'/'), days: null } : null);
+  const _lastExc = _hasGlobalHelpers ? _getLastFullExchange(ind.ind_id) : null;
+  const _indMat = String(ind.current_mat || '').toUpperCase();
+  const _fmtDate = _hasGlobalHelpers ? _formatAgeDate : function(d,m){ return d && d.value ? d.value : ''; };
+  const _matBadge = _hasGlobalHelpers ? _matBadgeHTML(_indMat) : '';
+
+  // サブ情報行 (ステージ + サイズなど簡易情報のみ)
   const subParts = [];
   if (stageLbl) subParts.push('<span style="font-weight:700;color:' + stageC + '">' + stageLbl + '</span>');
-  if (ageDaysStr) subParts.push('<span>' + ageDaysStr + '</span>');
-  else if (!ind.hatch_date) subParts.push('<span style="color:var(--amber);font-size:.7rem">孵化日未設定</span>');
-  if (w)  subParts.push('<span style="color:var(--green);font-weight:700">' + w + '</span>');
-  if (sz) subParts.push('<span style="color:var(--gold);font-weight:700">' + sz + '</span>');
+  if (sz)       subParts.push('<span style="color:var(--gold);font-weight:700">' + sz + '</span>');
+  if (!ind.hatch_date && !_hatch) subParts.push('<span style="color:var(--amber);font-size:.7rem">孵化日未設定</span>');
   const subHtml = subParts.join('<span style="font-size:.65rem;color:var(--border,rgba(255,255,255,.15));padding:0 2px">/</span>');
 
-  return '<div class="card" style="padding:12px 14px;cursor:pointer;display:flex;align-items:center;gap:0;margin-bottom:8px"'
+  // 日付情報行 (🐣孵化日 + 🔄最終交換日)
+  const dateLines = [];
+  if (_hatch)   dateLines.push('<span style="font-size:.68rem">🐣' + _fmtDate(_hatch, _indMat) + '</span>');
+  if (_lastExc) dateLines.push('<span style="font-size:.68rem">🔄' + _fmtDate(_lastExc, _indMat) + '</span>');
+  const dateBlock = dateLines.length
+    ? '<div style="display:flex;flex-direction:column;gap:1px;color:var(--text2);margin-top:2px">'
+      + dateLines.map(function(s){ return '<div>'+s+'</div>'; }).join('')
+      + '</div>'
+    : '';
+
+  return '<div class="card" style="padding:10px 12px;cursor:pointer;display:flex;align-items:center;gap:0;margin-bottom:8px"'
     + " onclick=\"routeTo('ind-detail',{indId:'" + ind.ind_id + "'})\">"
 
     // ①列: ライン + 性別
@@ -508,23 +539,25 @@ function _indCardHTML(ind) {
     +   '<span style="font-size:.82rem;font-weight:700;color:' + sexColor + ';margin-top:2px">' + (ind.sex || '?') + '</span>'
     + '</div>'
 
-    // ②列: ID + サブ情報
+    // ②列: ID + サブ情報 + 日付情報 + ステータス
     + '<div style="flex:1;min-width:0">'
-    +   '<div style="display:flex;align-items:center;gap:4px;margin-bottom:3px;flex-wrap:wrap">'
+    +   '<div style="display:flex;align-items:center;gap:4px;margin-bottom:2px;flex-wrap:wrap">'
     +     '<span style="font-family:var(--font-mono);font-weight:700;font-size:.85rem;color:var(--text1);'
     +       'overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + dispId + '</span>'
     +     (icons ? '<span style="font-size:.8rem;flex-shrink:0">' + icons + '</span>' : '')
     +     eclosionReminderBadge
     +   '</div>'
-    +   (subHtml ? '<div style="display:flex;align-items:center;gap:3px;flex-wrap:wrap;font-size:.78rem;color:var(--text2)">' + subHtml + '</div>' : '')
+    +   (subHtml ? '<div style="display:flex;align-items:center;gap:3px;flex-wrap:wrap;font-size:.76rem;color:var(--text2)">' + subHtml + '</div>' : '')
+    +   dateBlock
+    +   '<div style="font-size:.66rem;color:' + stClr + ';font-weight:700;margin-top:2px">' + stLbl + '</div>'
     + '</div>'
 
-    // ③列: ステータス + ›
-    + '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px;flex-shrink:0;margin-left:6px">'
-    +   '<span style="font-size:.72rem;font-weight:700;color:' + stClr + ';white-space:nowrap">' + stLbl + '</span>'
-    +   '<span style="color:var(--text3);font-size:1.1rem">›</span>'
+    // ③列: 体重 (大型) + マット種別バッジ
+    + '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;margin-left:6px">'
+    +   (w_txt ? '<span style="font-size:1.15rem;font-weight:800;color:var(--green);line-height:1">' + w_txt + '</span>' : '')
+    +   (_matBadge ? '<div>' + _matBadge + '</div>' : '')
     + '</div>'
-
+    + '<span style="color:var(--text3);font-size:1.1rem;margin-left:4px;flex-shrink:0">›</span>'
     + '</div>';
 }
 
