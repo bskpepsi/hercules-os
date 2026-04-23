@@ -1,8 +1,20 @@
 // FILE: js/pages/lot.js
 // ════════════════════════════════════════════════════════════════
-// lot.js — Phase4-1 UI統一版
-// build: 20260422u
+// lot.js
+// build: 20260422x
 // 変更点:
+//   - [20260422x] 孵化日/採卵日の経過表示を常に全単位で (112日 / 16週 / 3.7ヶ月)
+//     色も text3 → text2 (薄い白) に変更。1年超は "1年1ヶ月" 表記追加。
+//   - [20260422w] 🎨 カード経過日数の表示を改善
+//     ① 🐣 孵化日 / 🥚 採卵日: 警告色ではなく情報色 (グレー) で
+//        日数に応じた単位切替表示 (14日 / 45日/6週 / 112日/3.7ヶ月 / 400日/1年1ヶ月)
+//     ② 🔄 最終交換: 3段階色分けに拡張
+//        通常 → しきい値80%で黄 (#ffb800) → 超過で赤 (#e05050)
+//     新ヘルパー: _formatHatchAge (日→日/週/月/年の表記変換)、
+//                  _formatHatchDate (孵化/採卵用、グレー固定)
+//     _ageColor を3段階に拡張、_formatAgeDate は最終交換専用として継続。
+//   - [20260422v] カード ステージ+マット列を中揃えに変更
+//     (align-items: flex-end → center でバッジが中央で縦整列)
 //   - [20260422u] ユニットカードのステージバッジのバグ修正
 //     症状: A1 ユニットが "T1 / T1" (ステージ列もマット列もT1) と表示
 //     原因: _uStageLbl = _lotDisplayStageLabel(u.stage_phase) としていたが、
@@ -98,7 +110,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] lot.js v20260422u loaded');
+console.log('[HerculesOS] lot.js v20260422x loaded');
 
 // ────────────────────────────────────────────────────────────────
 // [20260418f] 血統・種親カードを生成（ロット詳細用）
@@ -332,18 +344,46 @@ function _getLastFullExchange(targetId) {
   return { value: d, days: _daysSince(d) };
 }
 
-// マット種別とその経過日数から色を決める
-//   days が null / しきい値未満 → 通常色
-//   しきい値超え → 赤
+// マット種別とその経過日数から色を決める (3段階)
+//   days が null / しきい値の 80% 未満 → 通常色 (薄いグレー)
+//   しきい値の 80% 以上 100% 以下 → 黄色予兆 (#ffb800)
+//   しきい値超過 → 赤警告 (#e05050)
 function _ageColor(matType, days) {
   if (days === null || days === undefined) return 'var(--text2)';
   var t = String(matType || '').toUpperCase();
   var limit = _MAT_DAYS_WARNING[t];
-  if (limit && days > limit) return 'var(--red,#e05050)';
-  return 'var(--text2)';
+  if (!limit) return 'var(--text2)';
+  if (days > limit) return 'var(--red,#e05050)';        // 超過: 赤
+  if (days >= limit * 0.8) return '#ffb800';             // 80%以上: 黄色予兆
+  return 'var(--text2)';                                 // 通常
 }
 
-// 「YYYY/MM/DD (Nd)」形式で日付と経過日数を整形
+// 経過日数を常に全単位で表示: "112日 / 16週 / 3.7ヶ月"
+// 365日以上は "400日 / 57週 / 1年1ヶ月" のように年も追加
+function _formatHatchAge(days) {
+  if (days == null) return '';
+  var parts = [];
+  parts.push(days + '日');
+  // 週 (1週未満は非表示)
+  if (days >= 7) {
+    parts.push(Math.floor(days / 7) + '週');
+  }
+  // ヶ月 (30日未満は非表示、小数1桁)
+  if (days >= 30) {
+    if (days >= 365) {
+      // 1年以上は "1年1ヶ月" 表記
+      var years = Math.floor(days / 365);
+      var remainDays = days - years * 365;
+      var remainMonths = Math.floor(remainDays / 30.4);
+      parts.push(years + '年' + remainMonths + 'ヶ月');
+    } else {
+      parts.push((days / 30.4).toFixed(1) + 'ヶ月');
+    }
+  }
+  return parts.join(' / ');
+}
+
+// 「YYYY/MM/DD (Nd)」形式で日付と経過日数を整形（最終交換日用: mat しきい値で色分け）
 // matType を渡すと経過日数部の色が決まる
 function _formatAgeDate(dateObj, matType) {
   if (!dateObj || !dateObj.value) return '';
@@ -351,6 +391,16 @@ function _formatAgeDate(dateObj, matType) {
   if (dateObj.days == null) return dstr;
   var col = _ageColor(matType, dateObj.days);
   return dstr + ' <span style="color:' + col + ';font-weight:700">(' + dateObj.days + '日)</span>';
+}
+
+// 孵化日用の整形。経過日数は警告色ではなく、情報色 (薄い白 = text2) で表示。
+// 日/週/ヶ月/年 すべての単位を並記する (ユーザー要望)。
+function _formatHatchDate(dateObj) {
+  if (!dateObj || !dateObj.value) return '';
+  var dstr = dateObj.value;
+  if (dateObj.days == null) return dstr;
+  var ageStr = _formatHatchAge(dateObj.days);
+  return dstr + ' <span style="color:var(--text2);font-weight:600">(' + ageStr + ')</span>';
 }
 
 // マット種別バッジを生成 (T0/T1/T2/T3/MD)
@@ -595,16 +645,6 @@ Pages.lotList = function () {
           ? memberLines
           : `<div style="font-size:.76rem;color:var(--text2)">${hc}頭 / 区分:${sc}</div>`;
 
-        // [20260422s] 孵化日・最終交換日の表示行
-        const _dateLines = [];
-        if (_uHatch)   _dateLines.push('<span style="font-size:.68rem">🐣' + _formatAgeDate(_uHatch, _uMatType) + '</span>');
-        if (_uLastExc) _dateLines.push('<span style="font-size:.68rem">🔄' + _formatAgeDate(_uLastExc, _uMatType) + '</span>');
-        const _dateBlock = _dateLines.length
-          ? '<div style="display:flex;flex-direction:column;gap:1px;color:var(--text2);margin-top:2px">'
-            + _dateLines.map(s => '<div>'+s+'</div>').join('')
-            + '</div>'
-          : '';
-
         const srcLotsText = (() => {
           try {
             const sl = u.source_lots ? JSON.parse(u.source_lots) : [];
@@ -678,7 +718,7 @@ Pages.lotList = function () {
               ? `<div style="font-size:.62rem;color:var(--text3);
                   white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${srcLotsText}</div>`
               : ''}
-            ${_uHatch   ? `<div style="font-size:.68rem;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">🐣${_formatAgeDate(_uHatch, _uMatType)}</div>`   : ''}
+            ${_uHatch   ? `<div style="font-size:.68rem;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">🐣${_formatHatchDate(_uHatch)}</div>`   : ''}
             ${_uLastExc ? `<div style="font-size:.68rem;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">🔄${_formatAgeDate(_uLastExc, _uMatType)}</div>` : ''}
           </div>
 
@@ -688,8 +728,8 @@ Pages.lotList = function () {
             ${memberBlock}
           </div>
 
-          <!-- ④列: ステージバッジ (上) + マット種別バッジ (下) -->
-          <div style="display:flex;flex-direction:column;align-items:flex-end;justify-content:center;gap:4px;flex-shrink:0;margin-right:6px;min-width:48px">
+          <!-- ④列: ステージバッジ (上) + マット種別バッジ (下) - 中揃え -->
+          <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;flex-shrink:0;margin-right:6px;min-width:48px">
             ${_uStageBadge}
             ${_matBadgeHTML(_uMatType || ph)}
           </div>
@@ -1172,13 +1212,13 @@ function _lotCardHTML(lot) {
       +   '<div style="font-family:var(--font-mono);font-size:.88rem;font-weight:700;color:var(--text1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
       +     (lot.display_id || '')
       +   '</div>'
-      +   (_lotCollect ? '<div style="font-size:.68rem;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">🥚採卵 ' + _formatAgeDate(_lotCollect, '') + '</div>' : '')
-      +   (_lotHatch   ? '<div style="font-size:.68rem;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">🐣孵化 ' + _formatAgeDate(_lotHatch, rawMat) + '</div>' : '')
+      +   (_lotCollect ? '<div style="font-size:.68rem;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">🥚採卵 ' + _formatHatchDate(_lotCollect) + '</div>' : '')
+      +   (_lotHatch   ? '<div style="font-size:.68rem;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">🐣孵化 ' + _formatHatchDate(_lotHatch) + '</div>' : '')
       +   (_lotLastExc ? '<div style="font-size:.68rem;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">🔄交換 ' + _formatAgeDate(_lotLastExc, rawMat) + '</div>' : '')
       + '</div>'
 
-      // ③列: ステージバッジ (上) + マット種別バッジ (下)
-      + '<div style="display:flex;flex-direction:column;align-items:flex-end;justify-content:center;gap:4px;flex-shrink:0;margin-right:6px;min-width:48px">'
+      // ③列: ステージバッジ (上) + マット種別バッジ (下) - 中揃え
+      + '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;flex-shrink:0;margin-right:6px;min-width:48px">'
       +   _stageBadge
       +   _matBadge
       + '</div>'

@@ -1,7 +1,25 @@
 // ════════════════════════════════════════════════════════════════
 // individual.js
 // 役割: 個体の一覧・詳細・新規登録・編集・ステータス変更を担う。
-// build: 20260422u
+// build: 20260422x
+//
+// 20260422x 修正:
+//   - 孵化日の経過表示を常に全単位で (112日 / 16週 / 3.7ヶ月)、色は薄い白
+//   (実装は lot.js の _formatHatchAge / _formatHatchDate を使用)
+//
+// 20260422w 修正:
+//   - 🐣 孵化日の経過表示形式を変更 (ユーザー要望)
+//     旧: (112日) 赤字 → 警告と誤認される問題
+//     新: (112日 / 3.7ヶ月) グレー (情報色)
+//     日数に応じて自動単位切替: 日/週/ヶ月/年
+//   - 🔄 最終交換は 3段階の色分け:
+//     通常 → 黄色 (しきい値の80%) → 赤 (超過)
+//   ヘルパー _formatHatchDate / _formatHatchAge は lot.js 側 (グローバル)
+//
+// 20260422v 修正:
+//   - カード ④列 (ステージ+マット) を中揃えに変更
+//     旧: align-items: flex-end (右寄せでL1L2とT1がズレていた)
+//     新: align-items: center (バッジ幅が違っても中央で揃う)
 //
 // 20260422u 修正:
 //   - 個体カードの体重を独立列に分離
@@ -105,7 +123,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] individual.js v20260422u loaded');
+console.log('[HerculesOS] individual.js v20260422x loaded');
 
 const Pages = window.Pages || {};
 
@@ -506,7 +524,8 @@ function _indCardHTML(ind) {
     : (ind.hatch_date ? { value: String(ind.hatch_date).replace(/-/g,'/'), days: null } : null);
   const _lastExc = _hasGlobalHelpers ? _getLastFullExchange(ind.ind_id) : null;
   const _indMat = String(ind.current_mat || '').toUpperCase();
-  const _fmtDate = _hasGlobalHelpers ? _formatAgeDate : function(d,m){ return d && d.value ? d.value : ''; };
+  const _fmtHatch = _hasGlobalHelpers ? _formatHatchDate : function(d){ return d && d.value ? d.value : ''; };
+  const _fmtExch  = _hasGlobalHelpers ? _formatAgeDate   : function(d,m){ return d && d.value ? d.value : ''; };
   const _matBadge = _hasGlobalHelpers ? _matBadgeHTML(_indMat) : '';
 
   // サブ情報行 (ステージ + サイズなど簡易情報のみ)
@@ -516,13 +535,15 @@ function _indCardHTML(ind) {
   if (!ind.hatch_date && !_hatch) subParts.push('<span style="color:var(--amber);font-size:.7rem">孵化日未設定</span>');
   const subHtml = subParts.join('<span style="font-size:.65rem;color:var(--border,rgba(255,255,255,.15));padding:0 2px">/</span>');
 
-  // [20260422t] 日付情報行 (小さく)
-  const _dateRow = function(icon, obj, mat) {
-    if (!obj) return '';
-    return '<div style="font-size:.68rem;color:var(--text2);'
-      + 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
-      + icon + _fmtDate(obj, mat) + '</div>';
-  };
+  // [20260422w] 日付情報行:
+  //   🐣 孵化日は情報色 (グレー) で N日/N週/Nヶ月/N年 形式
+  //   🔄 最終交換は警告色 (通常/黄/赤) で (N日) 形式
+  const _hatchRow = _hatch
+    ? '<div style="font-size:.68rem;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">🐣' + _fmtHatch(_hatch) + '</div>'
+    : '';
+  const _exchRow = _lastExc
+    ? '<div style="font-size:.68rem;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">🔄' + _fmtExch(_lastExc, _indMat) + '</div>'
+    : '';
 
   // ステージラベル (L1L2/L3/前蛹/蛹/成虫) 右上小バッジ用
   const _stageBadge = stageLbl
@@ -548,8 +569,8 @@ function _indCardHTML(ind) {
     +       'overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + dispId + '</span>'
     +     (icons ? '<span style="font-size:.8rem;flex-shrink:0">' + icons + '</span>' : '')
     +   '</div>'
-    +   (_hatch    ? _dateRow('🐣', _hatch,   _indMat) : '')
-    +   (_lastExc  ? _dateRow('🔄', _lastExc, _indMat) : '')
+    +   _hatchRow
+    +   _exchRow
     +   (!ind.hatch_date && !_hatch ? '<div style="font-size:.68rem;color:var(--amber)">孵化日未設定</div>' : '')
     + '</div>'
 
@@ -558,8 +579,8 @@ function _indCardHTML(ind) {
     +   (w_txt ? '<span style="font-size:1.2rem;font-weight:800;color:var(--green);line-height:1">' + w_txt + '</span>' : '')
     + '</div>'
 
-    // ④列: ステージバッジ (上) + マット種別バッジ (下)
-    + '<div style="display:flex;flex-direction:column;align-items:flex-end;justify-content:center;gap:4px;flex-shrink:0;margin-left:6px;min-width:48px">'
+    // ④列: ステージバッジ (上) + マット種別バッジ (下) - 中揃え
+    + '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;flex-shrink:0;margin-left:6px;min-width:48px">'
     +   _stageBadge
     +   (_matBadge ? _matBadge : '')
     + '</div>'
