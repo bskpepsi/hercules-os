@@ -1,8 +1,23 @@
 // FILE: js/pages/lot.js
 // ════════════════════════════════════════════════════════════════
 // lot.js
-// build: 20260423a
+// build: 20260423c
 // 変更点:
+//   - [20260423c] ライン絞り込みピルのラベルに年度下2桁を追加
+//     例: A1 (25) / A1 (26) / B2 (26)
+//     2025年度のA1ラインと2026年度のA1ラインは全く別のラインなので、
+//     ユーザーが混同しないように区別表示。内部の line_id は元々ユニーク
+//     なため絞り込み動作は従来から分離されていたが、UI上で見分けがつかない
+//     問題を修正。_lineFilterLabel ヘルパー関数を追加。
+//   - [20260423b] フィルタバー複数選択対応 (ユーザー要望)
+//     個体タブ: _indStages[], _indLines[] で OR 条件絞り込み
+//     ユニットタブ: _unitLines[] で OR 条件
+//     ロットタブ: filters.stages[], filters.line_ids[] で OR 条件
+//     各バーの"全て"ピル押下でクリア、個別ピルはトグル動作。
+//   - [20260423b] ライン絞り込みピルを全ライン表示に (旧: slice(0,8) で C1 等が
+//     一覧に出ない問題の修正)。filter-bar は overflow-x:auto で水平スクロール可。
+//   - [20260423b] ユニットカードの②列幅を広げ、③列を縮めて日付の 14週/3.7ヶ月
+//     が末尾省略されないように (flex 1.1→1.5, 1→0.8、font-size 微調整)。
 //   - [20260423a] 🥚採卵日の経過日数表示を削除 (孵化日の経過で代替)
 //     例: "🥚採卵 2025/11/01 (173日/24週/5.7ヶ月)" → "🥚採卵 2025/11/01"
 //     採卵〜孵化は孵化日からの経過に包含されるため冗長だった。
@@ -114,7 +129,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] lot.js v20260423a loaded');
+console.log('[HerculesOS] lot.js v20260423c loaded');
 
 // ────────────────────────────────────────────────────────────────
 // [20260418f] 血統・種親カードを生成（ロット詳細用）
@@ -222,8 +237,33 @@ function _lotRenderParentageCard(line, backCtx) {
 }
 
 // ────────────────────────────────────────────────────────────────
-// _lotDisplayStageLabel — ステージコード（新旧問わず）→ 新6区分の表示ラベル
+// [20260423c] _lineFilterLabel — フィルタピル専用のライン表示ラベル
+//   2025年度のA1と2026年度のA1を区別するため、年度下2桁を付けて表示。
+//   例: A1 (25) / A1 (26)
+//   ・line.hatch_year が無い場合は line.display_id や line.line_id から抽出を試みる
+//   ・全て失敗したら line_code のみを返す (後方互換)
 // ────────────────────────────────────────────────────────────────
+function _lineFilterLabel(line) {
+  if (!line) return '';
+  var code = line.line_code || line.display_id || '?';
+  // 年度の取得を複数経路で試行
+  var year = '';
+  if (line.hatch_year) {
+    year = String(line.hatch_year).trim();
+  } else if (line.display_id) {
+    // "HM2025-A1" や "HM2026-B2-001" → 2025 / 2026
+    var m = String(line.display_id).match(/[A-Za-z]{1,4}(\d{4})/);
+    if (m) year = m[1];
+  } else if (line.line_id) {
+    // "LINE-2025-A1" 等の可能性
+    var m2 = String(line.line_id).match(/(\d{4})/);
+    if (m2) year = m2[1];
+  }
+  if (!year) return code;
+  // 下2桁のみ付与 ("2025" → "25")
+  var y2 = year.slice(-2);
+  return code + ' (' + y2 + ')';
+}
 function _lotDisplayStageLabel(code) {
   if (!code) return '—';
   var map = {
@@ -482,17 +522,21 @@ Pages.lotList = function () {
   // [20260422r] デフォルトタブを 'lot' → 'ind' に変更（ボトムナビ「飼育」の意図）
   let _activeTab = params._tab || 'ind';
   let _keyword = '';
-  let filters = { status: 'active', stage: '', line_id: fixedLineId, mat_type: '' };
+  // [20260423b] ロットタブのフィルタを複数選択対応: line_ids/stages は配列
+  //   配列空 = 全て、1件以上 = その値群に含まれるものだけ表示 (OR条件)
+  let filters = { status: 'active', stages: [], line_ids: fixedLineId ? [fixedLineId] : [], mat_type: '' };
   let _lotStatusMode = 'active';
   let _unitPhase  = '';
   let _unitStatus = 'active';
   let _unitMat    = '';
-  let _unitLine   = fixedLineId;
+  // [20260423b] ユニットのライン絞り込みも配列化
+  let _unitLines  = fixedLineId ? [fixedLineId] : [];
   // [20260422q] 個体タブ用ローカル状態
   let _indStatus  = 'alive';     // alive / for_sale / listed / sold / dead / all
-  let _indStage   = '';          // L1L2 / L3 / prepupa / pupa / adult / ''
+  // [20260423b] 個体のステージ・ラインも複数選択 (配列)
+  let _indStages  = [];          // [] = 全て, ['L1L2','L3'] = L1L2またはL3
   let _indSex     = '';          // ♂ / ♀ / 不明 / ''
-  let _indLine    = fixedLineId; // ライン絞り込み
+  let _indLines   = fixedLineId ? [fixedLineId] : [];
   // [20260422s] ソート状態 (各タブ独立)
   let _indSort    = 'id';        // id / hatch_new / hatch_old / exchange / weight_desc
   let _unitSort   = 'id';        // id / hatch_new / hatch_old / exchange
@@ -514,7 +558,8 @@ Pages.lotList = function () {
     if (_unitPhase)  units = units.filter(u => u.stage_phase === _unitPhase);
     if (_unitStatus) units = units.filter(u => (u.status||'active') === _unitStatus);
     if (_unitMat)    units = units.filter(u => (u.mat_type||'') === _unitMat);
-    if (_unitLine)   units = units.filter(u => u.line_id === _unitLine);
+    // [20260423b] 複数ライン選択対応 (OR条件)
+    if (_unitLines.length) units = units.filter(u => _unitLines.includes(u.line_id));
     if (_keyword) {
       const kw = _keyword.toLowerCase();
       units = units.filter(u =>
@@ -574,9 +619,9 @@ Pages.lotList = function () {
         ).join('')}
       </div>` +
       (!isLineLimited ? `<div class="filter-bar" style="margin-bottom:6px" id="unit-line-filter">
-        <button class="pill ${!_unitLine?'active':''}" data-uline="">ライン全て</button>
-        ${lines.slice(0,8).map(l =>
-          `<button class="pill ${_unitLine===l.line_id?'active':''}" data-uline="${l.line_id}">${l.line_code||l.display_id}</button>`
+        <button class="pill ${!_unitLines.length?'active':''}" data-uline="">ライン全て</button>
+        ${lines.map(l =>
+          `<button class="pill ${_unitLines.includes(l.line_id)?'active':''}" data-uline="${l.line_id}">${_lineFilterLabel(l)}</button>`
         ).join('')}
       </div>` : '') +
       `<div class="filter-bar" style="margin-bottom:8px" id="unit-status-filter">
@@ -711,9 +756,9 @@ Pages.lotList = function () {
             <span style="font-size:.7rem;color:var(--text3);margin-top:3px">${hc}頭</span>
           </div>
 
-          <!-- ②列: ID + 孵化日 + 最終交換 -->
+          <!-- ②列: ID + 孵化日 + 最終交換 (flex:1.5 で日付全体を表示) -->
           <div style="display:flex;flex-direction:column;justify-content:center;gap:1px;
-            min-width:0;flex:1.1;margin-right:6px">
+            min-width:0;flex:1.5;margin-right:6px">
             <div style="font-family:var(--font-mono);font-weight:700;font-size:.82rem;color:var(--gold);
               white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
               ${u.display_id||u.unit_id}${stBadge}
@@ -722,13 +767,13 @@ Pages.lotList = function () {
               ? `<div style="font-size:.62rem;color:var(--text3);
                   white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${srcLotsText}</div>`
               : ''}
-            ${_uHatch   ? `<div style="font-size:.68rem;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">🐣${_formatHatchDate(_uHatch)}</div>`   : ''}
-            ${_uLastExc ? `<div style="font-size:.68rem;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">🔄${_formatAgeDate(_uLastExc, _uMatType)}</div>` : ''}
+            ${_uHatch   ? `<div style="font-size:.66rem;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">🐣${_formatHatchDate(_uHatch)}</div>`   : ''}
+            ${_uLastExc ? `<div style="font-size:.66rem;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">🔄${_formatAgeDate(_uLastExc, _uMatType)}</div>` : ''}
           </div>
 
-          <!-- ③列: 各頭情報 (①② 行) -->
+          <!-- ③列: 各頭情報 (①② 行) - flex:0.8 に縮小 -->
           <div style="display:flex;flex-direction:column;justify-content:center;
-            flex:1;min-width:0;margin-right:6px">
+            flex:0.8;min-width:0;margin-right:6px">
             ${memberBlock}
           </div>
 
@@ -767,7 +812,16 @@ Pages.lotList = function () {
       const _uLineFilter = document.getElementById('unit-line-filter');
       if (_uLineFilter) _uLineFilter.addEventListener('click', e => {
         const p = e.target.closest('.pill'); if (!p) return;
-        _unitLine = p.dataset.uline;
+        const v = p.dataset.uline;
+        if (v === '') {
+          // 「ライン全て」押下 → クリア
+          _unitLines = [];
+        } else {
+          // トグル: 含まれていれば外す、無ければ追加
+          const idx = _unitLines.indexOf(v);
+          if (idx >= 0) _unitLines.splice(idx, 1);
+          else _unitLines.push(v);
+        }
         renderUnit();
       });
     }
@@ -790,10 +844,32 @@ Pages.lotList = function () {
   // ══════════════════════════════════════════════════════════
   function renderInd() {
     const lines = Store.getDB('lines') || [];
-    // Store.filterIndividuals で基本絞り込み
+    // Store.filterIndividuals で status/sex のみ絞り込み、stage/line は自前で複数対応
     let list = (typeof Store !== 'undefined' && typeof Store.filterIndividuals === 'function')
-      ? Store.filterIndividuals({ status: _indStatus, stage: _indStage, sex: _indSex, line_id: _indLine })
+      ? Store.filterIndividuals({ status: _indStatus, sex: _indSex })
       : (Store.getDB('individuals') || []).slice();
+    // [20260423b] ステージ複数選択 (OR条件)
+    //   _indStages = ['L1L2','L3'] のようなキー配列。空なら絞らない。
+    //   Store.filterIndividuals と同じマッピングを自前で実施
+    if (_indStages.length) {
+      const _stageMap = {
+        L1L2: ['L1L2','L1','L2_EARLY','L2_LATE','EGG','T0','T1'],
+        L3: ['L3','L3_EARLY','L3_MID','L3_LATE','T2','T2A','T2B','T3'],
+        prepupa: ['PREPUPA','前蛹'],
+        pupa: ['PUPA','蛹'],
+        adult: ['ADULT','ADULT_PRE','成虫'],
+      };
+      const _expanded = [];
+      _indStages.forEach(s => {
+        if (_stageMap[s]) _expanded.push(..._stageMap[s]);
+        else _expanded.push(s);
+      });
+      list = list.filter(i => _expanded.includes(i.current_stage) || _expanded.includes(i.stage_life));
+    }
+    // [20260423b] ライン複数選択 (OR条件)
+    if (_indLines.length) {
+      list = list.filter(i => _indLines.includes(i.line_id));
+    }
     // キーワード検索
     if (_keyword) {
       const kw = _keyword.toLowerCase();
@@ -835,9 +911,8 @@ Pages.lotList = function () {
       ? ((fixedLine ? (fixedLine.line_code||fixedLine.display_id) : '') + ' の飼育管理')
       : '飼育管理';
 
-    // ステージフィルタピル
-    const _indStages = [
-      { val:'',       label:'全て' },
+    // ステージフィルタピル (複数選択)
+    const _stageDefs = [
       { val:'L1L2',   label:'L1L2' },
       { val:'L3',     label:'L3'   },
       { val:'prepupa',label:'前蛹' },
@@ -845,8 +920,9 @@ Pages.lotList = function () {
       { val:'adult',  label:'成虫' },
     ];
     const _stageBar = '<div class="filter-bar" style="margin-bottom:6px" id="ind-stage-filter">'
-      + _indStages.map(s =>
-          '<button class="pill ' + (_indStage===s.val?'active':'') + '" data-val="' + s.val + '">' + s.label + '</button>'
+      + '<button class="pill ' + (!_indStages.length?'active':'') + '" data-val="">全て</button>'
+      + _stageDefs.map(s =>
+          '<button class="pill ' + (_indStages.includes(s.val)?'active':'') + '" data-val="' + s.val + '">' + s.label + '</button>'
         ).join('') + '</div>';
 
     // 性別フィルタピル
@@ -875,13 +951,14 @@ Pages.lotList = function () {
           '<button class="pill ' + (_indStatus===s.val?'active':'') + '" data-val="' + s.val + '">' + s.label + '</button>'
         ).join('') + '</div>';
 
-    // ライン絞り込みバー（固定ライン時は非表示）
+    // [20260423b] ライン絞り込みバー: 複数選択、全ライン表示 (水平スクロール)
+    // [20260423c] 年度付きラベル (2025年のA1と2026年のA1を区別)
     const _lineBar = !isLineLimited && lines.length > 0
       ? '<div class="filter-bar" style="margin-bottom:6px;overflow-x:auto;white-space:nowrap" id="ind-line-filter">'
-        + '<button class="pill ' + (!_indLine?'active':'') + '" data-val="">全ライン</button>'
-        + lines.slice(0,10).map(l =>
-            '<button class="pill ' + (l.line_id===_indLine?'active':'') + '" data-val="' + l.line_id + '">'
-            + (l.line_code || l.display_id) + '</button>'
+        + '<button class="pill ' + (!_indLines.length?'active':'') + '" data-val="">全ライン</button>'
+        + lines.map(l =>
+            '<button class="pill ' + (_indLines.includes(l.line_id)?'active':'') + '" data-val="' + l.line_id + '">'
+            + _lineFilterLabel(l) + '</button>'
           ).join('')
         + '</div>'
       : '';
@@ -923,10 +1000,17 @@ Pages.lotList = function () {
       + '</div>' +
       '</div>';
 
-    // イベント: ステージ
+    // [20260423b] イベント: ステージ (複数選択トグル)
     document.getElementById('ind-stage-filter').addEventListener('click', e => {
       const p = e.target.closest('.pill'); if (!p) return;
-      _indStage = (p.dataset.val === _indStage ? '' : p.dataset.val);
+      const v = p.dataset.val;
+      if (v === '') {
+        _indStages = [];
+      } else {
+        const idx = _indStages.indexOf(v);
+        if (idx >= 0) _indStages.splice(idx, 1);
+        else _indStages.push(v);
+      }
       renderInd();
     });
     // イベント: 性別
@@ -941,12 +1025,19 @@ Pages.lotList = function () {
       _indStatus = p.dataset.val;
       renderInd();
     });
-    // イベント: ライン絞り込み
+    // [20260423b] イベント: ライン絞り込み (複数選択トグル)
     if (!isLineLimited) {
       const _indLineFilter = document.getElementById('ind-line-filter');
       if (_indLineFilter) _indLineFilter.addEventListener('click', e => {
         const p = e.target.closest('.pill'); if (!p) return;
-        _indLine = (p.dataset.val === _indLine ? '' : p.dataset.val);
+        const v = p.dataset.val;
+        if (v === '') {
+          _indLines = [];
+        } else {
+          const idx = _indLines.indexOf(v);
+          if (idx >= 0) _indLines.splice(idx, 1);
+          else _indLines.push(v);
+        }
         renderInd();
       });
     }
@@ -971,8 +1062,11 @@ Pages.lotList = function () {
   // ロット一覧タブ（既存機能 + キーワード検索）
   // ══════════════════════════════════════════════════════════
   function renderLot() {
+    // [20260423b] 複数ライン対応: filterLots は単一のみ受け付けるため、
+    //   ラインなし (line_ids空) または単独なら従来通り、2件以上なら全ラインで取って自前絞り込み
     let lots = [];
-    const _baseFilter = { line_id: filters.line_id };
+    const _singleLineForStore = (filters.line_ids.length === 1) ? filters.line_ids[0] : '';
+    const _baseFilter = { line_id: _singleLineForStore };
     if (_lotStatusMode === 'all') {
       lots = Store.filterLots({ ..._baseFilter, status: 'all' });
     } else if (_lotStatusMode === 'selling') {
@@ -985,11 +1079,17 @@ Pages.lotList = function () {
       const li = Store.filterLots({ ..._baseFilter, status: 'listed' });
       lots = [...ac, ...fs, ...li];
     }
-    if (filters.stage) {
-      const targetLabel = _lotDisplayStageLabel(filters.stage);
+    // [20260423b] ライン2件以上時は自前絞り込み (OR条件)
+    if (filters.line_ids.length > 1) {
+      lots = lots.filter(l => filters.line_ids.includes(l.line_id));
+    }
+    // [20260423b] ステージ複数選択 (OR条件)
+    if (filters.stages.length) {
       lots = lots.filter(l => {
         const s = l.stage_life || l.stage || '';
-        return _lotDisplayStageLabel(s) === targetLabel;
+        const lbl = _lotDisplayStageLabel(s);
+        // filters.stages の各値を _lotDisplayStageLabel マップと比較
+        return filters.stages.some(fs => _lotDisplayStageLabel(fs) === lbl);
       });
     }
     if (filters.mat_type) {
@@ -1045,7 +1145,7 @@ Pages.lotList = function () {
             oninput="Pages._lotUnitKw(this.value)">
         </div>
         <div class="filter-bar" id="lot-stage-filter">
-          ${_lotStageFilters(filters.stage)}
+          ${_lotStageFilters(filters.stages)}
         </div>
         <div class="filter-bar" style="margin-bottom:4px" id="lot-mat-filter">
           ${['','T0','T1','T2','T3','MD'].map(m =>
@@ -1053,9 +1153,9 @@ Pages.lotList = function () {
           ).join('')}
         </div>
         ${!isLineLimited ? `<div class="filter-bar" id="lot-line-filter">
-          <button class="pill ${!filters.line_id ? 'active' : ''}" data-val="">ライン全て</button>
-          ${lines.slice(0,8).map(l =>
-            '<button class="pill ' + (l.line_id === filters.line_id ? 'active' : '') + '" data-val="' + l.line_id + '">' + (l.line_code || l.display_id) + '</button>'
+          <button class="pill ${!filters.line_ids.length ? 'active' : ''}" data-val="">ライン全て</button>
+          ${lines.map(l =>
+            '<button class="pill ' + (filters.line_ids.includes(l.line_id) ? 'active' : '') + '" data-val="' + l.line_id + '">' + _lineFilterLabel(l) + '</button>'
           ).join('')}
         </div>` : ''}
         ${_sortBarHTML('lot', _lotSort, [
@@ -1078,9 +1178,17 @@ Pages.lotList = function () {
         </div>
       </div>`;
 
+    // [20260423b] ステージ複数選択トグル
     document.getElementById('lot-stage-filter').addEventListener('click', e => {
       const p = e.target.closest('.pill'); if (!p) return;
-      filters.stage = p.dataset.val === filters.stage ? '' : p.dataset.val;
+      const v = p.dataset.val;
+      if (v === '') {
+        filters.stages = [];
+      } else {
+        const idx = filters.stages.indexOf(v);
+        if (idx >= 0) filters.stages.splice(idx, 1);
+        else filters.stages.push(v);
+      }
       render();
     });
     const _lotMatFilter = document.getElementById('lot-mat-filter');
@@ -1089,11 +1197,19 @@ Pages.lotList = function () {
       filters.mat_type = p.dataset.mval === filters.mat_type ? '' : p.dataset.mval;
       render();
     });
+    // [20260423b] ライン複数選択トグル
     if (!isLineLimited) {
       const lineFilter = document.getElementById('lot-line-filter');
       if (lineFilter) lineFilter.addEventListener('click', e => {
         const p = e.target.closest('.pill'); if (!p) return;
-        filters.line_id = p.dataset.val === filters.line_id ? '' : p.dataset.val;
+        const v = p.dataset.val;
+        if (v === '') {
+          filters.line_ids = [];
+        } else {
+          const idx = filters.line_ids.indexOf(v);
+          if (idx >= 0) filters.line_ids.splice(idx, 1);
+          else filters.line_ids.push(v);
+        }
         render();
       });
     }
@@ -1138,9 +1254,10 @@ Pages.lotList = function () {
   render();
 };
 
-function _lotStageFilters(active) {
+function _lotStageFilters(activeList) {
+  // [20260423b] 複数選択対応: activeList は配列
+  var arr = Array.isArray(activeList) ? activeList : (activeList ? [activeList] : []);
   const stages = [
-    { val:'',        label:'全て'          },
     { val:'L1L2',    label:'L1L2'         },
     { val:'L3',      label:'L3'           },
     { val:'PREPUPA', label:'前蛹'          },
@@ -1148,8 +1265,9 @@ function _lotStageFilters(active) {
     { val:'ADULT_PRE',label:'成虫（未後食）' },
     { val:'ADULT',   label:'成虫（活動開始）'},
   ];
-  return stages.map(s =>
-    `<button class="pill ${s.val === active ? 'active' : ''}" data-val="${s.val}">${s.label}</button>`
+  var all = `<button class="pill ${arr.length === 0 ? 'active' : ''}" data-val="">全て</button>`;
+  return all + stages.map(s =>
+    `<button class="pill ${arr.includes(s.val) ? 'active' : ''}" data-val="${s.val}">${s.label}</button>`
   ).join('');
 }
 
