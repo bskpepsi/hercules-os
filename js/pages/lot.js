@@ -1,8 +1,14 @@
 // FILE: js/pages/lot.js
 // ════════════════════════════════════════════════════════════════
 // lot.js
-// build: 20260423h
+// build: 20260423i
 // 変更点:
+//   - [20260423i] 全体タブのフィルタにステータス追加
+//     選択肢: 全て / 飼育中 / 販売候補 / 出品中 / 売約済 / 死亡 (単一選択)
+//     デフォルト: 飼育中
+//     ステータスフィルタは個体に適用、ユニット・ロットは基本的に影響しない
+//     ただし「売約済」「死亡」を選んだ時はユニット・ロットを非表示にする
+//     (その2状態は生存個体と紐付かないため)
 //   - [20260423h] 全体タブ ラインモードのサマリ: ステータス → ステージ に修正
 //     L1L2 / L3 / 前蛹 / 蛹 / 成虫（未後食）/ 成虫（活動開始）の6区分で集計
 //     対象: 個体 (current_stage) + ユニット (メンバー推論) + ロット (stage_life)
@@ -180,7 +186,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] lot.js v20260423h loaded');
+console.log('[HerculesOS] lot.js v20260423i loaded');
 
 // ────────────────────────────────────────────────────────────────
 // [20260418f] 血統・種親カードを生成（ロット詳細用）
@@ -688,6 +694,9 @@ Pages.lotList = function () {
   let _allYears   = [], _allSymbols   = [], _allNumbers   = [];
   let _allStages  = [];          // 全体タブのステージ (個体・ユニット・ロットに共通適用)
   let _allSexes   = [];
+  // [20260423i] 全体タブのステータス絞り込み (個体のみに効く、単一選択)
+  //   alive=飼育中 / for_sale=販売候補 / listed=出品中 / sold=売約済 / dead=死亡 / all=全て
+  let _allStatus  = 'alive';
   let _allSort    = 'id';        // id / hatch_new / hatch_old / exchange
 
   // [20260423e] 折りたたみ状態 (全タブ共通)
@@ -1140,19 +1149,40 @@ Pages.lotList = function () {
     const allInds = Store.getDB('individuals') || [];
     const allUnits = Store.getDB('breeding_units') || [];
 
-    // active のみ絞り込み
-    let inds = allInds.filter(i => {
-      const s = i.status || 'alive';
-      return s === 'alive' || s === 'larva' || s === 'prepupa' || s === 'pupa' || s === 'adult'
-          || i.for_sale === true || i.for_sale === 'true' || i.for_sale === 1 || i.for_sale === '1'
-          || i.status === 'for_sale' || i.status === 'listed';
-    });
+    // [20260423i] ステータスフィルタ (_allStatus ベース、個体のみに効く)
+    //   全ステータス (all): 個体は全件、ユニット・ロットも全ての活動状態
+    //   飼育中 (alive): 飼育中フラグの個体のみ
+    //   販売候補 (for_sale): for_sale フラグまたは status='for_sale'
+    //   出品中 (listed): status='listed'
+    //   売約済 (sold): status='sold'
+    //   死亡 (dead): status='dead'
+    const _isAlive    = i => ['alive','larva','prepupa','pupa','adult'].includes(i.status || 'alive');
+    const _isForSale  = i => i.for_sale === true || i.for_sale === 'true' || i.for_sale === 1 || i.for_sale === '1' || i.status === 'for_sale';
+    const _isListed   = i => i.status === 'listed';
+    const _isSold     = i => i.status === 'sold';
+    const _isDead     = i => i.status === 'dead';
+    let inds;
+    if (_allStatus === 'all')       inds = allInds.slice();
+    else if (_allStatus === 'alive')    inds = allInds.filter(i => _isAlive(i) && !_isForSale(i));
+    else if (_allStatus === 'for_sale') inds = allInds.filter(i => _isForSale(i) && !_isListed(i) && !_isSold(i) && !_isDead(i));
+    else if (_allStatus === 'listed')   inds = allInds.filter(_isListed);
+    else if (_allStatus === 'sold')     inds = allInds.filter(_isSold);
+    else if (_allStatus === 'dead')     inds = allInds.filter(_isDead);
+    else inds = allInds.slice();
+
+    // ユニット: active のみ (全体タブでは基本的に飼育中のユニットのみ表示)
     let units = allUnits.filter(u => (u.status || 'active') === 'active');
+    // ロット: active/for_sale/listed をすべて対象 (ステータス絞り込みによる挙動は個体のみ)
     let lots = [
       ...Store.filterLots({ status: 'active'  }),
       ...Store.filterLots({ status: 'for_sale' }),
       ...Store.filterLots({ status: 'listed'  }),
     ];
+    // 死亡/売約済 を選んだ時は、現状のユニット・ロットは表示しない (意味的に個体のみ)
+    if (_allStatus === 'sold' || _allStatus === 'dead') {
+      units = [];
+      lots = [];
+    }
 
     // 階層フィルタ (線ID集合)
     if (isLineLimited) {
@@ -1277,12 +1307,24 @@ Pages.lotList = function () {
           ${[{v:'♂',l:'♂'},{v:'♀',l:'♀'},{v:'不明',l:'?'}].map(s =>
             `<button class="pill ${_allSexes.includes(s.v)?'active':''}" data-val="${s.v}">${s.l}</button>`
           ).join('')}
+        </div>`
+      + `<div class="filter-bar" style="margin-bottom:4px" id="all-status-filter">
+          <span style="font-size:.72rem;color:var(--text3);padding:3px 4px 0 2px;flex-shrink:0">ステータス:</span>
+          ${[
+            {v:'all',     l:'全て'},
+            {v:'alive',   l:'飼育中'},
+            {v:'for_sale',l:'販売候補'},
+            {v:'listed',  l:'出品中'},
+            {v:'sold',    l:'売約済'},
+            {v:'dead',    l:'死亡'},
+          ].map(s => `<button class="pill ${_allStatus===s.v?'active':''}" data-val="${s.v}">${s.l}</button>`).join('')}
         </div>`;
 
     const _summary = _filterSummary({
       years: _allYears, symbols: _allSymbols, numbers: _allNumbers,
       stages: _allStages,
       sex: _allSexes.join(','),
+      status: _allStatus === 'alive' ? '' : _allStatus,
     });
 
     const totalCount = inds.length + units.length + lots.length;
@@ -1359,6 +1401,13 @@ Pages.lotList = function () {
     if (_allSexEl) _allSexEl.addEventListener('click', e => {
       const p = e.target.closest('.pill'); if (!p) return;
       _allSexes = _toggleArrFilter(_allSexes, p.dataset.val);
+      renderAll();
+    });
+    // [20260423i] イベント: ステータス (単一選択)
+    const _allStatusEl = document.getElementById('all-status-filter');
+    if (_allStatusEl) _allStatusEl.addEventListener('click', e => {
+      const p = e.target.closest('.pill'); if (!p) return;
+      _allStatus = p.dataset.val;
       renderAll();
     });
     // イベント: ソート
