@@ -1,8 +1,14 @@
 // FILE: js/pages/lot.js
 // ════════════════════════════════════════════════════════════════
 // lot.js
-// build: 20260423c
+// build: 20260423d
 // 変更点:
+//   - [20260423d] 🐛 バグ修正
+//     ① 飼育管理のユニットタブの右上＋ボタンを非表示に
+//        (従来は「ロット登録」へ遷移してしまっていた)
+//        ユニットは T1 移行セッションから作成されるのが正しい流れ。
+//     ② ロット登録画面の戻るボタンが必ず飼育管理の個体タブに戻る問題を修正
+//        backFn を明示して _tab=lot を保持した飼育管理へ戻すように。
 //   - [20260423c] ライン絞り込みピルのラベルに年度下2桁を追加
 //     例: A1 (25) / A1 (26) / B2 (26)
 //     2025年度のA1ラインと2026年度のA1ラインは全く別のラインなので、
@@ -129,7 +135,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] lot.js v20260423c loaded');
+console.log('[HerculesOS] lot.js v20260423d loaded');
 
 // ────────────────────────────────────────────────────────────────
 // [20260418f] 血統・種親カードを生成（ロット詳細用）
@@ -590,7 +596,8 @@ Pages.lotList = function () {
     }).length;
 
     main.innerHTML =
-      UI.header(title, isLineLimited ? {back:true} : {action:{fn:"routeTo('lot-new')",icon:'＋'}}) +
+      // [20260423d] ユニットタブは＋ボタン非表示 (ユニットは T1 移行セッションから作成)
+      UI.header(title, isLineLimited ? {back:true} : {}) +
       `<div class="page-body">` +
       `<div class="filter-bar" style="margin-bottom:8px">
         <button class="pill" onclick="Pages._lotUnitTabSwitch('ind')">🐛 個体 (${_activeIndCount})</button>
@@ -1908,8 +1915,11 @@ Pages.lotNew = function (params = {}) {
   const main  = document.getElementById('main');
   const lines = Store.getDB('lines') || [];
 
+  // [20260423d] 戻るボタンは必ず飼育管理のロットタブへ (個体タブにリセットされない)
+  const _backFn = "routeTo('lot-list',{_tab:'lot'})";
+
   main.innerHTML = `
-    ${UI.header('ロット登録', { back: true })}
+    ${UI.header('ロット登録', { back: true, backFn: _backFn })}
     <div class="page-body">
       <form id="lot-form" class="form-section">
         ${UI.field('ライン', UI.select('line_id',
