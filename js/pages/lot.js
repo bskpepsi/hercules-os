@@ -1,11 +1,15 @@
 // FILE: js/pages/lot.js
 // ════════════════════════════════════════════════════════════════
 // lot.js
-// build: 20260422x
+// build: 20260423a
 // 変更点:
-//   - [20260422x] 孵化日/採卵日の経過表示を常に全単位で (112日 / 16週 / 3.7ヶ月)
-//     色も text3 → text2 (薄い白) に変更。1年超は "1年1ヶ月" 表記追加。
-//   - [20260422w] 🎨 カード経過日数の表示を改善
+//   - [20260423a] 🥚採卵日の経過日数表示を削除 (孵化日の経過で代替)
+//     例: "🥚採卵 2025/11/01 (173日/24週/5.7ヶ月)" → "🥚採卵 2025/11/01"
+//     採卵〜孵化は孵化日からの経過に包含されるため冗長だった。
+//   - [20260423a] (+ styles.css) タブ切替時のカード横幅ズレ修正
+//     .page-body > * に width:100% / min-width:0 / box-sizing:border-box を
+//     強制して、flex column 内で子の内容物依存の幅縮みを防ぐ。
+//   - [20260422x] 孵化日/採卵日の経過表示を常に全単位で
 //     ① 🐣 孵化日 / 🥚 採卵日: 警告色ではなく情報色 (グレー) で
 //        日数に応じた単位切替表示 (14日 / 45日/6週 / 112日/3.7ヶ月 / 400日/1年1ヶ月)
 //     ② 🔄 最終交換: 3段階色分けに拡張
@@ -110,7 +114,7 @@
 
 'use strict';
 
-console.log('[HerculesOS] lot.js v20260422x loaded');
+console.log('[HerculesOS] lot.js v20260423a loaded');
 
 // ────────────────────────────────────────────────────────────────
 // [20260418f] 血統・種親カードを生成（ロット詳細用）
@@ -1212,7 +1216,7 @@ function _lotCardHTML(lot) {
       +   '<div style="font-family:var(--font-mono);font-size:.88rem;font-weight:700;color:var(--text1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
       +     (lot.display_id || '')
       +   '</div>'
-      +   (_lotCollect ? '<div style="font-size:.68rem;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">🥚採卵 ' + _formatHatchDate(_lotCollect) + '</div>' : '')
+      +   (_lotCollect ? '<div style="font-size:.68rem;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">🥚採卵 ' + _lotCollect.value + '</div>' : '')
       +   (_lotHatch   ? '<div style="font-size:.68rem;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">🐣孵化 ' + _formatHatchDate(_lotHatch) + '</div>' : '')
       +   (_lotLastExc ? '<div style="font-size:.68rem;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">🔄交換 ' + _formatAgeDate(_lotLastExc, rawMat) + '</div>' : '')
       + '</div>'

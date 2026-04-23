@@ -148,6 +148,13 @@ img { max-width: 100%; }
   flex-direction: column;
   gap: 12px;
 }
+/* [20260423a] page-body の直接の子は常に幅100%で縦列揃え。
+   flex column の子が内容物依存で幅を縮めないようにする */
+.page-body > * {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
 
 /* ── カード ─────────────────────────────────────────────────────── */
 .card {
