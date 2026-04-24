@@ -1,6 +1,9 @@
 // FILE: js/pages/t2_session.js
-// build: 20260424m
+// build: 20260424n
 // 変更点:
+//   - [20260424n] 🎯 記録日 (session_date) を編集可能にする (ユーザー要望)
+//     T3と同様: date picker を UI に追加、session_date フィールドを保持、
+//     確定処理で s.session_date を送信、復元時に欠損を補完。
 //   - [20260424m] 🐛 既存セッションの復元で初期値が反映されない問題を修正
 //     症状: 20260424l で初期値を 'individualize' にしたが、実機では依然として
 //           「未確定」状態で表示されていた。
@@ -39,7 +42,7 @@
 //   - _renderT2Session: lineDisp に同じフォールバック追加
 'use strict';
 
-console.log('[HerculesOS] t2_session.js v20260424m loaded');
+console.log('[HerculesOS] t2_session.js v20260424n loaded');
 
 window._t2Session = window._t2Session || null;
 
@@ -83,6 +86,8 @@ Pages.t2SessionStart = async function (unitDisplayId) {
     mx_done:      false,
     mat_type:     'T2',
     exchange_type:'FULL',
+    // [20260424n] 記録日をユーザーが編集可能に (初期値=今日)
+    session_date: new Date().toISOString().split('T')[0].replace(/-/g,'/'),
     members:      members,
     saving:     false,
     _fromInd:   false,
@@ -139,6 +144,8 @@ Pages.t2SessionStartFromInd = async function (indIdOrDisplayId) {
     mx_done:     false,
     mat_type:    'T2',
     exchange_type:'FULL',
+    // [20260424n] 記録日をユーザーが編集可能に (初期値=今日)
+    session_date: new Date().toISOString().split('T')[0].replace(/-/g,'/'),
     members,
     saving:      false,
     _fromInd:    true,
@@ -254,6 +261,11 @@ function _restoreT2SessionFromStorage() {
           _saveT2SessionToStorage();
         }
       }
+      // [20260424n] 旧バージョンで保存された session_date 欠損を補完 (= 今日)
+      if (window._t2Session && !window._t2Session.session_date) {
+        window._t2Session.session_date = new Date().toISOString().split('T')[0].replace(/-/g,'/');
+        _saveT2SessionToStorage();
+      }
     }
   } catch(e) {}
 }
@@ -313,6 +325,28 @@ function _renderT2Session(s) {
         </div>
         ${s.hatch_date ? `<div style="font-size:.72rem;color:var(--text3)">孵化: ${s.hatch_date}</div>` : ''}
         <div style="font-size:.72rem;color:var(--text3)">由来ロット: ${originStr}</div>
+      </div>
+
+      <!-- [20260424n] 記録日ピッカー (初期値=今日、変更可能) -->
+      <div style="margin-top:8px;background:var(--surface1,var(--surface));border:1.5px solid var(--border);border-radius:10px;padding:10px 14px">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <label style="font-size:.82rem;font-weight:700;color:var(--text2);flex-shrink:0">
+            🗓️ 記録日
+          </label>
+          <input type="date" id="t2-session-date"
+            value="${(s.session_date||'').replace(/\//g,'-')}"
+            onchange="Pages._t2SetSessionDate(this.value)"
+            style="flex:1;min-width:150px;padding:7px 10px;border-radius:8px;border:1px solid var(--border);
+              background:var(--bg2);color:var(--text1);font-size:.88rem;box-sizing:border-box">
+          <button type="button" onclick="Pages._t2SetSessionDate('')"
+            style="padding:6px 10px;border-radius:7px;border:1px solid var(--border);background:var(--bg2);
+              color:var(--text3);font-size:.72rem;cursor:pointer;flex-shrink:0">
+            今日
+          </button>
+        </div>
+        <div style="font-size:.68rem;color:var(--text3);margin-top:4px">
+          体重・成長記録・個体化日として使われます。過去日付も指定可能です。
+        </div>
       </div>
 
       <div style="background:rgba(91,168,232,.07);border:1px solid rgba(91,168,232,.25);border-radius:8px;padding:10px 12px;margin-top:8px;font-size:.76rem;color:var(--text2);line-height:1.6">
@@ -703,6 +737,16 @@ Pages._t2ToggleDetail = function() {
 Pages._t2SetMx = function (done) {
   const s = window._t2Session; if (!s) return; s.mx_done = done; _renderT2Session(s);
 };
+// [20260424n] T2 記録日セッター (引数空文字で今日にリセット)
+Pages._t2SetSessionDate = function (val) {
+  const s = window._t2Session; if (!s) return;
+  const norm = v => String(v||'').trim().replace(/-/g,'/');
+  s.session_date = val
+    ? norm(val)
+    : new Date().toISOString().split('T')[0].replace(/-/g,'/');
+  _saveT2SessionToStorage();
+  _renderT2Session(s);
+};
 
 Pages._t2SessionSave = async function () {
   const s = window._t2Session;
@@ -735,10 +779,13 @@ Pages._t2SessionSave = async function () {
   s.saving = true; _renderT2Session(s);
 
   try {
-    const today = new Date().toISOString().split('T')[0].replace(/-/g, '/');
+    // [20260424n] session_date はユーザー選択の日付を使う (初期値=今日)
+    const sessionDate = (s.session_date && String(s.session_date).trim())
+      ? String(s.session_date).trim().replace(/-/g,'/')
+      : new Date().toISOString().split('T')[0].replace(/-/g, '/');
     const payload = {
       transaction_type:       'T2_SESSION',
-      session_date:           today,
+      session_date:           sessionDate,
       source_unit_id:         s.unit_id,
       source_unit_display_id: s.display_id,
       mx_done:                s.mx_done || false,

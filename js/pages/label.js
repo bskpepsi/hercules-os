@@ -1,7 +1,23 @@
 // FILE: js/pages/label.js
-// build: 20260424g
+// build: 20260424o
 // 修正:
-//   - [20260424g] 成長記録マージ結果に UI._gr_dedupe を適用
+//   - [20260424o] 戻るボタンラベルを backRoute に応じて明示化
+//     症状: T3完了画面→ラベル発行→「← 詳細に戻る」を押すと個体詳細に飛ぶ
+//           と誤解される (実際は t3-completion に遷移する実装で正しい)。
+//     原因: ボタンラベルが「詳細に戻る」で曖昧。個体詳細に飛ぶように見える。
+//     修正: backRoute が t3-completion / t2-completion / t1-session の場合
+//           各々「← T3/T2移行完了画面へ戻る」「← T1移行セッションへ戻る」
+//           と明示。
+//   - [20260424n] 🔥 新規個体のラベル発行で成長記録が空欄になる問題を修正
+//     症状: T3移行セッション確定直後にラベル発行画面に遷移したとき、
+//           記録表が全て空・M/Stチェックも全て空になる (Console に
+//           `[LABEL IND records merged: 0 items]` と出る)。
+//     原因: T3確定直後は Store に新しい個体の成長記録が配置されておらず、
+//           ind._growthRecords も空のまま _lblGenerate が呼ばれていた。
+//     修正: _lblGenerate の IND 分岐で、ind が空または _growthRecords が空の
+//           場合に API.individual.get で最新データを取得し Store に反映。
+//           既存個体 (既にデータが揃っている場合) は API を叩かないので負荷増なし。
+//   - [20260424g/h] 成長記録マージ結果に UI._gr_dedupe を適用
 //     日付×体重×スロットで重複を排除し、個体化時に発生しうる重複表示を解消。
 //     (app.js 20260424g の共通ヘルパーを利用)
 //   - [20260424f] 🐛 IND個別飼育ラベル (ind_fixed) の成長記録テーブルが空になる
@@ -735,7 +751,18 @@ Pages.labelGen = function (params = {}) {
             </button>`}` : _backRoute ? `
             <button class="btn btn-ghost btn-full" style="margin-top:2px;font-size:.82rem"
               onclick="routeTo('${_backRoute}',${_toOnclickParams(_backParam)})">
-              ← 詳細に戻る
+              ${(() => {
+                // [20260424o] 戻り先に応じてラベルを明示化 (曖昧な「詳細に戻る」を具体名に)
+                //   症状: T3完了画面から1頭目のラベルを発行 → 戻るボタンが
+                //         「← 詳細に戻る」と出ていたので "個体詳細画面に戻る"
+                //         と誤解され、2頭目のラベル発行に戻れないと苦情。
+                //   対応: backRoute が t2-completion / t3-completion の場合は
+                //         「← T2/T3移行完了画面へ戻る」と明示。
+                if (_backRoute === 't3-completion') return '← T3移行完了画面へ戻る';
+                if (_backRoute === 't2-completion') return '← T2移行完了画面へ戻る';
+                if (_backRoute === 't1-session')    return '← T1移行セッションへ戻る';
+                return '← 詳細に戻る';
+              })()}
             </button>` : origin ? `
             <button class="btn btn-ghost btn-full" style="margin-top:2px;font-size:.82rem"
               onclick="routeTo('${origin.page}',${_toOnclickParams(origin.params)})">
@@ -809,8 +836,39 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
   try {
     console.log('[LABEL] generate start', targetType, targetId);
     if (targetType === 'IND') {
-      const ind     = Store.getIndividual(targetId) || {};
-      const line    = Store.getLine(ind.line_id)    || {};
+      let ind  = Store.getIndividual(targetId) || {};
+      const line = Store.getLine(ind.line_id)  || {};
+      // [20260424n] 新規個体 (T3移行直後など) のラベル発行で ind が空 or 成長記録が
+      //   配置されていないケースを救済。API.individual.get で最新データを取得し
+      //   Store に入れ直す。既存個体で情報が揃っている場合は API を叩かない。
+      const _needsFetch = !ind.ind_id
+        || !Array.isArray(ind._growthRecords)
+        || ind._growthRecords.length === 0;
+      if (_needsFetch) {
+        try {
+          console.log('[LABEL] IND data looks empty for', targetId, '→ fetching from API');
+          const _fresh = await API.individual.get(targetId);
+          if (_fresh) {
+            // Store 反映 (individuals 配列に patch / add)
+            try {
+              const _individuals = Store.getDB('individuals') || [];
+              const _i = _individuals.findIndex(x => x && x.ind_id === _fresh.ind_id);
+              if (_i >= 0) _individuals[_i] = Object.assign({}, _individuals[_i], _fresh);
+              else _individuals.push(_fresh);
+              if (Store.setDB) Store.setDB('individuals', _individuals);
+            } catch(_ePatch) { console.warn('[LABEL] Store patch warn:', _ePatch.message); }
+            // 成長記録も Store に入れ直す (ind_id キー)
+            if (Array.isArray(_fresh._growthRecords) && _fresh._growthRecords.length > 0) {
+              try { Store.setGrowthRecords(_fresh.ind_id, _fresh._growthRecords); } catch(_eGR){}
+            }
+            ind = Store.getIndividual(targetId) || _fresh;
+            console.log('[LABEL] IND refetched:', _fresh.display_id, '_growthRecords=',
+              (_fresh._growthRecords||[]).length);
+          }
+        } catch (_eFetch) {
+          console.warn('[LABEL] IND fetch failed:', _eFetch.message);
+        }
+      }
       // [20260424f] ユニット/ロット時代の成長記録もマージして表示
       //   症状: 個別化個体 (T2/T3 後の新規 ind_id) のラベルで記録表が空欄
       //   原因: Store.getGrowthRecords(ind_id) は新しい ind_id キーのみ参照

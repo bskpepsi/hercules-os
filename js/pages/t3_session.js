@@ -1,6 +1,17 @@
 // FILE: js/pages/t3_session.js
-// build: 20260424m
+// build: 20260424n
 // 変更点:
+//   - [20260424n] 🎯 記録日 (session_date) を編集可能にする (ユーザー要望)
+//     症状: 「移行編成セッションの画面に記録の登録日を選択できるようにしたい」
+//           従来は _t3SessionSave 内で new Date() から毎回 "今日" を送信していた。
+//           後日まとめて記録する運用で、過去日付を指定する手段がなかった。
+//     修正: (a) window._t3Session に session_date フィールド追加 (既定=今日)
+//           (b) UI に date picker を配置 (ヘッダ直下、案内文の上)
+//                 - 「今日」ボタンで今日にリセット
+//                 - 過去日付も選択可
+//           (c) Pages._t3SetSessionDate ハンドラ追加
+//           (d) _saveT3SessionSave で today 固定 → s.session_date を使う
+//           (e) _restoreT3SessionFromStorage で旧データの session_date 欠損補完
 //   - [20260424m] 🐛 既存セッションの復元で初期値が反映されない問題を修正
 //     症状: 20260424l で初期値を 'individualize' にしたが、実機では依然として
 //           「未確定」状態で表示されていた。
@@ -45,7 +56,7 @@
 //   - [fix1] _renderT3Session: lineDisp に同じフォールバック追加
 'use strict';
 
-console.log('[HerculesOS] t3_session.js v20260424m loaded');
+console.log('[HerculesOS] t3_session.js v20260424n loaded');
 
 window._t3Session = window._t3Session || null;
 
@@ -88,6 +99,8 @@ Pages.t3SessionStart = async function (unitDisplayId) {
     mx_done:      false,
     mat_type:     'T3',
     exchange_type:'FULL',
+    // [20260424n] 記録日をユーザーが編集可能に (初期値=今日)
+    session_date: new Date().toISOString().split('T')[0].replace(/-/g,'/'),
     members:      members,
     saving:       false,
     _fromInd:     false,
@@ -148,6 +161,11 @@ Pages.t3SessionStartFromInd = async function (indIdOrDisplayId) {
     mx_done:      false,
     mat_type:     'T3',
     exchange_type:'FULL',
+    // [20260424n] 記録日をユーザーが編集可能に (初期値=今日)
+    //   従来は確定ボタン押下時の "今日" を自動送信していたため、後日まとめて
+    //   データ入力する運用ができなかった。UI に日付ピッカーを配置し、変更値を
+    //   session_date として GAS に送ることで、過去日付の記録もサポートする。
+    session_date: new Date().toISOString().split('T')[0].replace(/-/g,'/'),
     members,
     saving:       false,
     _fromInd:     true,
@@ -257,6 +275,11 @@ function _restoreT3SessionFromStorage() {
           _saveT3SessionToStorage();
         }
       }
+      // [20260424n] 旧バージョンで保存された session_date 欠損を補完 (= 今日)
+      if (window._t3Session && !window._t3Session.session_date) {
+        window._t3Session.session_date = new Date().toISOString().split('T')[0].replace(/-/g,'/');
+        _saveT3SessionToStorage();
+      }
     }
   } catch(e) {}
 }
@@ -317,6 +340,28 @@ function _renderT3Session(s) {
         </div>
         ${s.hatch_date ? `<div style="font-size:.72rem;color:var(--text3)">孵化: ${s.hatch_date}</div>` : ''}
         <div style="font-size:.72rem;color:var(--text3)">由来ロット: ${originStr}</div>
+      </div>
+
+      <!-- [20260424n] 記録日ピッカー (初期値=今日、変更可能) -->
+      <div style="margin-top:8px;background:var(--surface1,var(--surface));border:1.5px solid var(--border);border-radius:10px;padding:10px 14px">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <label style="font-size:.82rem;font-weight:700;color:var(--text2);flex-shrink:0">
+            🗓️ 記録日
+          </label>
+          <input type="date" id="t3-session-date"
+            value="${(s.session_date||'').replace(/\//g,'-')}"
+            onchange="Pages._t3SetSessionDate(this.value)"
+            style="flex:1;min-width:150px;padding:7px 10px;border-radius:8px;border:1px solid var(--border);
+              background:var(--bg2);color:var(--text1);font-size:.88rem;box-sizing:border-box">
+          <button type="button" onclick="Pages._t3SetSessionDate('')"
+            style="padding:6px 10px;border-radius:7px;border:1px solid var(--border);background:var(--bg2);
+              color:var(--text3);font-size:.72rem;cursor:pointer;flex-shrink:0">
+            今日
+          </button>
+        </div>
+        <div style="font-size:.68rem;color:var(--text3);margin-top:4px">
+          体重・成長記録・個体化日として使われます。過去日付も指定可能です。
+        </div>
       </div>
 
       <div style="background:rgba(224,144,64,.07);border:1px solid rgba(224,144,64,.3);border-radius:8px;
@@ -587,6 +632,18 @@ function _isT3MemberComplete(m) {
 Pages._t3SetMx = function (done) {
   const s = window._t3Session; if (!s) return; s.mx_done = done; _renderT3Session(s);
 };
+// [20260424n] 記録日セッター
+//   引数 val が空文字なら "今日" にリセット。yyyy-mm-dd / yyyy/mm/dd どちらでも受け付ける。
+//   保存は yyyy/mm/dd 形式 (GAS と統一)。render 後に date picker の DOM 値もリセットされる。
+Pages._t3SetSessionDate = function (val) {
+  const s = window._t3Session; if (!s) return;
+  const norm = v => String(v||'').trim().replace(/-/g,'/');
+  s.session_date = val
+    ? norm(val)
+    : new Date().toISOString().split('T')[0].replace(/-/g,'/');
+  _saveT3SessionToStorage();
+  _renderT3Session(s);
+};
 Pages._t3SetSize = function (idx, size) {
   const s = window._t3Session; if (!s || s.members[idx].status === 'dead') return;
   s.members[idx].size_category = s.members[idx].size_category === size ? '' : size; _renderT3Session(s);
@@ -679,10 +736,14 @@ Pages._t3SessionSave = async function () {
   s.saving = true; _renderT3Session(s);
 
   try {
-    const today = new Date().toISOString().split('T')[0].replace(/-/g, '/');
+    // [20260424n] session_date はユーザー選択の日付を使う (初期値=今日)
+    //   s.session_date が空の場合のみフォールバックで今日を採用
+    const sessionDate = (s.session_date && String(s.session_date).trim())
+      ? String(s.session_date).trim().replace(/-/g,'/')
+      : new Date().toISOString().split('T')[0].replace(/-/g, '/');
     const payload = {
       transaction_type:       'T3_SESSION',
-      session_date:           today,
+      session_date:           sessionDate,
       source_unit_id:         s.unit_id,
       source_unit_display_id: s.display_id,
       mx_done:                s.mx_done || false,
