@@ -1,4 +1,24 @@
-// FILE: js/pages/continuous_scan.js  build: 20260424b
+// FILE: js/pages/continuous_scan.js  build: 20260424c
+// 変更点(20260424b→20260424c):
+//   [20260424c-cs] 🔥 同一日付の複数行が1件に潰れる問題を修正
+//     症状: 継続読取りで同じ日付に 2行記録 (例: 04/24 T2/2.7L/66g と 04/24 T3/4.8L/85g)
+//           を入力して保存すると、1行目だけが保存され 2行目が反映されない。
+//     原因(2箇所):
+//       (A) _findExistingRecordId が「同日付の list[0].record_id」を常に返していた
+//           → 1行目が CREATE → 2行目も同じ既存record(または先の1行目?)にUPDATEを
+//             しかけようとして、結局 GAS に 1 件しか届かない。
+//       (B) pre-save の _preExist が「日付をkey、record_id を value」の単一Object
+//           で、同日付に複数件あっても最後の1件で上書きされていた。しかも行ループ
+//           では "if (_preExist[date]) continue" で UPDATE扱いにしてスキップして
+//           いたため、2行目の tmp が Store に積まれず UI にも一瞬すら出なかった。
+//     修正: 両方とも「既存record配列 + 先頭から1件ずつ消費」方式に変更。
+//       (A) _existingByDate の record に _matchedByRow フラグを立てて消費。
+//           未消費のものだけから next match を探す。
+//       (B) _preExist を Object→配列 に変更し、_preConsume() で先頭 shift。
+//           既存より多い行は全て tmp CREATE → 独立したレコードとして保存される。
+//     効果: 同日付 N 行を入力しても N 件すべて独立レコードで保存され、UI も即時
+//           反映されるようになる (pre-save tmp で initial render から見える)。
+//
 // 変更点(20260424a→20260424b):
 //   [20260424b] 🔥 保存直後の成長記録即時反映 (pre-save _tmp_ レコード追加)
 //     症状: 継続読取りで測定登録すると、成長記録テーブルに反映されるまで20-30秒かかる。
@@ -1207,26 +1227,43 @@ Pages.continuousScan = function(params) {
           return s;
         };
 
-        // 既存レコード (date[+slot] → record_id) のマップを構築
+        // 既存レコード (date[+slot] → record 配列) のマップを構築
         //   _tmp_ は UPDATE 対象外、ind_id/display_id の両キーをマージ
-        var _preExist = {};
+        // [20260424c-cs] 🔥 record_id ではなく record 本体の配列を保持するよう変更
+        //   同じ日付で複数レコードがある場合、従来は Object に上書きで1件しか
+        //   記録されず、2行目以降が「既存あり」と誤判定されて tmp 化されなかった。
+        //   新方式: 配列として全件保持し、各行で先頭から1件ずつ「消費」して
+        //   既存件数を超えた行は必ず新規 CREATE 扱いにする (_saveOne 側の
+        //   _findExistingRecordId と同じ1対1マッチングポリシー)。
+        var _preExist = {};  // key → [record, ...] (順序保持)
         var _preKeys = [_savedTargetId];
         if (_savedDisplayId && _savedDisplayId !== _savedTargetId) _preKeys.push(_savedDisplayId);
+        var _preSeenIds = {};
         _preKeys.forEach(function(_key){
           if (!_key) return;
           var _list = (Store.getGrowthRecords && Store.getGrowthRecords(_key)) || [];
           _list.forEach(function(r){
             if (!r || !r.record_id) return;
             if (String(r.record_id).indexOf('_tmp_') === 0) return;
+            if (_preSeenIds[r.record_id]) return;  // 両キー重複排除
+            _preSeenIds[r.record_id] = true;
             var _rd = _preNormDate(r.record_date);
             if (!_rd) return;
-            if (isUnit && r.unit_slot_no != null && r.unit_slot_no !== '') {
-              _preExist[_rd + '::' + String(r.unit_slot_no)] = r.record_id;
-            } else {
-              _preExist[_rd] = r.record_id;
-            }
+            var _k = (isUnit && r.unit_slot_no != null && r.unit_slot_no !== '')
+              ? (_rd + '::' + String(r.unit_slot_no))
+              : _rd;
+            if (!_preExist[_k]) _preExist[_k] = [];
+            _preExist[_k].push(r);
           });
         });
+        // _preExist から「未消費」の record が残っていれば UPDATE 対象 (tmp 不要)
+        // 消費済み or 要素0 なら CREATE 対象 (tmp 追加)
+        var _preConsume = function(_k) {
+          var arr = _preExist[_k];
+          if (!arr || arr.length === 0) return false;  // 既存なし→CREATE
+          arr.shift();  // 先頭を消費
+          return true;  // 既存あり→UPDATE(tmp不要)
+        };
 
         // tmp レコード構築ヘルパー (mkPayload とほぼ同等の出力)
         var _preBuildTmpRec = function(prerow, prerd, weightVal, slot) {
@@ -1269,9 +1306,8 @@ Pages.continuousScan = function(params) {
           if (!_prerd) continue;
 
           if (isUnit) {
-            // スロット1
-            var _keyS1 = _prerd + '::1';
-            if (!_preExist[_keyS1]) {
+            // スロット1: _preConsume が true なら既存UPDATE扱い(tmp不要)、false なら CREATE(tmp追加)
+            if (!_preConsume(_prerd + '::1')) {
               var _rec1 = _preBuildTmpRec(_prerow, _prerd, _prerow.weight1, 1);
               try {
                 Store.addGrowthRecord(_savedTargetId, _rec1);
@@ -1279,8 +1315,7 @@ Pages.continuousScan = function(params) {
               } catch(_e1){ console.warn('[CS] pre-tmp slot1 addGrowthRecord failed:', _e1.message); }
             }
             // スロット2
-            var _keyS2 = _prerd + '::2';
-            if (!_preExist[_keyS2]) {
+            if (!_preConsume(_prerd + '::2')) {
               var _rec2 = _preBuildTmpRec(_prerow, _prerd, _prerow.weight2, 2);
               try {
                 Store.addGrowthRecord(_savedTargetId, _rec2);
@@ -1288,8 +1323,8 @@ Pages.continuousScan = function(params) {
               } catch(_e2){ console.warn('[CS] pre-tmp slot2 addGrowthRecord failed:', _e2.message); }
             }
           } else {
-            // 個体: UPDATE 対象ならスキップ
-            if (_preExist[_prerd]) continue;
+            // 個体: 既存あり(UPDATE)ならスキップ、なければ tmp CREATE
+            if (_preConsume(_prerd)) continue;
             var _recI = _preBuildTmpRec(_prerow, _prerd, _prerow.weight1, null);
             try {
               Store.addGrowthRecord(_savedTargetId, _recI);
@@ -1424,16 +1459,40 @@ Pages.continuousScan = function(params) {
         } catch (_ebdErr) { console.warn('[CS] existing-by-date build error:', _ebdErr.message); }
 
         // 既存記録を slot_no で検索するヘルパー
+        // [20260424c-cs] 🔥 「同日付の複数行」問題修正
+        //   症状: 1回の継続読取りで同じ日付(例 04/24)に 2行記録したケース
+        //         (T2/2.7L 行 + T3/4.8L 行のように、1日で2段階のマット交換を記録)
+        //         1行目が CREATE 後、2行目も同じ日付で最初に見つかった record に
+        //         UPDATE してしまい、結果として 1 件しか保存されなかった。
+        //   原因: list[0].record_id を常に返すため、呼び出すたび同じ record を
+        //         掴み続け、2行目以降が上書き対象になる。
+        //   修正: 一度マッチした既存 record には _matchedByRow=true を立てて
+        //         「消費済み」扱いにし、次の呼び出しでは未消費の record のみから
+        //         選ぶ。list 内に未消費がなければ null を返して CREATE 経路に。
+        //         結果、同一日付の N 行は先頭から既存 N 件と 1:1 でマッチングされ、
+        //         既存より多い分は新規 CREATE として保存される。
         function _findExistingRecordId(dateStr, slotNo) {
           var dkey = _normalizeDateStr(dateStr);
           var list = _existingByDate[dkey] || [];
-          // ユニットの場合は unit_slot_no で絞り込み
+          var candidate;
+          // ユニットの場合は unit_slot_no で絞り込み (同 slot 内で未消費のものだけ)
           if (isUnit && slotNo) {
-            var found = list.find(function(r){ return String(r.unit_slot_no||'') === String(slotNo); });
-            if (found) return found.record_id || null;
+            candidate = list.find(function(r){
+              return !r._matchedByRow && String(r.unit_slot_no||'') === String(slotNo);
+            });
+            if (candidate) {
+              candidate._matchedByRow = true;
+              return candidate.record_id || null;
+            }
+            return null;  // 同 slot で未消費が無ければ CREATE
           }
-          // 個体の場合 or ユニットで slot 絞り込み失敗時は最初のヒット
-          return list.length > 0 ? (list[0].record_id || null) : null;
+          // 個体 or ユニット slot 指定なし: 未消費の先頭を消費
+          candidate = list.find(function(r){ return !r._matchedByRow; });
+          if (candidate) {
+            candidate._matchedByRow = true;
+            return candidate.record_id || null;
+          }
+          return null;
         }
 
         // update / create を実行し、Store を更新する共通ヘルパー
