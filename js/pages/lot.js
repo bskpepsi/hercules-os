@@ -1,8 +1,17 @@
 // FILE: js/pages/lot.js
 // ════════════════════════════════════════════════════════════════
 // lot.js
-// build: 20260424i
+// build: 20260424r
 // 変更点:
+//   - [20260424r] 🔥 ユニット一覧カードの体重が最新の成長記録を反映するよう修正
+//     症状: 継続読取りで体重を更新しても、飼育管理ユニットタブ (lot-list&_tab=unit)
+//           のカードでは古い体重 (12g/12g) のまま表示される。
+//     原因: カード描画は u.members[].weight_g (ユニット本体の固定値) だけを
+//           参照。継続読取りで成長記録は growth_records に追記されるが、
+//           breeding_units.members は編成時の初期値のまま更新されない設計。
+//     修正: カード描画前に Store.getGrowthRecords(unit_id) からスロット別に
+//           最新 record を抽出し、members[i].weight_g に上書き (元データは
+//           変更せず表示用コピーに適用)。
 //   - [20260424i] 🔥 採卵日を独立フィールドで管理 (メモ欄からの脱却)
 //     症状: ロット情報欄に採卵日の専用行が無く、メモ欄に
 //           「採卵日: 2026/04/21」と文字列で残っていた。画像6では
@@ -1000,6 +1009,38 @@ Pages.lotList = function () {
           membersArr = Array.isArray(raw) ? raw
             : (typeof raw === 'string' && raw.trim()) ? JSON.parse(raw) : [];
         } catch(_e) {}
+
+        // [20260424r] 成長記録から各スロットの最新 weight_g を優先して取得
+        //   症状: 継続読取りで体重を更新しても、ユニット一覧カードでは
+        //         members[].weight_g (ユニット本体の固定値) のままで古い値。
+        //   原因: ユニット一覧カードは u.members.weight_g のみを参照していた。
+        //         継続読取りでの成長記録追加時、ユニット本体の members は
+        //         更新されない設計 (成長記録は growth_records テーブルに
+        //         追記される一方、breeding_units.members は編成時の初期値固定)。
+        //   対応: Store の成長記録から slot 別の最新 weight_g を取得し、
+        //         members に上書き (一時変数にコピーして元データには触れない)。
+        try {
+          const _unitIdKey  = u.unit_id || u.display_id;
+          let _unitRecs = (Store.getGrowthRecords && Store.getGrowthRecords(_unitIdKey)) || [];
+          if ((!_unitRecs || !_unitRecs.length) && u.unit_id && u.unit_id !== u.display_id) {
+            _unitRecs = (Store.getGrowthRecords(u.display_id) || []);
+          }
+          if (_unitRecs && _unitRecs.length > 0) {
+            membersArr = membersArr.map(m => Object.assign({}, m || {}));
+            for (let _slot = 1; _slot <= 2; _slot++) {
+              const _slotRecs = _unitRecs.filter(r => {
+                const s = parseInt(r.unit_slot_no, 10);
+                return !isNaN(s) && s === _slot && r.weight_g;
+              });
+              if (_slotRecs.length === 0) continue;
+              _slotRecs.sort((a,b) => String(b.record_date||'').localeCompare(String(a.record_date||'')));
+              const _latest = _slotRecs[0];
+              const _mi = _slot - 1;
+              if (!membersArr[_mi]) membersArr[_mi] = {};
+              membersArr[_mi].weight_g = _latest.weight_g;
+            }
+          }
+        } catch (_eGr) { /* ignore */ }
 
         // 性別アイコン
         const sexColor = (sx) => sx === '♂' ? '#3366cc' : sx === '♀' ? '#cc3366' : 'var(--text3)';

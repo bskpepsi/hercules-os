@@ -2,8 +2,22 @@
 // ────────────────────────────────────────────────────────────────
 // ════════════════════════════════════════════════════════════════
 // app.js
-// build: 20260424q
+// build: 20260424r
 // 変更点:
+//   - [20260424r] 🔥 routeTo がネストオブジェクトを URL に正しく載せるよう修正
+//     症状: ラベル発行画面の戻るボタンが効かず
+//           "ユニットが見つかりません (ID未指定)" になる。
+//           URL が ?backParam=%5Bobject+Object%5D になっていた。
+//     原因: routeTo で const hashStr = new URLSearchParams(hashParts).toString();
+//           とやっていたが、URLSearchParams はオブジェクト値に対して暗黙の
+//           .toString() を呼ぶため "[object Object]" に変換されていた。
+//           戻り先での復元時、backParam が文字列 "[object Object]" となり
+//           unitDisplayId などのフィールドが取り出せない。
+//     修正: (a) routeTo でネストオブジェクト値を JSON.stringify し、
+//               キーに "_json__" プレフィックスを付けて URL に載せる。
+//           (b) 復元側 (DOMContentLoaded 内のハッシュ解析) で _json__
+//               プレフィックスを検出して JSON.parse で元のオブジェクト
+//               に戻す。
 //   - [20260424q] 🐛 起動時 ReferenceError 修正 (バチルスフック)
 //     症状: Console に
 //       "Uncaught ReferenceError: Pages is not defined at app.js:1034:25"
@@ -163,7 +177,18 @@ document.addEventListener('DOMContentLoaded', () => {
   const hash = location.hash.slice(1);
   if (hash) {
     try {
-      const hashParams = Object.fromEntries(new URLSearchParams(hash));
+      const hashRaw = Object.fromEntries(new URLSearchParams(hash));
+      // [20260424r] _json__ プレフィックスを JSON.parse でオブジェクトに復元
+      const hashParams = {};
+      Object.keys(hashRaw).forEach(function(k){
+        if (k.indexOf('_json__') === 0) {
+          var realKey = k.substring('_json__'.length);
+          try { hashParams[realKey] = JSON.parse(hashRaw[k]); }
+          catch(_e) { hashParams[realKey] = hashRaw[k]; }
+        } else {
+          hashParams[k] = hashRaw[k];
+        }
+      });
       const page = hashParams.page;
       if (page && PAGES[page]) {
         delete hashParams.page;
@@ -217,7 +242,20 @@ function routeTo(pageId, params = {}) {
 
   Store.navigate(pageId, params, true);
 
-  const hashParts = { page: pageId, ...(params || {}) };
+  // [20260424r] URL ハッシュ化時、ネストされたオブジェクト値を JSON 文字列化
+  //   これをしないと URLSearchParams が .toString() を呼んで "[object Object]"
+  //   に強制変換してしまい、戻り先で backParam などが復元できず「ID未指定」
+  //   などのエラーになる。キーに "_json__" プレフィックスを付与して復元側で
+  //   自動 parse する仕組み。
+  const hashParts = { page: pageId };
+  Object.keys(params || {}).forEach(function(k){
+    var v = params[k];
+    if (v !== null && typeof v === 'object') {
+      hashParts['_json__' + k] = JSON.stringify(v);
+    } else {
+      hashParts[k] = v;
+    }
+  });
   const hashStr = new URLSearchParams(hashParts).toString();
   history.replaceState(null, '', '#' + hashStr);
 

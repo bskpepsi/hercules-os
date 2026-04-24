@@ -1,16 +1,26 @@
 // FILE: js/pages/label.js
-// build: 20260424q
+// build: 20260424r
 // 修正:
+//   - [20260424r] 🔥 戻るボタンが ID なしで遷移する問題を修正
+//     症状: ラベル発行画面の「詳細に戻る」ボタンを押すと
+//           "ユニットが見つかりません (ID未指定)" と出る。
+//           URL: ?backParam=%5Bobject+Object%5D となっていた。
+//     原因: routeTo が URLSearchParams にオブジェクトを渡す際、JS の暗黙の
+//           .toString() で "[object Object]" に変換されていた。戻り先で
+//           復元しようとしても文字列化された backParam からは何も取れない。
+//     修正: (a) app.js の routeTo で、ネストされたオブジェクト値を
+//               JSON.stringify し、キーに _json__ プレフィックスを付けて
+//               URL ハッシュに載せる。復元時は _json__ を検出して
+//               JSON.parse で元のオブジェクトに戻す。
+//           (b) label.js 側で backParam が文字列 "[object Object]" に
+//               壊れて渡ってきた場合も _backParam を {} で初期化して
+//               targetType=UNIT かつ backRoute=unit-detail なら
+//               unitDisplayId=targetId を補完するフォールバックを追加。
+//   - [20260424r] UNIT ラベル描画の records 配列のデバッグログ追加
+//     症状報告: records:2 なのに 1 行しか描画されない件の原因特定のため、
+//     _buildT1UnitLabelHTML の冒頭で records の中身 (dates/slots/weights)
+//     をログに出力。
 //   - [20260424q] 🔥 UNIT ラベルに複数の成長記録を表示
-//     症状: ユニットラベルに2回分以上の成長記録があっても、直近 1 行 (最新)
-//           しか表示されず、残りは空行になる。
-//     原因: _buildT1UnitLabelHTML の rowsHtml 生成が「1行目 = 初期値」
-//           「2〜4行目 = 手書き用空行」固定仕様だった。記録複数回対応は未実装。
-//     修正: (a) UNIT ラベル ld に records 配列を渡す (従来は [] 固定だった)
-//           (b) _buildT1UnitLabelHTML が records を受けて日付ごとに slot1/slot2
-//               を合成した行を最大4行描画 (最古を切り捨て最新側残し)
-//               交換種別: FULL → ■全/□追、ADD → □全/■追、なし → □全/□追
-//           (c) records 空時は従来通りの初期値レイアウトにフォールバック
 //   - [20260424p] 🔥 UNIT ラベルで成長記録編集が反映されない問題を修正
 //   - [20260424o] 戻るボタンラベルを backRoute に応じて明示化
 //   - [20260424n] 🔥 新規個体のラベル発行で成長記録が空欄になる問題を修正
@@ -573,7 +583,21 @@ Pages.labelGen = function (params = {}) {
   console.log('[LABEL] params', { targetType, targetId, labelType, _isUnitMode, _unitDisplayId, hasDraft: !!_unitDraft });
 
   const _backRoute = params.backRoute || null;
-  const _backParam = params.backParam || (params.labeledDisplayId ? { labeledDisplayId: params.labeledDisplayId } : {});
+  // [20260424r] backParam が URLSearchParams 経由で "[object Object]" 文字列に
+  //   壊れているケースを修復。オブジェクトでない場合はターゲットに応じて
+  //   デフォルトを構築し直す。
+  let _backParam = params.backParam;
+  if (typeof _backParam === 'string' || !_backParam || typeof _backParam !== 'object') {
+    _backParam = params.labeledDisplayId ? { labeledDisplayId: params.labeledDisplayId } : {};
+  }
+  // [20260424r] UNIT の backRoute が unit-detail の場合、unitDisplayId を補完
+  //   label.js に ?backParam=[object+Object] の形で渡っていた場合、
+  //   復元時には {} になるため unit-detail に遷移しても ID が無くて
+  //   「ユニットが見つかりません (ID未指定)」になる。
+  //   targetType=UNIT かつ backRoute=unit-detail なら targetId を入れる。
+  if (_backRoute === 'unit-detail' && targetType === 'UNIT' && !_backParam.unitDisplayId) {
+    _backParam.unitDisplayId = _unitDisplayId || targetId || '';
+  }
   if (_isIndDraftMode && _backRoute === 't1-session' && _singleIdx >= 0) {
     if (!_backParam.singleIdx) Object.assign(_backParam, { singleIdx: _singleIdx });
   }
@@ -1931,6 +1955,11 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
   //   4行を超えたら最古を切り捨てて最新側を残す。交換欄はその日のいずれかの
   //   record が exchange_type='FULL' / 'ADD' なら■全/■追、それ以外は□全/□追。
   var _labelRecs = Array.isArray(ld.records) ? ld.records : [];
+  // [20260424r] デバッグ: 受け取った records の中身をログに出す
+  console.log('[LABEL _buildT1UnitLabelHTML] records.length =', _labelRecs.length,
+    '/ dates =', _labelRecs.map(function(r){ return r && r.record_date; }),
+    '/ slots =', _labelRecs.map(function(r){ return r && r.unit_slot_no; }),
+    '/ weights =', _labelRecs.map(function(r){ return r && r.weight_g; }));
   if (_labelRecs.length === 0) {
     // フォールバック: 従来通り 1 行目 = ユニット作成時の初期値、他は空
     for (var ri = 0; ri < 4; ri++) {
