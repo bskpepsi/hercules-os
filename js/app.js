@@ -2,8 +2,21 @@
 // ────────────────────────────────────────────────────────────────
 // ════════════════════════════════════════════════════════════════
 // app.js
-// build: 20260424h
+// build: 20260424q
 // 変更点:
+//   - [20260424q] 🐛 起動時 ReferenceError 修正 (バチルスフック)
+//     症状: Console に
+//       "Uncaught ReferenceError: Pages is not defined at app.js:1034:25"
+//       が出て、その後の処理が止まりユニット一覧の体重が更新されない等の
+//       二次障害が発生していた。
+//     原因: バチルスリマインド差し込み用の IIFE が app.js 本体の末尾で
+//       即実行され、その時点では個別ページ JS (individual.js 等) が
+//       `const Pages = window.Pages || {}` で Pages を定義する前だった
+//       ため ReferenceError。
+//     修正: IIFE を関数 _setupBacilusHook に変換し、DOMContentLoaded
+//       イベントで遅延実行するよう変更。個別ページ JS は同期ロードなので
+//       DOMContentLoaded 時点で Pages は必ず定義済み。
+//       Pages.manage が既に代入されているケースにも対応 (直接 wrap)。
 //   - [20260424h] 🔥 個体画面の重複排除で unit_slot_no を無視するよう改善
 //     症状: 個体詳細の成長記録で、T3移行後に 04/24 85g L3 が 2行重複表示される。
 //           (20260424g 修正でもこのケースは残っていた)
@@ -1016,7 +1029,22 @@ Object.assign(PAGES, {
 // ── バチルスリマインドを管理タブ・ダッシュボードに差し込む ────────
 // Pages.manage / Pages.dashboard をラップして
 // ページ描画後にリマインドバナーを先頭に挿入する
-(function() {
+// [20260424q] DOMContentLoaded 後に遅延実行する方式に変更
+//   症状: Image 3 の Console に
+//     "Uncaught ReferenceError: Pages is not defined at app.js:1034:25"
+//     が出てユニット一覧の画面が壊れ、結果「体重が更新されない」ように見えた。
+//   原因: この IIFE が app.js 読み込み直後に即実行されており、その時点では
+//     Pages は個別ページ JS (individual.js 等で `const Pages = window.Pages || {};`)
+//     で定義される前だったため ReferenceError。
+//   修正: Pages 参照を遅延させるため DOMContentLoaded イベントで実行。
+//     個別ページ JS は同期的に読み込まれるので DOMContentLoaded 時点では
+//     window.Pages が確実に存在する。
+function _setupBacilusHook() {
+  // Pages が未定義ならフォールバックで skip (異常時の防御)
+  if (typeof Pages === 'undefined' || !Pages) {
+    console.warn('[APP] _setupBacilusHook skipped: Pages undefined');
+    return;
+  }
   function _injectBacilusIfNeeded() {
     if (typeof window._getBacilusDueReminders !== 'function') return;
     var due = window._getBacilusDueReminders();
@@ -1030,20 +1058,36 @@ Object.assign(PAGES, {
   }
 
   // manage ページをフック（バチルスリマインド＋分析ボタン差し込み）
-  var _origManage = null;
-  Object.defineProperty(Pages, 'manage', {
-    get: function() { return _origManage; },
-    set: function(fn) {
-      _origManage = function() {
-        fn.apply(this, arguments);
-        setTimeout(function(){
-          _injectBacilusIfNeeded();
-          _injectAnalysisButton();
-        }, 100);
-      };
-    },
-    configurable: true,
-  });
+  var _origManage = Pages.manage;
+  if (typeof _origManage === 'function') {
+    Pages.manage = function() {
+      _origManage.apply(this, arguments);
+      setTimeout(function(){
+        _injectBacilusIfNeeded();
+        _injectAnalysisButton();
+      }, 100);
+    };
+  } else {
+    // 後から Pages.manage が代入されるケースに対応 (defineProperty で上書き検知)
+    var _origManageLate = null;
+    try {
+      Object.defineProperty(Pages, 'manage', {
+        get: function() { return _origManageLate; },
+        set: function(fn) {
+          _origManageLate = function() {
+            fn.apply(this, arguments);
+            setTimeout(function(){
+              _injectBacilusIfNeeded();
+              _injectAnalysisButton();
+            }, 100);
+          };
+        },
+        configurable: true,
+      });
+    } catch(_e) {
+      console.warn('[APP] Pages.manage hook failed:', _e.message);
+    }
+  }
 
   function _injectAnalysisButton() {
     if (document.getElementById('inject-analysis-btn')) return;
@@ -1069,4 +1113,12 @@ Object.assign(PAGES, {
       setTimeout(_injectBacilusIfNeeded, 100);
     };
   }
-})();
+}
+
+// [20260424q] DOMContentLoaded 後 (= 個別ページ JS 読込完了後) に初期化
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', _setupBacilusHook);
+} else {
+  // 既に ready (scripts が defer 等で遅延実行された場合) は即実行
+  _setupBacilusHook();
+}

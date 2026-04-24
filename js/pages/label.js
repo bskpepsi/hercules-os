@@ -1,18 +1,17 @@
 // FILE: js/pages/label.js
-// build: 20260424p
+// build: 20260424q
 // 修正:
+//   - [20260424q] 🔥 UNIT ラベルに複数の成長記録を表示
+//     症状: ユニットラベルに2回分以上の成長記録があっても、直近 1 行 (最新)
+//           しか表示されず、残りは空行になる。
+//     原因: _buildT1UnitLabelHTML の rowsHtml 生成が「1行目 = 初期値」
+//           「2〜4行目 = 手書き用空行」固定仕様だった。記録複数回対応は未実装。
+//     修正: (a) UNIT ラベル ld に records 配列を渡す (従来は [] 固定だった)
+//           (b) _buildT1UnitLabelHTML が records を受けて日付ごとに slot1/slot2
+//               を合成した行を最大4行描画 (最古を切り捨て最新側残し)
+//               交換種別: FULL → ■全/□追、ADD → □全/■追、なし → □全/□追
+//           (c) records 空時は従来通りの初期値レイアウトにフォールバック
 //   - [20260424p] 🔥 UNIT ラベルで成長記録編集が反映されない問題を修正
-//     症状: ユニットの成長記録を編集 (04/24→04/19 に変更) しても、ラベル発行画面
-//           では古い 04/24 のまま表示され、再生成を押しても更新されない。
-//     原因: t1_unit ラベルは ld.t1_date (= unit.t1_date / unit.created_at) を
-//           描画に使っていた。これはユニット作成日の固定値で、成長記録の
-//           record_date とは別フィールド。GR を編集してもユニット本体の
-//           t1_date は変わらないためラベルに反映されない。
-//           members[].weight_g も同様で unit.members に埋め込まれた固定値。
-//     修正: UNIT ラベル ld 組立時に成長記録を優先解決:
-//           (a) t1_date ← 最も古い record_date (GR)
-//           (b) members[i].weight_g ← スロット別の最新 record の weight_g
-//           成長記録が無ければ従来の固定値にフォールバック。
 //   - [20260424o] 戻るボタンラベルを backRoute に応じて明示化
 //   - [20260424n] 🔥 新規個体のラベル発行で成長記録が空欄になる問題を修正
 //     症状: T3移行セッション確定直後にラベル発行画面に遷移したとき、
@@ -1113,12 +1112,17 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
       //         (a) t1_date = 最も古い記録の record_date (= T1開始日相当)
       //         (b) members[i].weight_g = 対応するスロットの最新記録の weight_g
       //         これで GR 編集が即ラベルに反映される。
+      // [20260424q] UNIT ラベルに成長記録全件を渡して複数行描画できるようにする
+      //   従来は 1 行目だけ埋めていたが、2 回目以降の成長記録も存在する
+      //   ケースが多く、「直近の記録が見えない」という声があった。
+      //   records 配列をそのまま ld に流し、描画側で日付+両スロットを並べる。
       let _resolvedT1Date = unit.t1_date || unit.created_at || '';
       let _resolvedMembers = Array.isArray(unit.members)
         ? unit.members.slice().map(m => Object.assign({}, m || {}))
         : (typeof unit.members === 'string'
             ? (function(){ try { return JSON.parse(unit.members) || []; } catch(_){ return []; } })().map(m => Object.assign({}, m || {}))
             : []);
+      let _resolvedUnitRecs = [];
       try {
         const _unitIdKey = unit.unit_id || _genDisplayId;
         let _unitRecs = (Store.getGrowthRecords && Store.getGrowthRecords(_unitIdKey)) || [];
@@ -1126,6 +1130,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
           _unitRecs = Store.getGrowthRecords(_genDisplayId) || [];
         }
         if (_unitRecs && _unitRecs.length > 0) {
+          _resolvedUnitRecs = _unitRecs.slice();
           // (a) 最も古い record_date を T1_date に
           const _sortedAsc = _unitRecs.slice().sort((a,b) =>
             String(a.record_date||'').localeCompare(String(b.record_date||'')));
@@ -1149,7 +1154,8 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
             _resolvedMembers[_mi].weight_g = _latest.weight_g;
           }
           console.log('[LABEL UNIT] t1_date resolved from GR:', _resolvedT1Date,
-            '/ members weights:', _resolvedMembers.map(m => (m && m.weight_g) || '').join('/'));
+            '/ members weights:', _resolvedMembers.map(m => (m && m.weight_g) || '').join('/'),
+            '/ records:', _resolvedUnitRecs.length);
         }
       } catch (_eReslove) {
         console.warn('[LABEL UNIT] GR resolve warn:', _eReslove.message);
@@ -1167,7 +1173,8 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         mat_molt:      _matMolt,  // [20260420k] Mx表示用 (has_malt由来、未取得時はT2フォールバック)
         for_sale:      _genForSale,
         members:       _resolvedMembers,
-        records:       [],
+        // [20260424q] records 配列を渡す (t1_unit 描画で複数行表示)
+        records:       _resolvedUnitRecs,
         label_type:    't1_unit',
         note_private:  unit.note        || '',
         origin_lots_str: _originLotsStr,
@@ -1919,14 +1926,73 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
   }
 
   var rowsHtml = '';
-  for (var ri = 0; ri < 4; ri++) {
-    var isT1Row = (ri === 0);
-    rowsHtml += '<tr>'
-      + '<td style="' + tdU + '">' + (isT1Row && t1Date ? t1Date : '&nbsp;') + '</td>'
-      + _wgtCell(isT1Row ? m0w : '')
-      + _wgtCell(isT1Row ? m1w : '')
-      + '<td style="' + tdU + '">' + (isT1Row ? '■全<br>□追' : '□全<br>□追') + '</td>'
-      + '</tr>';
+  // [20260424q] records 配列から最大4行を描画
+  //   仕様: 日付昇順で並べ、同じ record_date の slot1/slot2 を同一行に合成。
+  //   4行を超えたら最古を切り捨てて最新側を残す。交換欄はその日のいずれかの
+  //   record が exchange_type='FULL' / 'ADD' なら■全/■追、それ以外は□全/□追。
+  var _labelRecs = Array.isArray(ld.records) ? ld.records : [];
+  if (_labelRecs.length === 0) {
+    // フォールバック: 従来通り 1 行目 = ユニット作成時の初期値、他は空
+    for (var ri = 0; ri < 4; ri++) {
+      var isT1Row = (ri === 0);
+      rowsHtml += '<tr>'
+        + '<td style="' + tdU + '">' + (isT1Row && t1Date ? t1Date : '&nbsp;') + '</td>'
+        + _wgtCell(isT1Row ? m0w : '')
+        + _wgtCell(isT1Row ? m1w : '')
+        + '<td style="' + tdU + '">' + (isT1Row ? '■全<br>□追' : '□全<br>□追') + '</td>'
+        + '</tr>';
+    }
+  } else {
+    // 日付ごとに slot1/slot2 をグループ化
+    var _byDate = {};
+    _labelRecs.forEach(function(r){
+      if (!r || !r.record_date) return;
+      var d = r.record_date;
+      if (!_byDate[d]) _byDate[d] = { date: d, slot1: null, slot2: null, exchange: '' };
+      var slot = parseInt(r.unit_slot_no, 10);
+      if (slot === 1) _byDate[d].slot1 = r;
+      else if (slot === 2) _byDate[d].slot2 = r;
+      else {
+        if (!_byDate[d].slot1) _byDate[d].slot1 = r;
+        else if (!_byDate[d].slot2) _byDate[d].slot2 = r;
+      }
+      // 交換種別: 1件でも FULL/ADD があれば優先
+      if (r.exchange_type && r.exchange_type !== 'NONE') {
+        if (_byDate[d].exchange !== 'FULL') _byDate[d].exchange = r.exchange_type;
+      }
+    });
+    var _dates = Object.keys(_byDate).sort();
+    // 4件を超える場合、最新4件を残す (最古から切り捨て)
+    if (_dates.length > 4) _dates = _dates.slice(_dates.length - 4);
+    // 日付短縮 (M/D)
+    var _shortDate = function(yyyymmdd) {
+      var m = String(yyyymmdd||'').match(/(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})/);
+      return m ? (parseInt(m[2],10) + '/' + parseInt(m[3],10)) : yyyymmdd;
+    };
+    _dates.forEach(function(d){
+      var g = _byDate[d];
+      var w1 = g.slot1 && g.slot1.weight_g ? String(g.slot1.weight_g) : '';
+      var w2 = g.slot2 && g.slot2.weight_g ? String(g.slot2.weight_g) : '';
+      var exchLabel;
+      if (g.exchange === 'FULL')      exchLabel = '■全<br>□追';
+      else if (g.exchange === 'ADD')  exchLabel = '□全<br>■追';
+      else                            exchLabel = '□全<br>□追';
+      rowsHtml += '<tr>'
+        + '<td style="' + tdU + '">' + _shortDate(d) + '</td>'
+        + _wgtCell(w1)
+        + _wgtCell(w2)
+        + '<td style="' + tdU + '">' + exchLabel + '</td>'
+        + '</tr>';
+    });
+    // 4行に満たない場合は手書き用の空行を追加
+    for (var _fi = _dates.length; _fi < 4; _fi++) {
+      rowsHtml += '<tr>'
+        + '<td style="' + tdU + '">&nbsp;</td>'
+        + _wgtCell('')
+        + _wgtCell('')
+        + '<td style="' + tdU + '">□全<br>□追</td>'
+        + '</tr>';
+    }
   }
 
   var bLg = 'display:inline-block;border:1.5px solid #000;border-radius:3px;padding:0 4px;font-size:12px;font-weight:700;color:#000;margin-right:2px;line-height:1.5';
