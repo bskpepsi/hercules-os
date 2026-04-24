@@ -896,8 +896,10 @@ function _renderDetail(ind, main) {
         (Store.getGrowthRecords(ind.origin_lot_id) || []).forEach(_push);
       }
     } catch(_e){}
-    // (5) 日付×体重×スロット の重複排除 (record_id が違っても同一イベントは統合)
-    return (typeof UI !== 'undefined' && UI._gr_dedupe) ? UI._gr_dedupe(out) : out;
+    // (5) 日付×体重 の重複排除 (record_id が違っても同一イベントは統合)
+    //     個体視点なので ignoreSlot=true でスロット無視 (unit 時代の slot 付き
+    //     レコードと個体化後の slot なしレコードを統合)
+    return (typeof UI !== 'undefined' && UI._gr_dedupe) ? UI._gr_dedupe(out, { ignoreSlot: true }) : out;
   })();
   const _fromNew = !!(Store.getParams()._fromNew);
   const originLot      = ind.origin_lot_id ? Store.getLot(ind.origin_lot_id) : null;

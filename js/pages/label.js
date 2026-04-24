@@ -875,9 +875,10 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
       } catch (_e_lot_era) { console.warn('[LABEL] lot-era merge warn:', _e_lot_era.message); }
       console.log('[LABEL] IND records merged:', _indMergedRecs.length, 'items for', ind.display_id || targetId);
 
-      // [20260424g] 最終的に日付×体重×スロットで重複排除 (record_id が違っても同イベントは統合)
+      // [20260424g/h] 最終的に日付×体重で重複排除 (record_id が違っても同イベントは統合)
+      //   個体ラベルなので ignoreSlot=true (unit 時代の slot 付きと個体の slot なしを統合)
       const records = (typeof UI !== 'undefined' && UI._gr_dedupe)
-        ? UI._gr_dedupe(_indMergedRecs)
+        ? UI._gr_dedupe(_indMergedRecs, { ignoreSlot: true })
         : _indMergedRecs;
       // [20260422m] 孵化日フォールバック: ind.hatch_date → lot_id → origin_lot_id
       const _indHatch = _resolveLabelHatchDate({
