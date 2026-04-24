@@ -1,4 +1,26 @@
-// FILE: js/pages/continuous_scan.js  build: 20260424c
+// FILE: js/pages/continuous_scan.js  build: 20260424k
+// 変更点(20260424c→20260424k):
+//   [20260424k] 🔥 OCR のマット/容器が表に反映されない問題を修正
+//     症状: ユニットの継続読取り確認画面で
+//       (1) ラベルのマット M:■T1 を読み取っているのに表の最新行に T1 が入らない
+//       (2) ユニットの容器が 2.7L なのに、表の全行の容器が「—」表示
+//     原因:
+//       (1) 旧実装 [20260422b] が "OCR mat_type == entity.mat_type なら誤認識とみなして
+//           反映しない" という誤認識対策を入れていた。しかし実運用では「読み取ったのに
+//           反映されない」体験の方が混乱を招いていた。
+//       (2) _buildTableRows の defCont が entity.container_size のみを参照していた。
+//           T1移行直後など container_size が空のユニットでは defCont='' になり、
+//           全行で容器列が空欄 ('—') になっていた。
+//     修正:
+//       (1) OCR mat_type が読めていれば常に最新データ行の mat_type へ反映。
+//           誤認識の場合はセルタップで修正可能 (既存UI)。
+//       (2) defCont を 4 段階でフォールバック解決:
+//           (a) ocr.container / ocr.container_size
+//           (b) entity.container_size
+//           (c) entity の最新成長記録の container (target_id/display_id 両キーから)
+//           (d) entity.members[].container (ユニットの場合の2頭分)
+//           最初に見つかった値を採用。デバッグログで resolved 値と entity 値を出力。
+//
 // 変更点(20260424b→20260424c):
 //   [20260424c-cs] 🔥 同一日付の複数行が1件に潰れる問題を修正
 //     症状: 継続読取りで同じ日付に 2行記録 (例: 04/24 T2/2.7L/66g と 04/24 T3/4.8L/85g)
@@ -449,17 +471,63 @@ Pages.continuousScan = function(params) {
 
   function _buildTableRows(ocrResult, isUnit, entity) {
     var ocr=ocrResult||{}, ocrRows=ocr.records||[];
-    // [20260421m] 仕様確定:
+    // [20260421m/20260424k] 仕様確定:
     //   - 容器 (container): ユニット本体の container_size を初期値として全行に設定
     //     → ユーザーが変更しなければ既存値を継承する前回踏襲モード。
+    //     [20260424k] entity.container_size が空の場合に備え、複数ソースから解決:
+    //       (1) ocr.container / ocr.container_size (OCR画像に写っていれば)
+    //       (2) entity.container_size
+    //       (3) entity の最新成長記録の container (target_id / display_id 両方から拾う)
+    //       (4) entity.members[].container (2頭分のうち有効なもの)
+    //     この順で最初に見つかった値を defCont とする。
     //   - マット (mat_type): 行ごとに独立管理。OCR で各行の mat_type が読み取れない仕様なので
     //     全行空のままで初期化する。ラベルの M チェック (ocr.mat_type) は「最新のマット」を
     //     意味するが、既存行のマット表示を書き換えてはならない (過去の交換履歴が壊れる)。
     //     代わりに _cScanSave の最終処理で「日付の新しい記録のみ」または
     //     「ラベルの M チェック」をユニット本体に反映する。
     //   - 既存行の修正: save 時に既存 growth_records と日付マッチして update/create を判定
-    var entityCont = (entity && entity.container_size) ? String(entity.container_size).trim() : '';
-    var defCont = entityCont || '';
+    var defCont = '';
+    // (1) OCR結果
+    if (ocr.container)       defCont = String(ocr.container).trim();
+    else if (ocr.container_size) defCont = String(ocr.container_size).trim();
+    // (2) entity本体
+    if (!defCont && entity && entity.container_size) defCont = String(entity.container_size).trim();
+    // (3) entity の最新成長記録
+    if (!defCont && entity) {
+      try {
+        var _gkeys = [];
+        if (entity.unit_id)    _gkeys.push(entity.unit_id);
+        if (entity.display_id) _gkeys.push(entity.display_id);
+        if (entity.ind_id)     _gkeys.push(entity.ind_id);
+        var _latestCont = '', _latestDate = '';
+        _gkeys.forEach(function(k){
+          var _list = (Store.getGrowthRecords && Store.getGrowthRecords(k)) || [];
+          _list.forEach(function(r){
+            if (!r) return;
+            var _c = r.container || r.container_size || '';
+            if (!_c) return;
+            var _d = String(r.record_date || '');
+            if (!_latestDate || _d > _latestDate) {
+              _latestDate = _d;
+              _latestCont = String(_c).trim();
+            }
+          });
+        });
+        if (_latestCont) defCont = _latestCont;
+      } catch (_eCont) { console.warn('[CS] container fallback from growth warn:', _eCont.message); }
+    }
+    // (4) members から (ユニットの場合)
+    if (!defCont && entity) {
+      try {
+        var _members = _parseMembers(entity);
+        for (var _mi = 0; _mi < _members.length; _mi++) {
+          var _mc = _members[_mi] && (_members[_mi].container || _members[_mi].container_size);
+          if (_mc) { defCont = String(_mc).trim(); break; }
+        }
+      } catch (_eMem) {}
+    }
+    if (defCont) console.log('[CS] _buildTableRows defCont resolved:', defCont, '(entity.container_size=' + ((entity && entity.container_size) || '(empty)') + ')');
+
     var maxRows=isUnit?4:8, rows=[];
     for (var i=0;i<maxRows;i++){
       var ocrRow=ocrRows[i]||null, row=_emptyRow('', defCont);
@@ -479,14 +547,15 @@ Pages.continuousScan = function(params) {
       }
       rows.push(row);
     }
-    // [20260422b] OCR の M チェック値 (ocr.mat_type) の最新行自動反映を条件付きで復活:
-    //   ラベルの M チェックは誤認識しやすい (Gemini OCR が連続■の最右を正しく選ばない) が、
-    //   ユーザーが最新行の mat_type を明示タップするオペレーションは省略されやすい。
-    //   妥協案: OCR の mat_type が 現在のユニット (entity) と異なる値 = 「マット交換があった」 と
-    //   解釈し、その場合のみ最新データ行の mat_type にセット。
-    //   entity と同じ値なら (誤認識の典型ケース) 反映しない = ユーザーの手動変更を尊重。
-    var _entityCurrentMat = (entity && entity.mat_type) ? String(entity.mat_type).trim() : '';
-    if (ocr.mat_type && String(ocr.mat_type).trim() !== _entityCurrentMat) {
+    // [20260424k] OCR の M チェック値 (ocr.mat_type) を常に最新データ行に反映
+    //   旧実装 (20260422b): ocr.mat_type が entity.mat_type と同じなら「誤認識の典型」として
+    //     反映しなかった。しかし実運用では「ユーザーが OCR で読み取った内容が表に出ない」
+    //     という混乱の方が大きかった。
+    //   新方針: OCR に mat_type があれば常に最新データ行へ反映する。
+    //     誤認識の場合はユーザーがセルをタップして修正できる (タップ編集 UI 既存)。
+    //     「反映されない」より「反映された値を修正できる」方が UX 的に優れる。
+    //     さらに: 最新行の mat_type が空の場合のみ書き込む (行内既存値があれば尊重)。
+    if (ocr.mat_type) {
       var lastDataRowIdx = -1;
       for (var lj = rows.length - 1; lj >= 0; lj--) {
         if (rows[lj] && (rows[lj].date || rows[lj].weight1 || rows[lj].weight2)) {

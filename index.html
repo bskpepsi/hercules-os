@@ -7,6 +7,17 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#0d1a0d">
+  <!-- [20260424j] 🔥 キャッシュ強制無効化 (Android Chrome 対策)
+       症状: Android Chrome が index.html を強くキャッシュし、?v=YYYYMMDD の
+             バージョン更新が反映されない (PC は OK だがスマホで古い JS を
+             読み続ける)。
+       対策: HTTP キャッシュを完全に無効化する meta タグ3種を追加。これで
+             index.html は毎回最新が取得され、子ファイルの ?v= も最新を参照。
+       備考: GitHub Pages は静的配信でサーバー側 Cache-Control を制御できない
+             ため、meta http-equiv で対処するのが現実解。 -->
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate, max-age=0">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
   <title>HerculesOS</title>
   <link rel="stylesheet" href="css/styles.css?v=20260423a">
 
@@ -69,8 +80,32 @@
 
 <!-- ════ JS 読み込み（順序厳守） ════ -->
 <script src="js/config.js?v=20260413bi"></script>
-<script src="js/api.js?v=20260424i"></script>
-  <script>window.__INDEX_BUILD= '20260424i';console.log("[INDEX_BUILD]",window.__INDEX_BUILD,"loaded");</script>
+<script src="js/api.js?v=20260424k"></script>
+  <script>window.__INDEX_BUILD= '20260424k';console.log("[INDEX_BUILD]",window.__INDEX_BUILD,"loaded");</script>
+  <!-- [20260424j] 自己修復: api.js のビルドが古ければ強制リロード
+       Android Chrome が index.html を古いままキャッシュした状態で誤って
+       開かれるケースの救済。index.html が最新 (20260424j) なのに
+       api.js が 20260424i 以前で読まれた = キャッシュずれなので 1 回だけ
+       キャッシュ破棄 (location.reload(true) 相当) を行う。
+       無限ループ防止に sessionStorage でフラグ管理。 -->
+  <script>
+  (function(){
+    var expected = '20260424i';  // api.js が持つべき最小ビルド
+    var actual   = (window.__API_BUILD || '');
+    if (actual && actual < expected) {
+      if (!sessionStorage.getItem('__hcos_force_reloaded_at_' + window.__INDEX_BUILD)) {
+        console.warn('[CACHE] api.js build mismatch. expected>=' + expected + ' / actual=' + actual + ' → force reload');
+        sessionStorage.setItem('__hcos_force_reloaded_at_' + window.__INDEX_BUILD, '1');
+        // URL にランダムクエリを付けて強制再取得
+        var u = new URL(location.href);
+        u.searchParams.set('__cb', Date.now());
+        location.replace(u.toString());
+      } else {
+        console.warn('[CACHE] api.js still old after forced reload; cache clear required manually. actual=' + actual);
+      }
+    }
+  })();
+  </script>
 <script>console.log("[HTML] after api.js", typeof API, !!window.API);</script>
 <script src="js/store.js?v=20260421f"></script>
 <!-- normalize.js: 表示正規化（config.js の後・app.js の前に必須） -->
@@ -90,7 +125,7 @@
   <script src="js/pages/t2_session.js?v=20260420g"></script>
   <script src="js/pages/t3_session.js?v=20260424f"></script>
   <script src="js/pages/unit_detail.js?v=20260422o"></script>
-  <script src="js/pages/continuous_scan.js?v=20260424c"></script>
+  <script src="js/pages/continuous_scan.js?v=20260424k"></script>
 <script src="js/pages/dashboard.js?v=20260423B"></script>
 <script src="js/pages/parent.js?v=20260413bi"></script>
 <script src="js/pages/bloodline.js?v=20260413bi"></script>
