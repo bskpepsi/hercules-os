@@ -1,6 +1,12 @@
 // FILE: js/pages/manage.js
-// build: 20260423B
+// build: 20260424d
 // 変更点:
+//   - [20260424d] 飼育管理カードに個体カウントを追加
+//     * 旧: 「ロット7件 / ユニット2件」 (count = ロット + ユニット)
+//     * 新: 「個体2件 / ユニット2件 / ロット7件」 (count = 個体 + ユニット + ロット)
+//     * 個体の集計は individual.js の _ALIVE_SET と同じ定義で生存中のみをカウント
+//       (alive/larva/prepupa/pupa/adult/seed_candidate/seed_reserved + 未設定)
+//       → 販売済み・死亡・個別化元個体などは除外
 //   - [20260423B] 保守性改善
 //     * build 番号を全ファイル統一 (`20260423B`)
 //     * 起動確認ログ `console.log` を追加
@@ -27,7 +33,7 @@
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
-console.log('[HerculesOS] manage.js v20260423B loaded');
+console.log('[HerculesOS] manage.js v20260424d loaded');
 
 // ── 管理メニュー ─────────────────────────────────────────────────
 Pages.manage = function () {
@@ -61,10 +67,24 @@ Pages.manage = function () {
     },
     {
       icon: '🐛', label: '飼育管理',
-      count: actLots.length + ((Store.getDB('breeding_units')||[]).filter(u=>u.status==='active').length),
+      // [20260424d] 個体カウントを追加
+      //   飼育中の個体は individual.js の _ALIVE_SET と同じ定義でフィルタ
+      //   (alive/larva/prepupa/pupa/adult/seed_candidate/seed_reserved + status 未設定)
+      //   → 販売済み・死亡・個別化元個体 (individualized_source) などは除外される
+      count: (function(){
+        var _ALIVE_SET = ['alive','larva','prepupa','pupa','adult','seed_candidate','seed_reserved'];
+        var _activeUnits = (Store.getDB('breeding_units')||[]).filter(u=>u.status==='active').length;
+        var _activeInds  = (Store.getDB('individuals')||[]).filter(i=>_ALIVE_SET.indexOf(i.status)>=0 || !i.status).length;
+        return _activeInds + _activeUnits + actLots.length;
+      })(),
       unit: '件',
       page: 'lot-list', newPage: 'lot-new',
-      sub: `ロット${actLots.length}件 / ユニット${(Store.getDB('breeding_units')||[]).filter(u=>u.status==='active').length}件`,
+      sub: (function(){
+        var _ALIVE_SET = ['alive','larva','prepupa','pupa','adult','seed_candidate','seed_reserved'];
+        var _activeUnits = (Store.getDB('breeding_units')||[]).filter(u=>u.status==='active').length;
+        var _activeInds  = (Store.getDB('individuals')||[]).filter(i=>_ALIVE_SET.indexOf(i.status)>=0 || !i.status).length;
+        return `個体${_activeInds}件 / ユニット${_activeUnits}件 / ロット${actLots.length}件`;
+      })(),
       color: 'var(--green)',
     },
     {
