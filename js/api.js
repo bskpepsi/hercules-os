@@ -4,8 +4,14 @@
 //       フロントの他のコードはこのファイルのメソッドのみを通してGASと通信する。
 //       成功時は data を返し、失敗時は Error をスローする。
 //       リトライ・タイムアウト・エラー整形もここで行う。
-// build: 20260421i
+// build: 20260424i
 // 変更:
+//   - [20260424i] タイムアウト延長 + タイムアウト時自動リトライ
+//       * TIMEOUT_MS: 30000 → 45000 (GAS コールドスタート救済)
+//       * AbortError 発生時も 1 回だけ自動リトライ (旧実装は Failed to fetch
+//         のときだけリトライだった。reserveDisplayIds 等で 30秒タイムアウトが
+//         出て T1移行ができない症状への対応)
+//       * エラーメッセージに "45秒×2回" を明記して原因切り分けを容易に
 //   - [20260421i] API.growth.delete を追加（成長記録の物理削除）
 // 変更点：
 //   - unit（飼育ユニット）API追加：create, list, get, update, delete
@@ -14,11 +20,16 @@
 
 'use strict';
 
-window.__API_BUILD = '20260417k-fix1';
+window.__API_BUILD = '20260424i';
 console.log('[API] ===== api.js LOADED BUILD=' + window.__API_BUILD + ' =====');
 var API = (() => {
   console.log('[API] IIFE start - BUILD:', window.__API_BUILD);
-  const TIMEOUT_MS = 30000;
+  // [20260424i] TIMEOUT_MS を 30s → 45s に延長
+  //   症状: GAS コールドスタート時 (数時間放置後の初回リクエスト) に 30秒では
+  //         足りずタイムアウトが発生 (例: T1移行の reserveDisplayIds)。
+  //   対策: 45秒まで伸ばし、かつタイムアウト発生時も1回だけ自動リトライする
+  //         (旧実装は Failed to fetch の場合のみリトライだった)。
+  const TIMEOUT_MS = 45000;
 
   // ── 基底通信 ──────────────────────────────────────────────────
   async function call(action, payload = {}, _retryCount = 0) {
@@ -42,6 +53,7 @@ var API = (() => {
     // ── 診断ログ（常時出力、通信トラブル切り分け用） ──
     console.log('[API] call start', {
       action,
+      retry: _retryCount,
       urlBase: url.slice(0, 60) + (url.length > 60 ? '...' : ''),
       payloadKeys: Object.keys(payload),
       fullUrlLength: fullUrl.length,
@@ -96,7 +108,15 @@ var API = (() => {
     } catch (e) {
       clearTimeout(tid);
       if (e.name === 'AbortError') {
-        throw new Error('タイムアウト（30秒）。通信環境を確認してください。(action=' + action + ')');
+        // [20260424i] タイムアウト時も 1回だけ自動リトライ
+        //   GAS のコールドスタートで初回だけ遅いケースの救済。
+        //   2 回目も失敗した場合のみユーザーに報告。
+        if (_retryCount === 0) {
+          console.warn('[API] Timeout, retrying in 1s... (action=' + action + ')');
+          await new Promise(r => setTimeout(r, 1000));
+          return call(action, payload, 1);
+        }
+        throw new Error('タイムアウト（' + Math.round(TIMEOUT_MS/1000) + '秒×2回）。通信環境を確認してください。(action=' + action + ')');
       }
       // Failed to fetch = ネットワーク到達不能 or CORS
       if (e.message === 'Failed to fetch') {

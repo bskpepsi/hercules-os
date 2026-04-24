@@ -1,8 +1,23 @@
 // FILE: js/pages/lot.js
 // ════════════════════════════════════════════════════════════════
 // lot.js
-// build: 20260423B
+// build: 20260424i
 // 変更点:
+//   - [20260424i] 🔥 採卵日を独立フィールドで管理 (メモ欄からの脱却)
+//     症状: ロット情報欄に採卵日の専用行が無く、メモ欄に
+//           「採卵日: 2026/04/21」と文字列で残っていた。画像6では
+//           孵化日=2026/01/01、メモ=採卵日: 2026/04/21 という表示で
+//           矛盾する上に採卵日は note からしか引けない状態。
+//     原因: GAS 側は collect_date カラムを持つ (20260421c で構造化済み) が、
+//           フロント側が collect_date を表示・編集する導線を用意していなかった。
+//     修正: (a) ロット情報カードに「採卵日」行を追加 (_resolveCollectDate で
+//               構造化カラム優先、note フォールバック)
+//           (b) 「ロット情報を修正」モーダルに採卵日フィールド追加
+//               Pages._lotEditSave が collect_date を payload に含めて送信
+//           (c) 「📅 孵化日を設定」モーダルを採卵日+孵化日の2フィールド化
+//               ボタンラベルも状況に応じて「採卵日・孵化日」「採卵日のみ」
+//               「孵化日のみ」と動的に切替
+//           (d) Store.patchDBItem で保存後も collect_date を即時反映
 //   - [20260423B] 保守性改善
 //     * build 番号を全ファイル統一 (`20260423B`)
 //   - [20260423l] build 番号のみ更新 (統一)
@@ -2382,10 +2397,10 @@ function _renderLotDetail(lot, main) {
           🏷️ ラベル発行
         </button>
       </div>
-      ${!lot.hatch_date ? `
+      ${(!lot.hatch_date || !_resolveCollectDate(lot)) ? `
       <button class="btn btn-full" style="background:var(--amber);color:#1a1a1a;font-weight:700;margin-top:8px"
         onclick="Pages._lotSetHatchDate('${lot.lot_id}')">
-        📅 孵化日を設定
+        📅 ${!lot.hatch_date && !_resolveCollectDate(lot) ? '採卵日・孵化日' : (!lot.hatch_date ? '孵化日' : '採卵日')}を設定
       </button>` : ''}
       ${!lot.t1_done ? `
       <button class="btn btn-full" style="background:var(--green);color:#fff;font-weight:700;margin-top:8px"
@@ -2406,6 +2421,14 @@ function _renderLotDetail(lot, main) {
           ${_infoRow('容器', dispContainer)}
           ${_infoRow('マット', dispMatLabel + (alertBadge ? ' ' + alertBadge : ''))}
           ${recMat && recMat !== dispMatType ? _infoRow('推奨マット', `<span style="font-size:.78rem;color:var(--amber)">→ ${recMat}</span>`) : ''}
+          ${(() => {
+            // [20260424i] 採卵日を独立した行として表示
+            //   従来はメモ欄の "採卵日: YYYY/MM/DD" 文字列でしか保持されていなかった。
+            //   GAS 側は collect_date カラムを持つため、_resolveCollectDate で
+            //   構造化カラム優先 → note からのフォールバックの順で解決して表示する。
+            var _cd = _resolveCollectDate(lot);
+            return _infoRow('採卵日', _cd ? _cd.value : '未設定');
+          })()}
           ${_infoRow('孵化日', lot.hatch_date || '未設定')}
           ${_infoRow('最終交換', lastMatDate || '—')}
           ${exDays > 0 ? _infoRow('次回交換予定', nextChangeLbl + modeBadge) : ''}
@@ -2851,6 +2874,11 @@ Pages._lotEdit = function (lotId) {
   const lines = Store.getDB('lines') || [];
   // [20260422k] 生体ステージを編集モーダルに追加（旧 _lotEditStage は廃止方針）
   const _curStage = lot.stage_life || lot.stage || '';
+  // [20260424i] 採卵日の初期値解決 (構造化カラム優先、note フォールバック)
+  const _curCollect = (function(){
+    var _cd = _resolveCollectDate(lot);
+    return _cd ? _cd.value : '';
+  })();
   UI.modal(`
     <div class="modal-title">ロット情報を修正</div>
     <div class="form-section" style="max-height:65vh;overflow-y:auto">
@@ -2868,10 +2896,12 @@ Pages._lotEdit = function (lotId) {
       <div style="font-size:.7rem;color:var(--text3);margin-top:3px">
         生体（幼虫／前蛹／蛹／成虫）の成長段階
       </div>`)}
+      <!-- [20260424i] 採卵日と孵化日を並べて編集可能に -->
       <div class="form-row-2">
+        ${UI.field('採卵日', `<input type="date" id="le-collect" class="input" value="${(_curCollect||'').replace(/\//g,'-')}">`)}
         ${UI.field('孵化日', `<input type="date" id="le-hatch" class="input" value="${(lot.hatch_date||'').replace(/\//g,'-')}">`)}
-        ${UI.field('頭数', `<input type="number" id="le-count" class="input" value="${lot.count||''}" min="1">`)}
       </div>
+      ${UI.field('頭数', `<input type="number" id="le-count" class="input" value="${lot.count||''}" min="1">`)}
       <div class="form-row-2">
         ${UI.field('容器', `<select id="le-container" class="input">
           ${['','1.8L','2.7L','4.8L'].map(s=>`<option value="${s}" ${lot.container_size===s?'selected':''}>${s||'— 未選択 —'}</option>`).join('')}
@@ -2892,6 +2922,7 @@ Pages._lotEdit = function (lotId) {
 Pages._lotEditSave = async function (lotId) {
   const lineId    = document.getElementById('le-line')?.value || '';
   const stageLife = document.getElementById('le-stage')?.value || '';
+  const collect   = document.getElementById('le-collect')?.value?.replace(/-/g,'/') || '';
   const hatch     = document.getElementById('le-hatch')?.value?.replace(/-/g,'/') || '';
   const count     = parseInt(document.getElementById('le-count')?.value || '0');
   const container = document.getElementById('le-container')?.value || '';
@@ -2900,7 +2931,8 @@ Pages._lotEditSave = async function (lotId) {
   if (lineId && !lineId.startsWith('LINE-')) {
     UI.toast('ライン選択が不正です。内部IDが必要です', 'error'); return;
   }
-  const payload = { lot_id: lotId, hatch_date: hatch, count, container_size: container, mat_type: mat, note };
+  // [20260424i] collect_date も送信 (GAS 側は updateLot allowed に collect_date あり)
+  const payload = { lot_id: lotId, collect_date: collect, hatch_date: hatch, count, container_size: container, mat_type: mat, note };
   if (lineId)    payload.line_id    = lineId;
   // [20260422k] 生体ステージも同時保存
   if (stageLife) payload.stage_life = stageLife;
@@ -2908,7 +2940,7 @@ Pages._lotEditSave = async function (lotId) {
     UI.loading(true);
     UI.closeModal();
     await API.lot.update(payload);
-    const patch = { hatch_date: hatch, count, container_size: container, mat_type: mat, note };
+    const patch = { collect_date: collect, hatch_date: hatch, count, container_size: container, mat_type: mat, note };
     if (lineId)    patch.line_id    = lineId;
     if (stageLife) patch.stage_life = stageLife;
     Store.patchDBItem('lots', 'lot_id', lotId, patch);
@@ -2922,10 +2954,23 @@ Pages._lotEditSave = async function (lotId) {
 };
 
 Pages._lotSetHatchDate = function (lotId) {
+  // [20260424i] 孵化日設定モーダルに採卵日フィールドを追加
+  //   採卵日がメモ欄扱いだった問題を解消し、1画面で両方設定できるように。
+  const lot = Store.getLot(lotId) || {};
+  const _curCollect = (function(){
+    var _cd = _resolveCollectDate(lot);
+    return _cd ? _cd.value : '';
+  })();
   UI.modal(`
-    <div class="modal-title">📅 孵化日を設定</div>
+    <div class="modal-title">📅 日付を設定</div>
     <div class="form-section">
-      ${UI.field('孵化日', `<input type="date" id="lot-hatch-inp" class="input" value="${new Date().toISOString().split('T')[0]}">`)}
+      <div class="form-row-2">
+        ${UI.field('採卵日', `<input type="date" id="lot-collect-inp" class="input" value="${(_curCollect||'').replace(/\//g,'-')}">`)}
+        ${UI.field('孵化日', `<input type="date" id="lot-hatch-inp" class="input" value="${(lot.hatch_date||new Date().toISOString().split('T')[0].replace(/\//g,'-')).replace(/\//g,'-')}">`)}
+      </div>
+      <div style="font-size:.7rem;color:var(--text3);margin-top:4px">
+        💡 採卵日と孵化日は別の日付です。採卵日＝産卵日、孵化日＝卵から幼虫が出た日。
+      </div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" style="flex:1" onclick="UI.closeModal()">キャンセル</button>
@@ -2935,15 +2980,22 @@ Pages._lotSetHatchDate = function (lotId) {
 };
 
 Pages._lotHatchSave = async function (lotId) {
-  const val = document.getElementById('lot-hatch-inp')?.value;
-  if (!val) { UI.toast('日付を選択してください'); return; }
-  const date = val.replace(/-/g, '/');
+  const collectRaw = document.getElementById('lot-collect-inp')?.value;
+  const hatchRaw   = document.getElementById('lot-hatch-inp')?.value;
+  if (!hatchRaw) { UI.toast('孵化日を選択してください'); return; }
+  const collect = collectRaw ? collectRaw.replace(/-/g, '/') : '';
+  const hatch   = hatchRaw.replace(/-/g, '/');
   try {
     UI.loading(true);
     UI.closeModal();
-    await API.lot.update({ lot_id: lotId, hatch_date: date });
-    Store.patchDBItem('lots', 'lot_id', lotId, { hatch_date: date });
-    UI.toast('孵化日を設定しました ✅');
+    // [20260424i] collect_date も同時保存
+    const payload = { lot_id: lotId, hatch_date: hatch };
+    if (collect) payload.collect_date = collect;
+    await API.lot.update(payload);
+    const patch = { hatch_date: hatch };
+    if (collect) patch.collect_date = collect;
+    Store.patchDBItem('lots', 'lot_id', lotId, patch);
+    UI.toast(collect ? '採卵日と孵化日を設定しました ✅' : '孵化日を設定しました ✅');
     Pages.lotDetail(lotId);
   } catch(e) {
     UI.toast('設定失敗: ' + e.message, 'error');
