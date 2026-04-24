@@ -2,8 +2,22 @@
 // ────────────────────────────────────────────────────────────────
 // ════════════════════════════════════════════════════════════════
 // app.js
-// build: 20260422r
+// build: 20260424g
 // 変更点:
+//   - [20260424g] 🔥 成長記録テーブルの重複行問題を根本解決
+//     症状: 個体詳細・ユニット詳細で、同じ日付・同じ体重の行が 2行重複表示
+//           される (例: 04/24 70g L3 が 2行連続)。
+//     原因: 成長記録は複数のキーで Store に保存される (lot_id / unit_id /
+//           unit_display_id / ind_id)。個体化に伴って API が返す
+//           _growthRecords (ユニット時代をマージ済み) が ind_id キーに追加
+//           される一方、別の経路 (T2/T3 セッション確定時の自動生成など) で
+//           同じイベントが異なる record_id で重複生成されるケースがあり、
+//           record_id による重複排除だけでは捕捉できなかった。
+//     修正: UI._gr_dedupe(records) 共通ヘルパーを新設し、日付×体重×スロット
+//           をキーに重複排除。情報量が多い方を残す。weightTable /
+//           weightTableUnit の冒頭で自動適用するため、呼び出し側が何も
+//           しなくても全テーブルで重複が消える。
+//           これにより画像2のような同日70g 2行表示が解消される。
 //   - [20260422r] ボトムナビのハイライト制御を飼育ナビに対応（Phase D）
 //     ① 新しい kanbanPages 配列を追加:
 //        ['lot-list','lot-detail','unit-detail','ind-detail','ind-list']
@@ -479,10 +493,97 @@ const UI = {
     return String(ageDays);
   },
 
+  // ════════════════════════════════════════════════════════════
+  // [20260424g] 成長記録の重複排除ヘルパー (共通)
+  // ════════════════════════════════════════════════════════════
+  // 背景: 成長記録は複数の経路で生成され、Store 上の複数キーで保存される:
+  //   ① T1前のロット時代: target_type='LOT' / target_id=lot_id
+  //   ② T1-T3中のユニット時代: target_type='UNIT'(or 'BU') / target_id=unit_id
+  //      または unit_display_id キー。unit_slot_no で 1頭目/2頭目を識別。
+  //   ③ 個別化後: target_type='IND' / target_id=ind_id
+  //   ④ T2/T3 セッション確定時に上記の遷移に伴う成長記録が自動生成されることがある
+  //
+  // これらは表示時にマージされるが、record_id だけでの重複排除だと、
+  // 同じイベント(同日・同体重)に対して異なる record_id が振られた重複が残る。
+  // 具体例: T3 セッションで個体化された直後、T3 時点の体重記録が
+  //   ① unit 時代のキーに1件
+  //   ② 新しい ind_id キーに1件 (同日・同体重)
+  // の 2件として存在し、個体詳細テーブルで 04/24 70g が 2行並ぶ現象が起きる。
+  //
+  // 本ヘルパーは「同日・同体重・同スロット」のレコードを 1件に集約する。
+  // 優先順位: (a) record_id が _tmp_ でない実レコードを優先
+  //            (b) より多くのフィールド (stage/mat_type/container 等) を持つ方を優先
+  // この関数は weightTable / weightTableUnit / individual.js / label.js 等
+  // 全ての成長記録表示点で呼び出して、どこから入ってきても重複が見えないようにする。
+  _gr_dedupe(records) {
+    if (!Array.isArray(records) || records.length <= 1) return records || [];
+    // 日付正規化: "2026-04-24" / "2026/4/24" → "2026/04/24"
+    var _norm = function(d) {
+      if (!d) return '';
+      var s = String(d).trim().replace(/-/g, '/');
+      var m = s.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})/);
+      if (m) return m[1] + '/' + String(parseInt(m[2],10)).padStart(2,'0') + '/' + String(parseInt(m[3],10)).padStart(2,'0');
+      return s;
+    };
+    // フィールド情報量スコア (多く埋まっている方を残す)
+    var _score = function(r) {
+      if (!r) return 0;
+      var sc = 0;
+      if (r.stage)         sc++;
+      if (r.mat_type)      sc++;
+      if (r.container)     sc++;
+      if (r.exchange_type && r.exchange_type !== 'NONE') sc++;
+      if (r.note_private)  sc++;
+      if (r.sex)           sc++;
+      if (r.size_category) sc++;
+      if (r.age_days != null && r.age_days !== '') sc++;
+      // 実レコード (_tmp_ でない) は +5
+      if (r.record_id && String(r.record_id).indexOf('_tmp_') !== 0) sc += 5;
+      return sc;
+    };
+    var seen = {};
+    var out  = [];
+    records.forEach(function(r) {
+      if (!r) return;
+      // 重複キー: 日付 + 体重 + スロット
+      //   体重は小数点1桁丸めで比較 (66.0 と 66 を同一視)
+      //   スロットは空/null を '' として扱う
+      var _d = _norm(r.record_date);
+      var _w = (r.weight_g !== '' && r.weight_g !== null && r.weight_g !== undefined)
+        ? Math.round(parseFloat(r.weight_g) * 10) / 10
+        : '';
+      var _s = (r.unit_slot_no !== '' && r.unit_slot_no !== null && r.unit_slot_no !== undefined)
+        ? String(r.unit_slot_no)
+        : '';
+      var key = _d + '|' + _w + '|' + _s;
+      if (!_d) {
+        // 日付が無い record はキー化できないのでそのまま通す
+        out.push(r);
+        return;
+      }
+      if (seen[key] === undefined) {
+        seen[key] = out.length;
+        out.push(r);
+      } else {
+        // 既に同一キーのレコードがある → スコアの高い方を残す
+        var _idxPrev = seen[key];
+        if (_score(r) > _score(out[_idxPrev])) {
+          out[_idxPrev] = r;
+        }
+      }
+    });
+    if (out.length < records.length) {
+      console.log('[UI._gr_dedupe]', records.length, '→', out.length, '(removed', records.length - out.length, 'duplicates)');
+    }
+    return out;
+  },
+
   // ── 体重推移 HTML テーブル（個体・ロット共通）────────────────
   // [20260419a] 日付を MM/DD 表記に短縮
+  // [20260424g] 入力レコードを _gr_dedupe で重複排除
   weightTable(records, opts = {}) {
-    const wts = records.filter(r => r.weight_g && +r.weight_g > 0)
+    const dedupedInput = UI._gr_dedupe(records || []);
+    const wts = dedupedInput.filter(r => r.weight_g && +r.weight_g > 0)
       .sort((a,b) => a.record_date.localeCompare(b.record_date));
     if (!wts.length) return UI.empty('体重記録なし');
 
@@ -559,6 +660,8 @@ const UI = {
   //                    → ユニット画面では両スロットの record_id と日付を受け取れる
   weightTableUnit(records, opts = {}) {
     if (!records || records.length === 0) return UI.empty('体重記録なし');
+    // [20260424g] ユニット画面でも冒頭で重複排除 (個体と同じ理由)
+    records = UI._gr_dedupe(records);
 
     // 日付でグループ化（slot1/slot2 を各日付行にマージ）
     const byDate = {};

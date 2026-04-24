@@ -1,6 +1,39 @@
 // FILE: js/pages/label.js
-// build: 20260422n
+// build: 20260424g
 // 修正:
+//   - [20260424g] 成長記録マージ結果に UI._gr_dedupe を適用
+//     日付×体重×スロットで重複を排除し、個体化時に発生しうる重複表示を解消。
+//     (app.js 20260424g の共通ヘルパーを利用)
+//   - [20260424f] 🐛 IND個別飼育ラベル (ind_fixed) の成長記録テーブルが空になる
+//     症状: T2/T3 移行で個別化された個体のラベルを発行すると、記録表の行が
+//           空欄で印刷される (今まで蓄積したユニット時代の体重/交換履歴が反映
+//           されない)。画像 1 の HM2025-A1-010 で 04/20 20g L1L2/T1 や
+//           T2 時代の 58g が一切載っていない状態。
+//     原因: Store.getGrowthRecords(indId) は "新しい個体ID" をキーにしており、
+//           ユニット時代の成長記録は unit_id / unit_display_id キーで保存
+//           されているため 0件扱いになっていた。GAS の getIndividual は
+//           origin_unit_id + origin_unit_slot_no / origin_lot_id を使って
+//           ユニット/ロット時代の記録をマージして _growthRecords として
+//           返すロジックを持つが、ラベル生成は Store 直参照のみで、この
+//           マージ済みデータに到達していなかった。
+//     修正: targetType === 'IND' 分岐で以下の順序でマージを試行:
+//             ① Store.getIndividual(targetId)._growthRecords (API応答がキャッシュ
+//                されていれば最優先)
+//             ② Store.getGrowthRecords(indId) (個体化後に記録されたもの)
+//             ③ origin_unit_id / ind.origin_unit_display_id から unit時代の記録
+//                を slot 絞り込みで拾う
+//             ④ origin_lot_id から lot時代の記録を拾う
+//           record_id で重複排除し、日付昇順に並べ替えてから最新8件を抽出。
+//     副次: targetType === 'LOT' / 'PAR' も同じ拡張適用余地があるが、
+//           本修正は IND のみ対象 (最低限の修正に留める)。
+//   - [20260424f] 🐛 T3 完了画面からラベル発行すると完了画面に戻れない
+//     原因: t3_session.js が routeTo('label-gen', {_back:'t3-completion'})
+//           と "_back" (アンダースコア付き) で渡していたが、label.js は
+//           params.backRoute しか見ていなかった。T2 と同じ backRoute/backParam
+//           の命名に揃えれば戻る導線が復活する。
+//     修正: t3_session.js 側を _back → backRoute に修正 (本ファイルではなく
+//           t3_session.js 側の変更)。label.js は既に backRoute を読んでいる
+//           ので修正不要。
 //   - [20260422n] 🐛 ラベル発行画面をリロードするとID/孵化日/下部ラベルが消えるバグ
 //     症状: 画面リロード (F5) すると HM2025-C1-001 等のID、孵化日、下部
 //           「T1個別飼育 HM2025-C1-L01 #3」等の note 部分が空になる。
@@ -778,7 +811,74 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
     if (targetType === 'IND') {
       const ind     = Store.getIndividual(targetId) || {};
       const line    = Store.getLine(ind.line_id)    || {};
-      const records = Store.getGrowthRecords(targetId) || [];
+      // [20260424f] ユニット/ロット時代の成長記録もマージして表示
+      //   症状: 個別化個体 (T2/T3 後の新規 ind_id) のラベルで記録表が空欄
+      //   原因: Store.getGrowthRecords(ind_id) は新しい ind_id キーのみ参照
+      //         し、ユニット/ロット時代の蓄積履歴が拾われない。
+      //   対応: 以下の優先順位でマージ:
+      //     (1) ind._growthRecords (API.individual.get の返り値で既にマージ済み)
+      //     (2) Store.getGrowthRecords(ind_id) (個体化後の新規記録)
+      //     (3) origin_unit_id / origin_unit_display_id + origin_unit_slot_no
+      //         で unit 時代の記録を拾う (GAS getIndividual と同じマージ仕様)
+      //     (4) origin_lot_id で lot 時代の記録を拾う (後方互換の救済)
+      //   最終的に record_id で重複排除し、日付降順 + slice(0,8) で最新8件。
+      var _indMergedRecs = [];
+      var _seenRecIds = {};
+      var _pushUnique = function(r){
+        if (!r) return;
+        var key = r.record_id || (r.record_date + '|' + (r.unit_slot_no||'') + '|' + (r.weight_g||''));
+        if (_seenRecIds[key]) return;
+        _seenRecIds[key] = true;
+        _indMergedRecs.push(r);
+      };
+      // (1) API cache
+      if (Array.isArray(ind._growthRecords)) ind._growthRecords.forEach(_pushUnique);
+      // (2) 新 ind_id キー
+      var _indSelfRecs = Store.getGrowthRecords(targetId) || [];
+      _indSelfRecs.forEach(_pushUnique);
+      // (3) origin_unit_id / origin_unit_display_id から unit 時代の記録
+      try {
+        var _originUnitId   = ind.origin_unit_id   || '';
+        var _originUnitDisp = ind.origin_unit_display_id || '';
+        // display_id が無い場合 BU レコードから引く
+        if (!_originUnitDisp && _originUnitId) {
+          var _unitObj = null;
+          var _bus = (Store.getDB && Store.getDB('breeding_units')) || [];
+          for (var _bi = 0; _bi < _bus.length; _bi++) {
+            if (_bus[_bi] && _bus[_bi].unit_id === _originUnitId) { _unitObj = _bus[_bi]; break; }
+          }
+          if (_unitObj) _originUnitDisp = _unitObj.display_id || '';
+        }
+        var _slotNo = ind.origin_unit_slot_no;
+        var _slotInt = (_slotNo !== '' && _slotNo !== null && _slotNo !== undefined) ? parseInt(_slotNo, 10) : null;
+        // unit_id / display_id 両方のキーから取得
+        [_originUnitId, _originUnitDisp].forEach(function(_key){
+          if (!_key) return;
+          var _list = Store.getGrowthRecords(_key) || [];
+          _list.forEach(function(g){
+            if (!g) return;
+            // slot が指定されていれば厳密絞り込み、なければ全件
+            if (_slotInt !== null && !isNaN(_slotInt)) {
+              var _recSlot = parseInt(g.unit_slot_no, 10);
+              if (_recSlot !== _slotInt) return;
+            }
+            _pushUnique(g);
+          });
+        });
+      } catch (_e_unit_era) { console.warn('[LABEL] unit-era merge warn:', _e_unit_era.message); }
+      // (4) origin_lot_id 救済
+      try {
+        if (ind.origin_lot_id) {
+          var _lotList = Store.getGrowthRecords(ind.origin_lot_id) || [];
+          _lotList.forEach(_pushUnique);
+        }
+      } catch (_e_lot_era) { console.warn('[LABEL] lot-era merge warn:', _e_lot_era.message); }
+      console.log('[LABEL] IND records merged:', _indMergedRecs.length, 'items for', ind.display_id || targetId);
+
+      // [20260424g] 最終的に日付×体重×スロットで重複排除 (record_id が違っても同イベントは統合)
+      const records = (typeof UI !== 'undefined' && UI._gr_dedupe)
+        ? UI._gr_dedupe(_indMergedRecs)
+        : _indMergedRecs;
       // [20260422m] 孵化日フォールバック: ind.hatch_date → lot_id → origin_lot_id
       const _indHatch = _resolveLabelHatchDate({
         direct:      ind.hatch_date,

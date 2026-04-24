@@ -2,7 +2,18 @@
 // individual.js
 // 役割: 個体の一覧・詳細・新規登録・編集・ステータス変更を担う。
 //       個体台帳の中心画面。ロット・成長記録・ラベルへの導線も持つ。
-// build: 20260424a
+// build: 20260424g
+//
+// 20260424g 修正: 成長記録マージロジックの追加
+//   個体詳細で records を取得する箇所 (_renderDetail 冒頭) を、
+//   ① ind._growthRecords (API 応答のマージ済みデータ)
+//   ② Store.getGrowthRecords(ind_id) (個体化後の新規)
+//   ③ origin_unit_id / origin_unit_display_id + origin_unit_slot_no (ユニット時代)
+//   ④ origin_lot_id (ロット時代の救済)
+//   の 4 段階で取得し、最後に UI._gr_dedupe() で重複排除するよう変更。
+//   これで個体詳細の成長記録テーブルが 重複なし かつ 全履歴表示 になる。
+//   _indComputePhase 呼び出しやグラフ描画も同じ records を使うため、
+//   フェーズ判定・グラフ・分析カード・ラベル発行が全て統一ソースに揃う。
 //
 // 20260424a 修正: 個体詳細 UX 3件
 //   (1) アクション（マット交換）カードを T1/T2 でも非表示に変更
@@ -829,7 +840,65 @@ function _renderDetail(ind, main) {
   const father   = Store.getParent(ind.father_par_id);
   const mother   = Store.getParent(ind.mother_par_id);
   const bld      = Store.getBloodline(ind.bloodline_id);
-  const records  = Store.getGrowthRecords(ind.ind_id) || ind._growthRecords || [];
+  // [20260424g] 成長記録の取得・マージ・重複排除
+  //   個体化された個体の詳細画面では、ユニット/ロット時代の蓄積履歴と
+  //   個体化後の新規記録を統合して表示する必要がある。
+  //   従来は Store.getGrowthRecords(ind.ind_id) のみで、ユニット時代の
+  //   記録が取りこぼされていたか、逆に GAS の _growthRecords を ind_id
+  //   キーに流し込む処理と T2/T3 セッションの自動生成が重複して保存される
+  //   問題があった。label.js と同じマージロジックをここでも適用する。
+  const records = (function(){
+    var out  = [];
+    var seen = {};
+    var _push = function(r){
+      if (!r) return;
+      var k = r.record_id || (r.record_date+'|'+(r.unit_slot_no||'')+'|'+(r.weight_g||''));
+      if (seen[k]) return;
+      seen[k] = true;
+      out.push(r);
+    };
+    // (1) API 応答でマージ済みの _growthRecords (最優先)
+    if (Array.isArray(ind._growthRecords)) ind._growthRecords.forEach(_push);
+    // (2) 新 ind_id キーの記録
+    var _self = Store.getGrowthRecords(ind.ind_id) || [];
+    _self.forEach(_push);
+    // (3) origin_unit_id / origin_unit_display_id から unit 時代の記録
+    try {
+      var _origUid  = ind.origin_unit_id   || '';
+      var _origUdsp = ind.origin_unit_display_id || '';
+      if (!_origUdsp && _origUid) {
+        var _bus = (Store.getDB && Store.getDB('breeding_units')) || [];
+        for (var _bi = 0; _bi < _bus.length; _bi++) {
+          if (_bus[_bi] && _bus[_bi].unit_id === _origUid) {
+            _origUdsp = _bus[_bi].display_id || '';
+            break;
+          }
+        }
+      }
+      var _slotNo  = ind.origin_unit_slot_no;
+      var _slotInt = (_slotNo !== '' && _slotNo != null) ? parseInt(_slotNo,10) : null;
+      [_origUid, _origUdsp].forEach(function(_k){
+        if (!_k) return;
+        var _list = Store.getGrowthRecords(_k) || [];
+        _list.forEach(function(g){
+          if (!g) return;
+          if (_slotInt !== null && !isNaN(_slotInt)) {
+            var _recSlot = parseInt(g.unit_slot_no, 10);
+            if (_recSlot !== _slotInt) return;
+          }
+          _push(g);
+        });
+      });
+    } catch(_e){}
+    // (4) origin_lot_id 救済
+    try {
+      if (ind.origin_lot_id) {
+        (Store.getGrowthRecords(ind.origin_lot_id) || []).forEach(_push);
+      }
+    } catch(_e){}
+    // (5) 日付×体重×スロット の重複排除 (record_id が違っても同一イベントは統合)
+    return (typeof UI !== 'undefined' && UI._gr_dedupe) ? UI._gr_dedupe(out) : out;
+  })();
   const _fromNew = !!(Store.getParams()._fromNew);
   const originLot      = ind.origin_lot_id ? Store.getLot(ind.origin_lot_id) : null;
   const promotedParent = ind.promoted_par_id ? Store.getParent(ind.promoted_par_id) : null;
