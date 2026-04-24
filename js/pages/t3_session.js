@@ -1,6 +1,27 @@
 // FILE: js/pages/t3_session.js
-// build: 20260421d
+// build: 20260424l
 // 変更点:
+//   - [20260424l] 🎯 判断選択肢を「個別化/販売候補」の2択に変更 + 初期値=個別化
+//     (ユーザー要望)
+//       * decisionDefs から 'continue' (継続) を削除
+//       * 新規メンバーの decision 初期値を null → 'individualize' に変更
+//         (1頭目の固定メンバー / ユニット起点の各メンバー 両方とも)
+//       * 判断サマリから「継続: N頭」行を削除
+//       * 確定ダイアログから「継続: N頭 → T3マット継続」行を削除
+//       * 案内文「※ 継続の場合も必ずここで確定してください」を
+//         「※ 判断の既定は「個別化」です」に差し替え
+//       * 'continue' を参照する集計・コミット処理は 0 件扱いで動作するため残置
+//         (将来クリーンアップ予定)
+//   - [20260424f] 🐛 ラベル画面からの「完了画面に戻る」導線を修正
+//     症状: T3 完了画面から 1頭目のラベルを発行した後、ラベル画面の戻るボタン
+//           が完了画面に戻らないため、2頭目のラベル発行に辿り着けない。
+//     原因: _t3OpenLabel が routeTo('label-gen', { ..., _back: 't3-completion' })
+//           で "_back" アンダースコア付きキーで渡していたが、label.js は
+//           params.backRoute を参照するため認識されなかった (t2_session.js と
+//           命名不一致)。
+//     修正: _back → backRoute に改名。label.js 側は既に backRoute を尊重する
+//           実装 (L521)。これで「← 詳細に戻る」→ 完了画面に戻り、次頭のラベル
+//           を発行できる。
 //   - [20260421d] T3移行確定後に完了画面 (_t3ShowCompletion) を表示するように変更
 //       T2と同じ仕組みで、確定済み個体を一覧表示し各個体ごとにラベル発行ボタンを配置
 //       販売候補の個体は 🏷️販売ラベル ボタンから自動で ind_sale (62×25mm) が発行される
@@ -14,7 +35,7 @@
 //   - [fix1] _renderT3Session: lineDisp に同じフォールバック追加
 'use strict';
 
-console.log('[HerculesOS] t3_session.js v20260421d loaded');
+console.log('[HerculesOS] t3_session.js v20260424l loaded');
 
 window._t3Session = window._t3Session || null;
 
@@ -98,7 +119,11 @@ Pages.t3SessionStartFromInd = async function (indIdOrDisplayId) {
     container:     '2.7L',
     mat_type:      'T3',
     exchange_type: 'FULL',
-    decision:      null,
+    // [20260424l] 初期値を 'individualize' に (旧: null)
+    //   ユーザー要望: T3移行編成では「個別化」が既定選択。手動で販売候補/死亡に
+    //   切替える運用が主体。未確定のまま確定画面に進ませないために null 初期値
+    //   だった経緯はあるが、2択化 (継続ボタン削除) に伴い「個別化」を既定化。
+    decision:      'individualize',
     memo:          '',
   }];
 
@@ -160,7 +185,8 @@ function _buildT3Members(unit) {
       container:     '2.7L',
       mat_type:      'T3',
       exchange_type: 'FULL',
-      decision:      null,
+      // [20260424l] 初期値を 'individualize' に (ユニット起点の各メンバー)
+      decision:      'individualize',
       memo:          '',
     });
   }
@@ -262,7 +288,7 @@ function _renderT3Session(s) {
         padding:10px 12px;margin-top:8px;font-size:.76rem;color:var(--text2);line-height:1.6">
         <b style="color:var(--amber)">⭐ T3（3齢後期）は最も体重が乗る重要ステージです。</b><br>
         体重計測・マット交換の有無を記録し、最終的な成長管理を確定してください。<br>
-        <span style="color:var(--text3)">※ 継続の場合も必ずここで確定してください。</span>
+        <span style="color:var(--text3)">※ 判断の既定は「個別化」です。必要に応じて「販売候補」に切り替えてください。</span>
       </div>
 
       <div style="margin-top:8px;border-radius:10px;border:1.5px solid var(--border);background:var(--surface1,var(--surface));padding:12px 14px">
@@ -362,8 +388,12 @@ function _renderT3MemberCard(m, idx, s) {
       ${lbl}</button>`;
   }).join('');
 
+  // [20260424l] 2択化: 'continue' (継続) を削除
+  //   ユーザー要望: 「継続」は運用上ほぼ使われず、誤タップの原因になっていた。
+  //   個別化 / 販売候補 / (死亡は別UI) の 2択に絞り、初期値は 'individualize'。
+  //   'continue' を参照する既存ロジック (集計・コミット処理) は 0件扱いで動作する
+  //   ため残置。不要になり次第クリーンアップ。
   const decisionDefs = [
-    { key:'continue',      lbl:'継続',     color:'var(--blue)',  bg:'rgba(91,168,232,.18)',  desc:'→ T3マットで継続飼育します' },
     { key:'individualize', lbl:'個別化',   color:'var(--green)', bg:'rgba(76,175,120,.18)',  desc:'→ 個体台帳に登録して個別飼育へ' },
     { key:'sale',          lbl:'販売候補', color:'var(--amber)', bg:'rgba(224,144,64,.18)',  desc:'→ 販売候補として個体台帳に登録' },
   ];
@@ -500,7 +530,6 @@ function _renderT3Summary(s) {
   <div style="background:var(--surface2);border-radius:10px;padding:12px 14px;margin-top:12px">
     <div style="font-size:.78rem;font-weight:700;color:var(--text2);margin-bottom:8px">判断サマリ</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:.8rem">
-      <div style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:var(--blue);flex-shrink:0"></span><span>継続</span><b style="margin-left:auto;color:var(--blue)">${cnt.continue}頭</b></div>
       <div style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:var(--green);flex-shrink:0"></span><span>個別化</span><b style="margin-left:auto;color:var(--green)">${cnt.individualize}頭</b></div>
       <div style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:var(--amber);flex-shrink:0"></span><span>販売候補</span><b style="margin-left:auto;color:var(--amber)">${cnt.sale}頭</b></div>
       <div style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:var(--red,#e05050);flex-shrink:0"></span><span>死亡</span><b style="margin-left:auto;color:var(--red,#e05050)">${cnt.dead}頭</b></div>
@@ -601,7 +630,6 @@ Pages._t3SessionSave = async function () {
     UI.toast('全頭の判断を完了してください（体重も入力してください）', 'error'); return;
   }
 
-  const cCnt = s.members.filter(m => m.decision === 'continue').length;
   const iCnt = s.members.filter(m => m.decision === 'individualize').length;
   const sCnt = s.members.filter(m => m.decision === 'sale').length;
   const dCnt = s.members.filter(m => m.decision === 'dead').length;
@@ -610,7 +638,7 @@ Pages._t3SessionSave = async function () {
     `T3（3齢後期）移行を確定します（取り消せません）\n\n` +
     `ユニット: ${s.display_id}\n由来ロット: ${_formatT3OriginLots(s.origin_lots)}\n` +
     `Mx（マット交換）: ${s.mx_done ? '実施' : '未実施'}\n\n` +
-    `継続: ${cCnt}頭 → T3マット継続\n個別化: ${iCnt}頭 → 個体台帳へ\n販売候補: ${sCnt}頭\n死亡: ${dCnt}頭`;
+    `個別化: ${iCnt}頭 → 個体台帳へ\n販売候補: ${sCnt}頭\n死亡: ${dCnt}頭`;
   if (!confirm(confirmMsg)) return;
 
   s.saving = true; _renderT3Session(s);
@@ -920,6 +948,9 @@ Pages._t3ShowCompletion = function () {
 
 // ラベル発行ボタン押下 → label-gen に遷移し、このボタンを押したことを印刷済みとして記録
 // 販売候補は簡易ラベル（ind_sale, 62×25mm）を使用、通常個体は個別飼育ラベル（ind_fixed, 62×70mm）
+// [20260424f] _back → backRoute に改名 (label.js 側の命名と統一)
+//   label.js L521 は params.backRoute のみ参照するため _back では戻るボタンが
+//   't3-completion' に遷移せず、2頭目のラベル発行に戻れなかった。
 Pages._t3OpenLabel = function (indId, isForSale) {
   window._t3LabeledIds = window._t3LabeledIds || {};
   window._t3LabeledIds[indId] = true;
@@ -927,7 +958,8 @@ Pages._t3OpenLabel = function (indId, isForSale) {
     targetType: 'IND',
     targetId:   indId,
     labelType:  isForSale ? 'ind_sale' : 'ind_fixed',
-    _back:      't3-completion'
+    backRoute:  't3-completion',
+    backParam:  {},
   };
   routeTo('label-gen', routeParams);
 };

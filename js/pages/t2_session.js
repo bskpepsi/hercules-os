@@ -1,6 +1,11 @@
 // FILE: js/pages/t2_session.js
-// build: 20260420d
+// build: 20260424l
 // 変更点:
+//   - [20260424l] 判断の初期値を 'individualize' に変更 (ユーザー要望)
+//       既に 20260420b で 2択化 (継続削除) 済みだったが、decision 初期値が null の
+//       ままで「何も選択されていない状態」から始まっていた。実運用では大半が
+//       個別化なので、初期値を 'individualize' に設定して手間を減らす。
+//       (1頭目の固定メンバー / ユニット起点の各メンバー 両方とも)
 //   - [20260420d] マット種別とモルトパウダーの連動実装
 //       マット種別選択時に mat_molt を自動切り替え: T2=ON, それ以外(T1/T3/MD)=OFF
 //       一括設定（_t2SetMatAll）と個別設定（_t2SetMemberMat）の両方で連動
@@ -26,7 +31,7 @@
 //   - _renderT2Session: lineDisp に同じフォールバック追加
 'use strict';
 
-console.log('[HerculesOS] t2_session.js v20260420d loaded');
+console.log('[HerculesOS] t2_session.js v20260424l loaded');
 
 window._t2Session = window._t2Session || null;
 
@@ -102,7 +107,9 @@ Pages.t2SessionStartFromInd = async function (indIdOrDisplayId) {
     container:     '2.7L',
     mat_type:      'T2',
     exchange_type: 'FULL',
-    decision:      null,
+    // [20260424l] 初期値を 'individualize' に (旧: null)
+    //   ユーザー要望: 判断の既定は「個別化」。2択化 (継続削除) に合わせて既定化。
+    decision:      'individualize',
     memo:          '',
   }];
 
@@ -175,7 +182,8 @@ function _buildT2Members(unit) {
       container:     '2.7L',
       mat_type:      'T2',
       exchange_type: 'FULL',
-      decision:      null,
+      // [20260424l] 初期値を 'individualize' に (ユニット起点の各メンバー)
+      decision:      'individualize',
       memo:          src.memo || '',
     });
   }
