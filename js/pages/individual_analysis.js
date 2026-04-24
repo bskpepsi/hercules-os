@@ -1,7 +1,20 @@
 // ════════════════════════════════════════════════════════════════
-// individual_analysis_patch.js  build: 20260424a
+// individual_analysis_patch.js  build: 20260424c
 // 個体詳細画面への成長分析カード追加パッチ
 // このファイルは individual.js の直後に読み込んでください
+//
+// [20260424c] 成長分析カード/前蛹予測カードの即時表示化
+//   残っていた2つの Pages.individualDetail ラップを MutationObserver 方式に切替。
+//   どちらも `await _orig.call(this, indId)` で Pages.individualDetail の
+//   `await API.individual.get(indId)` (20-30秒) の完了を待ってから setTimeout で
+//   挿入していた。前回 (20260424a) は環境記録ボタンだけ MutationObserver 化したが、
+//   成長分析カード (旧 L316) と前蛹予測 (旧 L835) は async ラップのまま残っていた。
+//   新方式: 既存の環境記録用 MutationObserver の直後にもう1つ observer を追加。
+//     - #acc-growth (成長記録アコーディオン) が DOM に出現したら分析カード挿入
+//     - #analysis-body-XXX (分析カード本体) が出現したら前蛹予測を追記
+//   initial render (Store 先行値) / API 応答後の再描画 / continuous-scan 保存後の
+//   即時遷移、すべてのタイミングに追従。_injectAnalysisCard 関数は IIFE 外に出して
+//   トップレベル関数化 (MutationObserver コールバックから呼べるように)。
 //
 // [20260424a] 環境記録ボタン挿入を MutationObserver 方式に変更
 //   旧方式(20260423B)の queueMicrotask は、Pages.individualDetail の async ラップが
@@ -43,7 +56,7 @@
 //   - サイズ段階判定を現代基準に更新 (全長170mm+でギネス候補)
 // ════════════════════════════════════════════════════════════════
 
-console.log('[HerculesOS] individual_analysis.js v20260424a loaded');
+console.log('[HerculesOS] individual_analysis.js v20260424c loaded');
 
 // ── _growthAnalysisHTML: 成長分析カードのHTML生成 ────────────────
 // records: GrowthRecordsの配列 [{record_date, weight_g, stage, ...}]
@@ -276,55 +289,40 @@ function _drawAnalysisChart(indId, wts) {
 // ── _patchIndividualDetailForAnalysis: 個体詳細の描画をパッチ ───
 // individual.jsの _renderDetail が呼ばれた後に成長分析カードを
 // 体重推移アコーディオンの直後に動的挿入する
-(function() {
-  var _origRenderDetail = null;
+// [20260424c] _injectAnalysisCard をトップレベル関数化
+//   IIFE 外からも呼べるように (下部の MutationObserver から参照)
+function _injectAnalysisCard(indId, records) {
+  var accGrowth = document.getElementById('acc-growth');
+  if (!accGrowth) return;
+  // 既に挿入済みなら二重挿入しない
+  if (document.getElementById('acc-analysis')) return;
 
-  // MutationObserver で acc-growth の挿入を監視し、その後に分析カードを挿入
-  function _injectAnalysisCard(indId, records) {
-    var accGrowth = document.getElementById('acc-growth');
-    if (!accGrowth) return;
-    // 既に挿入済みなら二重挿入しない
-    if (document.getElementById('acc-analysis')) return;
+  var wts = (records || [])
+    .filter(function(r){ return r.weight_g && +r.weight_g > 0; });
 
-    var wts = (records || [])
-      .filter(function(r){ return r.weight_g && +r.weight_g > 0; });
+  var card = document.createElement('div');
+  card.className = 'accordion';
+  card.id = 'acc-analysis';
+  card.innerHTML =
+    '<div class="acc-hdr" onclick="_toggleAcc(\'acc-analysis\')">'
+    + '📊 成長分析 <span class="acc-arrow">▼</span>'
+    + '</div>'
+    + '<div class="acc-body open" id="analysis-body-' + indId + '">'
+    + _growthAnalysisHTML(indId, records, 'line')
+    + '</div>';
 
-    var card = document.createElement('div');
-    card.className = 'accordion';
-    card.id = 'acc-analysis';
-    card.innerHTML =
-      '<div class="acc-hdr" onclick="_toggleAcc(\'acc-analysis\')">'
-      + '📊 成長分析 <span class="acc-arrow">▼</span>'
-      + '</div>'
-      + '<div class="acc-body open" id="analysis-body-' + indId + '">'
-      + _growthAnalysisHTML(indId, records, 'line')
-      + '</div>';
+  accGrowth.parentNode.insertBefore(card, accGrowth.nextSibling);
 
-    accGrowth.parentNode.insertBefore(card, accGrowth.nextSibling);
-
-    // グラフ描画
-    var sortedWts = wts.sort(function(a,b){
-      return String(a.record_date).localeCompare(String(b.record_date));
-    });
-    if (sortedWts.length >= 3) {
-      setTimeout(function(){ _drawAnalysisChart(indId, sortedWts); }, 150);
-    }
+  // グラフ描画
+  var sortedWts = wts.sort(function(a,b){
+    return String(a.record_date).localeCompare(String(b.record_date));
+  });
+  if (sortedWts.length >= 3) {
+    setTimeout(function(){ _drawAnalysisChart(indId, sortedWts); }, 150);
   }
-
-  // Pages.individualDetail をラップして分析カードを挿入
-  var _orig = Pages.individualDetail;
-  Pages.individualDetail = async function(indId) {
-    await _orig.call(this, indId);
-    // 画面描画後に分析カードを挿入
-    setTimeout(function() {
-      var realId = (typeof indId === 'object')
-        ? (indId.id || indId.indId || '')
-        : indId;
-      var records = Store.getGrowthRecords(realId) || [];
-      _injectAnalysisCard(realId, records);
-    }, 200);
-  };
-})();
+}
+// [20260424c] 旧実装の Pages.individualDetail ラップは削除
+//   下部の "分析カード用 MutationObserver" で自動挿入される。
 
 // ════════════════════════════════════════════════════════════════
 // [20260423l] ④ 前蛹体重 → 成虫サイズ予測 (Phase 1-A 刷新)
@@ -826,33 +824,89 @@ Pages._indSimPrepupa = function(indId) {
     '</div>';
 };
 
-// ── 分析カードに前蛹予測を追加（_patchIndividualDetailForAnalysis のラップを拡張） ─
-// individual_analysis.jsの既存パッチにフック
-var _origInjectAnalysis = null;
+// ── 分析カードと前蛹予測を MutationObserver 経由で挿入 ──────────
+// [20260424c] Pages.individualDetail ラップ 2本を廃止し、1つの MutationObserver に統合
+//   旧実装: Pages.individualDetail を2重にラップし、それぞれ await _orig.call を
+//           待ってから setTimeout(200-350ms) で挿入。
+//           Pages.individualDetail は内部で `await API.individual.get(indId)` を
+//           呼ぶため、GAS 応答が20-30秒かかる環境では分析カードも前蛹予測も
+//           20-30秒後にしか表示されなかった。
+//   新実装: #main を MutationObserver で監視し、
+//     - #acc-growth (成長記録アコーディオン) が出現したら分析カード挿入
+//     - #analysis-body-XXX (分析カード本体) が出現したら前蛹予測を追記
+//   initial render (Store 先行値) / API 応答後の再描画 / continuous-scan 保存後の
+//   即時遷移、すべてのタイミングに自動追従する。
+//   requestAnimationFrame で1フレームあたり最大1回にスロットル。二重挿入は
+//   #acc-analysis / #prepupa-pred-XXX の存在チェックで防止。
 (function(){
-  // 既存の Pages.individualDetail ラップが完了した後にさらに前蛹予測を注入
-  var _prevInjected = Pages.individualDetail;
-  Pages.individualDetail = async function(indId) {
-    await _prevInjected.call(this, indId);
-    setTimeout(function(){
-      var realId = (typeof indId === 'object') ? (indId.id || indId.indId || '') : indId;
-      var ind    = Store.getIndividual(realId);
+  if (typeof MutationObserver === 'undefined') return;
+
+  function _tryInjectAnalysis() {
+    // 個体詳細ページでなければ no-op
+    try {
+      if (Store && Store.getPage && Store.getPage() !== 'ind-detail') return;
+    } catch(_) { return; }
+
+    var realId = '';
+    try {
+      var params = (Store && Store.getParams) ? Store.getParams() : {};
+      realId = params.indId || params.id || '';
+    } catch(_) { return; }
+    if (!realId) return;
+
+    // (1) 成長分析カード: #acc-growth の直後に #acc-analysis を挿入
+    var accGrowth = document.getElementById('acc-growth');
+    if (accGrowth && !document.getElementById('acc-analysis')) {
+      var records = [];
+      try { records = (Store.getGrowthRecords && Store.getGrowthRecords(realId)) || []; } catch(_) {}
+      try { _injectAnalysisCard(realId, records); }
+      catch(e){ console.warn('[HerculesOS] analysis card inject error:', e.message); }
+    }
+
+    // (2) 前蛹予測: #analysis-body-XXX の末尾に #prepupa-pred-XXX を追記
+    var analysisBody = document.getElementById('analysis-body-' + realId);
+    if (analysisBody && !document.getElementById('prepupa-pred-' + realId)) {
+      var ind = null;
+      try { ind = Store.getIndividual ? Store.getIndividual(realId) : null; } catch(_) {}
       if (!ind) return;
-      // ステージがPREPUPA/PUPA/ADULT_PRE/ADULT の場合は前蛹予測を表示
       var stage = String(ind.current_stage || '').toUpperCase();
       var showPred = stage === 'PREPUPA' || stage === 'PUPA'
                   || stage === 'ADULT_PRE' || stage === 'ADULT'
                   || ind.prepupa_weight_g;
       if (!showPred) return;
-      var analysisBody = document.getElementById('analysis-body-' + realId);
-      if (!analysisBody) return;
-      // 既存の分析カード内に前蛹予測を追記
-      var predDiv = document.createElement('div');
-      predDiv.id  = 'prepupa-pred-' + realId;
-      predDiv.innerHTML = _prepupaPredictionHTML(ind);
-      analysisBody.appendChild(predDiv);
-    }, 350);
-  };
+      try {
+        var predDiv = document.createElement('div');
+        predDiv.id = 'prepupa-pred-' + realId;
+        predDiv.innerHTML = _prepupaPredictionHTML(ind);
+        analysisBody.appendChild(predDiv);
+      } catch(e){ console.warn('[HerculesOS] prepupa pred inject error:', e.message); }
+    }
+  }
+
+  var _rafScheduled = false;
+  function _schedule() {
+    if (_rafScheduled) return;
+    _rafScheduled = true;
+    (typeof requestAnimationFrame === 'function' ? requestAnimationFrame : function(cb){ setTimeout(cb, 16); })(function(){
+      _rafScheduled = false;
+      try { _tryInjectAnalysis(); } catch(e){ console.warn('[HerculesOS] analysis observer error:', e.message); }
+    });
+  }
+
+  function _startObserver(){
+    var main = document.getElementById('main');
+    if (!main) { setTimeout(_startObserver, 100); return; }
+    var mo = new MutationObserver(_schedule);
+    mo.observe(main, { childList: true, subtree: true });
+    _schedule();
+    console.log('[HerculesOS] analysis-card MutationObserver started');
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _startObserver);
+  } else {
+    _startObserver();
+  }
 })();
 
 // ── 個体詳細に「環境記録」ボタンを追加 ────────────────────────
