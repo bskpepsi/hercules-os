@@ -1,13 +1,19 @@
 // FILE: js/pages/label.js
-// build: 20260424o
+// build: 20260424p
 // 修正:
+//   - [20260424p] 🔥 UNIT ラベルで成長記録編集が反映されない問題を修正
+//     症状: ユニットの成長記録を編集 (04/24→04/19 に変更) しても、ラベル発行画面
+//           では古い 04/24 のまま表示され、再生成を押しても更新されない。
+//     原因: t1_unit ラベルは ld.t1_date (= unit.t1_date / unit.created_at) を
+//           描画に使っていた。これはユニット作成日の固定値で、成長記録の
+//           record_date とは別フィールド。GR を編集してもユニット本体の
+//           t1_date は変わらないためラベルに反映されない。
+//           members[].weight_g も同様で unit.members に埋め込まれた固定値。
+//     修正: UNIT ラベル ld 組立時に成長記録を優先解決:
+//           (a) t1_date ← 最も古い record_date (GR)
+//           (b) members[i].weight_g ← スロット別の最新 record の weight_g
+//           成長記録が無ければ従来の固定値にフォールバック。
 //   - [20260424o] 戻るボタンラベルを backRoute に応じて明示化
-//     症状: T3完了画面→ラベル発行→「← 詳細に戻る」を押すと個体詳細に飛ぶ
-//           と誤解される (実際は t3-completion に遷移する実装で正しい)。
-//     原因: ボタンラベルが「詳細に戻る」で曖昧。個体詳細に飛ぶように見える。
-//     修正: backRoute が t3-completion / t2-completion / t1-session の場合
-//           各々「← T3/T2移行完了画面へ戻る」「← T1移行セッションへ戻る」
-//           と明示。
 //   - [20260424n] 🔥 新規個体のラベル発行で成長記録が空欄になる問題を修正
 //     症状: T3移行セッション確定直後にラベル発行画面に遷移したとき、
 //           記録表が全て空・M/Stチェックも全て空になる (Console に
@@ -1097,6 +1103,58 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         debugInfo:    { unit_id: unit.unit_id, display_id: unit.display_id },
       });
 
+      // [20260424p] 🔥 成長記録から t1_date と members[].weight_g を動的解決
+      //   症状: ユーザーが成長記録の日付・体重を編集しても、ラベルには古い
+      //         値が表示されたままで、再生成しても変わらない。
+      //   原因: UNIT ラベルの描画は ld.t1_date (unit.t1_date / created_at) と
+      //         ld.members[0/1].weight_g を参照していたが、これらはユニット
+      //         本体の固定値で、成長記録編集では更新されないフィールド。
+      //   修正: 成長記録がある場合は以下を優先:
+      //         (a) t1_date = 最も古い記録の record_date (= T1開始日相当)
+      //         (b) members[i].weight_g = 対応するスロットの最新記録の weight_g
+      //         これで GR 編集が即ラベルに反映される。
+      let _resolvedT1Date = unit.t1_date || unit.created_at || '';
+      let _resolvedMembers = Array.isArray(unit.members)
+        ? unit.members.slice().map(m => Object.assign({}, m || {}))
+        : (typeof unit.members === 'string'
+            ? (function(){ try { return JSON.parse(unit.members) || []; } catch(_){ return []; } })().map(m => Object.assign({}, m || {}))
+            : []);
+      try {
+        const _unitIdKey = unit.unit_id || _genDisplayId;
+        let _unitRecs = (Store.getGrowthRecords && Store.getGrowthRecords(_unitIdKey)) || [];
+        if ((!_unitRecs || !_unitRecs.length) && unit.unit_id && unit.unit_id !== _genDisplayId) {
+          _unitRecs = Store.getGrowthRecords(_genDisplayId) || [];
+        }
+        if (_unitRecs && _unitRecs.length > 0) {
+          // (a) 最も古い record_date を T1_date に
+          const _sortedAsc = _unitRecs.slice().sort((a,b) =>
+            String(a.record_date||'').localeCompare(String(b.record_date||'')));
+          const _earliest = _sortedAsc[0];
+          if (_earliest && _earliest.record_date) {
+            _resolvedT1Date = _earliest.record_date;
+          }
+          // (b) 各スロットの最新 weight_g を members に反映
+          //   slot=1 → members[0], slot=2 → members[1]
+          //   slot 情報が無いレコードは skip
+          for (let _slot = 1; _slot <= 2; _slot++) {
+            const _slotRecs = _unitRecs.filter(r => {
+              const s = parseInt(r.unit_slot_no, 10);
+              return !isNaN(s) && s === _slot && r.weight_g;
+            });
+            if (_slotRecs.length === 0) continue;
+            _slotRecs.sort((a,b) => String(b.record_date||'').localeCompare(String(a.record_date||'')));
+            const _latest = _slotRecs[0];
+            const _mi = _slot - 1;
+            if (!_resolvedMembers[_mi]) _resolvedMembers[_mi] = {};
+            _resolvedMembers[_mi].weight_g = _latest.weight_g;
+          }
+          console.log('[LABEL UNIT] t1_date resolved from GR:', _resolvedT1Date,
+            '/ members weights:', _resolvedMembers.map(m => (m && m.weight_g) || '').join('/'));
+        }
+      } catch (_eReslove) {
+        console.warn('[LABEL UNIT] GR resolve warn:', _eReslove.message);
+      }
+
       ld = {
         qr_text:       `BU:${_genDisplayId}`,
         display_id:    _genDisplayId,
@@ -1108,12 +1166,12 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         mat_type:      unit.mat_type    || 'T1',
         mat_molt:      _matMolt,  // [20260420k] Mx表示用 (has_malt由来、未取得時はT2フォールバック)
         for_sale:      _genForSale,
-        members:       unit.members     || [],
+        members:       _resolvedMembers,
         records:       [],
         label_type:    't1_unit',
         note_private:  unit.note        || '',
         origin_lots_str: _originLotsStr,
-        t1_date:       unit.t1_date     || unit.created_at || '',
+        t1_date:       _resolvedT1Date,
       };
     } else if (targetType === 'IND_DRAFT') {
       const di   = _genIndDraft || {};
