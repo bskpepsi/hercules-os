@@ -1,6 +1,14 @@
 // FILE: js/pages/t2_session.js
-// build: 20260424l
+// build: 20260424m
 // 変更点:
+//   - [20260424m] 🐛 既存セッションの復元で初期値が反映されない問題を修正
+//     症状: 20260424l で初期値を 'individualize' にしたが、実機では依然として
+//           「未確定」状態で表示されていた。
+//     原因: localStorage (T2は永続) に旧バージョンで保存されたセッションが残り、
+//           復元時にそのまま使われて新初期値が反映されなかった。
+//     修正: (1) _restoreT2SessionFromStorage で復元直後に
+//               decision===null を 'individualize' に昇格させるマイグレーション
+//               (2) _renderT2Session の冒頭でも保険として補完
 //   - [20260424l] 判断の初期値を 'individualize' に変更 (ユーザー要望)
 //       既に 20260420b で 2択化 (継続削除) 済みだったが、decision 初期値が null の
 //       ままで「何も選択されていない状態」から始まっていた。実運用では大半が
@@ -31,7 +39,7 @@
 //   - _renderT2Session: lineDisp に同じフォールバック追加
 'use strict';
 
-console.log('[HerculesOS] t2_session.js v20260424l loaded');
+console.log('[HerculesOS] t2_session.js v20260424m loaded');
 
 window._t2Session = window._t2Session || null;
 
@@ -228,7 +236,26 @@ function _saveT2SessionToStorage() {
   try { localStorage.setItem('_t2SessionData', JSON.stringify(window._t2Session)); } catch(e) {}
 }
 function _restoreT2SessionFromStorage() {
-  try { const raw = localStorage.getItem('_t2SessionData'); if (raw) window._t2Session = JSON.parse(raw); } catch(e) {}
+  try {
+    const raw = localStorage.getItem('_t2SessionData');
+    if (raw) {
+      window._t2Session = JSON.parse(raw);
+      // [20260424m] 旧バージョンで保存された decision:null を
+      //   新初期値 'individualize' に昇格させる (2択化対応)
+      //   T2は localStorage 永続なので、ブラウザを閉じても古い状態が残り、
+      //   新バージョンで開いても画面が「未確定」で始まる問題を解消する。
+      if (window._t2Session && Array.isArray(window._t2Session.members)) {
+        let migrated = 0;
+        window._t2Session.members.forEach(m => {
+          if (m && m.decision === null) { m.decision = 'individualize'; migrated++; }
+        });
+        if (migrated > 0) {
+          console.log('[T2] restored session: migrated ' + migrated + ' member(s) decision null → individualize');
+          _saveT2SessionToStorage();
+        }
+      }
+    }
+  } catch(e) {}
 }
 
 Pages.t2Session = function (params = {}) {
@@ -240,6 +267,12 @@ Pages.t2Session = function (params = {}) {
 function _renderT2Session(s) {
   const main = document.getElementById('main');
   if (!main) return;
+
+  // [20260424m] 保険: render 時にも decision===null があれば 'individualize' に補完
+  //   古いセッションがどこかで混入した場合の最終防壁。
+  if (Array.isArray(s.members)) {
+    s.members.forEach(m => { if (m && m.decision === null) m.decision = 'individualize'; });
+  }
 
   // ── line_id フォールバック表示 ────────────────────────────────
   const line      = s.line_id ? Store.getLine(s.line_id) : null;

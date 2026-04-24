@@ -1,6 +1,16 @@
 // FILE: js/pages/t3_session.js
-// build: 20260424l
+// build: 20260424m
 // 変更点:
+//   - [20260424m] 🐛 既存セッションの復元で初期値が反映されない問題を修正
+//     症状: 20260424l で初期値を 'individualize' にしたが、実機では依然として
+//           「未確定」状態で表示されていた。
+//     原因: sessionStorage に旧バージョンで保存されたセッションデータ
+//           (members[*].decision === null) が残っていると、復元時にそのまま
+//           使われて新初期値が反映されない。
+//     修正: (1) _restoreT3SessionFromStorage で復元直後に
+//               decision===null を 'individualize' に昇格させるマイグレーション
+//               (2) _renderT3Session の冒頭でも保険として補完
+//           これにより既存の中断セッションも新仕様に揃う。
 //   - [20260424l] 🎯 判断選択肢を「個別化/販売候補」の2択に変更 + 初期値=個別化
 //     (ユーザー要望)
 //       * decisionDefs から 'continue' (継続) を削除
@@ -35,7 +45,7 @@
 //   - [fix1] _renderT3Session: lineDisp に同じフォールバック追加
 'use strict';
 
-console.log('[HerculesOS] t3_session.js v20260424l loaded');
+console.log('[HerculesOS] t3_session.js v20260424m loaded');
 
 window._t3Session = window._t3Session || null;
 
@@ -230,7 +240,25 @@ function _saveT3SessionToStorage() {
   try { sessionStorage.setItem('_t3SessionData', JSON.stringify(window._t3Session)); } catch(e) {}
 }
 function _restoreT3SessionFromStorage() {
-  try { const raw = sessionStorage.getItem('_t3SessionData'); if (raw) window._t3Session = JSON.parse(raw); } catch(e) {}
+  try {
+    const raw = sessionStorage.getItem('_t3SessionData');
+    if (raw) {
+      window._t3Session = JSON.parse(raw);
+      // [20260424m] 旧バージョンで保存された decision:null を
+      //   新初期値 'individualize' に昇格させる (2択化対応)
+      //   これをしないと、新バージョンで開いても画面が「未確定」状態で始まる。
+      if (window._t3Session && Array.isArray(window._t3Session.members)) {
+        let migrated = 0;
+        window._t3Session.members.forEach(m => {
+          if (m && m.decision === null) { m.decision = 'individualize'; migrated++; }
+        });
+        if (migrated > 0) {
+          console.log('[T3] restored session: migrated ' + migrated + ' member(s) decision null → individualize');
+          _saveT3SessionToStorage();
+        }
+      }
+    }
+  } catch(e) {}
 }
 
 Pages.t3Session = function (params = {}) {
@@ -242,6 +270,13 @@ Pages.t3Session = function (params = {}) {
 function _renderT3Session(s) {
   const main = document.getElementById('main');
   if (!main) return;
+
+  // [20260424m] 保険: render 時にも decision===null があれば 'individualize' に補完
+  //   古いセッションがどこかで混入した場合の最終防壁。restore 側で拾えなかった
+  //   ケース (例: 別タブで保存した旧データ等) でも、描画時には個別化選択状態に揃う。
+  if (Array.isArray(s.members)) {
+    s.members.forEach(m => { if (m && m.decision === null) m.decision = 'individualize'; });
+  }
 
   // ── line_id フォールバック表示 ────────────────────────────────
   const line     = s.line_id ? Store.getLine(s.line_id) : null;
