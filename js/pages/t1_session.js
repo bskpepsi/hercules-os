@@ -1,7 +1,17 @@
 // ────────────────────────────────────────────────────────────────
 // ════════════════════════════════════════════════════════════════
 // t1_session.js — T1移行編成セッション画面
-// build: 20260416a
+// build: 20260425a
+//
+// 20260425a 修正:
+//   - 🌟 T1セッション完了時に個別化個体の成長記録を Store に保存
+//     症状: T1で個別飼育として登録した個体について、個体詳細・ラベル発行で
+//           成長記録が 0件 になり体重も空白表示。
+//     原因: GAS の getIndividual が target_id===ind_id で検索するが、
+//           createT1Session は target_id=display_id で書き込んでおり不一致。
+//     対応: フロント側で送信した growth_entries をレスポンスの ind_id で
+//           ひもづけて Store.setGrowthRecords に保存。GAS パッチが入る
+//           までの暫定対応 (パッチ後も無害)。
 //
 // 20260416a 修正:
 //   - ← 戻るボタン: qr-scanではなくlot-detailに戻るよう修正
@@ -1208,6 +1218,54 @@ Pages._t1SessionSave = async function () {
     if (res && res.individuals && Array.isArray(res.individuals)) {
       res.individuals.forEach(function(ind) { Store.addDBItem('individuals', ind); });
     }
+
+    // [20260425a] 🌟 T1セッション保存時に成長記録もフロントの Store に保存
+    //   症状: T1移行で個別飼育として登録した個体について、個体詳細・ラベル発行で
+    //         成長記録が 0件 表示される。
+    //   原因: GAS の getIndividual は target_id === ind_id で検索するが、
+    //         createT1Session は target_id = display_id で書き込んでおり不一致。
+    //         GAS 側は別途パッチが必要 (GAS_patch_20260425a_getIndividual.txt)。
+    //   暫定: フロント側で送信時に組み立てた growth_entries を、レスポンスの
+    //         display_id → ind_id マッピングで紐付けて Store.setGrowthRecords
+    //         する。これで GAS パッチがまだでも個体詳細に体重が表示される。
+    //         GAS パッチが入った後は API.individual.get が正しく返すので
+    //         同じデータが上書きされるだけ (実害なし)。
+    try {
+      const _newInds = (res && res.individuals) || [];
+      const _displayIdToIndId = {};
+      _newInds.forEach(function(ind) {
+        if (ind && ind.display_id && ind.ind_id) {
+          _displayIdToIndId[ind.display_id] = ind.ind_id;
+        }
+      });
+      const _payload = payload;  // _buildSavePayload で組み立てた entries を再利用
+      const _entriesByInd = {};  // ind_id → records[]
+      (_payload.growth_entries || []).forEach(function(g) {
+        if (g.target_type !== 'IND_DISPLAY') return;
+        const indId = _displayIdToIndId[g.target_id];
+        if (!indId) return;
+        if (!_entriesByInd[indId]) _entriesByInd[indId] = [];
+        _entriesByInd[indId].push({
+          // 必要な属性に縮約 (画面表示で使う部分)
+          target_type:    'IND',
+          target_id:       indId,
+          record_date:     g.record_date,
+          weight_g:        g.weight_g,
+          size_category:   g.size_category,
+          stage:           g.stage           || 'L1L2',
+          mat_type:        g.mat_type        || 'T1',
+          container:       g.container       || '2.7L',
+          exchange_type:   g.exchange_type   || 'FULL',
+          event_type:      g.event_type      || 'T1_START',
+          unit_slot_no:    g.unit_slot_no    || '',
+          age_days:        g.age_days        || '',
+        });
+      });
+      Object.keys(_entriesByInd).forEach(function(indId){
+        Store.setGrowthRecords(indId, _entriesByInd[indId]);
+        console.log('[T1] 個体成長記録を Store に保存:', indId, _entriesByInd[indId].length, '件');
+      });
+    } catch (_eGr) { console.warn('[T1] 個体成長記録保存エラー:', _eGr.message); }
     s.lots.forEach(l => Store.patchDBItem('lots', 'lot_id', l.lot_id, {
       t1_done:    true,
       t1_done_at: new Date().toISOString().split('T')[0].replace(/-/g, '/'),
