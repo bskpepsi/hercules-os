@@ -1,6 +1,6 @@
 // ════════════════════════════════════════════════════════════════
 // store.js
-// build: 20260424u
+// build: 20260425d
 // 役割: アプリ全体の状態とローカルキャッシュを一元管理する。
 //
 // 本番仕様:
@@ -8,6 +8,28 @@
 //   - ステージ: L1L2 / L3 / PREPUPA / PUPA / ADULT_PRE / ADULT
 //   - ステータス: alive / for_sale / listed / sold / dead
 //   - localStorage 容量超過時の保護処理
+//
+// [20260425d] 🔥 幽霊 growthMap データ漏洩バグへの恒久対策
+//   症状: T1 移行セッションで A2-U01 のラベル発行を押すと、
+//         スプレッドシートに存在しない 4/18 20g/20g + 4/20 35g/38g の
+//         「幽霊データ」がラベル下部の記録表に表示される。
+//   根本原因: 別ユニット (HM2025-A1-U06 / 内部 ID BU-7stnssf) が個体化
+//             された後も、その unit_id をキーとする growthMap[BU-7stnssf]
+//             の 4 件が孤児として残留。中断中の _t2SessionData が同じ
+//             unit_id を保持していたため、後続の T1 セッションで構築される
+//             unitDraft (またはエイリアス map) を経由して別ユニットの
+//             ラベル生成時に getMergedUnitGrowthRecords が誤って引き当てた。
+//   対応:
+//     A. loadFromStorage 終端で _gcOrphanGrowthRecords を呼び、
+//        breeding_units / individuals / lots に紐づかない BU-/IND-/LOT-
+//        プレフィックスの growthMap キーと、display_id 形式 (HM2025-...)
+//        の冗長キーを起動時に自動 GC する。
+//     B. resolveUnitMembers / resolveUnitT1Date / getMergedUnitGrowthRecords
+//        が unit.unit_id を信用するのは、その unit_id が breeding_units に
+//        実在する場合のみ。実在しない (= ドラフト or ゾンビ) なら
+//        display_id を使う。これで中断 T2 セッションの unit_id がドラフト
+//        経由で漏洩しても、別ユニットの記録が引き寄せられない。
+//   公開: Store.gcOrphanGrowthRecords を露出、コンソールから手動実行可能。
 //
 // [20260424u] 🔥 ID 正規化レイヤー導入 (single source of truth)
 //   背景: 同じユニットの成長記録が unit_id (BU-xxx) と display_id (HM2025-A1-Uxx)
@@ -33,7 +55,8 @@
 // 20260421f: 販売候補フィルタ修正 — for_sale フラグ判定 (T2移行直後の個体対応)
 //            飼育中フィルタから for_sale===true 個体を除外
 // 20260424u: ID正規化レイヤー導入 (display_id ↔ internal_id 自動変換)
-console.log('[HerculesOS] store.js v20260424u loaded');
+// 20260425d: 幽霊 growthMap データ漏洩への対策 (起動時 GC + resolveUnit* の防御)
+console.log('[HerculesOS] store.js v20260425d loaded');
 
 const Store = (() => {
 
@@ -368,7 +391,49 @@ const Store = (() => {
         .forEach(function(tbl){
           if (Array.isArray(_db[tbl])) _rebuildAliasMapForTable(tbl, _db[tbl]);
         });
+      // [20260425d] 起動時に孤児 growthMap キーを自動 GC
+      //   中断された T2 セッションや個体化済ユニットの古い unit_id に紐づく
+      //   成長記録が、後続セッションの unitDraft 経由で別ユニットのラベルに
+      //   「幽霊データ」として漏洩するバグを根絶するための予防策。
+      _gcOrphanGrowthRecords();
     } catch (e) { console.warn('Store: ローカルデータ読み込み失敗', e); }
+  }
+
+  // [20260425d] growthMap の孤児キーを自動 GC
+  //   breeding_units / individuals / lots に紐づかないキーを除去する。
+  //   - BU-/IND-/LOT- プレフィックスのキー: 各テーブルの internal_id 集合に
+  //     存在しなければ削除 (ゾンビ)。
+  //   - HM2025-... 形式の display_id キー: alias map (display_id → internal_id)
+  //     により、setGrowthRecords は内部 ID キーで保存されるはずで
+  //     display_id キーは redundant のため削除。
+  //   - その他のキー (例: 連続スキャンの _tmp_xxx 等) は保守のため触らない。
+  //   削除があれば _scheduleSave で localStorage に書き戻す。
+  function _gcOrphanGrowthRecords() {
+    const gm = _db.growthMap;
+    if (!gm || typeof gm !== 'object') return;
+    const validBU  = new Set((_db.breeding_units||[])
+      .map(function(u){ return u && u.unit_id; }).filter(Boolean));
+    const validIND = new Set((_db.individuals||[])
+      .map(function(i){ return i && i.ind_id; }).filter(Boolean));
+    const validLOT = new Set((_db.lots||[])
+      .map(function(l){ return l && l.lot_id; }).filter(Boolean));
+    const removed = [];
+    Object.keys(gm).forEach(function(key){
+      let drop = false;
+      if      (/^BU-/.test(key))      drop = !validBU.has(key);
+      else if (/^IND-/.test(key))     drop = !validIND.has(key);
+      else if (/^LOT-/.test(key))     drop = !validLOT.has(key);
+      else if (/^HM\d{4}-/.test(key)) drop = true;
+      if (drop) {
+        const cnt = Array.isArray(gm[key]) ? gm[key].length : 0;
+        removed.push({ key: key, count: cnt });
+        delete gm[key];
+      }
+    });
+    if (removed.length > 0) {
+      console.warn('[Store GC 20260425d] orphan growthMap keys removed:', removed);
+      _scheduleSave();
+    }
   }
 
   function clearCache() {
@@ -531,6 +596,30 @@ const Store = (() => {
         || null;
   }
 
+  // [20260425d] 🛡️ ユニット成長記録のキー解決ヘルパー（防御層）
+  //   resolveUnitMembers / resolveUnitT1Date / getMergedUnitGrowthRecords
+  //   の 3 関数で、unit.unit_id || unit.display_id のフォールバックを
+  //   素朴に書いていたが、それだと中断中の T2 セッション draft や
+  //   個体化済で breeding_units から消えたユニットの「ゾンビ unit_id」が
+  //   ドラフト経由でリークした際、別ユニットの記録を引き寄せてしまう。
+  //
+  //   本ヘルパーは unit.unit_id が breeding_units に実在する場合のみそれを
+  //   キーとし、実在しなければ display_id を採用する。これで
+  //     - T1 セッション中の unitDraft (まだ確定 unit_id 無し) → display_id
+  //     - 個体化済ユニットの古い unit_id がドラフトに残っていた場合も → display_id
+  //   と安全側に倒せる。alias map (display_id → internal_id) は別途稼働
+  //   しているので、display_id 経由でも本来のレコードは引ける。
+  function _resolveUnitGrowthKey(unit) {
+    if (!unit) return null;
+    if (unit.unit_id && unit.display_id) {
+      const buExists = (_db.breeding_units || []).some(function(b){
+        return b && b.unit_id === unit.unit_id;
+      });
+      if (!buExists) return unit.display_id;
+    }
+    return unit.unit_id || unit.display_id || null;
+  }
+
   // [20260424u] 🌟 Single-Source-of-Truth リファクタ Phase 2
   //   ユニットの members 配列を「最新の成長記録」で補完して返す。
   //   従来は各画面 (lot.js, label.js, t2/t3_session.js, unit_detail.js) で
@@ -558,8 +647,10 @@ const Store = (() => {
     members = members.map(function(m){ return Object.assign({}, m || {}); });
 
     // 成長記録から各スロットの最新を取得
-    // _resolveId 経由なので unit_id でも display_id でも同じ場所を引く
-    const recs = getGrowthRecords(unit.unit_id || unit.display_id) || [];
+    // [20260425d] _resolveUnitGrowthKey でゾンビ unit_id をフィルタ。
+    //   実在しない unit_id がドラフト経由でリークしても他ユニットの記録を
+    //   参照しないようにするための防御層。
+    const recs = getGrowthRecords(_resolveUnitGrowthKey(unit)) || [];
     if (recs.length === 0) return members;
 
     // スロット別の最新 record を抽出
@@ -591,7 +682,8 @@ const Store = (() => {
   //   描画する際に使用。GR の編集が即反映されるようにするのが狙い。
   function resolveUnitT1Date(unit) {
     if (!unit) return '';
-    const recs = getGrowthRecords(unit.unit_id || unit.display_id) || [];
+    // [20260425d] _resolveUnitGrowthKey でゾンビ unit_id を弾く
+    const recs = getGrowthRecords(_resolveUnitGrowthKey(unit)) || [];
     if (recs.length > 0) {
       const sorted = recs.slice().sort(function(a,b){
         return String(a.record_date||'').localeCompare(String(b.record_date||''));
@@ -605,9 +697,10 @@ const Store = (() => {
   // [20260424u] ユニットの成長記録を全件返す。
   //   Store の ID 正規化により unit_id / display_id どちらを渡しても
   //   同じキー (internal_id) を引くので、シンプルに getGrowthRecords を呼ぶだけ。
+  // [20260425d] ゾンビ unit_id 防御のため _resolveUnitGrowthKey を経由。
   function getMergedUnitGrowthRecords(unit) {
     if (!unit) return [];
-    const recs = getGrowthRecords(unit.unit_id || unit.display_id) || [];
+    const recs = getGrowthRecords(_resolveUnitGrowthKey(unit)) || [];
     return recs.slice();
   }
   // 指定ロットに由来するユニット一覧を返す
@@ -725,5 +818,7 @@ const Store = (() => {
     resolveUnitMembers,
     resolveUnitT1Date,
     getMergedUnitGrowthRecords,
+    // [20260425d] 孤児 growthMap キーの手動 GC を露出
+    gcOrphanGrowthRecords: _gcOrphanGrowthRecords,
   };
 })();
