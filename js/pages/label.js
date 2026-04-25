@@ -1,25 +1,18 @@
 // FILE: js/pages/label.js
-// build: 20260424r
+// build: 20260424s
 // 修正:
+//   - [20260424s] 🔥 UNIT ラベルの成長記録マージを両キーから merge するよう修正
+//     症状: Console ログで records.length=2 / dates=['2026/04/20','2026/04/20']
+//           と表示され、04/18 の記録が抜け落ちていた。ユニット詳細画面では
+//           04/18 と 04/20 の両方が正しく表示されていた。
+//     原因: Store.getGrowthRecords は unit_id / display_id 別々にキャッシュ
+//           されており、unit_detail.js が recU / recD を別々に保存していた
+//           ため片側にしか最新記録が入らないケースがあった。
+//     修正: ラベル生成時に unit_id / display_id 両方のキーから取得して
+//           record_id で重複排除 merge。unit_detail.js 側も merged を
+//           両方に保存するよう修正 (20260424s)。
 //   - [20260424r] 🔥 戻るボタンが ID なしで遷移する問題を修正
-//     症状: ラベル発行画面の「詳細に戻る」ボタンを押すと
-//           "ユニットが見つかりません (ID未指定)" と出る。
-//           URL: ?backParam=%5Bobject+Object%5D となっていた。
-//     原因: routeTo が URLSearchParams にオブジェクトを渡す際、JS の暗黙の
-//           .toString() で "[object Object]" に変換されていた。戻り先で
-//           復元しようとしても文字列化された backParam からは何も取れない。
-//     修正: (a) app.js の routeTo で、ネストされたオブジェクト値を
-//               JSON.stringify し、キーに _json__ プレフィックスを付けて
-//               URL ハッシュに載せる。復元時は _json__ を検出して
-//               JSON.parse で元のオブジェクトに戻す。
-//           (b) label.js 側で backParam が文字列 "[object Object]" に
-//               壊れて渡ってきた場合も _backParam を {} で初期化して
-//               targetType=UNIT かつ backRoute=unit-detail なら
-//               unitDisplayId=targetId を補完するフォールバックを追加。
 //   - [20260424r] UNIT ラベル描画の records 配列のデバッグログ追加
-//     症状報告: records:2 なのに 1 行しか描画されない件の原因特定のため、
-//     _buildT1UnitLabelHTML の冒頭で records の中身 (dates/slots/weights)
-//     をログに出力。
 //   - [20260424q] 🔥 UNIT ラベルに複数の成長記録を表示
 //   - [20260424p] 🔥 UNIT ラベルで成長記録編集が反映されない問題を修正
 //   - [20260424o] 戻るボタンラベルを backRoute に応じて明示化
@@ -1148,15 +1141,34 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
             : []);
       let _resolvedUnitRecs = [];
       try {
-        const _unitIdKey = unit.unit_id || _genDisplayId;
-        let _unitRecs = (Store.getGrowthRecords && Store.getGrowthRecords(_unitIdKey)) || [];
-        if ((!_unitRecs || !_unitRecs.length) && unit.unit_id && unit.unit_id !== _genDisplayId) {
-          _unitRecs = Store.getGrowthRecords(_genDisplayId) || [];
-        }
-        if (_unitRecs && _unitRecs.length > 0) {
-          _resolvedUnitRecs = _unitRecs.slice();
+        // [20260424s] unit_id / display_id 両方のキーから取得して record_id で重複排除
+        //   症状: 継続読取り後のラベル発行で記録表に直近日付 (04/20) の行しか
+        //         出ず、以前の日付 (04/18) が消える。
+        //   原因: unit_detail.js の _udLoadGrowthAsync が、API を unit_id と
+        //         display_id の 2 つのキーで呼び、それぞれのレスポンスを
+        //         Store.setGrowthRecords(unit_id, recU) と
+        //         Store.setGrowthRecords(display_id, recD) で "別々に" 保存する。
+        //         片方のキーにだけ最新記録が入るケースがあり、ラベル生成側が
+        //         そのキーだけ読むと 04/18 分が抜け落ちる。
+        //   対応: unit_id / display_id の両方から取得して record_id で重複排除。
+        const _keys = [];
+        if (unit.unit_id)     _keys.push(unit.unit_id);
+        if (_genDisplayId && _genDisplayId !== unit.unit_id) _keys.push(_genDisplayId);
+        const _seenRec = {};
+        _keys.forEach(function(_k){
+          const _list = (Store.getGrowthRecords && Store.getGrowthRecords(_k)) || [];
+          _list.forEach(function(r){
+            if (!r) return;
+            const _rid = r.record_id
+              || (r.record_date + '|' + (r.unit_slot_no||'') + '|' + (r.weight_g||''));
+            if (_seenRec[_rid]) return;
+            _seenRec[_rid] = true;
+            _resolvedUnitRecs.push(r);
+          });
+        });
+        if (_resolvedUnitRecs.length > 0) {
           // (a) 最も古い record_date を T1_date に
-          const _sortedAsc = _unitRecs.slice().sort((a,b) =>
+          const _sortedAsc = _resolvedUnitRecs.slice().sort((a,b) =>
             String(a.record_date||'').localeCompare(String(b.record_date||'')));
           const _earliest = _sortedAsc[0];
           if (_earliest && _earliest.record_date) {
@@ -1166,7 +1178,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
           //   slot=1 → members[0], slot=2 → members[1]
           //   slot 情報が無いレコードは skip
           for (let _slot = 1; _slot <= 2; _slot++) {
-            const _slotRecs = _unitRecs.filter(r => {
+            const _slotRecs = _resolvedUnitRecs.filter(r => {
               const s = parseInt(r.unit_slot_no, 10);
               return !isNaN(s) && s === _slot && r.weight_g;
             });
@@ -1179,7 +1191,8 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
           }
           console.log('[LABEL UNIT] t1_date resolved from GR:', _resolvedT1Date,
             '/ members weights:', _resolvedMembers.map(m => (m && m.weight_g) || '').join('/'),
-            '/ records:', _resolvedUnitRecs.length);
+            '/ records:', _resolvedUnitRecs.length,
+            '/ keys:', _keys);
         }
       } catch (_eReslove) {
         console.warn('[LABEL UNIT] GR resolve warn:', _eReslove.message);

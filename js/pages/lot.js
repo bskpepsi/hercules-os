@@ -1,17 +1,14 @@
 // FILE: js/pages/lot.js
 // ════════════════════════════════════════════════════════════════
 // lot.js
-// build: 20260424r
+// build: 20260424s
 // 変更点:
+//   - [20260424s] 成長記録取得を両キー (unit_id / display_id) から merge
+//     症状: ユニット一覧カードで、直近以外の記録が欠損するケースがあった。
+//     原因: 20260424r で成長記録を参照するようにしたが、片側のキーしか
+//           参照していなかったため、unit_detail.js の保存仕様と相性が悪かった。
+//     修正: 両キーから取得して record_id で重複排除。
 //   - [20260424r] 🔥 ユニット一覧カードの体重が最新の成長記録を反映するよう修正
-//     症状: 継続読取りで体重を更新しても、飼育管理ユニットタブ (lot-list&_tab=unit)
-//           のカードでは古い体重 (12g/12g) のまま表示される。
-//     原因: カード描画は u.members[].weight_g (ユニット本体の固定値) だけを
-//           参照。継続読取りで成長記録は growth_records に追記されるが、
-//           breeding_units.members は編成時の初期値のまま更新されない設計。
-//     修正: カード描画前に Store.getGrowthRecords(unit_id) からスロット別に
-//           最新 record を抽出し、members[i].weight_g に上書き (元データは
-//           変更せず表示用コピーに適用)。
 //   - [20260424i] 🔥 採卵日を独立フィールドで管理 (メモ欄からの脱却)
 //     症状: ロット情報欄に採卵日の専用行が無く、メモ欄に
 //           「採卵日: 2026/04/21」と文字列で残っていた。画像6では
@@ -1019,16 +1016,29 @@ Pages.lotList = function () {
         //         追記される一方、breeding_units.members は編成時の初期値固定)。
         //   対応: Store の成長記録から slot 別の最新 weight_g を取得し、
         //         members に上書き (一時変数にコピーして元データには触れない)。
+        //   [20260424s] unit_id / display_id 両方のキーから merge (unit_detail.js が
+        //         別々のキーに保存するため片方だけだと欠損するケースがある)。
         try {
-          const _unitIdKey  = u.unit_id || u.display_id;
-          let _unitRecs = (Store.getGrowthRecords && Store.getGrowthRecords(_unitIdKey)) || [];
-          if ((!_unitRecs || !_unitRecs.length) && u.unit_id && u.unit_id !== u.display_id) {
-            _unitRecs = (Store.getGrowthRecords(u.display_id) || []);
-          }
-          if (_unitRecs && _unitRecs.length > 0) {
+          const _keys = [];
+          if (u.unit_id)     _keys.push(u.unit_id);
+          if (u.display_id && u.display_id !== u.unit_id) _keys.push(u.display_id);
+          const _seenRec = {};
+          const _mergedRecs = [];
+          _keys.forEach(function(_k){
+            const _list = (Store.getGrowthRecords && Store.getGrowthRecords(_k)) || [];
+            _list.forEach(function(r){
+              if (!r) return;
+              const _rid = r.record_id
+                || (r.record_date + '|' + (r.unit_slot_no||'') + '|' + (r.weight_g||''));
+              if (_seenRec[_rid]) return;
+              _seenRec[_rid] = true;
+              _mergedRecs.push(r);
+            });
+          });
+          if (_mergedRecs.length > 0) {
             membersArr = membersArr.map(m => Object.assign({}, m || {}));
             for (let _slot = 1; _slot <= 2; _slot++) {
-              const _slotRecs = _unitRecs.filter(r => {
+              const _slotRecs = _mergedRecs.filter(r => {
                 const s = parseInt(r.unit_slot_no, 10);
                 return !isNaN(s) && s === _slot && r.weight_g;
               });
