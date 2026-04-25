@@ -1,14 +1,19 @@
 // FILE: js/pages/t2_session.js
-// build: 20260425b
+// build: 20260425c
 // 変更点:
-//   - [20260425b] 🔥 T2移行で個別化した個体の成長記録が Store に反映されない問題を修正
-//     症状: T2移行完了後のラベル発行画面で、個体の体重欄が空白・成長記録 0件 表示。
-//     原因: フロントが res.created_individuals を Store の個体台帳に追加するだけで、
-//           対応する成長記録 (T2_INDIVIDUALIZE) を Store に保存していなかった。
-//           ラベル発行画面は Store.getGrowthRecords(ind_id) を見るため 0件になる。
-//     修正: payload.decisions と res.created_individuals を origin_unit_slot_no で
-//           照合し、Store.setGrowthRecords で個体ごとに T2_INDIVIDUALIZE 記録を
-//           保存する。これは T1セッション (build 20260425a) と同じ修正パターン。
+//   - [20260425c] 🔥 T2セッション完了後の Store 同期を API再取得方式に変更
+//     20260425b は payload からローカル生成した記録 1件で setGrowthRecords していたが、
+//     これは完全上書きでありユニット時代の T1記録 (18g等) が失われる問題があった。
+//     さらに Store.growthMap は ID 正規化を通っておらず、ind_id / display_id が
+//     混在する場合に取り違えるリスクもあった。
+//     → API.individual.get で完全な _growthRecords を取得して Store に反映する
+//       方式に変更 (GAS の getIndividual は IND直接 + ユニット時代をマージ済み)。
+//       ind_id / display_id 両方のキーに同じデータをセットして取り違えを防ぐ。
+//       API失敗時はフォールバックとしてローカル生成 (20260425b ロジック改良版) で
+//       既存 Store とマージ保存。
+//     並列化 (Promise.all) してからラベル画面遷移するため、ラベルの体重欄が
+//     確実に埋まるようになる。
+//   - [20260425b] T2移行で個別化した個体の成長記録 Store 反映 (本コミットで改善)
 //   - [20260424u] 🌟 Store の ID 正規化に伴い両キーマージハックを削除
 //     _getT1GrowthBySLot / _fromInd ブランチの両キーマージを単一呼び出しに簡素化。
 //   - [20260424t] 🔥 T2移行画面の前回体重 (T1:) が古い値の問題を修正 (T3 と同仕様)
@@ -861,57 +866,87 @@ Pages._t2SessionSave = async function () {
       res.created_individuals.forEach(ind => { if (typeof Store.addDBItem === 'function') Store.addDBItem('individuals', ind); });
     }
 
-    // [20260425b] 🌟 T2セッション保存時に個体の成長記録も Store に反映
-    //   症状: T2移行で個別化した個体について、ラベル発行画面で成長記録 0件、
-    //         体重欄が空白になる。
-    //   原因: GAS は GROWTH シートに T2_INDIVIDUALIZE 記録を正しく書き込むが、
-    //         フロントは res.created_individuals を Store の個体台帳に追加する
-    //         だけで、成長記録までは Store に反映していなかった。
-    //         ラベル発行画面は Store.getGrowthRecords(ind_id) を見るので 0件返る。
-    //   対応: payload.decisions と res.created_individuals を slot_no で照合し、
-    //         個別化された個体ごとに T2_INDIVIDUALIZE 相当の record を組み立てて
-    //         Store.setGrowthRecords で保存。GAS パッチ適用後は API.individual.get
-    //         でも取得できるので、これは即時表示用の先行反映。
+    // [20260425c] 🔥 T2セッション完了後に個体ごとに API.individual.get を呼んで
+    //   完全な成長記録を Store に同期する。
+    //   背景:
+    //     - 20260425b で T2_INDIVIDUALIZE 記録 1件を Store にセットしたが、
+    //       これは完全上書きであり、Store にユニット時代の記録 (T1_START 18g等)
+    //       が入っていてもそれを破壊してしまう問題があった。
+    //     - また Store.setGrowthRecords は ID 正規化 (_resolveId) を通っておらず、
+    //       ind_id / display_id の混在で同一個体が別キーで保存されるリスクもあった。
+    //   対応:
+    //     - GAS の getIndividual は ind_id / display_id の両方で IND 記録を引き、
+    //       さらに origin_unit_id 経由でユニット時代の記録もマージして返す。
+    //     - これを各個体について並列で呼び出し、Store に反映する。
+    //     - これにより T1時代の 18g + T2の 50g が両方ラベル画面に出るようになる。
+    //   失敗時:
+    //     - API 呼び出し失敗時はフォールバックとして payload からローカル記録を生成
+    //       (build 20260425b の旧ロジック) を実行する。
     try {
       if (res && Array.isArray(res.created_individuals) && res.created_individuals.length > 0) {
-        res.created_individuals.forEach(function(ind) {
-          if (!ind || !ind.ind_id) return;
-          // slot_no で payload.decisions と照合 (origin_unit_slot_no がレスポンスに含まれる)
-          const slotNo = (ind.origin_unit_slot_no !== undefined && ind.origin_unit_slot_no !== null)
-            ? parseInt(ind.origin_unit_slot_no, 10) : null;
-          let dec = null;
-          if (slotNo !== null && !isNaN(slotNo)) {
-            dec = payload.decisions.find(function(d) {
-              const dSlot = parseInt(d.unit_slot_no, 10);
-              return dSlot === slotNo
-                  && (d.decision === 'individualize' || d.decision === 'sale');
-            });
-          }
-          if (!dec || !dec.weight_g) return;
-
-          const grRecord = {
-            record_id:    '_local_' + ind.ind_id,  // GAS 取得時に上書きされる仮ID
-            target_type:  'IND',
-            target_id:    ind.ind_id,
-            record_date:  payload.session_date,
-            weight_g:     Number(dec.weight_g),
-            size_category:dec.size_category || '',
-            stage:        s.stage_phase || 'T1',  // T2移行時の対象ステージ (T1→T2 移行)
-            mat_type:     dec.mat_type     || 'T2',
-            container:    dec.container    || '2.7L',
-            exchange_type:dec.exchange_type || 'FULL',
-            has_malt:     (dec.mat_molt === true || dec.mat_molt === 'true'),
-            event_type:   'T2_INDIVIDUALIZE',
-            note_private: dec.memo || '',
-          };
-          // Store の ID 正規化 (build 20260424u) により ind_id でも display_id でも同じ場所
-          Store.setGrowthRecords(ind.ind_id, [grRecord]);
-          console.log('[T2] 個体成長記録を Store に保存:', ind.ind_id,
-            '(slot=' + slotNo + ', weight=' + dec.weight_g + 'g)');
-        });
+        const _indGets = res.created_individuals
+          .filter(function(ind){ return ind && ind.ind_id; })
+          .map(function(ind) {
+            return API.individual.get(ind.ind_id)
+              .then(function(detRes) {
+                const _ind = detRes && detRes.individual;
+                if (_ind && Array.isArray(_ind._growthRecords)) {
+                  Store.setGrowthRecords(ind.ind_id, _ind._growthRecords);
+                  // display_id でも同じデータでセット (Store.growthMap は _resolveId 未対応のため両キーに保存)
+                  if (_ind.display_id && _ind.display_id !== ind.ind_id) {
+                    Store.setGrowthRecords(_ind.display_id, _ind._growthRecords);
+                  }
+                  console.log('[T2] 個体成長記録 API再取得:', ind.ind_id,
+                    '(' + _ind._growthRecords.length + '件)');
+                }
+              })
+              .catch(function(eGet) {
+                console.warn('[T2] API.individual.get 失敗、フォールバックでローカル生成:',
+                  ind.ind_id, eGet.message);
+                // フォールバック: payload からローカル記録を生成
+                const slotNo = (ind.origin_unit_slot_no !== undefined && ind.origin_unit_slot_no !== null)
+                  ? parseInt(ind.origin_unit_slot_no, 10) : null;
+                let dec = null;
+                if (slotNo !== null && !isNaN(slotNo)) {
+                  dec = payload.decisions.find(function(d) {
+                    const dSlot = parseInt(d.unit_slot_no, 10);
+                    return dSlot === slotNo
+                        && (d.decision === 'individualize' || d.decision === 'sale');
+                  });
+                }
+                if (!dec || !dec.weight_g) return;
+                const grRecord = {
+                  record_id:    '_local_' + ind.ind_id,
+                  target_type:  'IND',
+                  target_id:    ind.ind_id,
+                  record_date:  payload.session_date,
+                  weight_g:     Number(dec.weight_g),
+                  size_category:dec.size_category || '',
+                  stage:        s.stage_phase || 'T1',
+                  mat_type:     dec.mat_type     || 'T2',
+                  container:    dec.container    || '2.7L',
+                  exchange_type:dec.exchange_type || 'FULL',
+                  has_malt:     (dec.mat_molt === true || dec.mat_molt === 'true'),
+                  event_type:   'T2_INDIVIDUALIZE',
+                  note_private: dec.memo || '',
+                };
+                // 既存の Store 記録があれば残してマージ
+                const existing = Store.getGrowthRecords(ind.ind_id) || [];
+                const dedup = {};
+                const merged = [];
+                existing.concat([grRecord]).forEach(function(r) {
+                  const key = r.record_id ||
+                    (r.target_type+'|'+r.target_id+'|'+r.record_date+'|'+r.weight_g);
+                  if (!dedup[key]) { dedup[key] = true; merged.push(r); }
+                });
+                Store.setGrowthRecords(ind.ind_id, merged);
+              });
+          });
+        // 全件並列で完了を待ってからラベル画面遷移 (体重欄が確実に埋まる)
+        await Promise.all(_indGets);
       }
     } catch (_eGr) {
-      console.warn('[T2] 個体成長記録 Store 保存エラー:', _eGr.message);
+      console.warn('[T2] 個体成長記録 同期エラー:', _eGr.message);
     }
 
     window._t2Session = null; localStorage.removeItem('_t2SessionData');

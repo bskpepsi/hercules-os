@@ -1,11 +1,9 @@
 // FILE: js/pages/t3_session.js
-// build: 20260425b
+// build: 20260425c
 // 変更点:
-//   - [20260425b] 🔥 T3移行で個別化した個体の成長記録が Store に反映されない問題を修正
-//     T2と同根の問題。res.created_individuals を Store の個体台帳に追加するだけで
-//     成長記録 (T3_INDIVIDUALIZE) を Store に反映していなかったため、ラベル発行
-//     画面で体重欄が空白になっていた。
-//     payload.decisions と origin_unit_slot_no で照合して Store.setGrowthRecords。
+//   - [20260425c] 🔥 T3セッション完了後の Store 同期を API再取得方式に変更
+//     T2 と同根の問題・対応 (詳細は t2_session.js のコメント参照)。
+//   - [20260425b] T3 個別化個体の成長記録 Store 反映 (本コミットで改善)
 //   - [20260424u] 🌟 Store の ID 正規化に伴い両キーマージハックを削除
 //     _getT2GrowthBySlot / _fromInd ブランチの両キーマージを単一呼び出しに簡素化。
 //     Store 内部で _resolveId が走るので、unit_id / display_id どちらでも
@@ -829,48 +827,69 @@ Pages._t3SessionSave = async function () {
       res.created_individuals.forEach(ind => { if (typeof Store.addDBItem === 'function') Store.addDBItem('individuals', ind); });
     }
 
-    // [20260425b] 🌟 T3セッション保存時に個体の成長記録も Store に反映
-    //   T2 と同じ症状・対応 (詳細は t2_session.js のコメント参照)。
-    //   T3 移行も「個別化」で個体が作られるため、同様に GAS の T3_INDIVIDUALIZE
-    //   相当記録を Store に先行反映する必要がある。
+    // [20260425c] 🔥 T3セッション完了後に個体ごとに API.individual.get を呼んで
+    //   完全な成長記録を Store に同期する (T2と同根対応、詳細は t2_session.js コメント参照)。
     try {
       if (res && Array.isArray(res.created_individuals) && res.created_individuals.length > 0) {
-        res.created_individuals.forEach(function(ind) {
-          if (!ind || !ind.ind_id) return;
-          const slotNo = (ind.origin_unit_slot_no !== undefined && ind.origin_unit_slot_no !== null)
-            ? parseInt(ind.origin_unit_slot_no, 10) : null;
-          let dec = null;
-          if (slotNo !== null && !isNaN(slotNo)) {
-            dec = payload.decisions.find(function(d) {
-              const dSlot = parseInt(d.unit_slot_no, 10);
-              return dSlot === slotNo
-                  && (d.decision === 'individualize' || d.decision === 'sale');
-            });
-          }
-          if (!dec || !dec.weight_g) return;
-
-          const grRecord = {
-            record_id:    '_local_' + ind.ind_id,
-            target_type:  'IND',
-            target_id:    ind.ind_id,
-            record_date:  payload.session_date,
-            weight_g:     Number(dec.weight_g),
-            size_category:dec.size_category || '',
-            stage:        s.stage_phase || 'T2',  // T3移行時の対象ステージ (T2→T3 移行)
-            mat_type:     dec.mat_type     || 'T3',
-            container:    dec.container    || '2.7L',
-            exchange_type:dec.exchange_type || 'FULL',
-            has_malt:     (dec.mat_molt === true || dec.mat_molt === 'true'),
-            event_type:   'T3_INDIVIDUALIZE',
-            note_private: dec.memo || '',
-          };
-          Store.setGrowthRecords(ind.ind_id, [grRecord]);
-          console.log('[T3] 個体成長記録を Store に保存:', ind.ind_id,
-            '(slot=' + slotNo + ', weight=' + dec.weight_g + 'g)');
-        });
+        const _indGets = res.created_individuals
+          .filter(function(ind){ return ind && ind.ind_id; })
+          .map(function(ind) {
+            return API.individual.get(ind.ind_id)
+              .then(function(detRes) {
+                const _ind = detRes && detRes.individual;
+                if (_ind && Array.isArray(_ind._growthRecords)) {
+                  Store.setGrowthRecords(ind.ind_id, _ind._growthRecords);
+                  if (_ind.display_id && _ind.display_id !== ind.ind_id) {
+                    Store.setGrowthRecords(_ind.display_id, _ind._growthRecords);
+                  }
+                  console.log('[T3] 個体成長記録 API再取得:', ind.ind_id,
+                    '(' + _ind._growthRecords.length + '件)');
+                }
+              })
+              .catch(function(eGet) {
+                console.warn('[T3] API.individual.get 失敗、フォールバックでローカル生成:',
+                  ind.ind_id, eGet.message);
+                const slotNo = (ind.origin_unit_slot_no !== undefined && ind.origin_unit_slot_no !== null)
+                  ? parseInt(ind.origin_unit_slot_no, 10) : null;
+                let dec = null;
+                if (slotNo !== null && !isNaN(slotNo)) {
+                  dec = payload.decisions.find(function(d) {
+                    const dSlot = parseInt(d.unit_slot_no, 10);
+                    return dSlot === slotNo
+                        && (d.decision === 'individualize' || d.decision === 'sale');
+                  });
+                }
+                if (!dec || !dec.weight_g) return;
+                const grRecord = {
+                  record_id:    '_local_' + ind.ind_id,
+                  target_type:  'IND',
+                  target_id:    ind.ind_id,
+                  record_date:  payload.session_date,
+                  weight_g:     Number(dec.weight_g),
+                  size_category:dec.size_category || '',
+                  stage:        s.stage_phase || 'T2',
+                  mat_type:     dec.mat_type     || 'T3',
+                  container:    dec.container    || '2.7L',
+                  exchange_type:dec.exchange_type || 'FULL',
+                  has_malt:     (dec.mat_molt === true || dec.mat_molt === 'true'),
+                  event_type:   'T3_INDIVIDUALIZE',
+                  note_private: dec.memo || '',
+                };
+                const existing = Store.getGrowthRecords(ind.ind_id) || [];
+                const dedup = {};
+                const merged = [];
+                existing.concat([grRecord]).forEach(function(r) {
+                  const key = r.record_id ||
+                    (r.target_type+'|'+r.target_id+'|'+r.record_date+'|'+r.weight_g);
+                  if (!dedup[key]) { dedup[key] = true; merged.push(r); }
+                });
+                Store.setGrowthRecords(ind.ind_id, merged);
+              });
+          });
+        await Promise.all(_indGets);
       }
     } catch (_eGr) {
-      console.warn('[T3] 個体成長記録 Store 保存エラー:', _eGr.message);
+      console.warn('[T3] 個体成長記録 同期エラー:', _eGr.message);
     }
 
     window._t3Session = null; sessionStorage.removeItem('_t3SessionData');
