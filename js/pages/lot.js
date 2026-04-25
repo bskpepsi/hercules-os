@@ -1,13 +1,13 @@
 // FILE: js/pages/lot.js
 // ════════════════════════════════════════════════════════════════
 // lot.js
-// build: 20260424s
+// build: 20260424u
 // 変更点:
-//   - [20260424s] 成長記録取得を両キー (unit_id / display_id) から merge
-//     症状: ユニット一覧カードで、直近以外の記録が欠損するケースがあった。
-//     原因: 20260424r で成長記録を参照するようにしたが、片側のキーしか
-//           参照していなかったため、unit_detail.js の保存仕様と相性が悪かった。
-//     修正: 両キーから取得して record_id で重複排除。
+//   - [20260424u] 🌟 Single-Source-of-Truth リファクタ Phase 2
+//     ユニットカードの members 解決を Store.resolveUnitMembers に集約。
+//     従来は本ファイル内で両キーマージ + スロット別最新体重抽出を直書きしていた
+//     (約50行) が、Store のリゾルバ経由 (約13行) に簡略化。
+//   - [20260424s] 成長記録取得を両キー (unit_id / display_id) から merge (旧)
 //   - [20260424r] 🔥 ユニット一覧カードの体重が最新の成長記録を反映するよう修正
 //   - [20260424i] 🔥 採卵日を独立フィールドで管理 (メモ欄からの脱却)
 //     症状: ロット情報欄に採卵日の専用行が無く、メモ欄に
@@ -1001,56 +1001,21 @@ Pages.lotList = function () {
 
         // members を解析して①②の情報を組み立て
         let membersArr = [];
+        // [20260424t] Single-Source-of-Truth リファクタ Phase 2
+        //   従来は u.members を JSON.parse → 個別に Store.getGrowthRecords()
+        //   から最新 weight_g を取り直して上書き、というロジックを直書きしていた。
+        //   この処理を Store.resolveUnitMembers(u) に集約。今後仕様変更があっても
+        //   store.js だけ直せば全画面に反映される。
         try {
-          const raw = u.members;
-          membersArr = Array.isArray(raw) ? raw
-            : (typeof raw === 'string' && raw.trim()) ? JSON.parse(raw) : [];
-        } catch(_e) {}
-
-        // [20260424r] 成長記録から各スロットの最新 weight_g を優先して取得
-        //   症状: 継続読取りで体重を更新しても、ユニット一覧カードでは
-        //         members[].weight_g (ユニット本体の固定値) のままで古い値。
-        //   原因: ユニット一覧カードは u.members.weight_g のみを参照していた。
-        //         継続読取りでの成長記録追加時、ユニット本体の members は
-        //         更新されない設計 (成長記録は growth_records テーブルに
-        //         追記される一方、breeding_units.members は編成時の初期値固定)。
-        //   対応: Store の成長記録から slot 別の最新 weight_g を取得し、
-        //         members に上書き (一時変数にコピーして元データには触れない)。
-        //   [20260424s] unit_id / display_id 両方のキーから merge (unit_detail.js が
-        //         別々のキーに保存するため片方だけだと欠損するケースがある)。
-        try {
-          const _keys = [];
-          if (u.unit_id)     _keys.push(u.unit_id);
-          if (u.display_id && u.display_id !== u.unit_id) _keys.push(u.display_id);
-          const _seenRec = {};
-          const _mergedRecs = [];
-          _keys.forEach(function(_k){
-            const _list = (Store.getGrowthRecords && Store.getGrowthRecords(_k)) || [];
-            _list.forEach(function(r){
-              if (!r) return;
-              const _rid = r.record_id
-                || (r.record_date + '|' + (r.unit_slot_no||'') + '|' + (r.weight_g||''));
-              if (_seenRec[_rid]) return;
-              _seenRec[_rid] = true;
-              _mergedRecs.push(r);
-            });
-          });
-          if (_mergedRecs.length > 0) {
-            membersArr = membersArr.map(m => Object.assign({}, m || {}));
-            for (let _slot = 1; _slot <= 2; _slot++) {
-              const _slotRecs = _mergedRecs.filter(r => {
-                const s = parseInt(r.unit_slot_no, 10);
-                return !isNaN(s) && s === _slot && r.weight_g;
-              });
-              if (_slotRecs.length === 0) continue;
-              _slotRecs.sort((a,b) => String(b.record_date||'').localeCompare(String(a.record_date||'')));
-              const _latest = _slotRecs[0];
-              const _mi = _slot - 1;
-              if (!membersArr[_mi]) membersArr[_mi] = {};
-              membersArr[_mi].weight_g = _latest.weight_g;
-            }
+          if (Store.resolveUnitMembers) {
+            membersArr = Store.resolveUnitMembers(u);
+          } else {
+            // 古い store.js が読まれている場合のフォールバック (理論上は通らない)
+            const raw = u.members;
+            membersArr = Array.isArray(raw) ? raw
+              : (typeof raw === 'string' && raw.trim()) ? JSON.parse(raw) : [];
           }
-        } catch (_eGr) { /* ignore */ }
+        } catch(_e) { membersArr = []; }
 
         // 性別アイコン
         const sexColor = (sx) => sx === '♂' ? '#3366cc' : sx === '♀' ? '#cc3366' : 'var(--text3)';

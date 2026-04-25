@@ -1,17 +1,11 @@
 // ════════════════════════════════════════════════════════════════
 // unit_detail.js — 飼育ユニット（BU）詳細画面
-// build: 20260424s
+// build: 20260424u
 // 変更点:
-//   - [20260424s] 🔥 成長記録を両キーに "同じ merged" で保存
-//     症状: 継続読取りで新しい成長記録を追加後、ラベル発行に遷移すると
-//           記録表に直近日付の行しか出ず、以前の日付が消える。
-//     原因: _udLoadGrowthAsync が API を unit_id と display_id 2 つで呼び、
-//           それぞれのレスポンス (recU / recD) を別々のキーに保存していた。
-//           ラベル生成側が片方のキーだけ参照すると、もう片方にしかない
-//           レコードが欠損する。
-//     修正: recU.concat(recD) を record_id で重複排除した merged 配列を
-//           両方のキーに保存。以降は unit_id / display_id どちらから
-//           参照しても完全なデータ集合が得られる。
+//   - [20260424u] 🌟 Store ID 正規化レイヤーに合わせて簡素化
+//     Store.setGrowthRecords(internal_id) 1 回呼ぶだけで OK に。
+//     Store 内で _resolveId が走るので display_id でも同じキーに保存される。
+//   - [20260424s] 🔥 成長記録を両キーに "同じ merged" で保存 (旧仕様)
 //   - [20260422o] ⚡ 消失していたユニット体重推移グラフ (Chart.js) を復元
 //     経緯: 20260420a で実装した `_udWeightChartBlock` / `_udDrawWeightChart`
 //          が、それ以降のコミット (afc03b2 → ... → 6d4ce03) で削除されていた。
@@ -349,15 +343,13 @@ Pages.unitDetail = function (params = {}) {
         if (!seen[key]) { seen[key] = true; merged.push(r); }
       });
 
-      // [20260424s] Store に両方のキーで "同じ merged" を保存
-      //   以前は recU / recD を別々に保存していたため、どちらか片方しか呼ばない
-      //   コード (ラベル、ユニット一覧カード) が片側の部分集合しか取得できず、
-      //   直近以外の成長記録が欠損する現象があった。merged 全件を両キーに
-      //   保存することで、どちらのキーを引いても完全なデータが得られる。
+      // [20260424u] Store の ID 正規化レイヤー (Phase 1) により unit_id /
+      //   display_id は内部で同じキーに解決されるので、保存は 1 回でよい。
+      //   internal_id (unit_id) で保存しておけば、表示側がどちらの id で
+      //   引いても確実に取得できる。
       if (unit.unit_id) {
-        Store.setGrowthRecords(unit.unit_id,    merged);
-      }
-      if (unit.display_id && unit.display_id !== unit.unit_id) {
+        Store.setGrowthRecords(unit.unit_id, merged);
+      } else if (unit.display_id) {
         Store.setGrowthRecords(unit.display_id, merged);
       }
 

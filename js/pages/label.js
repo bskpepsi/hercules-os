@@ -1,18 +1,16 @@
 // FILE: js/pages/label.js
-// build: 20260424s
+// build: 20260424u
 // 修正:
+//   - [20260424u] 🌟 Single-Source-of-Truth リファクタ Phase 2
+//     UNIT ラベルの t1_date / members 解決を Store のリゾルバに集約。
+//     従来は両キーから merge → 最古日付検出 → スロット別最新体重抽出を
+//     直書きで持っていたため、同じロジックが lot.js, label.js, unit_detail.js
+//     などに散らばっていた。今後仕様を変える際は store.js のリゾルバだけ
+//     直せば全画面に反映される。
+//       Before: 約70行のインライン処理
+//       After : Store.resolveUnitMembers / resolveUnitT1Date を呼ぶだけ (約25行)
 //   - [20260424s] 🔥 UNIT ラベルの成長記録マージを両キーから merge するよう修正
-//     症状: Console ログで records.length=2 / dates=['2026/04/20','2026/04/20']
-//           と表示され、04/18 の記録が抜け落ちていた。ユニット詳細画面では
-//           04/18 と 04/20 の両方が正しく表示されていた。
-//     原因: Store.getGrowthRecords は unit_id / display_id 別々にキャッシュ
-//           されており、unit_detail.js が recU / recD を別々に保存していた
-//           ため片側にしか最新記録が入らないケースがあった。
-//     修正: ラベル生成時に unit_id / display_id 両方のキーから取得して
-//           record_id で重複排除 merge。unit_detail.js 側も merged を
-//           両方に保存するよう修正 (20260424s)。
 //   - [20260424r] 🔥 戻るボタンが ID なしで遷移する問題を修正
-//   - [20260424r] UNIT ラベル描画の records 配列のデバッグログ追加
 //   - [20260424q] 🔥 UNIT ラベルに複数の成長記録を表示
 //   - [20260424p] 🔥 UNIT ラベルで成長記録編集が反映されない問題を修正
 //   - [20260424o] 戻るボタンラベルを backRoute に応じて明示化
@@ -1119,83 +1117,34 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         debugInfo:    { unit_id: unit.unit_id, display_id: unit.display_id },
       });
 
-      // [20260424p] 🔥 成長記録から t1_date と members[].weight_g を動的解決
-      //   症状: ユーザーが成長記録の日付・体重を編集しても、ラベルには古い
-      //         値が表示されたままで、再生成しても変わらない。
-      //   原因: UNIT ラベルの描画は ld.t1_date (unit.t1_date / created_at) と
-      //         ld.members[0/1].weight_g を参照していたが、これらはユニット
-      //         本体の固定値で、成長記録編集では更新されないフィールド。
-      //   修正: 成長記録がある場合は以下を優先:
-      //         (a) t1_date = 最も古い記録の record_date (= T1開始日相当)
-      //         (b) members[i].weight_g = 対応するスロットの最新記録の weight_g
-      //         これで GR 編集が即ラベルに反映される。
-      // [20260424q] UNIT ラベルに成長記録全件を渡して複数行描画できるようにする
-      //   従来は 1 行目だけ埋めていたが、2 回目以降の成長記録も存在する
-      //   ケースが多く、「直近の記録が見えない」という声があった。
-      //   records 配列をそのまま ld に流し、描画側で日付+両スロットを並べる。
-      let _resolvedT1Date = unit.t1_date || unit.created_at || '';
-      let _resolvedMembers = Array.isArray(unit.members)
-        ? unit.members.slice().map(m => Object.assign({}, m || {}))
-        : (typeof unit.members === 'string'
-            ? (function(){ try { return JSON.parse(unit.members) || []; } catch(_){ return []; } })().map(m => Object.assign({}, m || {}))
-            : []);
+      // [20260424t] Single-Source-of-Truth リゾルバを使用
+      //   従来は両キーから merge → t1_date / weight 解決を直書きしていた処理を
+      //   Store.resolveUnitT1Date / resolveUnitMembers / getMergedUnitGrowthRecords
+      //   に置き換え。仕様変更時は store.js だけ直せばよい。
+      let _resolvedT1Date  = unit.t1_date || unit.created_at || '';
+      let _resolvedMembers;
       let _resolvedUnitRecs = [];
       try {
-        // [20260424s] unit_id / display_id 両方のキーから取得して record_id で重複排除
-        //   症状: 継続読取り後のラベル発行で記録表に直近日付 (04/20) の行しか
-        //         出ず、以前の日付 (04/18) が消える。
-        //   原因: unit_detail.js の _udLoadGrowthAsync が、API を unit_id と
-        //         display_id の 2 つのキーで呼び、それぞれのレスポンスを
-        //         Store.setGrowthRecords(unit_id, recU) と
-        //         Store.setGrowthRecords(display_id, recD) で "別々に" 保存する。
-        //         片方のキーにだけ最新記録が入るケースがあり、ラベル生成側が
-        //         そのキーだけ読むと 04/18 分が抜け落ちる。
-        //   対応: unit_id / display_id の両方から取得して record_id で重複排除。
-        const _keys = [];
-        if (unit.unit_id)     _keys.push(unit.unit_id);
-        if (_genDisplayId && _genDisplayId !== unit.unit_id) _keys.push(_genDisplayId);
-        const _seenRec = {};
-        _keys.forEach(function(_k){
-          const _list = (Store.getGrowthRecords && Store.getGrowthRecords(_k)) || [];
-          _list.forEach(function(r){
-            if (!r) return;
-            const _rid = r.record_id
-              || (r.record_date + '|' + (r.unit_slot_no||'') + '|' + (r.weight_g||''));
-            if (_seenRec[_rid]) return;
-            _seenRec[_rid] = true;
-            _resolvedUnitRecs.push(r);
-          });
-        });
+        if (Store.resolveUnitMembers && Store.resolveUnitT1Date && Store.getMergedUnitGrowthRecords) {
+          _resolvedMembers   = Store.resolveUnitMembers(unit);
+          _resolvedT1Date    = Store.resolveUnitT1Date(unit);
+          _resolvedUnitRecs  = Store.getMergedUnitGrowthRecords(unit);
+        } else {
+          // 古い store.js フォールバック
+          _resolvedMembers = Array.isArray(unit.members)
+            ? unit.members.slice().map(m => Object.assign({}, m || {}))
+            : [];
+        }
         if (_resolvedUnitRecs.length > 0) {
-          // (a) 最も古い record_date を T1_date に
-          const _sortedAsc = _resolvedUnitRecs.slice().sort((a,b) =>
-            String(a.record_date||'').localeCompare(String(b.record_date||'')));
-          const _earliest = _sortedAsc[0];
-          if (_earliest && _earliest.record_date) {
-            _resolvedT1Date = _earliest.record_date;
-          }
-          // (b) 各スロットの最新 weight_g を members に反映
-          //   slot=1 → members[0], slot=2 → members[1]
-          //   slot 情報が無いレコードは skip
-          for (let _slot = 1; _slot <= 2; _slot++) {
-            const _slotRecs = _resolvedUnitRecs.filter(r => {
-              const s = parseInt(r.unit_slot_no, 10);
-              return !isNaN(s) && s === _slot && r.weight_g;
-            });
-            if (_slotRecs.length === 0) continue;
-            _slotRecs.sort((a,b) => String(b.record_date||'').localeCompare(String(a.record_date||'')));
-            const _latest = _slotRecs[0];
-            const _mi = _slot - 1;
-            if (!_resolvedMembers[_mi]) _resolvedMembers[_mi] = {};
-            _resolvedMembers[_mi].weight_g = _latest.weight_g;
-          }
-          console.log('[LABEL UNIT] t1_date resolved from GR:', _resolvedT1Date,
+          console.log('[LABEL UNIT] resolved via Store: t1_date=' + _resolvedT1Date,
             '/ members weights:', _resolvedMembers.map(m => (m && m.weight_g) || '').join('/'),
-            '/ records:', _resolvedUnitRecs.length,
-            '/ keys:', _keys);
+            '/ records:', _resolvedUnitRecs.length);
         }
       } catch (_eReslove) {
-        console.warn('[LABEL UNIT] GR resolve warn:', _eReslove.message);
+        console.warn('[LABEL UNIT] resolve warn:', _eReslove.message);
+        _resolvedMembers = Array.isArray(unit.members)
+          ? unit.members.slice().map(m => Object.assign({}, m || {}))
+          : [];
       }
 
       ld = {

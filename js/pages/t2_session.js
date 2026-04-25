@@ -1,6 +1,8 @@
 // FILE: js/pages/t2_session.js
-// build: 20260424t
+// build: 20260424u
 // 変更点:
+//   - [20260424u] 🌟 Store の ID 正規化に伴い両キーマージハックを削除
+//     _getT1GrowthBySLot / _fromInd ブランチの両キーマージを単一呼び出しに簡素化。
 //   - [20260424t] 🔥 T2移行画面の前回体重 (T1:) が古い値の問題を修正 (T3 と同仕様)
 //     _buildT2Members で GR を最優先、_getT1GrowthBySLot を両キー merge に改修。
 //     _fromInd 個体起点ブランチでも両キー merge。
@@ -129,23 +131,10 @@ Pages.t2SessionStartFromInd = async function (indIdOrDisplayId) {
     memo:          '',
   }];
 
-  // [20260424t] 個体の成長記録は ind_id / display_id 両キーから merge
-  const _indKeys = [];
-  if (ind.ind_id) _indKeys.push(ind.ind_id);
-  if (ind.display_id && ind.display_id !== ind.ind_id) _indKeys.push(ind.display_id);
-  const _seenInd = {};
-  const records = [];
-  _indKeys.forEach(function(_k){
-    const _l = (typeof Store.getGrowthRecords === 'function') ? (Store.getGrowthRecords(_k) || []) : [];
-    _l.forEach(function(r){
-      if (!r) return;
-      const _rid = r.record_id
-        || (r.record_date + '|' + (r.unit_slot_no||'') + '|' + (r.weight_g||''));
-      if (_seenInd[_rid]) return;
-      _seenInd[_rid] = true;
-      records.push(r);
-    });
-  });
+  // [20260424u] Store の ID 正規化により単一呼び出しで十分。
+  const records = (typeof Store.getGrowthRecords === 'function')
+    ? (Store.getGrowthRecords(ind.ind_id || ind.display_id) || [])
+    : [];
   if (records && records.length > 0) {
     const latest = records.filter(r => r.weight_g > 0)
       .sort((a, b) => String(b.record_date).localeCompare(String(a.record_date)))[0];
@@ -231,32 +220,18 @@ function _buildT2Members(unit) {
   return result;
 }
 
-// [20260424t] 両キー (unit_id / display_id) の成長記録を merge し、
-//   各スロットの最新 record を返すよう改修 (T3 と同仕様)。
+// [20260424u] Store の ID 正規化により単一キーで十分。
+//   後方互換のため文字列 (unit_id) も受け付ける。
 function _getT1GrowthBySLot(unit) {
   let _u = unit;
   if (typeof _u === 'string') _u = { unit_id: _u };
   if (!_u) return {};
-  const _keys = [];
-  if (_u.unit_id)    _keys.push(_u.unit_id);
-  if (_u.display_id && _u.display_id !== _u.unit_id) _keys.push(_u.display_id);
-  if (_keys.length === 0) return {};
-  const _seen = {};
-  const _all = [];
-  _keys.forEach(function(_k){
-    const _list = Store.getGrowthRecords ? (Store.getGrowthRecords(_k) || []) : [];
-    _list.forEach(function(r){
-      if (!r) return;
-      const _rid = r.record_id
-        || (r.record_date + '|' + (r.unit_slot_no||'') + '|' + (r.weight_g||''));
-      if (_seen[_rid]) return;
-      _seen[_rid] = true;
-      _all.push(r);
-    });
-  });
-  if (_all.length === 0) return {};
+  const recs = (typeof Store.getGrowthRecords === 'function')
+    ? (Store.getGrowthRecords(_u.unit_id || _u.display_id) || [])
+    : [];
+  if (recs.length === 0) return {};
   const bySlot = {};
-  _all.forEach(r => {
+  recs.forEach(r => {
     const slot = parseInt(r.unit_slot_no, 10);
     if (!slot) return;
     if (!bySlot[slot] || String(r.record_date) > String(bySlot[slot].record_date)) bySlot[slot] = r;

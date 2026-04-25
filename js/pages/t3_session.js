@@ -1,6 +1,10 @@
 // FILE: js/pages/t3_session.js
-// build: 20260424t
+// build: 20260424u
 // 変更点:
+//   - [20260424u] 🌟 Store の ID 正規化に伴い両キーマージハックを削除
+//     _getT2GrowthBySlot / _fromInd ブランチの両キーマージを単一呼び出しに簡素化。
+//     Store 内部で _resolveId が走るので、unit_id / display_id どちらでも
+//     同じ場所が引かれる。
 //   - [20260424t] 🔥 T3移行画面の前回体重 (T2:) が古い値の問題を修正
 //     症状: T3移行セッションで「T2: 12g」と表示されるが、ユニット詳細では
 //           最新の継続読取り値 35g/28g が記録済み。
@@ -129,24 +133,11 @@ Pages.t3SessionStartFromInd = async function (indIdOrDisplayId) {
 
   if (!ind) { UI.toast('個体が見つかりません: ' + indIdOrDisplayId, 'error'); return; }
 
-  // [20260424t] 個体の成長記録は ind_id / display_id 両キーから merge
-  //   個体化フローで Store にどちらのキーで保存されているかは経路により異なる。
-  const _indKeys = [];
-  if (ind.ind_id) _indKeys.push(ind.ind_id);
-  if (ind.display_id && ind.display_id !== ind.ind_id) _indKeys.push(ind.display_id);
-  const _seenInd = {};
-  const records = [];
-  _indKeys.forEach(function(_k){
-    const _l = (typeof Store.getGrowthRecords === 'function') ? (Store.getGrowthRecords(_k) || []) : [];
-    _l.forEach(function(r){
-      if (!r) return;
-      const _rid = r.record_id
-        || (r.record_date + '|' + (r.unit_slot_no||'') + '|' + (r.weight_g||''));
-      if (_seenInd[_rid]) return;
-      _seenInd[_rid] = true;
-      records.push(r);
-    });
-  });
+  // [20260424u] Store の ID 正規化により ind_id / display_id どちらでも
+  //   同じキーを引くので単一呼び出しで十分。
+  const records = (typeof Store.getGrowthRecords === 'function')
+    ? (Store.getGrowthRecords(ind.ind_id || ind.display_id) || [])
+    : [];
   var t2Weight = null;
   if (records && records.length > 0) {
     const latest = records.filter(r => r.weight_g > 0)
@@ -259,36 +250,19 @@ function _buildT3Members(unit) {
   return result;
 }
 
-// [20260424t] 両キー (unit_id / display_id) の成長記録を merge し、
-//   各スロットの最新 record を返すように改修。
-//   従来は unit_id 1 つだけしか参照しておらず、unit_detail.js が片方のキー
-//   にしか保存しなかった旧仕様 (~20260424r) のキャッシュが残ると、最新の
-//   体重が取得できないことがあった。
+// [20260424u] Store.resolveUnitMembers と同じ仕組みで slot 別最新を返す。
+//   ID 正規化により単一キーで十分。
+//   後方互換のため文字列 (unit_id) も受け付ける。
 function _getT2GrowthBySlot(unit) {
-  // 後方互換: 文字列 (旧 unitId) を受けたら unit オブジェクトに変換
   let _u = unit;
   if (typeof _u === 'string') _u = { unit_id: _u };
   if (!_u) return {};
-  const _keys = [];
-  if (_u.unit_id)    _keys.push(_u.unit_id);
-  if (_u.display_id && _u.display_id !== _u.unit_id) _keys.push(_u.display_id);
-  if (_keys.length === 0) return {};
-  const _seen = {};
-  const _all = [];
-  _keys.forEach(function(_k){
-    const _list = (typeof Store.getGrowthRecords === 'function') ? (Store.getGrowthRecords(_k) || []) : [];
-    _list.forEach(function(r){
-      if (!r) return;
-      const _rid = r.record_id
-        || (r.record_date + '|' + (r.unit_slot_no||'') + '|' + (r.weight_g||''));
-      if (_seen[_rid]) return;
-      _seen[_rid] = true;
-      _all.push(r);
-    });
-  });
-  if (_all.length === 0) return {};
+  const recs = (typeof Store.getGrowthRecords === 'function')
+    ? (Store.getGrowthRecords(_u.unit_id || _u.display_id) || [])
+    : [];
+  if (recs.length === 0) return {};
   const bySlot = {};
-  _all.forEach(r => {
+  recs.forEach(r => {
     const slot = parseInt(r.unit_slot_no, 10);
     if (!slot) return;
     if (!bySlot[slot] || String(r.record_date) > String(bySlot[slot].record_date)) bySlot[slot] = r;

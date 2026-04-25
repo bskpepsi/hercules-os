@@ -1,5 +1,6 @@
 // ════════════════════════════════════════════════════════════════
 // store.js
+// build: 20260424u
 // 役割: アプリ全体の状態とローカルキャッシュを一元管理する。
 //
 // 本番仕様:
@@ -7,6 +8,22 @@
 //   - ステージ: L1L2 / L3 / PREPUPA / PUPA / ADULT_PRE / ADULT
 //   - ステータス: alive / for_sale / listed / sold / dead
 //   - localStorage 容量超過時の保護処理
+//
+// [20260424u] 🔥 ID 正規化レイヤー導入 (single source of truth)
+//   背景: 同じユニットの成長記録が unit_id (BU-xxx) と display_id (HM2025-A1-Uxx)
+//         で別々のキーとして growthMap に保存されており、表示画面ごとにどちらの
+//         キーを使うかでデータ欠損やキャッシュの不整合が頻発していた。
+//         label / lot / t2_session / t3_session / unit_detail で個別にハック
+//         (両キー merge) を入れる対症療法を続けていた。
+//   対応: Store の入口 (set/get/add) で id を内部 ID に正規化する。
+//         _idAliasMap[display_id] = internal_id を維持し、display_id で渡された
+//         場合は自動で内部 ID に変換してアクセス。
+//         setDB('breeding_units' / 'individuals' / 'lots' / 'lines' / 'parents')
+//         が呼ばれるたびに、各レコードの display_id → internal_id を map に登録。
+//   利点: (1) 各画面の両キー merge ハックが不要になる
+//         (2) どちらのキーで保存・取得しても同じ結果が得られる
+//         (3) 既存呼び出しの互換性を保てる (既存の display_id ベース呼び出しも動く)
+//   注意: 永続化対象には _idAliasMap を含めない (毎回 setDB 時に再構築する設計)。
 // ════════════════════════════════════════════════════════════════
 
 'use strict';
@@ -15,7 +32,8 @@
 // 20260418a: Step2 ③ 性別頭数集計 — getSexStats() 追加 / filterIndividuals の '_unknown' 対応
 // 20260421f: 販売候補フィルタ修正 — for_sale フラグ判定 (T2移行直後の個体対応)
 //            飼育中フィルタから for_sale===true 個体を除外
-console.log('[HerculesOS] store.js v20260421f loaded');
+// 20260424u: ID正規化レイヤー導入 (display_id ↔ internal_id 自動変換)
+console.log('[HerculesOS] store.js v20260424u loaded');
 
 const Store = (() => {
 
@@ -43,6 +61,74 @@ const Store = (() => {
     settings:          {},
     labelHistory:      {},
   };
+
+  // ── [20260424u] ID 正規化レイヤー ─────────────────────────────
+  // 設計:
+  //   _idAliasMap[<display_id>] = <internal_id>
+  //     例: { 'HM2025-A1-U06': 'BU-7stnssf', 'HM2025-A1-013': 'IND-30spfjd' }
+  //   _aliasOwners[<table>] = Set<display_id>
+  //     どの table が登録した entry かを追跡。setDB で table 全体が
+  //     置換されたとき、その table 由来の古い alias を確実に除去できる。
+  // 永続化対象にはしない (setDB / loadFromStorage 時に再構築)。
+  let _idAliasMap   = {};
+  let _aliasOwners  = {};
+
+  // 引数が display_id ならエイリアスを解決して internal_id を返す。
+  // internal_id ならそのまま返す。null/undefined もそのまま返す。
+  function _resolveId(id) {
+    if (!id) return id;
+    return _idAliasMap[id] || id;
+  }
+
+  // table 名から internal id フィールド名を返す
+  function _internalKeyForTable(table) {
+    if (table === 'individuals')    return 'ind_id';
+    if (table === 'breeding_units') return 'unit_id';
+    if (table === 'lots')           return 'lot_id';
+    if (table === 'lines')          return 'line_id';
+    if (table === 'parents')        return 'par_id';
+    if (table === 'bloodlines')     return 'bloodline_id';
+    return null;
+  }
+
+  // 単一レコードを alias map に登録
+  function _registerAliasFromRecord(table, rec) {
+    if (!rec || typeof rec !== 'object') return;
+    const internalKey = _internalKeyForTable(table);
+    if (!internalKey) return;
+    const internalId = rec[internalKey];
+    const displayId  = rec.display_id;
+    if (!internalId || !displayId || displayId === internalId) return;
+    // [20260424u] 衝突検出: 別 internal_id に既にマッピングされている場合は警告
+    //   (実運用では発生しないが、データ不整合の早期発見のため)
+    const existing = _idAliasMap[displayId];
+    if (existing && existing !== internalId) {
+      console.warn('[Store] alias collision: display_id "' + displayId
+        + '" was "' + existing + '", overwriting with "' + internalId
+        + '" (table=' + table + ')');
+    }
+    _idAliasMap[displayId] = internalId;
+    if (!_aliasOwners[table]) _aliasOwners[table] = new Set();
+    _aliasOwners[table].add(displayId);
+  }
+
+  // [20260424u] 指定 table が登録した alias を全て解除 (setDB 時に呼ぶ)
+  //   これにより、削除されたレコードの alias が残留しなくなる。
+  function _clearAliasesForTable(table) {
+    const owned = _aliasOwners[table];
+    if (!owned) return;
+    owned.forEach(function(displayId){
+      delete _idAliasMap[displayId];
+    });
+    _aliasOwners[table] = new Set();
+  }
+
+  // table 配列全体からエイリアス map を再構築
+  function _rebuildAliasMapForTable(table, arr) {
+    _clearAliasesForTable(table);
+    if (!Array.isArray(arr)) return;
+    arr.forEach(function(rec){ _registerAliasFromRecord(table, rec); });
+  }
 
   // ── ページ遷移 ─────────────────────────────────────────────────
   // _skipNavEvent=true のとき nav イベントを発火しない（routeTo 専用）
@@ -76,6 +162,8 @@ const Store = (() => {
   // ── DB 書き込み ────────────────────────────────────────────────
   function setDB(key, value) {
     _db[key] = value;
+    // [20260424u] エイリアス map を再構築
+    _rebuildAliasMapForTable(key, value);
     _notify('db_' + key);
     _scheduleSave();
   }
@@ -83,9 +171,13 @@ const Store = (() => {
   function patchDBItem(key, idField, id, patch) {
     const arr = _db[key];
     if (!Array.isArray(arr)) return;
-    const i = arr.findIndex(r => r[idField] === id);
+    // [20260424u] id が display_id でも引けるように解決
+    const resolvedId = _resolveId(id);
+    const i = arr.findIndex(r => r[idField] === resolvedId || r[idField] === id);
     if (i !== -1) {
       _db[key][i] = { ..._db[key][i], ...patch };
+      // [20260424u] patch によって display_id が変わった可能性があるので alias 更新
+      _registerAliasFromRecord(key, _db[key][i]);
       _notify('db_' + key);
       _scheduleSave();
     }
@@ -94,16 +186,36 @@ const Store = (() => {
   function addDBItem(key, item) {
     if (!Array.isArray(_db[key])) _db[key] = [];
     _db[key].unshift(item);
+    // [20260424u] 新規追加 record の alias を登録
+    _registerAliasFromRecord(key, item);
     _notify('db_' + key);
     _scheduleSave();
   }
 
   // ── DB 読み込み ────────────────────────────────────────────────
+  // [20260424u] 各 get 関数は display_id でも引けるように _resolveId を通す。
+  //   既存の internal_id 呼び出しはそのまま動作する (映射に無ければ素通し)。
+  //   見つからなければ display_id 直接マッチも保険として試す。
   function getDB(key)        { return _db[key]; }
-  function getIndividual(id) { return _db.individuals.find(i => i.ind_id       === id) || null; }
+  function getIndividual(id) {
+    const r = _resolveId(id);
+    return _db.individuals.find(i => i.ind_id === r)
+        || _db.individuals.find(i => i.display_id === id)
+        || null;
+  }
   function getLine(id)       { return _db.lines.find(l       => l.line_id      === id) || null; }
-  function getLot(id)        { return _db.lots.find(l        => l.lot_id       === id) || null; }
-  function getParent(id)     { return _db.parents.find(p     => p.par_id       === id) || null; }
+  function getLot(id)        {
+    const r = _resolveId(id);
+    return _db.lots.find(l => l.lot_id === r)
+        || _db.lots.find(l => l.display_id === id)
+        || null;
+  }
+  function getParent(id)     {
+    const r = _resolveId(id);
+    return _db.parents.find(p => p.par_id === r)
+        || _db.parents.find(p => p.display_id === id)
+        || null;
+  }
   function getBloodline(id)  { return _db.bloodlines.find(b  => b.bloodline_id === id) || null; }
 
   function getIndividualsByLine(lineId) {
@@ -180,17 +292,23 @@ const Store = (() => {
   }
 
   // ── 成長記録キャッシュ ─────────────────────────────────────────
+  // [20260424u] 全ての関数で _resolveId を通し、display_id / internal_id
+  //   どちらで呼んでも同じ場所 (internal_id キー) を参照するように。
+  //   これで「両キー merge」のハックが不要になる。
   function setGrowthRecords(targetId, records) {
-    _db.growthMap[targetId] = records;
+    const id = _resolveId(targetId);
+    _db.growthMap[id] = records;
     _scheduleSave();
   }
   function getGrowthRecords(targetId) {
-    return _db.growthMap[targetId] || null;
+    const id = _resolveId(targetId);
+    return _db.growthMap[id] || null;
   }
   function addGrowthRecord(targetId, record) {
-    if (!_db.growthMap[targetId]) _db.growthMap[targetId] = [];
-    _db.growthMap[targetId].push(record);
-    _db.growthMap[targetId].sort((a,b) => a.record_date.localeCompare(b.record_date));
+    const id = _resolveId(targetId);
+    if (!_db.growthMap[id]) _db.growthMap[id] = [];
+    _db.growthMap[id].push(record);
+    _db.growthMap[id].sort((a,b) => a.record_date.localeCompare(b.record_date));
     _scheduleSave();
   }
 
@@ -243,6 +361,13 @@ const Store = (() => {
       if (gasUrl)    { CONFIG.GAS_URL    = gasUrl;    _db.settings.gas_url    = gasUrl;    }
       if (geminiKey) { CONFIG.GEMINI_KEY = geminiKey; _db.settings.gemini_key = geminiKey; }
       _state.lastSync = localStorage.getItem(CONFIG.LS_KEYS.LAST_SYNC);
+      // [20260424u] localStorage 復帰後にエイリアス map を再構築
+      _idAliasMap  = {};
+      _aliasOwners = {};
+      ['individuals','lots','lines','parents','bloodlines','breeding_units']
+        .forEach(function(tbl){
+          if (Array.isArray(_db[tbl])) _rebuildAliasMapForTable(tbl, _db[tbl]);
+        });
     } catch (e) { console.warn('Store: ローカルデータ読み込み失敗', e); }
   }
 
@@ -250,6 +375,9 @@ const Store = (() => {
     _db = { individuals:[], lots:[], lines:[], parents:[], bloodlines:[],
             pairings:[], pairing_histories:[], egg_records:[],
             growthMap:{}, settings: _db.settings, labelHistory:{} };
+    // [20260424u] alias map もクリア
+    _idAliasMap  = {};
+    _aliasOwners = {};
     _scheduleSave();
     _notify('db_all');
   }
@@ -384,11 +512,103 @@ const Store = (() => {
   }
 
   // ── breeding_units ─────────────────────────────────────────────
+  // [20260424u] getUnit / getUnitByDisplayId をエイリアス map で統一。
+  //   どちらも display_id でも internal_id でも引けるようになる。
   function getUnitByDisplayId(displayId) {
-    return (_db.breeding_units || []).find(u => u.display_id === displayId) || null;
+    if (!displayId) return null;
+    return (_db.breeding_units || []).find(u => u.display_id === displayId)
+        || (function(){
+            const r = _resolveId(displayId);
+            return (_db.breeding_units || []).find(u => u.unit_id === r);
+          })()
+        || null;
   }
   function getUnit(unitId) {
-    return (_db.breeding_units || []).find(u => u.unit_id === unitId) || null;
+    if (!unitId) return null;
+    const r = _resolveId(unitId);
+    return (_db.breeding_units || []).find(u => u.unit_id === r)
+        || (_db.breeding_units || []).find(u => u.display_id === unitId)
+        || null;
+  }
+
+  // [20260424u] 🌟 Single-Source-of-Truth リファクタ Phase 2
+  //   ユニットの members 配列を「最新の成長記録」で補完して返す。
+  //   従来は各画面 (lot.js, label.js, t2/t3_session.js, unit_detail.js) で
+  //     unit.members を JSON.parse
+  //     → Store.getGrowthRecords を呼び
+  //     → スロット別の最新 weight_g/size_category を抽出
+  //     → members[i] に上書き
+  //   というロジックを直書きしており、修正漏れや両キー merge ハックの温床に
+  //   なっていた。本関数で集約することで、今後仕様が変わっても store.js
+  //   だけ直せば全画面に反映される。
+  //
+  //   引数 unit (object): breeding_units の 1 レコード
+  //   返値 (Array): members 配列のコピー。weight_g/size_category は
+  //          GR の最新値で上書き済 (GR が無いスロットはユニット本体の値)。
+  function resolveUnitMembers(unit) {
+    if (!unit) return [];
+    let members = [];
+    try {
+      const raw = unit.members;
+      members = Array.isArray(raw) ? raw.slice()
+        : (typeof raw === 'string' && raw.trim()) ? JSON.parse(raw)
+        : [];
+    } catch(_e) { members = []; }
+    // 元データに副作用を与えないため shallow copy
+    members = members.map(function(m){ return Object.assign({}, m || {}); });
+
+    // 成長記録から各スロットの最新を取得
+    // _resolveId 経由なので unit_id でも display_id でも同じ場所を引く
+    const recs = getGrowthRecords(unit.unit_id || unit.display_id) || [];
+    if (recs.length === 0) return members;
+
+    // スロット別の最新 record を抽出
+    const bySlot = {};
+    recs.forEach(function(r){
+      if (!r) return;
+      const slot = parseInt(r.unit_slot_no, 10);
+      if (!slot) return;
+      if (!bySlot[slot] || String(r.record_date||'') > String(bySlot[slot].record_date||'')) {
+        bySlot[slot] = r;
+      }
+    });
+
+    // members に反映
+    for (let s = 1; s <= Math.max(2, members.length); s++) {
+      const latest = bySlot[s];
+      if (!latest) continue;
+      const idx = s - 1;
+      if (!members[idx]) members[idx] = {};
+      if (latest.weight_g)      members[idx].weight_g      = latest.weight_g;
+      if (latest.size_category) members[idx].size_category = latest.size_category;
+    }
+    return members;
+  }
+
+  // [20260424u] ユニットの T1 開始日相当の日付を返す。
+  //   優先順位: 最古の record_date > unit.t1_date > unit.created_at
+  //   ラベル発行や成長グラフで「ユニット作成日 (= T1 開始)」を
+  //   描画する際に使用。GR の編集が即反映されるようにするのが狙い。
+  function resolveUnitT1Date(unit) {
+    if (!unit) return '';
+    const recs = getGrowthRecords(unit.unit_id || unit.display_id) || [];
+    if (recs.length > 0) {
+      const sorted = recs.slice().sort(function(a,b){
+        return String(a.record_date||'').localeCompare(String(b.record_date||''));
+      });
+      const earliest = sorted[0];
+      if (earliest && earliest.record_date) return earliest.record_date;
+    }
+    return unit.t1_date || unit.created_at || '';
+  }
+
+  // [20260424u] ユニットの成長記録を全件返す。
+  //   Store の ID 正規化により unit_id / display_id どちらを渡しても
+  //   同じキー (internal_id) を引くので、シンプルに getGrowthRecords を呼ぶだけ。
+  function getMergedUnitGrowthRecords(unit) {
+    if (!unit) return [];
+    const recs = getGrowthRecords(unit.unit_id || unit.display_id) || [];
+    return recs.slice();
   }
   // 指定ロットに由来するユニット一覧を返す
   function getUnitsByOriginLotId(lotId) {
@@ -499,5 +719,11 @@ const Store = (() => {
     filterIndividuals, filterLots,
     getPairingStats,
     getSexStats,
+    // [20260424u] ID 正規化レイヤー (外部からも利用可)
+    resolveId: _resolveId,
+    // [20260424u] Single-Source-of-Truth: ユニット members を GR で補完
+    resolveUnitMembers,
+    resolveUnitT1Date,
+    getMergedUnitGrowthRecords,
   };
 })();
