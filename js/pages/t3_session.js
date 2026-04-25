@@ -1,6 +1,16 @@
 // FILE: js/pages/t3_session.js
-// build: 20260424n
+// build: 20260424t
 // 変更点:
+//   - [20260424t] 🔥 T3移行画面の前回体重 (T2:) が古い値の問題を修正
+//     症状: T3移行セッションで「T2: 12g」と表示されるが、ユニット詳細では
+//           最新の継続読取り値 35g/28g が記録済み。
+//     原因: _buildT3Members が src.weight_g (= breeding_units.members の
+//           固定値) を最優先していた。GR フォールバックは値が無い時のみ。
+//           加えて _getT2GrowthBySlot が unit_id 1 つだけで取得しており、
+//           display_id にしか保存されていない記録が拾えなかった。
+//     修正: (a) GR (最新成長記録) を最優先、無ければ src.weight_g にフォールバック
+//           (b) _getT2GrowthBySlot を unit オブジェクト受取 + 両キー merge に改修
+//           (c) _fromInd 個体起点ブランチでも ind_id / display_id 両キー merge
 //   - [20260424n] 🎯 記録日 (session_date) を編集可能にする (ユーザー要望)
 //     症状: 「移行編成セッションの画面に記録の登録日を選択できるようにしたい」
 //           従来は _t3SessionSave 内で new Date() から毎回 "今日" を送信していた。
@@ -119,7 +129,24 @@ Pages.t3SessionStartFromInd = async function (indIdOrDisplayId) {
 
   if (!ind) { UI.toast('個体が見つかりません: ' + indIdOrDisplayId, 'error'); return; }
 
-  const records = (typeof Store.getGrowthRecords === 'function') ? Store.getGrowthRecords(ind.ind_id) : [];
+  // [20260424t] 個体の成長記録は ind_id / display_id 両キーから merge
+  //   個体化フローで Store にどちらのキーで保存されているかは経路により異なる。
+  const _indKeys = [];
+  if (ind.ind_id) _indKeys.push(ind.ind_id);
+  if (ind.display_id && ind.display_id !== ind.ind_id) _indKeys.push(ind.display_id);
+  const _seenInd = {};
+  const records = [];
+  _indKeys.forEach(function(_k){
+    const _l = (typeof Store.getGrowthRecords === 'function') ? (Store.getGrowthRecords(_k) || []) : [];
+    _l.forEach(function(r){
+      if (!r) return;
+      const _rid = r.record_id
+        || (r.record_date + '|' + (r.unit_slot_no||'') + '|' + (r.weight_g||''));
+      if (_seenInd[_rid]) return;
+      _seenInd[_rid] = true;
+      records.push(r);
+    });
+  });
   var t2Weight = null;
   if (records && records.length > 0) {
     const latest = records.filter(r => r.weight_g > 0)
@@ -185,16 +212,26 @@ function _buildT3Members(unit) {
   }
 
   const unitSizeCategory = unit.size_category || '';
-  const growthBySlot = _getT2GrowthBySlot(unit.unit_id);
+  // [20260424t] unit オブジェクトを渡して unit_id / display_id 両キーから merge
+  const growthBySlot = _getT2GrowthBySlot(unit);
   const count = Math.max(parseInt(unit.head_count, 10) || 2, parsedMembers.length, 1);
   const result = [];
 
   for (let i = 0; i < count; i++) {
     const src = parsedMembers[i] || {};
     const slotNo = i + 1;
+    // [20260424t] サイズ・体重とも GR を最優先に変更
+    //   症状: T3移行画面で "T2: 12g" と表示される (= 編成時の固定値)。
+    //         実際には継続読取りで 35g/28g に更新済み。
+    //   原因: src.weight_g (= breeding_units.members[].weight_g 固定値) を
+    //         最優先していたため。T2移行(継続飼育)後も members 本体は
+    //         書き換わらない設計。
+    //   対応: growthBySlot (最新成長記録) を最優先、無ければ src.weight_g に
+    //         フォールバック。size_category も同様に GR 優先。
+    const _grRow = growthBySlot[slotNo];
     const sizeCategory =
-      src.size_category
-      || (growthBySlot[slotNo] && growthBySlot[slotNo].size_category)
+      (_grRow && _grRow.size_category)
+      || src.size_category
       || unitSizeCategory
       || '';
 
@@ -204,7 +241,8 @@ function _buildT3Members(unit) {
       lot_item_no:   src.lot_item_no    || '',
       lot_display_id:src.lot_display_id || src.lot_id || '',
       size_category: sizeCategory,
-      t2_weight_g:   src.weight_g || (growthBySlot[slotNo] && growthBySlot[slotNo].weight_g) || null,
+      // [20260424t] GR の weight_g を最優先 (= 直近の継続読取り値)
+      t2_weight_g:   (_grRow && _grRow.weight_g) || src.weight_g || null,
       weight_g:      null,
       sex:           src.sex || '不明',
       mx_done:       false,
@@ -221,12 +259,36 @@ function _buildT3Members(unit) {
   return result;
 }
 
-function _getT2GrowthBySlot(unitId) {
-  if (!unitId) return {};
-  const records = (typeof Store.getGrowthRecords === 'function') ? Store.getGrowthRecords(unitId) : [];
-  if (!records || records.length === 0) return {};
+// [20260424t] 両キー (unit_id / display_id) の成長記録を merge し、
+//   各スロットの最新 record を返すように改修。
+//   従来は unit_id 1 つだけしか参照しておらず、unit_detail.js が片方のキー
+//   にしか保存しなかった旧仕様 (~20260424r) のキャッシュが残ると、最新の
+//   体重が取得できないことがあった。
+function _getT2GrowthBySlot(unit) {
+  // 後方互換: 文字列 (旧 unitId) を受けたら unit オブジェクトに変換
+  let _u = unit;
+  if (typeof _u === 'string') _u = { unit_id: _u };
+  if (!_u) return {};
+  const _keys = [];
+  if (_u.unit_id)    _keys.push(_u.unit_id);
+  if (_u.display_id && _u.display_id !== _u.unit_id) _keys.push(_u.display_id);
+  if (_keys.length === 0) return {};
+  const _seen = {};
+  const _all = [];
+  _keys.forEach(function(_k){
+    const _list = (typeof Store.getGrowthRecords === 'function') ? (Store.getGrowthRecords(_k) || []) : [];
+    _list.forEach(function(r){
+      if (!r) return;
+      const _rid = r.record_id
+        || (r.record_date + '|' + (r.unit_slot_no||'') + '|' + (r.weight_g||''));
+      if (_seen[_rid]) return;
+      _seen[_rid] = true;
+      _all.push(r);
+    });
+  });
+  if (_all.length === 0) return {};
   const bySlot = {};
-  records.forEach(r => {
+  _all.forEach(r => {
     const slot = parseInt(r.unit_slot_no, 10);
     if (!slot) return;
     if (!bySlot[slot] || String(r.record_date) > String(bySlot[slot].record_date)) bySlot[slot] = r;
