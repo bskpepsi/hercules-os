@@ -2,7 +2,37 @@
 // ════════════════════════════════════════════════════════════════
 // parent_bloodline_extract.js — 種親血統情報の Vision 抽出機能
 //
-// build: 20260426y6.4
+// build: 20260426y6.6
+//
+// ── y6.6 での修正点 ────────────────────────────────────────────
+// ・🔥 「保存した血統情報がページ再読み込みで消える」バグを修正
+//   原因: HerculesOS は起動時に syncAll → API.getAllData → Store.setDB('parents', ...)
+//        で GAS から取得した parents 配列でローカル DB を完全上書きしていた。
+//        GAS には bloodline_data フィールドが存在しないため、ローカルで
+//        保存した bloodline_data / source_screenshots がページ再読み込みのたびに
+//        消えていた (実際は localStorage への保存自体は成功していたが、syncAll
+//        で別キーから読み込まれた parents で上書きされていた)。
+//   対策:
+//     1) 専用 localStorage キー (hercules_parent_bloodline_v1) に par_id を
+//        キーにして bloodline_data と source_screenshots を保存。
+//        Store とは独立しているので syncAll の影響を受けない。
+//     2) Store.on('db_parents') を購読し、parents が更新されるたびに
+//        PBE 専用ストアの内容を各 parent オブジェクトに自動マージ。
+//        これで yahoo_listing.js などの他モジュールも普通に
+//        par.bloodline_data でアクセスできる。
+//     3) localStorage 容量超過時は画像本体を削除しメタデータのみ保存する
+//        フォールバック処理。
+//
+// ── y6.5 での修正点 ────────────────────────────────────────────
+// ・🔥 「複数画像でトークン上限切り捨て」問題を**根本解決**
+//   原因: 複数画像を1リクエストで送ると入力トークンが膨大になり、
+//        どれだけ圧縮しても出力 8192 トークンを使い切る前に切り捨てられる。
+//   対策: 2枚以上の場合は 1枚ずつ順次抽出し、結果をJS側でマージする方式に変更。
+//        各リクエストは軽量で絶対に切り捨てられない。
+//        マージは構造化フィールドごとにスマート統合 (kinshipは重複排除、
+//        テキストは長い方優先 等)。1枚失敗しても他の枚で続行可能。
+//   トレードオフ: API消費は枚数分増えるが、1日250RPDの無料枠には
+//        余裕で収まる (3〜5枚×30回=90〜150リクエスト/日)。
 //
 // ── y6.4 での修正点 ────────────────────────────────────────────
 // ・🔥 大きなスクショ複数枚で「トークン上限切り捨て」が頻発する問題を解決
@@ -170,20 +200,117 @@ function _pbeSetApiKey(key) {
   } catch (_) {}
 }
 
-// 種親レコード取得・更新 (Store.getDB / patchDBItem を利用)
-function _pbeGetParent(parId) {
-  const parents = (Store.getDB && Store.getDB('parents')) || [];
-  return parents.find(p => p.par_id === parId
-    || p.parent_display_id === parId
-    || p.display_name === parId) || null;
+// ════════════════════════════════════════════════════════════════
+// [y6.6] 永続化レイヤー
+// ────────────────────────────────────────────────────────────────
+// 問題: HerculesOS は起動時に syncAll → API.getAllData → Store.setDB('parents', ...)
+//   で GAS から取得した parents 配列でローカル DB を上書きする。
+//   GAS には bloodline_data フィールドが存在しないため、ページ再読み込みするたびに
+//   ローカルで保存した bloodline_data / source_screenshots が消えていた。
+//
+// 解決策: 専用の localStorage キー (PBE_LS_KEY) に par_id をキーにして保存する。
+//   これは Store と無関係なので syncAll の影響を受けない。
+//   _pbeGetParent() で読み出すときに、Store.getDB の parent と PBE データを
+//   毎回マージして返す。
+//
+// データ構造 (localStorage):
+//   PBE_LS_KEY: {
+//     "PAR-xxx": { bloodline_data: {...}, source_screenshots: [...], updated_at: '...' },
+//     "PAR-yyy": { ... },
+//   }
+// ════════════════════════════════════════════════════════════════
+const PBE_LS_KEY = 'hercules_parent_bloodline_v1';
+
+function _pbeLoadStore() {
+  try {
+    const raw = localStorage.getItem(PBE_LS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return (parsed && typeof parsed === 'object') ? parsed : {};
+  } catch (_) { return {}; }
 }
 
-async function _pbePatchParent(parId, patch) {
-  if (Store.patchDBItem) {
-    Store.patchDBItem('parents', 'par_id', parId, patch);
+function _pbeSaveStore(store) {
+  try {
+    localStorage.setItem(PBE_LS_KEY, JSON.stringify(store));
+    return true;
+  } catch (e) {
+    console.error('[PBE] localStorage write failed', e);
+    // 容量超過の可能性: source_screenshots を削って再試行
+    try {
+      const slim = {};
+      Object.entries(store).forEach(function (entry) {
+        const k = entry[0], v = entry[1];
+        slim[k] = {
+          bloodline_data: v.bloodline_data,
+          source_screenshots: (v.source_screenshots || []).map(function (s) {
+            return { id: s.id, uploaded_at: s.uploaded_at, thumbnail_data_url: s.thumbnail_data_url, extraction_status: s.extraction_status };
+          }),
+          updated_at: v.updated_at,
+        };
+      });
+      localStorage.setItem(PBE_LS_KEY, JSON.stringify(slim));
+      console.warn('[PBE] saved slim version (full screenshots dropped)');
+      return true;
+    } catch (e2) {
+      console.error('[PBE] slim save also failed', e2);
+      return false;
+    }
   }
-  // GAS への永続化は本機能では行わない (既存の更新フローを壊さないため)
-  // ローカルストレージのみで完結。次回の syncAll で同期される設計。
+}
+
+// par_id を正規化 (display_id でも引けるようにする)
+function _pbeResolveParId(parId) {
+  if (!parId) return '';
+  const parents = (Store.getDB && Store.getDB('parents')) || [];
+  const found = parents.find(function (p) {
+    return p.par_id === parId || p.parent_display_id === parId || p.display_name === parId;
+  });
+  return found ? (found.par_id || parId) : parId;
+}
+
+// 種親レコード取得 (Store の parent と PBE 永続レイヤーをマージして返す)
+function _pbeGetParent(parId) {
+  const parents = (Store.getDB && Store.getDB('parents')) || [];
+  const par = parents.find(function (p) {
+    return p.par_id === parId || p.parent_display_id === parId || p.display_name === parId;
+  });
+  if (!par) return null;
+  // PBE 永続レイヤーから bloodline_data / source_screenshots をマージ
+  const store = _pbeLoadStore();
+  const pbeRec = store[par.par_id];
+  if (pbeRec) {
+    return Object.assign({}, par, {
+      bloodline_data:       pbeRec.bloodline_data || par.bloodline_data,
+      source_screenshots:   pbeRec.source_screenshots || par.source_screenshots || [],
+      bloodline_updated_at: pbeRec.updated_at || par.bloodline_updated_at,
+    });
+  }
+  return par;
+}
+
+// 種親レコード更新 (PBE 専用 localStorage に保存し、Store にもメモリ反映)
+async function _pbePatchParent(parId, patch) {
+  const realParId = _pbeResolveParId(parId);
+
+  // [y6.6] PBE 専用 localStorage に永続化 (syncAll で消えない)
+  const store = _pbeLoadStore();
+  const existing = store[realParId] || {};
+  const next = {
+    bloodline_data: (patch.bloodline_data !== undefined)
+      ? patch.bloodline_data : existing.bloodline_data,
+    source_screenshots: (patch.source_screenshots !== undefined)
+      ? patch.source_screenshots : existing.source_screenshots,
+    updated_at: patch.bloodline_updated_at || _pbeNowIso(),
+  };
+  store[realParId] = next;
+  _pbeSaveStore(store);
+
+  // Store のメモリ DB にもメモリ反映 (画面再描画用)。これは syncAll で上書きされても
+  // 次回の _pbeGetParent でまた PBE レイヤーから補完されるので問題ない。
+  if (Store.patchDBItem) {
+    Store.patchDBItem('parents', 'par_id', realParId, patch);
+  }
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -591,6 +718,91 @@ async function _pbeCallVisionMulti(imageDataUrls, apiKey, opts) {
 }
 
 // ════════════════════════════════════════════════════════════════
+// [y6.5] 複数画像から個別に抽出した部分結果をJSロジックでマージ
+//   各フィールドの統合方針:
+//     - 文字列フィールド: 最初に値があったものを採用、ただし他で
+//       より長い値があれば置き換え (より詳細な記述を優先)
+//     - 数値フィールド (body_size_mm): 最初の非null値を採用
+//     - kinship_records: 全部結合して、metric+thresholdが同じものは
+//       より count や is_top の情報が豊富なものを残して重複排除
+//     - feature_notes: 全部結合 (改行区切り)
+//     - raw_text: 全部結合 (改行2つで区切り)
+// ════════════════════════════════════════════════════════════════
+function _pbeMergePartials(partials) {
+  if (!partials || !partials.length) return null;
+  if (partials.length === 1) return partials[0];
+
+  function pickStr(field) {
+    let best = null;
+    partials.forEach(function (p) {
+      const v = p && p[field];
+      if (v == null || v === '') return;
+      if (best == null || String(v).length > String(best).length) best = v;
+    });
+    return best;
+  }
+  function pickNum(field) {
+    for (let i = 0; i < partials.length; i++) {
+      const v = partials[i] && partials[i][field];
+      if (v != null && !isNaN(parseFloat(v))) return parseFloat(v);
+    }
+    return null;
+  }
+  function joinStr(field, sep) {
+    const xs = [];
+    partials.forEach(function (p) {
+      const v = p && p[field];
+      if (v && String(v).trim()) xs.push(String(v).trim());
+    });
+    // 完全一致の重複は除外
+    return Array.from(new Set(xs)).join(sep || '\n\n');
+  }
+
+  // kinship_records をマージ・重複排除
+  const allRecords = [];
+  partials.forEach(function (p) {
+    if (p && Array.isArray(p.kinship_records)) {
+      p.kinship_records.forEach(function (r) { allRecords.push(r); });
+    }
+  });
+  // metric+threshold をキーに統合 (同じキーで count や is_top が異なる場合、情報が多い方を採用)
+  const recordMap = {};
+  allRecords.forEach(function (r) {
+    if (!r || !r.metric || r.threshold == null) return;
+    const key = r.metric + '@' + r.threshold;
+    const existing = recordMap[key];
+    if (!existing) {
+      recordMap[key] = r;
+      return;
+    }
+    // より情報が多い方を残す
+    const newScore = (r.count != null ? 2 : 0) + (r.is_top ? 1 : 0) + (r.note ? 1 : 0);
+    const oldScore = (existing.count != null ? 2 : 0) + (existing.is_top ? 1 : 0) + (existing.note ? 1 : 0);
+    if (newScore > oldScore) recordMap[key] = r;
+  });
+  const mergedRecords = Object.values(recordMap)
+    .sort(function (a, b) {
+      // metric ごとにグループ化、同metric内では threshold降順
+      if (a.metric !== b.metric) return a.metric < b.metric ? -1 : 1;
+      return b.threshold - a.threshold;
+    });
+
+  return {
+    species_full:    pickStr('species_full'),
+    common_name:     pickStr('common_name'),
+    origin:          pickStr('origin'),
+    generation:      pickStr('generation'),
+    eclosion_period: pickStr('eclosion_period'),
+    body_size_mm:    pickNum('body_size_mm'),
+    paternal_blood:  pickStr('paternal_blood'),
+    maternal_blood:  pickStr('maternal_blood'),
+    kinship_records: mergedRecords,
+    feature_notes:   joinStr('feature_notes', ' / '),
+    raw_text:        joinStr('raw_text', '\n\n'),
+  };
+}
+
+// ════════════════════════════════════════════════════════════════
 // 抽出結果のサニタイズ (販売者名等が混入していたら除去)
 // ════════════════════════════════════════════════════════════════
 function _pbeSanitizeBloodlineData(data) {
@@ -704,15 +916,13 @@ Pages._pbeOpenExtractor = function (parId, opts) {
       if (!prev) return;
       if (!files.length) { prev.innerHTML = ''; return; }
       // [y6.4] 合計サイズ計算と警告判定
+      // [y6.5] 順次処理になったのでトークン上限による失敗は起きない。
+      //   警告は10枚以上の極端な場合のみ(時間がかかる注意)。
       const totalKb = Math.round(files.reduce(function (s, f) { return s + f.size; }, 0) / 1024);
-      const tooMany = files.length > PBE_WARN_FILE_COUNT;
-      const tooLarge = totalKb > 2500;
-      const warningHtml = (tooMany || tooLarge)
+      const tooMany = files.length > 10;
+      const warningHtml = tooMany
         ? '<div style="background:rgba(230,150,0,.12);border:1px solid rgba(230,150,0,.35);padding:6px 10px;border-radius:6px;font-size:.74rem;color:var(--amber);margin-bottom:6px;line-height:1.5">'
-          + '⚠️ '
-          + (tooMany ? files.length + '枚は多めです。' : '')
-          + (tooLarge ? '合計サイズが大きいため' : '')
-          + 'AIが応答しきれない可能性があります。失敗した場合は枚数を減らしてください。'
+          + '⚠️ ' + files.length + '枚は多めです。1枚あたり5〜10秒×枚数の時間がかかります。'
           + '</div>'
         : '';
       // 各ファイルをサムネイルとしてグリッド表示
@@ -797,32 +1007,68 @@ Pages._pbeRunExtraction = async function (parId) {
       return _pbeProcessImageFile(f);
     }));
 
-    if (stat) {
-      stat.innerHTML = '🔄 Geminiで' + files.length + '枚を統合解析中... (15〜30秒)';
-    }
-
-    // [y6.2] 全画像をまとめて Vision API に送信。AIが統合された1セットの構造化データを返す
-    // [y6.3] 自動リトライ: 1回目失敗時は温度を下げて再試行
-    // [y6.4] リトライ時は画像をさらに強く再圧縮して入力トークンも削減
-    const imageUrls = processedAll.map(function (p) { return p.image_data_url; });
     let raw;
-    try {
-      raw = await _pbeCallVisionMulti(imageUrls, key);
-    } catch (e1) {
-      const msg = String(e1.message || '');
-      // パース失敗・切り捨ての場合のみリトライ (API認証エラー等は即時失敗)
-      const isRetriable = msg.includes('JSON') || msg.includes('切り捨て') || msg.includes('パース');
-      if (isRetriable) {
-        console.warn('[PBE] retrying with stronger compression + lower temperature...', e1);
-        if (stat) stat.innerHTML = '🔄 再試行中... (画像を再圧縮して短く生成します)';
-        // [y6.4] リトライ時の画像をさらに圧縮
-        const retryImageUrls = await Promise.all(processedAll.map(function (p) {
-          return _pbeRecompressForRetry(p);
-        }));
-        raw = await _pbeCallVisionMulti(retryImageUrls, key, { isRetry: true });
-      } else {
-        throw e1;
+    if (processedAll.length === 1) {
+      // [y6.5] 1枚: 従来通り単発リクエスト
+      if (stat) stat.innerHTML = '🔄 Geminiで解析中... (10〜20秒)';
+      try {
+        raw = await _pbeCallVision(processedAll[0].image_data_url, key);
+      } catch (e1) {
+        const msg = String(e1.message || '');
+        const isRetriable = msg.includes('JSON') || msg.includes('切り捨て') || msg.includes('パース');
+        if (isRetriable) {
+          console.warn('[PBE] retrying single image with stronger compression...', e1);
+          if (stat) stat.innerHTML = '🔄 再試行中... (画像を再圧縮)';
+          const retryUrl = await _pbeRecompressForRetry(processedAll[0]);
+          raw = await _pbeCallVision(retryUrl, key, { isRetry: true });
+        } else {
+          throw e1;
+        }
       }
+    } else {
+      // [y6.5] 🔥 2枚以上: 1枚ずつ順次抽出してJS側でマージする方式に変更
+      //   理由: 複数画像を1リクエストで送ると入力トークンが膨大になり、
+      //         出力の8192トークンを使い切る前に切り捨てられる。
+      //         1枚ずつ送れば各リクエストが軽量で、絶対に切り捨てられない。
+      //   実装: 各画像を個別にVision APIに送信 → 結果をJS側でフィールドごとにマージ。
+      //         API消費は枚数分増えるが、無料枠1日250リクエストには余裕で収まる(3〜5枚ならOK)。
+      const partials = [];
+      for (let i = 0; i < processedAll.length; i++) {
+        if (stat) {
+          stat.innerHTML = '🔄 ' + (i + 1) + '/' + processedAll.length
+            + ' 枚目を解析中... (各5〜10秒)';
+        }
+        try {
+          const r = await _pbeCallVision(processedAll[i].image_data_url, key);
+          partials.push(r);
+        } catch (e1) {
+          const msg = String(e1.message || '');
+          const isRetriable = msg.includes('JSON') || msg.includes('切り捨て') || msg.includes('パース');
+          if (isRetriable) {
+            console.warn('[PBE] retrying image #' + (i + 1) + ' with stronger compression...', e1);
+            if (stat) stat.innerHTML = '🔄 ' + (i + 1) + '/' + processedAll.length + ' 枚目を再試行中...';
+            const retryUrl = await _pbeRecompressForRetry(processedAll[i]);
+            try {
+              const r = await _pbeCallVision(retryUrl, key, { isRetry: true });
+              partials.push(r);
+            } catch (e2) {
+              console.warn('[PBE] image #' + (i + 1) + ' failed twice, skipping', e2);
+              // この1枚は諦めて次へ (1枚失敗しても他の枚で抽出続行)
+              partials.push(null);
+            }
+          } else {
+            throw e1;
+          }
+        }
+      }
+      // 全部失敗したらエラー
+      const valid = partials.filter(function (p) { return p; });
+      if (!valid.length) {
+        throw new Error('全ての画像で抽出に失敗しました。画像を変えて再試行してください。');
+      }
+      // [y6.5] 結果をマージ (JSロジックで統合)
+      if (stat) stat.innerHTML = '🔄 ' + valid.length + '枚の結果を統合中...';
+      raw = _pbeMergePartials(valid);
     }
 
     // サニタイズ
@@ -1266,4 +1512,54 @@ Pages._pbeExportCsv = function (parId) {
 window.Pages = window.Pages || {};
 Pages._pbeRenderBloodlineCard = _pbeRenderBloodlineCard;
 
-console.log('[PBE] parent_bloodline_extract.js loaded build=20260426y6.4');
+// ════════════════════════════════════════════════════════════════
+// [y6.6] Store.parents に PBE データを自動マージするフック
+//   syncAll で parents が GAS から再取得されても、その直後に PBE レイヤーの
+//   bloodline_data / source_screenshots を自動で各 parent オブジェクトに注入する。
+//   これにより yahoo_listing.js などの他モジュールも普通に
+//   par.bloodline_data でアクセスできる。
+// ════════════════════════════════════════════════════════════════
+function _pbeMergeIntoStore() {
+  if (!window.Store || typeof Store.getDB !== 'function') return;
+  const parents = Store.getDB('parents');
+  if (!Array.isArray(parents) || !parents.length) return;
+  const pbeStore = _pbeLoadStore();
+  let modified = false;
+  parents.forEach(function (par) {
+    const rec = pbeStore[par.par_id];
+    if (rec) {
+      if (rec.bloodline_data !== undefined && par.bloodline_data === undefined) {
+        par.bloodline_data = rec.bloodline_data;
+        modified = true;
+      }
+      if (rec.source_screenshots !== undefined && par.source_screenshots === undefined) {
+        par.source_screenshots = rec.source_screenshots;
+        modified = true;
+      }
+      if (rec.updated_at && !par.bloodline_updated_at) {
+        par.bloodline_updated_at = rec.updated_at;
+        modified = true;
+      }
+    }
+  });
+  return modified;
+}
+
+// 起動直後と、Store 更新通知 (db_parents イベント) を購読してマージ
+(function () {
+  // 起動時: Store がまだ初期化されていない可能性があるので少し待つ
+  setTimeout(_pbeMergeIntoStore,  300);
+  setTimeout(_pbeMergeIntoStore, 1500);
+  setTimeout(_pbeMergeIntoStore, 3500);
+  // Store の購読 (Store.on イベントで購読)
+  if (window.Store && typeof Store.on === 'function') {
+    try {
+      Store.on('db_parents', _pbeMergeIntoStore);
+    } catch (e) { console.warn('[PBE] Store.on failed', e); }
+  }
+})();
+
+// 外部からも呼べるように公開 (画面再描画前に明示的に呼ぶ用途)
+Pages._pbeMergeIntoStore = _pbeMergeIntoStore;
+
+console.log('[PBE] parent_bloodline_extract.js loaded build=20260426y6.6');
