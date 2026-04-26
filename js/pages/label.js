@@ -1,6 +1,29 @@
 // FILE: js/pages/label.js
-// build: 20260424u
+// build: 20260426a
 // 修正:
+//   - [20260426a] 🌟 ラベルのステージ表示を「最新の成長記録」から取得
+//     症状: T2 移行編成直後に発行されるラベルで St (生育ステージ) の
+//           チェックが全て空欄になる。一方、個体一覧から呼び出すラベル
+//           では正しく ■L3 等にチェックが入る。
+//     根本原因: GAS の createT2Session が返す created_individuals
+//           オブジェクトに current_stage が含まれておらず、フロント
+//           Store には個体本体の current_stage が undefined のまま。
+//           label.js の IND 分岐は ind.current_stage || ind.stage_life
+//           しか見ていなかったので、stage_code が空文字列となり
+//           _stageCheckboxRow が全て □ で描画されていた。
+//     方針: 個体テーブルの current_stage に依存せず、最新の成長記録
+//           (records 配列) の stage フィールドを参照する。GR は T1 移行
+//           時に T1_START、T2 移行時に T2_INDIVIDUALIZE 等で確実に
+//           作成されるため、最新 GR の stage を見れば必ず最新状態が
+//           取れる。GR 0 件のフォールバックは 'L1L2' (孵化直後想定)。
+//     新ヘルパー: _resolveLabelStageCode(records) を追加。
+//           record_date 降順、同日なら created_at 降順でソートし、
+//           最新の stage 値が空でない GR の stage を返す。
+//     適用: IND / LOT / UNIT / IND_DRAFT / IND_FORMAL の 5 経路で
+//           stage_code を新ヘルパー経由に置換。_normStageForLabel で
+//           T1→L1L2 / T2/T3→L3 等の自動変換が引き続き効くため、
+//           既存の表示挙動と完全互換。
+//
 //   - [20260424u] 🌟 Single-Source-of-Truth リファクタ Phase 2
 //     UNIT ラベルの t1_date / members 解決を Store のリゾルバに集約。
 //     従来は両キーから merge → 最古日付検出 → スロット別最新体重抽出を
@@ -175,7 +198,7 @@
 //   - Bug 3: _backRoute が存在する場合に「詳細に戻る」ボタンを追加
 'use strict';
 
-window._LABEL_BUILD = '20260422n';
+window._LABEL_BUILD = '20260426a';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 // ════════════════════════════════════════════════════════════════
@@ -227,6 +250,55 @@ function _normStageForLabel(code) {
     ADULT_PRE:'成虫（未後食）', ADULT:'成虫（活動開始）',
   };
   return MAP[code] || code;
+}
+
+// ════════════════════════════════════════════════════════════════
+// [20260426a] ラベルのステージコードを最新成長記録から決定する
+// ════════════════════════════════════════════════════════════════
+// 設計理由:
+//   個体テーブル (individuals) の current_stage は、T2 移行直後の
+//   created_individuals レスポンスに含まれない等の理由で undefined に
+//   なるケースがある。一方、成長記録 (GROWTH) は T1 移行時の T1_START、
+//   T2 移行時の T2_INDIVIDUALIZE 等で必ず作成されるため、最新 GR の
+//   stage フィールドを参照すれば「ラベル発行時点での最新ステージ」が
+//   常に正確に取得できる。
+//
+// 動作:
+//   1. records が空 (0件) の場合 → 'L1L2' を返す
+//      (孵化直後・採卵記録のみで GR 未生成の場合のフォールバック)
+//   2. records が 1件以上の場合:
+//      record_date 降順、同日なら created_at 降順でソート。
+//      最新行の stage が空でなければそれを返す。
+//      最新行の stage が空なら、次に新しい行で stage が空でないものを探す
+//      (ラベル発行履歴など stage 無記入の GR が混ざっていても安全)。
+//      全件 stage 空なら 'L1L2' を返す。
+//
+// 戻り値:
+//   stage コード文字列 (T1, T2, T2A, T2B, T3, L1L2, L3, PREPUPA, PUPA,
+//   ADULT_PRE, ADULT 等)。これを _normStageForLabel に通すことで
+//   ラベルの St 表示 (■L1L2 / ■L3 等) に変換される。
+function _resolveLabelStageCode(records) {
+  if (!Array.isArray(records) || records.length === 0) return 'L1L2';
+  // shallow copy してから降順ソート (元配列を破壊しない)
+  var sorted = records.slice().sort(function(a, b){
+    var ad = String((a && a.record_date) || '');
+    var bd = String((b && b.record_date) || '');
+    if (ad !== bd) return bd.localeCompare(ad); // record_date 降順
+    var ac = String((a && a.created_at) || '');
+    var bc = String((b && b.created_at) || '');
+    return bc.localeCompare(ac);                // 同日なら created_at 降順
+  });
+  for (var i = 0; i < sorted.length; i++) {
+    var st = sorted[i] && sorted[i].stage;
+    if (st && String(st).trim() !== '') {
+      console.log('[LABEL] stage from latest GR:', st,
+        '(record_date=' + (sorted[i].record_date||'') +
+        ', record_id=' + (sorted[i].record_id||'') + ')');
+      return String(st).trim();
+    }
+  }
+  console.log('[LABEL] stage fallback to L1L2 (all', sorted.length, 'records have empty stage)');
+  return 'L1L2';
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -970,7 +1042,9 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         qr_text:      `IND:${ind.ind_id || targetId}`,
         display_id:   ind.display_id    || targetId,
         line_code:    line.line_code    || line.display_id || '',
-        stage_code:   ind.current_stage || ind.stage_life  || '',
+        // [20260426a] 個体テーブルの current_stage は T2移行直後等で undefined
+        //   になる経路があるため、最新成長記録の stage を優先的に参照する。
+        stage_code:   _resolveLabelStageCode(records),
         sex:          ind.sex           || '',
         hatch_date:   _indHatch,
         mat_type:     ind.current_mat   || '',
@@ -1008,7 +1082,9 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         qr_text:      `LOT:${lot.lot_id || targetId}`,
         display_id:   lot.display_id    || targetId,
         line_code:    line.line_code    || line.display_id || '',
-        stage_code:   lot.stage_life    || lot.stage       || '',
+        // [20260426a] 最新成長記録の stage を優先 (lot.stage / stage_life の
+        //   個別フィールドは T0/EGG など初期値のままで残ることが多いため)。
+        stage_code:   _resolveLabelStageCode(records),
         hatch_date:   _lotHatchNorm     || '',
         count:        lot.count         || '',
         mat_type:     lot.mat_type      || '',
@@ -1151,7 +1227,10 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         qr_text:       `BU:${_genDisplayId}`,
         display_id:    _genDisplayId,
         line_code:     unit.line_code || line.line_code || line.display_id || '',
-        stage_code:    unit.stage_phase || 'T1',
+        // [20260426a] UNIT も最新 GR の stage を参照する。T1 → T2 へ移行
+        //   した瞬間 (updateBreedingUnit で stage_phase が T2 に変わる前) でも、
+        //   GR には T1_START / T2_START 等が記録されているのでズレが起きない。
+        stage_code:    _resolveLabelStageCode(_resolvedUnitRecs),
         head_count:    unit.head_count  || 2,
         size_category: unit.size_category || '',
         hatch_date:    _unitHatch,
@@ -1180,7 +1259,10 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         qr_text:      'IND:DRAFT',
         display_id:   `${di.lot_display_id||''}#${di.lot_item_no||'?'} DRAFT`,
         line_code:    di.line_code || line.line_code || line.display_id || '',
-        stage_code:   di.stage_phase || 'T1',
+        // [20260426a] T1セッション中の draft なので records=[] で
+        //   _resolveLabelStageCode のフォールバック 'L1L2' が使われる。
+        //   従来の di.stage_phase || 'T1' (= L1L2) と挙動同等。
+        stage_code:   _resolveLabelStageCode([]),
         sex:          '',
         hatch_date:   _diHatch,
         mat_type:     di.mat_type  || 'T1',
@@ -1214,7 +1296,9 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         qr_text:      fi.display_id ? `IND:${fi.display_id}` : 'IND:FORMAL',
         display_id:   fi.display_id || `${fi.lot_display_id||''}#${fi.lot_item_no||'?'}`,
         line_code:    fi.line_code || line.line_code || line.display_id || '',
-        stage_code:   fi.stage_phase || 'T1',
+        // [20260426a] T1個別飼育の確定ラベル。_formalRecords が空なら
+        //   _resolveLabelStageCode のフォールバックで 'L1L2' (= T1段階)。
+        stage_code:   _resolveLabelStageCode(_formalRecords),
         sex:          fi.sex || '',
         hatch_date:   _fiHatch,
         mat_type:     fi.mat_type || 'T1',
