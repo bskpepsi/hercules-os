@@ -315,6 +315,9 @@ Pages.parentDetail = async function (parIdParam) {
         ${pairingBadge ? `<div style="margin-top:10px">${pairingBadge}</div>` : ''}
       </div>
 
+      <!-- [y6] 系統評価カード (bloodline_dataがある時のみ描画) -->
+      <div id="pbe-bloodline-card-mount"></div>
+
       <!-- クイックアクション -->
       <div style="display:flex;gap:8px">
         <button class="btn btn-ghost" style="flex:1"
@@ -322,6 +325,14 @@ Pages.parentDetail = async function (parIdParam) {
         <button class="btn btn-ghost" style="flex:1"
           onclick="routeTo('label-gen',{targetType:'PAR',targetId:'${parId}',autoGenerate:true})">🏷 ラベル/QR</button>
       </div>
+
+      <!-- [y6] 血統情報がない場合のCTAボタン -->
+      ${!p.bloodline_data ? `
+      <button class="btn btn-full"
+        style="background:rgba(200,168,75,.12);color:var(--gold);border:1px solid rgba(200,168,75,.4);font-weight:700;margin-top:8px"
+        onclick="Pages._pbeOpenExtractor('${parId}')">
+        📷 スクショからAIで血統情報を抽出
+      </button>` : ''}
 
       <!-- 後食開始日未設定警告（編集フォームへ誘導） -->
       ${!p.feeding_start_date ? `
@@ -440,6 +451,14 @@ Pages.parentDetail = async function (parIdParam) {
 
         // ペアリング管理を非同期ロード（♂♀両対応）
     _loadPairingManagement(parId);
+
+    // [y6] 系統評価カードをマウント (bloodline_data がある時のみ)
+    setTimeout(function () {
+      const mount = document.getElementById('pbe-bloodline-card-mount');
+      if (mount && p.bloodline_data && Pages._pbeRenderBloodlineCard) {
+        mount.innerHTML = Pages._pbeRenderBloodlineCard(p);
+      }
+    }, 60);
 
   } catch (err) {
     // レンダリング中の予期しない例外をキャッチして真っ暗を防ぐ
@@ -1130,6 +1149,20 @@ Pages.parentNew = function (params = {}) {
             UI.input('mother_parent_size_mm', 'number', v('mother_parent_size_mm'), '例: 65'))}
         </div>
 
+        <!-- [y6] スクショから血統情報を抽出 -->
+        <div class="form-title">血統情報の自動抽出</div>
+        <div style="background:linear-gradient(135deg,rgba(200,168,75,.06),rgba(200,168,75,.01));border:1px solid rgba(200,168,75,.25);padding:10px 12px;border-radius:8px;margin-bottom:12px">
+          <div style="font-size:.82rem;color:var(--text2);line-height:1.5;margin-bottom:8px">
+            ヤフオク等の出品ページのスクリーンショットから、AI(Gemini Vision)が血統表記・産地・累代・サイズ・同腹兄弟実績を自動抽出して各項目に入力します。
+          </div>
+          <button type="button" class="btn btn-primary btn-sm" style="width:100%;font-weight:700"
+            onclick="Pages._pbeOpenExtractor('${isEdit ? params.editId : ''}')">
+            📷 スクリーンショットから抽出
+          </button>
+          ${isEdit && par && par.bloodline_data ? `
+          <div id="pbe-summary-card" style="margin-top:10px"></div>` : ''}
+        </div>
+
         <div class="form-title">血統（♂系）</div>
         ${UI.field('♂血統原文',
           UI.input('paternal_raw', 'text', v('paternal_raw'), '例: U6SA-GTR.RU01U6SAティー'))}
@@ -1190,6 +1223,14 @@ Pages.parentNew = function (params = {}) {
         </div>
       </form>
     </div>`;
+
+  // [y6] 既存の bloodline_data があれば系統評価カードを描画
+  setTimeout(function () {
+    const summary = document.getElementById('pbe-summary-card');
+    if (summary && isEdit && par && Pages._pbeRenderBloodlineCard) {
+      summary.innerHTML = Pages._pbeRenderBloodlineCard(par);
+    }
+  }, 50);
 };
 
 // 種親登録・更新保存（createParentV2 を呼ぶ）

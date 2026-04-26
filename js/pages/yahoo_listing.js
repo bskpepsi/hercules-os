@@ -2,9 +2,21 @@
 // ════════════════════════════════════════════════════════════════
 // yahoo_listing.js — ヤフオク出品AIジェネレーター（手動入力モード）
 //
-// build: 20260426y5
+// build: 20260426y6
 // 要件定義書: HerculesOS_ヤフオク出品AIジェネレーター_要件定義書_v1.0
 //
+// ── y6 での修正点 ─────────────────────────────────────────────
+// ・🔥 種親に紐づく Vision 抽出データ (bloodline_data) を出品文生成に統合
+//   parent_bloodline_extract.js で抽出された情報を AI プロンプトに自動連携:
+//     - 同腹兄弟実績(構造化データ)
+//     - 系統的特徴 (feature_notes)
+//     - 産地・累代・血統表記原文
+//   これらを「種親系統評価」セクションとしてプロンプトに渡し、
+//   おすすめポイント等で**中立的・客観的に**組み込ませる。
+// ・🔥 販売者名・店舗名・購入経緯は出品文に**絶対に書かない**ガード
+//   そもそもデータベースに含まれない設計だが、プロンプトでも明示禁止。
+// ・🔥 「過去入手の」のような購入を匂わせる表現も禁止
+//   系統そのものの評価のみを語るスタイルに統一。
 // ── y5 での修正点 ─────────────────────────────────────────────
 // ・🔥 「1回目だけJSON生成失敗、2回目で成功」問題を根本解決
 //   原因: maxOutputTokens=4096 で長文の【注意事項】セクションを書かせると
@@ -110,7 +122,7 @@ window.PAGES['yahoo-listing-history'] = () => Pages.yahooListingHistory(Store.ge
 const YL_LS_KEY        = 'hercules_yahoo_listing_v1';      // メインデータ保存先
 const YL_API_KEY_LS    = 'hercules_gemini_key';            // 既存sale_listing.jsと共用
 const YL_DRAFT_KEY     = 'hercules_yahoo_listing_draft';   // 入力中の下書き
-const YL_LOGO_PATH     = 'assets/logos/herakabu-marche-logo.png?v=20260426y5';
+const YL_LOGO_PATH     = 'assets/logos/herakabu-marche-logo.png?v=20260426y6';
 const YL_GEMINI_MODEL  = 'gemini-2.5-flash';
 
 // ────────────────────────────────────────────────────────────────
@@ -1153,15 +1165,18 @@ Pages.yahooListing = function (params = {}) {
       const mInfo = m ? `\n  ♀親情報: ${m.size_mm?m.size_mm+'mm':'(サイズ不明)'} ${m.maternal_raw?'(血統表記: '+m.maternal_raw+')':''}${m.memo?' メモ:'+m.memo:''}` : '';
       parentBlocks.push(`[${ic.line.species}${ic.line.origin?' '+ic.line.origin+'産':''}]${lineMemo}${fInfo}${mInfo}`);
       // [y3] ナンバリング用リスト
+      // [y6] bloodline_data (Vision抽出された系統評価データ) も含める
       if (f) fatherList.push({
-        size:  f.size_mm  || '',
-        blood: f.paternal_raw || '',
-        memo:  f.memo || '',
+        size:           f.size_mm  || '',
+        blood:          f.paternal_raw || '',
+        memo:           f.memo || '',
+        bloodline_data: f.bloodline_data || null,
       });
       if (m) motherList.push({
-        size:  m.size_mm  || '',
-        blood: m.maternal_raw || '',
-        memo:  m.memo || '',
+        size:           m.size_mm  || '',
+        blood:          m.maternal_raw || '',
+        memo:           m.memo || '',
+        bloodline_data: m.bloodline_data || null,
       });
     });
 
@@ -1187,6 +1202,49 @@ Pages.yahooListing = function (params = {}) {
             : `  ♀${num} ${sizeStr} 血統原文なし(括弧書きを書かないこと)`;
         }).join('\n')
       : '  (♀親情報なし)';
+
+    // [y6] 系統評価情報 (Vision抽出された bloodline_data)
+    //   出品者名・店舗名・購入価格は含まれない (抽出時に除外済み)。
+    //   AIには「同腹兄弟の実績は系統評価として中立的に記述」「販売者を特定する情報は出さない」と指示。
+    function _ylFormatBloodlineEvaluation(role, p) {
+      if (!p.bloodline_data) return '';
+      const b = p.bloodline_data;
+      const parts = [];
+      if (b.feature_notes)   parts.push(`系統的特徴: ${b.feature_notes}`);
+      if (b.kinship_records && b.kinship_records.length) {
+        const grouped = {};
+        b.kinship_records.forEach(r => {
+          const key = r.metric || 'other';
+          if (!grouped[key]) grouped[key] = [];
+          grouped[key].push(r);
+        });
+        const KIN_LABEL = {
+          body_size: '体長', pre_pupa_weight: '前蛹体重', larva_weight: '幼虫体重',
+          thorax_horn: '胸角', head_horn: '頭角',
+        };
+        Object.keys(grouped).forEach(metric => {
+          const lbl = KIN_LABEL[metric] || metric;
+          const rows = grouped[metric].sort((a,b) => b.threshold - a.threshold).map(r => {
+            const cnt = r.count != null ? r.count + '頭' : (r.note || '—');
+            const top = r.is_top ? '(筆頭)' : '';
+            return `${r.threshold}${r.unit || ''}up ${cnt}${top}`;
+          }).join('・');
+          parts.push(`同腹兄弟${lbl}実績: ${rows}`);
+        });
+      }
+      return parts.length ? `\n  [${role}系統評価] ${parts.join(' / ')}` : '';
+    }
+    const fatherEvalText = fatherList.map((p, i) => {
+      const num = '①②③④⑤⑥⑦⑧⑨'[i] || `(${i+1})`;
+      return _ylFormatBloodlineEvaluation(`♂${num}`, p);
+    }).join('');
+    const motherEvalText = motherList.map((p, i) => {
+      const num = '①②③④⑤⑥⑦⑧⑨'[i] || `(${i+1})`;
+      return _ylFormatBloodlineEvaluation(`♀${num}`, p);
+    }).join('');
+    const bloodlineEvalSection = (fatherEvalText || motherEvalText)
+      ? `\n【種親系統評価 (Vision抽出データ・販売者情報は含まれない)】${fatherEvalText}${motherEvalText}\n`
+      : '';
 
     // 参考出品文 (line別最大1件、テキストの先頭500文字まで)
     const refBlocks = [];
@@ -1288,7 +1346,7 @@ ${parentBlocks.join('\n\n')}
 【種親リスト (この番号順で①②③として記載すること)】
 ${fatherListText}
 ${motherListText}
-
+${bloodlineEvalSection}
 【出品個体】
 ${indLines}
 
@@ -1355,6 +1413,14 @@ ${sf.extraAppeal ? '【出品者アピール (必ず本文に盛り込む)】\n'
 
 4) 【おすすめポイント】セクション:
    中点(・)リストで3〜5項目。実際の血統情報・サイズ・成長状態から具体的な訴求を作る。
+   ${(fatherEvalText || motherEvalText) ? `🌟 [y6] 上記「種親系統評価」セクションに記載がある場合は、その内容を本文中に**中立的・客観的**に組み込むこと:
+   ・「同腹兄弟から174mm筆頭・170up6頭・168up3頭の実績」のように、系統の実績を**事実として**記述
+   ・🚫 販売者名・店舗名・購入経緯・購入価格は**絶対に書かない**(そもそもデータベースに含まれない)
+   ・🚫 「〇〇商店様より入手」「過去入手の」のような購入を匂わせる表現も**書かない**
+   ・系統的特徴 (feature_notes) があれば、それを参考に説得力ある訴求を作る
+   ・「系統的特徴として胸角の伸びが優秀」「サイズ系・長角系統」のように、その血統の強みを購入希望者にわかりやすく伝える
+   例: 「・♂親側の系統は同腹兄弟から174mm筆頭・170up6頭という大型実績を持ち、サイズ系として高ポテンシャル」
+       「・♀親側の系統は前蛹150g up筆頭・140g台複数の重量実績を持ち、将来の超大型個体作出が期待できます」` : ''}
    ${sf.extraAppeal ? '※必ず出品者アピールの内容を反映させる。' : ''}
 
 5) 【注意事項】セクション (◆マーク列記・実例完全準拠):
@@ -2354,4 +2420,4 @@ ${h.body_html || '<pre>'+_ylEsc(h.body_plain)+'</pre>'}
   `;
 };
 
-console.log('[YL] yahoo_listing.js loaded build=20260426y5');
+console.log('[YL] yahoo_listing.js loaded build=20260426y6');

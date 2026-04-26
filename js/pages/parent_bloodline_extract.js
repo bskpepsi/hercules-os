@@ -1,0 +1,918 @@
+// FILE: js/pages/parent_bloodline_extract.js
+// ════════════════════════════════════════════════════════════════
+// parent_bloodline_extract.js — 種親血統情報の Vision 抽出機能
+//
+// build: 20260426y6
+//
+// ── 概要 ─────────────────────────────────────────────────────
+// ヤフオク等の出品ページのスクショ画像から、Gemini 2.5 Flash の
+// Vision API を使って種親の血統情報を構造化抽出するモジュール。
+// 抽出結果は parents テーブルの bloodline_data フィールドに保存され、
+// 飼育画面・ヤフオク出品文生成・ライン詳細画面で参照される。
+//
+// ── 設計方針 ─────────────────────────────────────────────────
+// ・既存の parent_v2.js / sale_listing.js / yahoo_listing.js は触らない
+//   (組み込みは「📷 血統情報を抽出」ボタンを差し込むだけの最小介入)
+// ・関数名は `_pbe*` プレフィックスで衝突回避
+// ・グローバル公開は Pages._pbeOpenExtractor / _pbeOpenViewer のみ
+// ・既存の parents レコードに後方互換的にフィールド追加
+//   (古いレコードは bloodline_data === undefined で動作する)
+// ・販売者名・店舗名・購入価格・購入条件は抽出しない方針
+//   (Vision プロンプトで明示的に禁止)
+//
+// ── データモデル ──────────────────────────────────────────────
+// parents テーブルの各レコードに以下フィールドを追加 (任意):
+//   {
+//     // 既存フィールド (par_id, sex, size_mm, paternal_raw, ...) はそのまま
+//
+//     bloodline_data: {
+//       species_full:    'Dynastes hercules hercules',
+//       origin:          'グアドループ',
+//       generation:      'CB',
+//       eclosion_period: '2025/8/中旬',
+//       body_size_mm:    79,
+//       paternal_blood:  'MT-FF1710F.FFOAKS',
+//       maternal_blood:  '00-181',
+//       kinship_records: [
+//         {metric:'body_size', threshold:174, count:1, unit:'mm', is_top:true},
+//         {metric:'body_size', threshold:170, count:6, unit:'mm'},
+//         {metric:'pre_pupa_weight', threshold:150, count:1, unit:'g', is_top:true, note:'前蛹'},
+//       ],
+//       feature_notes:   '胸角の伸びがピカイチ。サイズ系・長角系統。',
+//       raw_text:        '(原文全文)',
+//     },
+//     source_screenshots: [
+//       {
+//         id:                  'shot_xxx',
+//         uploaded_at:         '2026-04-26T17:30:00',
+//         image_data_url:      'data:image/jpeg;base64,...',  // 1MB以下圧縮
+//         thumbnail_data_url:  'data:image/jpeg;base64,...',  // 200x300サムネ
+//         extraction_status:   'done' | 'pending' | 'failed',
+//         extracted_at:        '2026-04-26T17:30:30',
+//       },
+//     ],
+//     bloodline_updated_at: '2026-04-26T17:31:00',
+//   }
+// ════════════════════════════════════════════════════════════════
+'use strict';
+
+// ════════════════════════════════════════════════════════════════
+// 定数
+// ════════════════════════════════════════════════════════════════
+const PBE_GEMINI_MODEL = 'gemini-2.5-flash';
+const PBE_API_KEY_LS   = 'hercules_gemini_key';     // yahoo_listing.js と共用
+const PBE_MAX_IMAGE_SIZE_BYTES = 1024 * 1024;       // 1MB
+const PBE_MAX_IMAGE_DIMENSION  = 1280;              // 長辺 1280px
+const PBE_THUMB_DIMENSION      = 240;               // サムネ長辺
+
+// 同腹兄弟実績の指標
+const PBE_KINSHIP_METRICS = {
+  body_size:        { label: '体長',     unit: 'mm' },
+  pre_pupa_weight:  { label: '前蛹体重', unit: 'g'  },
+  larva_weight:     { label: '幼虫体重', unit: 'g'  },
+  thorax_horn:      { label: '胸角',     unit: 'mm' },
+  head_horn:        { label: '頭角',     unit: 'mm' },
+};
+
+// ════════════════════════════════════════════════════════════════
+// ユーティリティ
+// ════════════════════════════════════════════════════════════════
+function _pbeEsc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function _pbeNowIso() {
+  return new Date().toISOString();
+}
+
+function _pbeUid(prefix) {
+  return prefix + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+
+// API キー取得 (yahoo_listing.js と共用)
+function _pbeGetApiKey() {
+  try { return localStorage.getItem(PBE_API_KEY_LS) || ''; }
+  catch (_) { return ''; }
+}
+
+// API キー保存
+function _pbeSetApiKey(key) {
+  try { localStorage.setItem(PBE_API_KEY_LS, key); } catch (_) {}
+}
+
+// 種親レコード取得・更新 (Store.getDB / patchDBItem を利用)
+function _pbeGetParent(parId) {
+  const parents = (Store.getDB && Store.getDB('parents')) || [];
+  return parents.find(p => p.par_id === parId
+    || p.parent_display_id === parId
+    || p.display_name === parId) || null;
+}
+
+async function _pbePatchParent(parId, patch) {
+  if (Store.patchDBItem) {
+    Store.patchDBItem('parents', 'par_id', parId, patch);
+  }
+  // GAS への永続化は本機能では行わない (既存の更新フローを壊さないため)
+  // ローカルストレージのみで完結。次回の syncAll で同期される設計。
+}
+
+// ════════════════════════════════════════════════════════════════
+// 画像圧縮: File / DataURL → 1MB以下の JPEG DataURL
+// ════════════════════════════════════════════════════════════════
+function _pbeCompressImage(srcDataUrl, maxDim, qualityStart) {
+  return new Promise(function (resolve, reject) {
+    const img = new Image();
+    img.onload = function () {
+      const w0 = img.naturalWidth, h0 = img.naturalHeight;
+      const longest = Math.max(w0, h0);
+      const scale = longest > maxDim ? (maxDim / longest) : 1;
+      const w = Math.round(w0 * scale), h = Math.round(h0 * scale);
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(img, 0, 0, w, h);
+
+      // 段階的に quality を下げて 1MB 以下に
+      let quality = qualityStart || 0.85;
+      let dataUrl = canvas.toDataURL('image/jpeg', quality);
+      let attempts = 0;
+      while (dataUrl.length * 0.75 > PBE_MAX_IMAGE_SIZE_BYTES && quality > 0.4 && attempts < 6) {
+        quality -= 0.1;
+        dataUrl = canvas.toDataURL('image/jpeg', quality);
+        attempts++;
+      }
+      resolve({ dataUrl: dataUrl, width: w, height: h, quality: quality });
+    };
+    img.onerror = function () { reject(new Error('画像の読み込みに失敗しました')); };
+    img.src = srcDataUrl;
+  });
+}
+
+function _pbeFileToDataUrl(file) {
+  return new Promise(function (resolve, reject) {
+    const fr = new FileReader();
+    fr.onload  = function () { resolve(fr.result); };
+    fr.onerror = function () { reject(new Error('ファイルの読み込みに失敗しました')); };
+    fr.readAsDataURL(file);
+  });
+}
+
+async function _pbeProcessImageFile(file) {
+  const rawDataUrl = await _pbeFileToDataUrl(file);
+  const main = await _pbeCompressImage(rawDataUrl, PBE_MAX_IMAGE_DIMENSION, 0.85);
+  const thumb = await _pbeCompressImage(rawDataUrl, PBE_THUMB_DIMENSION,  0.7);
+  return {
+    image_data_url:     main.dataUrl,
+    thumbnail_data_url: thumb.dataUrl,
+    width:              main.width,
+    height:             main.height,
+  };
+}
+
+// ════════════════════════════════════════════════════════════════
+// Gemini Vision API 呼び出し
+// ════════════════════════════════════════════════════════════════
+function _pbeBuildVisionPrompt() {
+  return `あなたはヘラクレスオオカブトの繁殖個体の出品ページを分析する専門家です。
+以下の出品ページのスクリーンショット画像を読み取り、種親の血統情報を構造化して抽出してください。
+
+━━━ 🚫 厳守ルール (絶対守ること) ━━━
+1. 販売者名・店舗名・出品者名は**抽出しない**(seller_name フィールドは作らない)
+2. 購入価格・落札金額は**抽出しない**
+3. 購入条件・購入制約 (「幼虫販売目的不可」など) は**抽出しない**
+4. 画像内に書かれていない情報は捏造しない (推測値は null にする)
+5. 数値は画像内の表記を**そのまま**転記し、改変しない
+
+━━━ 抽出対象 ━━━
+出品ページから以下の情報を読み取ってください:
+
+- species_full:    学名 (例: "Dynastes hercules hercules")
+- common_name:     和名 (例: "ヘラクレスオオカブト" / "DHヘラクレス")
+- origin:          産地 (例: "グアドループ" / "Guadeloupe")
+- generation:      累代 (例: "CB" / "WD" / "F1" / "WF1" / "CBF2")
+- eclosion_period: 羽化日・羽化期 (例: "2025/8/中旬" / "2024年12月")
+- body_size_mm:    体長 (mm 単位の数値のみ。例: 79)
+- paternal_blood:  ♂親(父系)の血統表記原文 (例: "MT-FF1710F.FFOAKS")
+- maternal_blood:  ♀親(母系)の血統表記原文 (例: "00-181")
+- kinship_records: 同腹兄弟・同系統の実績 (構造化配列、後述)
+- feature_notes:   系統的な特徴・優位点を中立的にまとめた1-2文 (例: "胸角の伸びが優秀。サイズ系・長角系統。")
+- raw_text:        出品文の本文テキスト全文 (画像から読み取れた範囲で)
+
+━━━ kinship_records の構造 ━━━
+「174mm筆頭・170mm up 6頭・168mm up 3頭・前蛹150g up 筆頭・140g台複数」のような
+同腹兄弟実績が書かれている場合、以下の形式で配列にする:
+
+[
+  { "metric": "body_size",       "threshold": 174, "count": 1,    "unit": "mm", "is_top": true },
+  { "metric": "body_size",       "threshold": 170, "count": 6,    "unit": "mm", "is_top": false },
+  { "metric": "body_size",       "threshold": 168, "count": 3,    "unit": "mm", "is_top": false },
+  { "metric": "body_size",       "threshold": 165, "count": null, "unit": "mm", "note": "数えていない" },
+  { "metric": "pre_pupa_weight", "threshold": 150, "count": 1,    "unit": "g",  "is_top": true,  "note": "前蛹" },
+  { "metric": "pre_pupa_weight", "threshold": 140, "count": null, "unit": "g",  "note": "複数" }
+]
+
+metric 値: "body_size" (体長) | "pre_pupa_weight" (前蛹体重) | "larva_weight" (幼虫体重) | "thorax_horn" (胸角) | "head_horn" (頭角)
+threshold: 数値のしきい値
+count: 該当頭数 (不明なら null、note に「複数」「数えていない」等を入れる)
+unit: "mm" | "g"
+is_top: 筆頭 (最大個体) なら true
+note: 補足
+
+━━━ 出力フォーマット (必須) ━━━
+以下の純粋なJSON形式のみで返してください。マークダウンのコードブロック装飾は付けないでください。
+画像から読み取れない項目は null としてください (空文字列ではなく)。
+
+{
+  "species_full":    "...",
+  "common_name":     "...",
+  "origin":          "...",
+  "generation":      "...",
+  "eclosion_period": "...",
+  "body_size_mm":    79,
+  "paternal_blood":  "...",
+  "maternal_blood":  "...",
+  "kinship_records": [...],
+  "feature_notes":   "...",
+  "raw_text":        "..."
+}`;
+}
+
+async function _pbeCallVision(imageDataUrl, apiKey) {
+  // image_data_url は "data:image/jpeg;base64,xxxx" 形式
+  const m = String(imageDataUrl).match(/^data:(image\/[a-zA-Z]+);base64,(.+)$/);
+  if (!m) throw new Error('画像データの形式が不正です');
+  const mimeType = m[1];
+  const base64   = m[2];
+
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/'
+            + PBE_GEMINI_MODEL + ':generateContent?key=' + encodeURIComponent(apiKey);
+
+  const responseSchema = {
+    type: 'OBJECT',
+    properties: {
+      species_full:    { type: 'STRING', nullable: true },
+      common_name:     { type: 'STRING', nullable: true },
+      origin:          { type: 'STRING', nullable: true },
+      generation:      { type: 'STRING', nullable: true },
+      eclosion_period: { type: 'STRING', nullable: true },
+      body_size_mm:    { type: 'NUMBER', nullable: true },
+      paternal_blood:  { type: 'STRING', nullable: true },
+      maternal_blood:  { type: 'STRING', nullable: true },
+      kinship_records: {
+        type: 'ARRAY',
+        nullable: true,
+        items: {
+          type: 'OBJECT',
+          properties: {
+            metric:    { type: 'STRING' },
+            threshold: { type: 'NUMBER' },
+            count:     { type: 'NUMBER', nullable: true },
+            unit:      { type: 'STRING' },
+            is_top:    { type: 'BOOLEAN', nullable: true },
+            note:      { type: 'STRING', nullable: true },
+          },
+          required: ['metric', 'threshold', 'unit'],
+        },
+      },
+      feature_notes: { type: 'STRING', nullable: true },
+      raw_text:      { type: 'STRING', nullable: true },
+    },
+  };
+
+  const body = {
+    contents: [{
+      parts: [
+        { text: _pbeBuildVisionPrompt() },
+        { inline_data: { mime_type: mimeType, data: base64 } },
+      ],
+    }],
+    generationConfig: {
+      temperature:      0.3,             // 抽出系は低温度で安定化
+      maxOutputTokens:  8192,
+      topP:             0.85,
+      responseMimeType: 'application/json',
+      responseSchema:   responseSchema,
+    },
+  };
+
+  const res = await fetch(url, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(function () { return {}; });
+    throw new Error((err && err.error && err.error.message) || ('HTTP ' + res.status));
+  }
+  const data = await res.json();
+  const cand = data && data.candidates && data.candidates[0];
+  const finishReason = cand && cand.finishReason;
+  const text = (cand && cand.content && cand.content.parts &&
+                cand.content.parts[0] && cand.content.parts[0].text) || '';
+  if (!text) {
+    if (finishReason === 'SAFETY') {
+      throw new Error('Geminiのセーフティフィルタにブロックされました');
+    }
+    throw new Error('Gemini レスポンスが空でした (finishReason=' + (finishReason || 'unknown') + ')');
+  }
+
+  // JSON パース (yahoo_listing.js と同等のフォールバック)
+  let jsonStr = text.trim();
+  const fence = jsonStr.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  if (fence) jsonStr = fence[1].trim();
+  let parsed;
+  try { parsed = JSON.parse(jsonStr); }
+  catch (_) {
+    const m2 = jsonStr.match(/\{[\s\S]*\}/);
+    if (m2) {
+      try { parsed = JSON.parse(m2[0]); } catch (_e) {}
+    }
+  }
+  if (!parsed) {
+    console.warn('[PBE] JSON parse failed. Raw response head:', text.slice(0, 500));
+    throw new Error('抽出結果のJSONパースに失敗しました。再試行してください。');
+  }
+  return parsed;
+}
+
+// ════════════════════════════════════════════════════════════════
+// 抽出結果のサニタイズ (販売者名等が混入していたら除去)
+// ════════════════════════════════════════════════════════════════
+function _pbeSanitizeBloodlineData(data) {
+  if (!data || typeof data !== 'object') return null;
+  // 想定外フィールドが万一混入してもこの段階で除去
+  const allowed = [
+    'species_full', 'common_name', 'origin', 'generation',
+    'eclosion_period', 'body_size_mm', 'paternal_blood', 'maternal_blood',
+    'kinship_records', 'feature_notes', 'raw_text',
+  ];
+  const out = {};
+  allowed.forEach(function (k) {
+    if (data[k] !== undefined) out[k] = data[k];
+  });
+  // body_size_mm は数値化
+  if (out.body_size_mm != null && typeof out.body_size_mm !== 'number') {
+    const n = parseFloat(out.body_size_mm);
+    out.body_size_mm = isNaN(n) ? null : n;
+  }
+  // kinship_records はサニタイズ
+  if (Array.isArray(out.kinship_records)) {
+    out.kinship_records = out.kinship_records
+      .filter(function (r) { return r && r.metric && r.threshold != null; })
+      .map(function (r) {
+        return {
+          metric:    String(r.metric),
+          threshold: Number(r.threshold),
+          count:     r.count != null ? Number(r.count) : null,
+          unit:      r.unit || (PBE_KINSHIP_METRICS[r.metric] && PBE_KINSHIP_METRICS[r.metric].unit) || '',
+          is_top:    !!r.is_top,
+          note:      r.note ? String(r.note) : '',
+        };
+      });
+  } else {
+    out.kinship_records = [];
+  }
+  return out;
+}
+
+// ════════════════════════════════════════════════════════════════
+// 抽出モーダル: 種親編集画面から呼ばれる
+//   parId   - 対象の種親ID
+//   onDone  - 抽出完了時に呼ばれるコールバック (formに値を反映する用)
+// ════════════════════════════════════════════════════════════════
+Pages._pbeOpenExtractor = function (parId, opts) {
+  opts = opts || {};
+  const par = _pbeGetParent(parId);
+  // par が null でもOK (新規登録時など) - その場合は parId='' で扱う
+  const apiKey = _pbeGetApiKey();
+
+  const html = '<div class="modal-title">📷 血統情報を抽出</div>'
+    + '<div class="form-section" style="font-size:.88rem;line-height:1.55">'
+    + '  <p style="margin-bottom:8px;color:var(--text2)">'
+    + '    ヤフオク等の出品ページのスクリーンショットを選択してください。<br>'
+    + '    AI(Gemini Vision)が血統表記・サイズ・累代・同腹兄弟実績を自動抽出します。'
+    + '  </p>'
+    + '  <div style="background:var(--surface2);padding:8px 10px;border-radius:6px;font-size:.78rem;color:var(--text3);line-height:1.5;margin-bottom:12px">'
+    + '    🔒 販売者名・店舗名・購入価格・購入条件は<b>抽出されません</b>。<br>'
+    + '    🔒 抽出結果はあなたの端末内のみに保存されます。'
+    + '  </div>'
+    + (apiKey ? '' :
+      '  <div style="background:rgba(230,150,0,.12);border:1px solid rgba(230,150,0,.4);padding:8px 10px;border-radius:6px;font-size:.78rem;color:var(--amber);margin-bottom:10px">'
+      + '    ⚠️ Gemini API キーが未設定です。下のフォームから入力してください。'
+      + '  </div>')
+    + '  <div style="margin-bottom:10px">'
+    + '    <label style="font-size:.82rem;font-weight:600;display:block;margin-bottom:4px">スクリーンショット</label>'
+    + '    <input type="file" id="pbe-file-input" accept="image/*" '
+    + '           style="width:100%;padding:8px;background:var(--surface2);border-radius:6px;color:var(--text);border:1px solid var(--surface3)">'
+    + '    <div id="pbe-file-preview" style="margin-top:8px"></div>'
+    + '  </div>'
+    + '  <div style="margin-bottom:10px">'
+    + '    <label style="font-size:.82rem;font-weight:600;display:block;margin-bottom:4px">'
+    + '      Gemini API キー <span style="font-weight:400;color:var(--text3)">(初回のみ・端末に保存)</span>'
+    + '    </label>'
+    + '    <input type="password" id="pbe-key-input" value="' + _pbeEsc(apiKey) + '" '
+    + '           placeholder="AIzaSy..." '
+    + '           style="width:100%;padding:8px;background:var(--surface2);border-radius:6px;color:var(--text);border:1px solid var(--surface3)">'
+    + '  </div>'
+    + '  <div id="pbe-status" style="display:none;margin:10px 0;padding:8px;border-radius:6px;font-size:.82rem"></div>'
+    + '</div>'
+    + '<div class="modal-footer">'
+    + '  <button class="btn btn-ghost" style="flex:1" onclick="UI.closeModal()">キャンセル</button>'
+    + '  <button class="btn btn-primary" id="pbe-extract-btn" style="flex:2" '
+    + '          onclick="Pages._pbeRunExtraction(\'' + _pbeEsc(parId) + '\')">'
+    + '    🤖 AIで抽出開始'
+    + '  </button>'
+    + '</div>';
+
+  UI.modal(html);
+
+  // ファイル選択時のプレビュー
+  setTimeout(function () {
+    const fi = document.getElementById('pbe-file-input');
+    if (fi) fi.addEventListener('change', function (e) {
+      const f = e.target.files && e.target.files[0];
+      const prev = document.getElementById('pbe-file-preview');
+      if (!f || !prev) return;
+      const r = new FileReader();
+      r.onload = function () {
+        prev.innerHTML = '<img src="' + r.result + '" '
+          + 'style="max-width:100%;max-height:200px;border-radius:6px;border:1px solid var(--surface3)">'
+          + '<div style="font-size:.74rem;color:var(--text3);margin-top:4px">'
+          + _pbeEsc(f.name) + ' (' + Math.round(f.size / 1024) + ' KB)'
+          + '</div>';
+      };
+      r.readAsDataURL(f);
+    });
+  }, 50);
+
+  // 完了コールバックをグローバル保持 (モーダルからフォームへ反映するため)
+  window.__pbeOnDone = opts.onDone || null;
+};
+
+// ════════════════════════════════════════════════════════════════
+// 抽出実行 (モーダル内ボタンから呼ばれる)
+// ════════════════════════════════════════════════════════════════
+Pages._pbeRunExtraction = async function (parId) {
+  const fi   = document.getElementById('pbe-file-input');
+  const ki   = document.getElementById('pbe-key-input');
+  const stat = document.getElementById('pbe-status');
+  const btn  = document.getElementById('pbe-extract-btn');
+
+  const file = fi && fi.files && fi.files[0];
+  const key  = ki ? ki.value.trim() : '';
+
+  if (!file) {
+    if (stat) {
+      stat.style.display = 'block';
+      stat.style.cssText += ';background:rgba(230,80,80,.12);color:#e05050';
+      stat.textContent = '⚠️ スクリーンショットを選択してください';
+    }
+    return;
+  }
+  if (!key) {
+    if (stat) {
+      stat.style.display = 'block';
+      stat.style.cssText += ';background:rgba(230,80,80,.12);color:#e05050';
+      stat.textContent = '⚠️ Gemini APIキーを入力してください';
+    }
+    return;
+  }
+  _pbeSetApiKey(key);
+
+  if (btn) btn.disabled = true;
+  if (stat) {
+    stat.style.display = 'block';
+    stat.style.cssText = 'display:block;margin:10px 0;padding:8px;border-radius:6px;font-size:.82rem;'
+      + 'background:rgba(80,180,120,.12);color:var(--green)';
+    stat.innerHTML = '🔄 画像を圧縮中...';
+  }
+
+  try {
+    // 1. 画像を圧縮 (1MB以下JPEG)
+    const processed = await _pbeProcessImageFile(file);
+    if (stat) stat.innerHTML = '🔄 Geminiで解析中... (10〜20秒)';
+
+    // 2. Vision API 呼び出し
+    const raw = await _pbeCallVision(processed.image_data_url, key);
+
+    // 3. サニタイズ
+    const data = _pbeSanitizeBloodlineData(raw);
+
+    // 4. 確認エディタを開く
+    UI.closeModal();
+    setTimeout(function () {
+      _pbeOpenEditor(parId, data, processed);
+    }, 100);
+
+  } catch (e) {
+    console.error('[PBE] extraction failed', e);
+    if (stat) {
+      stat.style.cssText = 'display:block;margin:10px 0;padding:8px;border-radius:6px;font-size:.82rem;'
+        + 'background:rgba(230,80,80,.12);color:#e05050';
+      stat.textContent = '❌ ' + (e.message || String(e));
+    }
+    if (btn) btn.disabled = false;
+  }
+};
+
+// ════════════════════════════════════════════════════════════════
+// 抽出結果の確認・編集モーダル (構造化エディタ)
+// ════════════════════════════════════════════════════════════════
+function _pbeOpenEditor(parId, data, processedImage) {
+  data = data || {};
+  // データを window に保持して onclick から参照
+  window.__pbeCurrentEdit = {
+    parId:           parId,
+    data:            data,
+    processedImage:  processedImage,
+  };
+
+  const html = '<div class="modal-title">📝 抽出結果の確認・編集</div>'
+    + '<div class="form-section" style="font-size:.85rem;max-height:65vh;overflow-y:auto">'
+    + (processedImage ? '<details style="margin-bottom:10px"><summary style="cursor:pointer;color:var(--text3);font-size:.78rem">📷 元画像を見る</summary>'
+        + '<img src="' + processedImage.thumbnail_data_url + '" style="max-width:100%;max-height:160px;border-radius:6px;margin-top:6px"></details>' : '')
+    + '  <div style="margin-bottom:8px">'
+    + '    <label style="font-size:.78rem;font-weight:600;display:block;margin-bottom:2px">和名・通称</label>'
+    + '    <input type="text" id="pbe-ed-common_name" class="input" value="' + _pbeEsc(data.common_name || '') + '" placeholder="ヘラクレスオオカブト">'
+    + '  </div>'
+    + '  <div style="margin-bottom:8px">'
+    + '    <label style="font-size:.78rem;font-weight:600;display:block;margin-bottom:2px">学名</label>'
+    + '    <input type="text" id="pbe-ed-species_full" class="input" value="' + _pbeEsc(data.species_full || '') + '" placeholder="Dynastes hercules hercules">'
+    + '  </div>'
+    + '  <div class="form-row-2">'
+    + '    <div>'
+    + '      <label style="font-size:.78rem;font-weight:600;display:block;margin-bottom:2px">産地</label>'
+    + '      <input type="text" id="pbe-ed-origin" class="input" value="' + _pbeEsc(data.origin || '') + '" placeholder="グアドループ">'
+    + '    </div>'
+    + '    <div>'
+    + '      <label style="font-size:.78rem;font-weight:600;display:block;margin-bottom:2px">累代</label>'
+    + '      <input type="text" id="pbe-ed-generation" class="input" value="' + _pbeEsc(data.generation || '') + '" placeholder="CB">'
+    + '    </div>'
+    + '  </div>'
+    + '  <div class="form-row-2">'
+    + '    <div>'
+    + '      <label style="font-size:.78rem;font-weight:600;display:block;margin-bottom:2px">羽化期</label>'
+    + '      <input type="text" id="pbe-ed-eclosion_period" class="input" value="' + _pbeEsc(data.eclosion_period || '') + '" placeholder="2025/8/中旬">'
+    + '    </div>'
+    + '    <div>'
+    + '      <label style="font-size:.78rem;font-weight:600;display:block;margin-bottom:2px">体長(mm)</label>'
+    + '      <input type="number" id="pbe-ed-body_size_mm" class="input" value="' + _pbeEsc(data.body_size_mm != null ? data.body_size_mm : '') + '" placeholder="79">'
+    + '    </div>'
+    + '  </div>'
+    + '  <div style="margin-bottom:8px">'
+    + '    <label style="font-size:.78rem;font-weight:600;display:block;margin-bottom:2px">♂血統表記原文</label>'
+    + '    <textarea id="pbe-ed-paternal_blood" class="input" rows="2" placeholder="MT-FF1710F.FFOAKS">' + _pbeEsc(data.paternal_blood || '') + '</textarea>'
+    + '  </div>'
+    + '  <div style="margin-bottom:8px">'
+    + '    <label style="font-size:.78rem;font-weight:600;display:block;margin-bottom:2px">♀血統表記原文</label>'
+    + '    <textarea id="pbe-ed-maternal_blood" class="input" rows="2" placeholder="00-181">' + _pbeEsc(data.maternal_blood || '') + '</textarea>'
+    + '  </div>'
+    + '  <div style="margin-bottom:8px">'
+    + '    <label style="font-size:.78rem;font-weight:600;display:block;margin-bottom:4px">'
+    + '      同腹兄弟実績 <span style="font-weight:400;color:var(--text3);font-size:.74rem">(数値修正可)</span>'
+    + '    </label>'
+    + '    <div id="pbe-ed-kinship-rows">' + _pbeRenderKinshipRows(data.kinship_records || []) + '</div>'
+    + '    <button type="button" class="btn btn-ghost btn-sm" style="margin-top:4px;font-size:.78rem"'
+    + '            onclick="Pages._pbeAddKinshipRow()">＋ 実績を追加</button>'
+    + '  </div>'
+    + '  <div style="margin-bottom:8px">'
+    + '    <label style="font-size:.78rem;font-weight:600;display:block;margin-bottom:2px">系統的特徴</label>'
+    + '    <textarea id="pbe-ed-feature_notes" class="input" rows="2" placeholder="胸角の伸びが優秀。サイズ系・長角系統。">' + _pbeEsc(data.feature_notes || '') + '</textarea>'
+    + '  </div>'
+    + '  <details style="margin-bottom:8px">'
+    + '    <summary style="cursor:pointer;font-size:.78rem;color:var(--text3)">📄 抽出した本文 (編集可・ヤフオク出品時のヒント用)</summary>'
+    + '    <textarea id="pbe-ed-raw_text" class="input" rows="6" style="margin-top:4px;font-size:.78rem">' + _pbeEsc(data.raw_text || '') + '</textarea>'
+    + '  </details>'
+    + '</div>'
+    + '<div class="modal-footer">'
+    + '  <button class="btn btn-ghost" style="flex:1" onclick="UI.closeModal()">キャンセル</button>'
+    + '  <button class="btn btn-primary" style="flex:2" onclick="Pages._pbeSaveEditor()">💾 保存</button>'
+    + '</div>';
+  UI.modal(html);
+}
+
+// 同腹兄弟実績の行HTML
+function _pbeRenderKinshipRows(records) {
+  if (!records || !records.length) {
+    return '<div style="font-size:.74rem;color:var(--text3);padding:4px 0">(実績データなし)</div>';
+  }
+  return records.map(function (r, i) { return _pbeKinshipRowHtml(r, i); }).join('');
+}
+
+function _pbeKinshipRowHtml(r, idx) {
+  r = r || { metric:'body_size', threshold:'', count:'', unit:'mm', is_top:false, note:'' };
+  const metricOpts = Object.keys(PBE_KINSHIP_METRICS).map(function (k) {
+    return '<option value="' + k + '"' + (r.metric === k ? ' selected' : '') + '>'
+      + PBE_KINSHIP_METRICS[k].label + '</option>';
+  }).join('');
+  return '<div class="pbe-kin-row" data-idx="' + idx + '" '
+    + 'style="display:grid;grid-template-columns:1fr 1fr 1fr 24px;gap:4px;margin-bottom:4px;align-items:center">'
+    + '  <select class="input pbe-kin-metric" style="font-size:.74rem;padding:4px">' + metricOpts + '</select>'
+    + '  <input type="number" class="input pbe-kin-threshold" placeholder="しきい値" '
+    + '         value="' + _pbeEsc(r.threshold != null ? r.threshold : '') + '" style="font-size:.74rem;padding:4px">'
+    + '  <input type="text" class="input pbe-kin-count" placeholder="頭数 or 複数" '
+    + '         value="' + _pbeEsc(r.count != null ? r.count : (r.note || '')) + '" style="font-size:.74rem;padding:4px">'
+    + '  <button type="button" class="btn btn-ghost" style="padding:0;font-size:.9rem;color:var(--text3)" '
+    + '          onclick="this.closest(\'.pbe-kin-row\').remove()">×</button>'
+    + '</div>';
+}
+
+Pages._pbeAddKinshipRow = function () {
+  const wrap = document.getElementById('pbe-ed-kinship-rows');
+  if (!wrap) return;
+  // 「(実績データなし)」を消す
+  if (wrap.querySelector('.pbe-kin-row')) {
+    // 既に行がある
+  } else {
+    wrap.innerHTML = '';
+  }
+  const idx = wrap.querySelectorAll('.pbe-kin-row').length;
+  const div = document.createElement('div');
+  div.innerHTML = _pbeKinshipRowHtml(null, idx);
+  wrap.appendChild(div.firstElementChild);
+};
+
+// 編集モーダルから保存
+Pages._pbeSaveEditor = async function () {
+  const ctx = window.__pbeCurrentEdit || {};
+  const parId = ctx.parId;
+  // 入力値を回収
+  function val(id) { const el = document.getElementById(id); return el ? el.value.trim() : ''; }
+  const bld = {
+    common_name:     val('pbe-ed-common_name')     || null,
+    species_full:    val('pbe-ed-species_full')    || null,
+    origin:          val('pbe-ed-origin')          || null,
+    generation:      val('pbe-ed-generation')      || null,
+    eclosion_period: val('pbe-ed-eclosion_period') || null,
+    body_size_mm:    (function(){ const v = val('pbe-ed-body_size_mm'); const n = parseFloat(v); return isNaN(n) ? null : n; })(),
+    paternal_blood:  val('pbe-ed-paternal_blood')  || null,
+    maternal_blood:  val('pbe-ed-maternal_blood')  || null,
+    feature_notes:   val('pbe-ed-feature_notes')   || null,
+    raw_text:        val('pbe-ed-raw_text')        || null,
+    kinship_records: [],
+  };
+  // 同腹兄弟実績を回収
+  const rows = document.querySelectorAll('.pbe-kin-row');
+  rows.forEach(function (row) {
+    const metric    = (row.querySelector('.pbe-kin-metric')    || {}).value || 'body_size';
+    const threshold = parseFloat((row.querySelector('.pbe-kin-threshold') || {}).value);
+    const countRaw  = (row.querySelector('.pbe-kin-count')     || {}).value || '';
+    if (isNaN(threshold)) return;
+    const countNum = parseInt(countRaw, 10);
+    const isCount = !isNaN(countNum);
+    bld.kinship_records.push({
+      metric:    metric,
+      threshold: threshold,
+      count:     isCount ? countNum : null,
+      unit:      (PBE_KINSHIP_METRICS[metric] && PBE_KINSHIP_METRICS[metric].unit) || '',
+      is_top:    false,
+      note:      isCount ? '' : countRaw,
+    });
+  });
+
+  // スクショレコード作成
+  const shot = ctx.processedImage ? {
+    id:                 _pbeUid('shot'),
+    uploaded_at:        _pbeNowIso(),
+    image_data_url:     ctx.processedImage.image_data_url,
+    thumbnail_data_url: ctx.processedImage.thumbnail_data_url,
+    extraction_status:  'done',
+    extracted_at:       _pbeNowIso(),
+  } : null;
+
+  // 既存レコードに統合
+  if (parId) {
+    const par = _pbeGetParent(parId);
+    const existingShots = (par && par.source_screenshots) || [];
+    const patch = {
+      bloodline_data:        bld,
+      bloodline_updated_at:  _pbeNowIso(),
+      source_screenshots:    shot ? existingShots.concat([shot]) : existingShots,
+    };
+    await _pbePatchParent(parId, patch);
+    UI.toast('血統情報を保存しました ✅', 'success');
+  } else {
+    // parId 無し (新規登録時) - フォームに反映するだけ
+    UI.toast('抽出結果をフォームに反映しました ✅', 'success');
+  }
+
+  // フォームに既存値を上書き反映 (parent_v2.js のフォームに値を流し込む)
+  _pbeFillForm(bld);
+
+  UI.closeModal();
+
+  // コールバック呼び出し
+  if (window.__pbeOnDone) {
+    try { window.__pbeOnDone(bld); } catch (_) {}
+  }
+};
+
+// parent_v2.js のフォームに抽出値を反映
+function _pbeFillForm(bld) {
+  if (!bld) return;
+  function setIf(name, value) {
+    const el = document.querySelector('[name="' + name + '"]');
+    if (el && value != null && value !== '') {
+      // 既存値が空のときのみ上書き (ユーザー入力を尊重)
+      if (!el.value || el.value === '') el.value = String(value);
+    }
+  }
+  // 産地・累代・血統原文・サイズ をフォームに反映
+  setIf('locality',     bld.origin);
+  setIf('generation',   bld.generation);
+  setIf('paternal_raw', bld.paternal_blood);
+  setIf('maternal_raw', bld.maternal_blood);
+  setIf('size_mm',      bld.body_size_mm);
+  // 羽化期 (eclosion_period) は parent フォームの eclosion_date と粒度が違うので
+  // 月旬表記の場合は反映しない (誤入力防止)
+  if (bld.eclosion_period && /^\d{4}\/\d{1,2}\/\d{1,2}$/.test(bld.eclosion_period)) {
+    setIf('eclosion_date', bld.eclosion_period.replace(/\//g, '-'));
+  }
+}
+
+// ════════════════════════════════════════════════════════════════
+// 系統評価カードを生成 (種親詳細画面・ライン詳細画面で使う)
+// ════════════════════════════════════════════════════════════════
+function _pbeRenderBloodlineCard(par) {
+  if (!par || !par.bloodline_data) return '';
+  const b = par.bloodline_data;
+  // 同腹兄弟実績を表示形式に整形
+  const kinshipHtml = _pbeFormatKinshipDisplay(b.kinship_records || []);
+  // 抽出データの主要項目
+  const items = [];
+  if (b.common_name)     items.push({ label: '種',       value: b.common_name });
+  if (b.species_full)    items.push({ label: '学名',     value: b.species_full });
+  if (b.origin)          items.push({ label: '産地',     value: b.origin });
+  if (b.generation)      items.push({ label: '累代',     value: b.generation });
+  if (b.eclosion_period) items.push({ label: '羽化期',   value: b.eclosion_period });
+  if (b.body_size_mm)    items.push({ label: '体長',     value: b.body_size_mm + 'mm' });
+  if (b.paternal_blood)  items.push({ label: '♂血統',   value: b.paternal_blood });
+  if (b.maternal_blood)  items.push({ label: '♀血統',   value: b.maternal_blood });
+
+  const detailRows = items.map(function (it) {
+    return '<div style="display:flex;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.06)">'
+      + '<div style="width:5em;color:var(--text3);font-size:.78rem;flex-shrink:0">' + _pbeEsc(it.label) + '</div>'
+      + '<div style="flex:1;font-size:.85rem;font-weight:600;word-break:break-all">' + _pbeEsc(it.value) + '</div>'
+      + '</div>';
+  }).join('');
+
+  const featureBlock = b.feature_notes
+    ? '<div style="margin-top:8px;padding:8px 10px;background:rgba(200,168,75,.08);border-left:3px solid var(--gold);border-radius:4px;font-size:.82rem;line-height:1.55">'
+      + '🌟 ' + _pbeEsc(b.feature_notes) + '</div>'
+    : '';
+
+  const shotsThumbs = (par.source_screenshots || []).map(function (s) {
+    return '<img src="' + s.thumbnail_data_url + '" '
+      + 'style="width:48px;height:48px;object-fit:cover;border-radius:4px;border:1px solid var(--surface3);cursor:pointer" '
+      + 'onclick="Pages._pbeViewScreenshot(\'' + _pbeEsc(par.par_id) + '\',\'' + _pbeEsc(s.id) + '\')">';
+  }).join('');
+
+  return '<div class="card" style="background:linear-gradient(135deg,rgba(200,168,75,.04),rgba(200,168,75,.01));border:1px solid rgba(200,168,75,.25)">'
+    + '<div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">'
+    + '  <span style="font-size:1.05rem;color:var(--gold);font-weight:700">📜 系統評価</span>'
+    + '</div>'
+    + detailRows
+    + featureBlock
+    + (kinshipHtml ? '<div style="margin-top:10px"><div style="font-size:.78rem;font-weight:700;color:var(--text2);margin-bottom:4px">同腹兄弟・系統実績</div>' + kinshipHtml + '</div>' : '')
+    + (shotsThumbs ? '<div style="margin-top:8px;display:flex;gap:4px;flex-wrap:wrap">' + shotsThumbs + '</div>' : '')
+    + '<div style="display:flex;gap:6px;margin-top:10px">'
+    + '  <button class="btn btn-ghost btn-sm" style="flex:1;font-size:.78rem" '
+    + '          onclick="Pages._pbeOpenExtractor(\'' + _pbeEsc(par.par_id) + '\')">📷 スクショ追加</button>'
+    + '  <button class="btn btn-ghost btn-sm" style="flex:1;font-size:.78rem" '
+    + '          onclick="Pages._pbeReopenEditor(\'' + _pbeEsc(par.par_id) + '\')">✏️ 編集</button>'
+    + '  <button class="btn btn-ghost btn-sm" style="flex:1;font-size:.78rem" '
+    + '          onclick="Pages._pbeExportCsv(\'' + _pbeEsc(par.par_id) + '\')">💾 CSV</button>'
+    + '</div>'
+    + '</div>';
+}
+
+function _pbeFormatKinshipDisplay(records) {
+  if (!records || !records.length) return '';
+  // metric ごとにグルーピング
+  const groups = {};
+  records.forEach(function (r) {
+    if (!groups[r.metric]) groups[r.metric] = [];
+    groups[r.metric].push(r);
+  });
+  // 大きい順に
+  Object.keys(groups).forEach(function (k) {
+    groups[k].sort(function (a, b) { return b.threshold - a.threshold; });
+  });
+  return Object.keys(groups).map(function (metric) {
+    const def = PBE_KINSHIP_METRICS[metric] || { label: metric, unit: '' };
+    const items = groups[metric].map(function (r) {
+      const head  = r.is_top ? '<span style="color:var(--gold);font-weight:700">★筆頭</span> ' : '';
+      const cnt   = r.count != null ? (r.count + '頭') : (r.note || '—');
+      return '<li style="font-size:.82rem;line-height:1.6;margin-left:1.2em">'
+        + head + r.threshold + def.unit + ' up: <b>' + _pbeEsc(cnt) + '</b></li>';
+    }).join('');
+    return '<div style="margin-bottom:6px">'
+      + '<div style="font-size:.74rem;color:var(--text3);font-weight:600">' + def.label + '</div>'
+      + '<ul style="list-style:disc;padding-left:0;margin:2px 0">' + items + '</ul>'
+      + '</div>';
+  }).join('');
+}
+
+// 既存データの再編集
+Pages._pbeReopenEditor = function (parId) {
+  const par = _pbeGetParent(parId);
+  if (!par) { UI.toast('種親が見つかりません', 'error'); return; }
+  _pbeOpenEditor(parId, par.bloodline_data || {}, null);
+};
+
+// スクショ閲覧
+Pages._pbeViewScreenshot = function (parId, shotId) {
+  const par = _pbeGetParent(parId);
+  if (!par) return;
+  const shot = (par.source_screenshots || []).find(function (s) { return s.id === shotId; });
+  if (!shot) return;
+  const html = '<div class="modal-title">📷 スクリーンショット</div>'
+    + '<div style="text-align:center;padding:8px">'
+    + '  <img src="' + shot.image_data_url + '" style="max-width:100%;max-height:70vh;border-radius:6px">'
+    + '  <div style="font-size:.74rem;color:var(--text3);margin-top:6px">アップロード: ' + _pbeEsc(shot.uploaded_at) + '</div>'
+    + '</div>'
+    + '<div class="modal-footer">'
+    + '  <button class="btn btn-ghost" style="flex:1"'
+    + '          onclick="Pages._pbeDeleteScreenshot(\'' + _pbeEsc(parId) + '\',\'' + _pbeEsc(shotId) + '\')">🗑 削除</button>'
+    + '  <button class="btn btn-primary" style="flex:2" onclick="UI.closeModal()">閉じる</button>'
+    + '</div>';
+  UI.modal(html);
+};
+
+Pages._pbeDeleteScreenshot = async function (parId, shotId) {
+  if (!confirm('このスクリーンショットを削除しますか？')) return;
+  const par = _pbeGetParent(parId);
+  if (!par) return;
+  const next = (par.source_screenshots || []).filter(function (s) { return s.id !== shotId; });
+  await _pbePatchParent(parId, { source_screenshots: next });
+  UI.closeModal();
+  UI.toast('削除しました', 'success');
+  // 再描画
+  if (window.__currentRoute === 'parent-detail') {
+    Pages.parentDetail(parId);
+  }
+};
+
+// CSV エクスポート (1種親分)
+Pages._pbeExportCsv = function (parId) {
+  const par = _pbeGetParent(parId);
+  if (!par || !par.bloodline_data) {
+    UI.toast('抽出データがありません', 'error');
+    return;
+  }
+  const b = par.bloodline_data;
+  const rows = [
+    ['parent_id',    par.par_id || ''],
+    ['display_name', par.display_name || ''],
+    ['sex',          par.sex || ''],
+    ['common_name',  b.common_name || ''],
+    ['species_full', b.species_full || ''],
+    ['origin',       b.origin || ''],
+    ['generation',   b.generation || ''],
+    ['eclosion_period', b.eclosion_period || ''],
+    ['body_size_mm',    b.body_size_mm || ''],
+    ['paternal_blood',  b.paternal_blood || ''],
+    ['maternal_blood',  b.maternal_blood || ''],
+    ['feature_notes',   b.feature_notes || ''],
+  ];
+  // 同腹兄弟実績
+  (b.kinship_records || []).forEach(function (r, i) {
+    const def = PBE_KINSHIP_METRICS[r.metric] || { label: r.metric };
+    rows.push([
+      'kinship_' + (i+1) + '_metric',  def.label,
+    ]);
+    rows.push([
+      'kinship_' + (i+1) + '_value',
+      r.threshold + (r.unit || '') + ' up : ' + (r.count != null ? r.count + '頭' : (r.note || '—')) + (r.is_top ? ' (★筆頭)' : ''),
+    ]);
+  });
+  // CSV形式
+  function csvEsc(v) {
+    const s = String(v == null ? '' : v);
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  const csv = '\ufeff' + rows.map(function (r) { return csvEsc(r[0]) + ',' + csvEsc(r[1]); }).join('\r\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'bloodline_' + (par.parent_display_id || par.par_id) + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  UI.toast('CSVをダウンロードしました', 'success');
+};
+
+// ════════════════════════════════════════════════════════════════
+// グローバル公開
+// ════════════════════════════════════════════════════════════════
+// 内部関数を Pages 経由で呼べるように
+window.Pages = window.Pages || {};
+Pages._pbeRenderBloodlineCard = _pbeRenderBloodlineCard;
+
+console.log('[PBE] parent_bloodline_extract.js loaded build=20260426y6');
