@@ -2,7 +2,24 @@
 // ════════════════════════════════════════════════════════════════
 // parent_bloodline_extract.js — 種親血統情報の Vision 抽出機能
 //
-// build: 20260426y6
+// build: 20260426y6.2
+//
+// ── y6.2 での修正点 ────────────────────────────────────────────
+// ・🔥 複数スクリーンショット同時アップロード対応
+//   1度のリクエストで複数画像をVision APIに送信し、AIが統合された
+//   1セットの構造化データを返す。同腹兄弟実績などスクショ間で重複
+//   する情報も自動統合される。タイトル画像+商品説明1枚目+2枚目など
+//   1個体に関する複数ページのスクショをまとめて処理可能。
+// ・file inputに multiple 属性追加、サムネイルグリッドプレビュー表示
+// ・編集モーダルで複数枚の元画像をサムネ並べ表示
+// ・全スクショを source_screenshots[] に保存
+//
+// ── y6.1 での修正点 ────────────────────────────────────────────
+// ・🔥 APIキーの再入力を不要に
+//   設定画面と同じ localStorage キー (hercules_gemini_key) を共用しているため、
+//   既にキーが設定済みの場合は「✅ 設定済み」表示にし、入力欄を非表示化。
+//   「変更」リンクで必要なときだけ入力欄を展開できる。
+//   未設定時のみ入力欄を表示し、保存先は設定画面と共通であることを明記。
 //
 // ── 概要 ─────────────────────────────────────────────────────
 // ヤフオク等の出品ページのスクショ画像から、Gemini 2.5 Flash の
@@ -340,6 +357,130 @@ async function _pbeCallVision(imageDataUrl, apiKey) {
 }
 
 // ════════════════════════════════════════════════════════════════
+// [y6.2] 複数画像をまとめて Vision API に渡す版
+//   同じ種親に関する複数のスクショ (タイトル・商品説明1・2など) を
+//   一度のリクエストで送信し、AIに統合された1セットの構造化データを
+//   返してもらう。同腹兄弟実績などスクショ間で重複する情報も統合される。
+// ════════════════════════════════════════════════════════════════
+async function _pbeCallVisionMulti(imageDataUrls, apiKey) {
+  if (!imageDataUrls || !imageDataUrls.length) {
+    throw new Error('画像が選択されていません');
+  }
+  if (imageDataUrls.length === 1) {
+    // 1枚なら従来関数を呼ぶ
+    return _pbeCallVision(imageDataUrls[0], apiKey);
+  }
+
+  // 複数枚の場合
+  const imageParts = imageDataUrls.map(function (dataUrl, idx) {
+    const m = String(dataUrl).match(/^data:(image\/[a-zA-Z]+);base64,(.+)$/);
+    if (!m) throw new Error('画像データの形式が不正です (' + (idx + 1) + '枚目)');
+    return { mimeType: m[1], base64: m[2] };
+  });
+
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/'
+            + PBE_GEMINI_MODEL + ':generateContent?key=' + encodeURIComponent(apiKey);
+
+  // 複数画像用に少しプロンプトを調整 (画像が複数ある旨を伝える)
+  const multiPrompt = _pbeBuildVisionPrompt()
+    + '\n\n━━━ 複数画像の取り扱い ━━━\n'
+    + 'これから ' + imageDataUrls.length + '枚 の画像を渡します。これらはすべて同じ種親個体に関する出品ページの異なる部分(商品タイトル・商品説明1ページ目・2ページ目・画像など)です。\n'
+    + '各画像から読み取れる情報を**統合**して、1セットの構造化データを返してください。\n'
+    + '・同じ情報が複数の画像にある場合は重複させない\n'
+    + '・補完的な情報がある場合は両方を活かす(例: 1枚目に♂血統、2枚目に♀血統)\n'
+    + '・kinship_records は全画像の情報を統合して1つの配列にまとめる\n'
+    + '・raw_text は全画像から読み取れた本文を結合する';
+
+  const responseSchema = {
+    type: 'OBJECT',
+    properties: {
+      species_full:    { type: 'STRING', nullable: true },
+      common_name:     { type: 'STRING', nullable: true },
+      origin:          { type: 'STRING', nullable: true },
+      generation:      { type: 'STRING', nullable: true },
+      eclosion_period: { type: 'STRING', nullable: true },
+      body_size_mm:    { type: 'NUMBER', nullable: true },
+      paternal_blood:  { type: 'STRING', nullable: true },
+      maternal_blood:  { type: 'STRING', nullable: true },
+      kinship_records: {
+        type: 'ARRAY',
+        nullable: true,
+        items: {
+          type: 'OBJECT',
+          properties: {
+            metric:    { type: 'STRING' },
+            threshold: { type: 'NUMBER' },
+            count:     { type: 'NUMBER', nullable: true },
+            unit:      { type: 'STRING' },
+            is_top:    { type: 'BOOLEAN', nullable: true },
+            note:      { type: 'STRING', nullable: true },
+          },
+          required: ['metric', 'threshold', 'unit'],
+        },
+      },
+      feature_notes: { type: 'STRING', nullable: true },
+      raw_text:      { type: 'STRING', nullable: true },
+    },
+  };
+
+  // parts: [テキスト, 画像1, 画像2, ...]
+  const parts = [{ text: multiPrompt }];
+  imageParts.forEach(function (p) {
+    parts.push({ inline_data: { mime_type: p.mimeType, data: p.base64 } });
+  });
+
+  const body = {
+    contents: [{ parts: parts }],
+    generationConfig: {
+      temperature:      0.3,
+      maxOutputTokens:  8192,
+      topP:             0.85,
+      responseMimeType: 'application/json',
+      responseSchema:   responseSchema,
+    },
+  };
+
+  const res = await fetch(url, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(function () { return {}; });
+    throw new Error((err && err.error && err.error.message) || ('HTTP ' + res.status));
+  }
+  const data = await res.json();
+  const cand = data && data.candidates && data.candidates[0];
+  const finishReason = cand && cand.finishReason;
+  const text = (cand && cand.content && cand.content.parts &&
+                cand.content.parts[0] && cand.content.parts[0].text) || '';
+  if (!text) {
+    if (finishReason === 'SAFETY') {
+      throw new Error('Geminiのセーフティフィルタにブロックされました');
+    }
+    throw new Error('Gemini レスポンスが空でした (finishReason=' + (finishReason || 'unknown') + ')');
+  }
+
+  // JSON パース
+  let jsonStr = text.trim();
+  const fence = jsonStr.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  if (fence) jsonStr = fence[1].trim();
+  let parsed;
+  try { parsed = JSON.parse(jsonStr); }
+  catch (_) {
+    const m2 = jsonStr.match(/\{[\s\S]*\}/);
+    if (m2) {
+      try { parsed = JSON.parse(m2[0]); } catch (_e) {}
+    }
+  }
+  if (!parsed) {
+    console.warn('[PBE] JSON parse failed (multi). Raw response head:', text.slice(0, 500));
+    throw new Error('抽出結果のJSONパースに失敗しました。再試行してください。');
+  }
+  return parsed;
+}
+
+// ════════════════════════════════════════════════════════════════
 // 抽出結果のサニタイズ (販売者名等が混入していたら除去)
 // ════════════════════════════════════════════════════════════════
 function _pbeSanitizeBloodlineData(data) {
@@ -389,6 +530,8 @@ Pages._pbeOpenExtractor = function (parId, opts) {
   const par = _pbeGetParent(parId);
   // par が null でもOK (新規登録時など) - その場合は parId='' で扱う
   const apiKey = _pbeGetApiKey();
+  // [y6.1] 設定画面と共用の API キーがすでにある場合は再入力させない
+  const hasKey = !!apiKey;
 
   const html = '<div class="modal-title">📷 血統情報を抽出</div>'
     + '<div class="form-section" style="font-size:.88rem;line-height:1.55">'
@@ -400,24 +543,36 @@ Pages._pbeOpenExtractor = function (parId, opts) {
     + '    🔒 販売者名・店舗名・購入価格・購入条件は<b>抽出されません</b>。<br>'
     + '    🔒 抽出結果はあなたの端末内のみに保存されます。'
     + '  </div>'
-    + (apiKey ? '' :
-      '  <div style="background:rgba(230,150,0,.12);border:1px solid rgba(230,150,0,.4);padding:8px 10px;border-radius:6px;font-size:.78rem;color:var(--amber);margin-bottom:10px">'
-      + '    ⚠️ Gemini API キーが未設定です。下のフォームから入力してください。'
-      + '  </div>')
     + '  <div style="margin-bottom:10px">'
-    + '    <label style="font-size:.82rem;font-weight:600;display:block;margin-bottom:4px">スクリーンショット</label>'
-    + '    <input type="file" id="pbe-file-input" accept="image/*" '
+    + '    <label style="font-size:.82rem;font-weight:600;display:block;margin-bottom:4px">スクリーンショット <span style="font-weight:400;color:var(--text3);font-size:.72rem">(複数枚選択可)</span></label>'
+    + '    <input type="file" id="pbe-file-input" accept="image/*" multiple '
     + '           style="width:100%;padding:8px;background:var(--surface2);border-radius:6px;color:var(--text);border:1px solid var(--surface3)">'
     + '    <div id="pbe-file-preview" style="margin-top:8px"></div>'
     + '  </div>'
-    + '  <div style="margin-bottom:10px">'
-    + '    <label style="font-size:.82rem;font-weight:600;display:block;margin-bottom:4px">'
-    + '      Gemini API キー <span style="font-weight:400;color:var(--text3)">(初回のみ・端末に保存)</span>'
-    + '    </label>'
-    + '    <input type="password" id="pbe-key-input" value="' + _pbeEsc(apiKey) + '" '
-    + '           placeholder="AIzaSy..." '
-    + '           style="width:100%;padding:8px;background:var(--surface2);border-radius:6px;color:var(--text);border:1px solid var(--surface3)">'
-    + '  </div>'
+    + (hasKey
+      ? // [y6.1] 既にキーがある: ステータス表示のみ、入力欄は折り畳み
+        '  <div style="background:rgba(80,180,120,.10);border:1px solid rgba(80,180,120,.3);padding:6px 10px;border-radius:6px;font-size:.78rem;color:var(--green);margin-bottom:8px;display:flex;align-items:center;justify-content:space-between">'
+        + '    <span>✅ Gemini APIキー設定済み</span>'
+        + '    <a href="#" onclick="document.getElementById(\'pbe-key-section\').style.display=\'block\';this.style.display=\'none\';return false;" style="color:var(--text3);font-size:.72rem;text-decoration:underline">変更</a>'
+        + '  </div>'
+        + '  <div id="pbe-key-section" style="display:none;margin-bottom:10px">'
+        + '    <label style="font-size:.78rem;font-weight:600;display:block;margin-bottom:2px">APIキーを変更 <span style="font-weight:400;color:var(--text3)">(設定画面と共通)</span></label>'
+        + '    <input type="password" id="pbe-key-input" value="' + _pbeEsc(apiKey) + '" placeholder="AIzaSy..." '
+        + '           style="width:100%;padding:8px;background:var(--surface2);border-radius:6px;color:var(--text);border:1px solid var(--surface3)">'
+        + '  </div>'
+      : // [y6.1] 未設定: 案内 + その場で入力
+        '  <div style="background:rgba(230,150,0,.12);border:1px solid rgba(230,150,0,.4);padding:8px 10px;border-radius:6px;font-size:.78rem;color:var(--amber);margin-bottom:10px;line-height:1.55">'
+        + '    ⚠️ Gemini APIキーが未設定です。<br>'
+        + '    通常は<b>設定画面 → Gemini APIキー</b>でまとめて設定しますが、ここでも入力できます。<br>'
+        + '    入力したキーは設定画面と共通の保存先に記録されます。'
+        + '  </div>'
+        + '  <div style="margin-bottom:10px">'
+        + '    <label style="font-size:.82rem;font-weight:600;display:block;margin-bottom:4px">'
+        + '      Gemini APIキー <span style="font-weight:400;color:var(--text3)">(端末に保存・設定画面と共通)</span>'
+        + '    </label>'
+        + '    <input type="password" id="pbe-key-input" value="" placeholder="AIzaSy..." '
+        + '           style="width:100%;padding:8px;background:var(--surface2);border-radius:6px;color:var(--text);border:1px solid var(--surface3)">'
+        + '  </div>')
     + '  <div id="pbe-status" style="display:none;margin:10px 0;padding:8px;border-radius:6px;font-size:.82rem"></div>'
     + '</div>'
     + '<div class="modal-footer">'
@@ -430,22 +585,36 @@ Pages._pbeOpenExtractor = function (parId, opts) {
 
   UI.modal(html);
 
-  // ファイル選択時のプレビュー
+  // ファイル選択時のプレビュー (複数枚対応)
   setTimeout(function () {
     const fi = document.getElementById('pbe-file-input');
     if (fi) fi.addEventListener('change', function (e) {
-      const f = e.target.files && e.target.files[0];
+      const files = Array.from((e.target.files) || []);
       const prev = document.getElementById('pbe-file-preview');
-      if (!f || !prev) return;
-      const r = new FileReader();
-      r.onload = function () {
-        prev.innerHTML = '<img src="' + r.result + '" '
-          + 'style="max-width:100%;max-height:200px;border-radius:6px;border:1px solid var(--surface3)">'
-          + '<div style="font-size:.74rem;color:var(--text3);margin-top:4px">'
-          + _pbeEsc(f.name) + ' (' + Math.round(f.size / 1024) + ' KB)'
-          + '</div>';
-      };
-      r.readAsDataURL(f);
+      if (!prev) return;
+      if (!files.length) { prev.innerHTML = ''; return; }
+      // 各ファイルをサムネイルとしてグリッド表示
+      prev.innerHTML = '<div style="font-size:.78rem;color:var(--text2);margin-bottom:6px">'
+        + '📁 ' + files.length + ' 枚選択中'
+        + '</div>'
+        + '<div id="pbe-thumbs-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(80px,1fr));gap:6px"></div>';
+      const grid = document.getElementById('pbe-thumbs-grid');
+      files.forEach(function (f, idx) {
+        const r = new FileReader();
+        r.onload = function () {
+          const cell = document.createElement('div');
+          cell.style.cssText = 'position:relative;border:1px solid var(--surface3);border-radius:6px;overflow:hidden;background:var(--surface2)';
+          cell.innerHTML = '<img src="' + r.result + '" '
+            + 'style="width:100%;height:80px;object-fit:cover;display:block">'
+            + '<div style="position:absolute;top:2px;left:2px;background:rgba(0,0,0,.7);color:#fff;font-size:.66rem;padding:1px 5px;border-radius:3px;font-weight:700">'
+            + (idx + 1) + '/' + files.length
+            + '</div>'
+            + '<div style="font-size:.66rem;color:var(--text3);padding:2px 4px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'
+            + Math.round(f.size / 1024) + 'KB</div>';
+          grid.appendChild(cell);
+        };
+        r.readAsDataURL(f);
+      });
     });
   }, 50);
 
@@ -462,14 +631,20 @@ Pages._pbeRunExtraction = async function (parId) {
   const stat = document.getElementById('pbe-status');
   const btn  = document.getElementById('pbe-extract-btn');
 
-  const file = fi && fi.files && fi.files[0];
-  const key  = ki ? ki.value.trim() : '';
+  const files = fi && fi.files ? Array.from(fi.files) : [];
+  // [y6.1] APIキー: 入力欄が表示されていればそれを使い、なければ既存のキーを使う
+  let key = '';
+  if (ki && ki.offsetParent !== null) {
+    key = ki.value.trim();
+  } else {
+    key = _pbeGetApiKey();
+  }
 
-  if (!file) {
+  if (!files.length) {
     if (stat) {
       stat.style.display = 'block';
       stat.style.cssText += ';background:rgba(230,80,80,.12);color:#e05050';
-      stat.textContent = '⚠️ スクリーンショットを選択してください';
+      stat.textContent = '⚠️ スクリーンショットを選択してください (複数枚選択可)';
     }
     return;
   }
@@ -477,35 +652,45 @@ Pages._pbeRunExtraction = async function (parId) {
     if (stat) {
       stat.style.display = 'block';
       stat.style.cssText += ';background:rgba(230,80,80,.12);color:#e05050';
-      stat.textContent = '⚠️ Gemini APIキーを入力してください';
+      stat.textContent = '⚠️ Gemini APIキーが必要です。設定画面で登録するか、上の「変更」リンクから入力してください';
     }
     return;
   }
-  _pbeSetApiKey(key);
+  if (ki && ki.offsetParent !== null && key !== _pbeGetApiKey()) {
+    _pbeSetApiKey(key);
+  }
 
   if (btn) btn.disabled = true;
   if (stat) {
     stat.style.display = 'block';
     stat.style.cssText = 'display:block;margin:10px 0;padding:8px;border-radius:6px;font-size:.82rem;'
       + 'background:rgba(80,180,120,.12);color:var(--green)';
-    stat.innerHTML = '🔄 画像を圧縮中...';
+    stat.innerHTML = '🔄 ' + files.length + '枚の画像を圧縮中...';
   }
 
   try {
-    // 1. 画像を圧縮 (1MB以下JPEG)
-    const processed = await _pbeProcessImageFile(file);
-    if (stat) stat.innerHTML = '🔄 Geminiで解析中... (10〜20秒)';
+    // [y6.2] 全画像を並列圧縮
+    const processedAll = await Promise.all(files.map(function (f) {
+      return _pbeProcessImageFile(f);
+    }));
 
-    // 2. Vision API 呼び出し
-    const raw = await _pbeCallVision(processed.image_data_url, key);
+    if (stat) {
+      stat.innerHTML = '🔄 Geminiで' + files.length + '枚を統合解析中... (15〜30秒)';
+    }
 
-    // 3. サニタイズ
+    // [y6.2] 全画像をまとめて Vision API に送信。AIが統合された1セットの構造化データを返す
+    const raw = await _pbeCallVisionMulti(
+      processedAll.map(function (p) { return p.image_data_url; }),
+      key
+    );
+
+    // サニタイズ
     const data = _pbeSanitizeBloodlineData(raw);
 
-    // 4. 確認エディタを開く
+    // 確認エディタを開く (複数スクショを渡す)
     UI.closeModal();
     setTimeout(function () {
-      _pbeOpenEditor(parId, data, processed);
+      _pbeOpenEditor(parId, data, processedAll);
     }, 100);
 
   } catch (e) {
@@ -521,20 +706,40 @@ Pages._pbeRunExtraction = async function (parId) {
 
 // ════════════════════════════════════════════════════════════════
 // 抽出結果の確認・編集モーダル (構造化エディタ)
+//   processedImages: 単一の processed オブジェクト or 配列 (両対応)
 // ════════════════════════════════════════════════════════════════
-function _pbeOpenEditor(parId, data, processedImage) {
+function _pbeOpenEditor(parId, data, processedImages) {
   data = data || {};
+  // [y6.2] 単一画像/複数画像の両方を受け付ける(後方互換)
+  const imagesArr = Array.isArray(processedImages)
+    ? processedImages
+    : (processedImages ? [processedImages] : []);
+
   // データを window に保持して onclick から参照
   window.__pbeCurrentEdit = {
     parId:           parId,
     data:            data,
-    processedImage:  processedImage,
+    processedImages: imagesArr,  // [y6.2] 配列で保持
   };
+
+  // 元画像のサムネイル並べ表示
+  const imagesPreview = imagesArr.length
+    ? '<details style="margin-bottom:10px"><summary style="cursor:pointer;color:var(--text3);font-size:.78rem">📷 元画像 (' + imagesArr.length + '枚) を見る</summary>'
+      + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:6px;margin-top:6px">'
+      + imagesArr.map(function (img, i) {
+          return '<div style="position:relative">'
+            + '<img src="' + img.thumbnail_data_url + '" '
+            + 'style="width:100%;height:120px;object-fit:cover;border-radius:6px;border:1px solid var(--surface3)">'
+            + '<div style="position:absolute;top:2px;left:2px;background:rgba(0,0,0,.7);color:#fff;font-size:.66rem;padding:1px 5px;border-radius:3px">'
+            + (i + 1) + '/' + imagesArr.length + '</div>'
+            + '</div>';
+        }).join('')
+      + '</div></details>'
+    : '';
 
   const html = '<div class="modal-title">📝 抽出結果の確認・編集</div>'
     + '<div class="form-section" style="font-size:.85rem;max-height:65vh;overflow-y:auto">'
-    + (processedImage ? '<details style="margin-bottom:10px"><summary style="cursor:pointer;color:var(--text3);font-size:.78rem">📷 元画像を見る</summary>'
-        + '<img src="' + processedImage.thumbnail_data_url + '" style="max-width:100%;max-height:160px;border-radius:6px;margin-top:6px"></details>' : '')
+    + imagesPreview
     + '  <div style="margin-bottom:8px">'
     + '    <label style="font-size:.78rem;font-weight:600;display:block;margin-bottom:2px">和名・通称</label>'
     + '    <input type="text" id="pbe-ed-common_name" class="input" value="' + _pbeEsc(data.common_name || '') + '" placeholder="ヘラクレスオオカブト">'
@@ -674,15 +879,18 @@ Pages._pbeSaveEditor = async function () {
     });
   });
 
-  // スクショレコード作成
-  const shot = ctx.processedImage ? {
-    id:                 _pbeUid('shot'),
-    uploaded_at:        _pbeNowIso(),
-    image_data_url:     ctx.processedImage.image_data_url,
-    thumbnail_data_url: ctx.processedImage.thumbnail_data_url,
-    extraction_status:  'done',
-    extracted_at:       _pbeNowIso(),
-  } : null;
+  // [y6.2] 全スクショを source_screenshots に追加
+  const imagesArr = ctx.processedImages || [];
+  const newShots = imagesArr.map(function (img) {
+    return {
+      id:                 _pbeUid('shot'),
+      uploaded_at:        _pbeNowIso(),
+      image_data_url:     img.image_data_url,
+      thumbnail_data_url: img.thumbnail_data_url,
+      extraction_status:  'done',
+      extracted_at:       _pbeNowIso(),
+    };
+  });
 
   // 既存レコードに統合
   if (parId) {
@@ -691,10 +899,12 @@ Pages._pbeSaveEditor = async function () {
     const patch = {
       bloodline_data:        bld,
       bloodline_updated_at:  _pbeNowIso(),
-      source_screenshots:    shot ? existingShots.concat([shot]) : existingShots,
+      source_screenshots:    newShots.length ? existingShots.concat(newShots) : existingShots,
     };
     await _pbePatchParent(parId, patch);
-    UI.toast('血統情報を保存しました ✅', 'success');
+    UI.toast(newShots.length > 1
+      ? newShots.length + '枚のスクショと血統情報を保存しました ✅'
+      : '血統情報を保存しました ✅', 'success');
   } else {
     // parId 無し (新規登録時) - フォームに反映するだけ
     UI.toast('抽出結果をフォームに反映しました ✅', 'success');
@@ -915,4 +1125,4 @@ Pages._pbeExportCsv = function (parId) {
 window.Pages = window.Pages || {};
 Pages._pbeRenderBloodlineCard = _pbeRenderBloodlineCard;
 
-console.log('[PBE] parent_bloodline_extract.js loaded build=20260426y6');
+console.log('[PBE] parent_bloodline_extract.js loaded build=20260426y6.2');
