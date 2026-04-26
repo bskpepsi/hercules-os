@@ -2,9 +2,20 @@
 // ════════════════════════════════════════════════════════════════
 // yahoo_listing.js — ヤフオク出品AIジェネレーター（手動入力モード）
 //
-// build: 20260426y4
+// build: 20260426y5
 // 要件定義書: HerculesOS_ヤフオク出品AIジェネレーター_要件定義書_v1.0
 //
+// ── y5 での修正点 ─────────────────────────────────────────────
+// ・🔥 「1回目だけJSON生成失敗、2回目で成功」問題を根本解決
+//   原因: maxOutputTokens=4096 で長文の【注意事項】セクションを書かせると
+//   レスポンスが途中で切れ、JSONパースが破綻していた。
+//   対策:
+//     1) maxOutputTokens を 4096 → 8192 に拡張
+//     2) responseSchema を指定してJSON構造を強制
+//     3) finishReason をチェックし MAX_TOKENS 検知時に明確エラー
+//     4) パース失敗時に温度0.5で自動リトライ (本文を短く収束させる)
+//     5) 切り捨てJSONの自動補修(末尾文字列を閉じ、{}を完成)
+//     6) 安全フィルタブロックを別エラーで明示
 // ── y4 での修正点 ─────────────────────────────────────────────
 // ・🔥 ラベルサイズを 60×30mm → 62×30mm に変更
 //   ユーザーのDK-2205は62mm幅連続テープのため、60mm幅指定では
@@ -99,7 +110,7 @@ window.PAGES['yahoo-listing-history'] = () => Pages.yahooListingHistory(Store.ge
 const YL_LS_KEY        = 'hercules_yahoo_listing_v1';      // メインデータ保存先
 const YL_API_KEY_LS    = 'hercules_gemini_key';            // 既存sale_listing.jsと共用
 const YL_DRAFT_KEY     = 'hercules_yahoo_listing_draft';   // 入力中の下書き
-const YL_LOGO_PATH     = 'assets/logos/herakabu-marche-logo.png?v=20260426y4';
+const YL_LOGO_PATH     = 'assets/logos/herakabu-marche-logo.png?v=20260426y5';
 const YL_GEMINI_MODEL  = 'gemini-2.5-flash';
 
 // ────────────────────────────────────────────────────────────────
@@ -1000,7 +1011,25 @@ Pages.yahooListing = function (params = {}) {
     try {
       const ctx = _buildPromptContext();
       const prompt = _buildPrompt(ctx);
-      const json = await _callGemini(prompt, apiKey);
+      // [y5] 自動リトライ: 1回目失敗時は温度下げて1回だけ再試行
+      let json;
+      try {
+        json = await _callGemini(prompt, apiKey);
+      } catch (e1) {
+        const msg = String(e1.message || '');
+        // パース失敗・切り捨ての場合のみリトライ (API認証エラーなどは即時失敗)
+        const isRetriable = msg.includes('JSON') || msg.includes('切り捨て') || msg.includes('truncate') || msg.includes('MAX_TOKENS');
+        if (isRetriable) {
+          console.warn('[YL] retrying with lower temperature...', e1);
+          if (spinner) {
+            const spinTxt = spinner.querySelector('.yl-spin-text');
+            if (spinTxt) spinTxt.textContent = '🔄 再試行中... (より短く生成します)';
+          }
+          json = await _callGemini(prompt, apiKey, { isRetry: true });
+        } else {
+          throw e1;
+        }
+      }
       _renderGeneratedOutput(json, ctx);
       if (outCard) outCard.style.display = 'block';
       // ラベルプレビュー (PNG生成は時間がかかるので await; エラーは握り潰す)
@@ -1351,18 +1380,41 @@ HTML版は <h3> でセクション見出し、<p> で本文、<ul><li> で箇条
 プレーン版は実際の改行で構造を表現すること。`;
   }
 
-  async function _callGemini(prompt, apiKey) {
+  // [y5] Gemini API 呼び出し本体
+  //   y4までの問題: 1回目だけJSONパース失敗 → 原因は maxOutputTokens=4096 で
+  //   レスポンスが途中で切れていたため。長い注意事項セクションを書かせると
+  //   4096を超えることが温度0.85の振れ幅で1〜2割発生。
+  //   y5の対策:
+  //     1) maxOutputTokens: 4096 → 8192 (Gemini 2.5 Flash の上限を活用)
+  //     2) responseSchema で JSON 構造を強制 → 切り捨ても部分JSONとして保持
+  //     3) finishReason をチェックし MAX_TOKENS 検知 → ユーザー向けに明確エラー
+  //     4) パース失敗時は自動で1回リトライ (温度を 0.5 に下げて短く収束)
+  async function _callGemini(prompt, apiKey, opts) {
+    opts = opts || {};
+    const isRetry = !!opts.isRetry;
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${YL_GEMINI_MODEL}:generateContent?key=${apiKey}`;
+    // responseSchema で JSON 構造を強制
+    const responseSchema = {
+      type: 'OBJECT',
+      properties: {
+        title:           { type: 'STRING' },
+        body_html:       { type: 'STRING' },
+        body_plain:      { type: 'STRING' },
+        appeal_summary:  { type: 'STRING' },
+      },
+      required: ['title', 'body_html', 'body_plain'],
+    };
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: {
-          temperature:    0.85,
-          maxOutputTokens: 4096,
-          topP:            0.92,
+          temperature:      isRetry ? 0.5  : 0.85,  // リトライ時は温度下げて短く
+          maxOutputTokens:  8192,                    // [y5] 4096 → 8192
+          topP:             isRetry ? 0.85 : 0.92,
           responseMimeType: 'application/json',
+          responseSchema,                            // [y5] 構造強制
         },
       }),
     });
@@ -1371,16 +1423,22 @@ HTML版は <h3> でセクション見出し、<p> で本文、<ul><li> で箇条
       throw new Error((err && err.error && err.error.message) || `HTTP ${res.status}`);
     }
     const data = await res.json();
-    const text = (data && data.candidates && data.candidates[0] &&
-                  data.candidates[0].content && data.candidates[0].content.parts &&
-                  data.candidates[0].content.parts[0] && data.candidates[0].content.parts[0].text) || '';
-    if (!text) throw new Error('Gemini レスポンスが空でした');
+    const cand = data && data.candidates && data.candidates[0];
+    const finishReason = cand && cand.finishReason;
+    const text = (cand && cand.content && cand.content.parts &&
+                  cand.content.parts[0] && cand.content.parts[0].text) || '';
+    // [y5] finishReason チェック
+    if (!text) {
+      if (finishReason === 'SAFETY') {
+        throw new Error('Geminiのセーフティフィルタにブロックされました。プロンプトを変更してください。');
+      }
+      throw new Error('Gemini レスポンスが空でした (finishReason=' + (finishReason || 'unknown') + ')');
+    }
+    // [y5] 切り捨て警告 (最終的にパース成功なら警告のみ、失敗なら原因として明記)
+    const wasTruncated = (finishReason === 'MAX_TOKENS');
+    if (wasTruncated) console.warn('[YL] Gemini response was truncated (MAX_TOKENS).');
 
-    // [y4] JSON抽出フォールバック強化
-    //   1) ```json ... ``` フェンス除去
-    //   2) 制御文字除去 (改行が文字列内に裸で入る Gemini ミス対策)
-    //   3) 末尾の余分なテキスト切り捨て
-    //   4) 中括弧範囲だけ切り出して再試行
+    // JSON抽出フォールバック (y4 のロジックを継承)
     let jsonStr = text.trim();
     const fence = jsonStr.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
     if (fence) jsonStr = fence[1].trim();
@@ -1428,8 +1486,49 @@ HTML版は <h3> でセクション見出し、<p> で本文、<ul><li> で箇条
       if (obj) return obj;
     }
 
-    console.warn('[YL] JSON parse failed. Raw response:', text.slice(0, 500));
-    throw new Error('Gemini レスポンスの JSON パースに失敗しました');
+    // [y5] 試行5: 切り捨て JSON を補修 (途中で切れた文字列を閉じ、{} を完成させる)
+    //   MAX_TOKENS で切れた典型例:
+    //     {"title":"...","body_html":"...","body_plain":"...大阪府か
+    //   末尾を `"` で閉じ、最後のフィールドが完成していれば `}` で締める。
+    if (wasTruncated && m) {
+      let s = m[0];
+      // 末尾の不完全部分を切り詰めて閉じる
+      let inS = false, esc2 = false;
+      let lastSafeIdx = -1;       // 完成した "..." または , または { の直後
+      const stack = [];           // [{}], 各 } 待ち
+      for (let i = 0; i < s.length; i++) {
+        const ch = s[i];
+        if (esc2) { esc2 = false; continue; }
+        if (ch === '\\') { esc2 = true; continue; }
+        if (ch === '"') { inS = !inS; if (!inS) lastSafeIdx = i; continue; }
+        if (!inS) {
+          if (ch === '{' || ch === '[') stack.push(ch);
+          else if (ch === '}' || ch === ']') stack.pop();
+          else if (ch === ',') lastSafeIdx = i;
+        }
+      }
+      if (lastSafeIdx > 0) {
+        let tail = s.slice(0, lastSafeIdx + 1);
+        // 末尾の , を削除
+        tail = tail.replace(/,\s*$/, '');
+        // スタックを閉じる
+        // stackには { や [ が残ってる可能性があるが、今回は { のみ閉じれば十分
+        const remainingOpens = (tail.match(/\{/g) || []).length - (tail.match(/\}/g) || []).length;
+        for (let i = 0; i < remainingOpens; i++) tail += '}';
+        obj = _ylTryParse(tail);
+        if (obj) {
+          console.warn('[YL] Recovered partial JSON from truncated response.');
+          UI.toast('レスポンスが途中で切れたため一部のみ復元しました。再生成すると完全な本文を取得できます。', 'success', 5000);
+          return obj;
+        }
+      }
+    }
+
+    console.warn('[YL] JSON parse failed. finishReason=' + (cand && cand.finishReason) + ', raw response head:', text.slice(0, 500));
+    if (wasTruncated) {
+      throw new Error('Gemini レスポンスがトークン上限で切り捨てられました。再度「AIで出品文を生成」を押してください。');
+    }
+    throw new Error('Gemini レスポンスの JSON パースに失敗しました (再試行で解消する場合があります)');
   }
 
   // 出力描画
@@ -2255,4 +2354,4 @@ ${h.body_html || '<pre>'+_ylEsc(h.body_plain)+'</pre>'}
   `;
 };
 
-console.log('[YL] yahoo_listing.js loaded build=20260426y4');
+console.log('[YL] yahoo_listing.js loaded build=20260426y5');
