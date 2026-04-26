@@ -1,6 +1,11 @@
 // FILE: js/pages/manage.js
-// build: 20260424d
-// 変更点:
+// build: 20260426y1
+// 変更点 (build 20260426y1):
+//   - [20260426y1] 「ヤフオク出品(手動入力モード)」ボタンを追加
+//     既存の sale-listing (LOT/IND/PARベース) に加えて、要件定義書v1.0に
+//     基づく新規ページ yahoo-listing への導線を追加。個体未登録でも
+//     ライン情報・親情報を参照して出品文を生成可能。
+// 変更点 (旧):
 //   - [20260424d] 飼育管理カードに個体カウントを追加
 //     * 旧: 「ロット7件 / ユニット2件」 (count = ロット + ユニット)
 //     * 新: 「個体2件 / ユニット2件 / ロット7件」 (count = 個体 + ユニット + ロット)
@@ -169,6 +174,10 @@ Pages.manage = function () {
           <button class="btn btn-ghost" onclick="routeTo('sale-listing')"
             style="grid-column:span 2;border-color:rgba(76,175,120,.4);color:var(--green);font-weight:700">
             ✨ ヤフオク出品文AIジェネレーター（Gemini 無料）
+          </button>
+          <button class="btn btn-ghost" onclick="routeTo('yahoo-listing')"
+            style="grid-column:span 2;border-color:rgba(200,168,75,.55);color:var(--gold);font-weight:700">
+            🪲 ヤフオク出品（手動入力モード・HERAKABU MARCHÉ）
           </button>
         </div>
       </div>

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  HERAKABU MARCHÉ ロゴ (暫定版 / build: 20260426y1)
+  注意: ユーザー提供PNGロゴ (背景クリーム色) を完全再現したものではありません。
+       ラベル印刷上で機能するシンプルな透過SVGとして暫定実装。
+       最終版は提供PNG画像を背景透過処理 (PhotoshopやGIMPでクリーム色を白に置換し
+       透明化) または再描画した本物のロゴに差し替えてください。
+       差し替え時はファイル名 `herakabu-marche-logo.svg` を維持してください。
+  サイズ: viewBox="0 0 200 220" — 横長配置にも縦長配置にも対応
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 220" preserveAspectRatio="xMidYMid meet">
+  <g fill="#000000">
+    <!-- カブトムシシルエット (簡略化、HERAKABU MARCHÉ オリジナルロゴ風) -->
+    <!-- 頭角 (大角) -->
+    <path d="M100 22 L92 6 L96 4 L100 14 L104 4 L108 6 Z"/>
+    <!-- 胸角 (中央から上に湾曲) -->
+    <path d="M100 30 Q88 36 84 28 Q80 22 88 18 L92 22 Q86 26 90 30 Q96 32 100 30 Z" opacity="0.85"/>
+    <path d="M100 30 Q112 36 116 28 Q120 22 112 18 L108 22 Q114 26 110 30 Q104 32 100 30 Z" opacity="0.85"/>
+    <!-- 頭部 -->
+    <ellipse cx="100" cy="42" rx="14" ry="10"/>
+    <!-- 前胸 (台形) -->
+    <path d="M82 50 Q80 60 84 70 L116 70 Q120 60 118 50 Q110 48 100 48 Q90 48 82 50 Z"/>
+    <!-- 翅鞘 (ボディ) -->
+    <ellipse cx="100" cy="100" rx="32" ry="36"/>
+    <!-- 翅鞘の中央線 -->
+    <line x1="100" y1="68" x2="100" y2="134" stroke="#ffffff" stroke-width="0.8"/>
+    <!-- 脚 (左右3本ずつ簡略化) -->
+    <path d="M70 78 L58 72 L56 76 L68 84 Z"/>
+    <path d="M68 100 L52 100 L52 104 L68 106 Z"/>
+    <path d="M70 122 L56 132 L60 136 L74 128 Z"/>
+    <path d="M130 78 L142 72 L144 76 L132 84 Z"/>
+    <path d="M132 100 L148 100 L148 104 L132 106 Z"/>
+    <path d="M130 122 L144 132 L140 136 L126 128 Z"/>
+  </g>
+  <!-- HERAKABU テキスト (セリフ体風) -->
+  <text x="100" y="170" text-anchor="middle"
+        font-family="'Noto Serif JP', 'Times New Roman', serif"
+        font-size="22" font-weight="700" fill="#000000"
+        letter-spacing="2">HERAKABU</text>
+  <!-- MARCHÉ テキスト (細め・小さめ) -->
+  <text x="100" y="195" text-anchor="middle"
+        font-family="'Noto Sans JP', 'Helvetica', sans-serif"
+        font-size="12" font-weight="400" fill="#000000"
+        letter-spacing="6">MARCHÉ</text>
+</svg>
