@@ -2,10 +2,25 @@
 // ════════════════════════════════════════════════════════════════
 // yahoo_listing.js — ヤフオク出品AIジェネレーター（手動入力モード）
 //
-// build: 20260426y2
+// build: 20260426y3
 // 要件定義書: HerculesOS_ヤフオク出品AIジェネレーター_要件定義書_v1.0
 //
-// ── y2 での修正点 ──────────────────────────────────────────────
+// ── y3 での修正点 ─────────────────────────────────────────────
+// ・🔥 AI本文の【種親情報】セクションでサイズ右隣の産地表記を削除し、
+//   代わりに血統原文(paternal_raw / maternal_raw)を括弧書きで完全記載
+//   するようプロンプト指示を強化。
+//   実例フォーマット完全準拠:
+//     ♂:①164mm
+//        ②165mm(U6SA-/GTR.RU01U6SAティーガー...)
+//     ♀:①75mm(U71イン×165T-REX.T-115)
+//        ②77mm(FFOFA2No113×T117R(2)MD)
+// ・🔥 ラベルのタイトルを「DHヘラクレス グアドループ産」スタイルに正規化
+//   ヘラクレス系 → 「DHヘラクレス」略称化
+//   英語産地 → カタカナ自動変換 (Guadeloupe → グアドループ 等)
+//   1行で収まるよう文字長に応じて自動フォント縮小は維持。
+// ・複数ラインのセット出品で、種親♂①②③ ♀①②③ を正しくナンバリング
+//   するため、ラインごとに親♂♀を集約して AI プロンプトに渡す形に改修。
+// ── y2 での修正点 ─────────────────────────────────────────────
 // ・🔥 ライン管理コード(A1, B2 等)を AI プロンプトから完全除外
 //   ライン管理コードは社内識別子であり、購入者向け出品文に含めるべきでないため。
 //   プロンプトに「ライン管理コードを出品文/タイトルに含めないこと」と明示禁止。
@@ -57,8 +72,77 @@ window.PAGES['yahoo-listing-history'] = () => Pages.yahooListingHistory(Store.ge
 const YL_LS_KEY        = 'hercules_yahoo_listing_v1';      // メインデータ保存先
 const YL_API_KEY_LS    = 'hercules_gemini_key';            // 既存sale_listing.jsと共用
 const YL_DRAFT_KEY     = 'hercules_yahoo_listing_draft';   // 入力中の下書き
-const YL_LOGO_PATH     = 'assets/logos/herakabu-marche-logo.png?v=20260426y2';
+const YL_LOGO_PATH     = 'assets/logos/herakabu-marche-logo.png?v=20260426y3';
 const YL_GEMINI_MODEL  = 'gemini-2.5-flash';
+
+// ────────────────────────────────────────────────────────────────
+// [y3] 産地名の英語表記 → カタカナ表記 変換マップ
+// ラベル/出品文で「DHヘラクレス グアドループ産」のように
+// 日本語表記に統一するため、英語入力を自動変換する。
+// 大小文字を無視し、末尾の「島」「Island」も除去する。
+// ────────────────────────────────────────────────────────────────
+const YL_ORIGIN_KATAKANA = {
+  'guadeloupe':       'グアドループ',
+  'guadalupe':        'グアドループ',
+  'hispaniola':       'イスパニオラ',
+  'trinidad':         'トリニダード',
+  'ecuador':          'エクアドル',
+  'colombia':         'コロンビア',
+  'lita':             'リタ',
+  'bolivia':          'ボリビア',
+  'brazil':           'ブラジル',
+  'mexico':           'メキシコ',
+  'peru':             'ペルー',
+  'venezuela':        'ベネズエラ',
+  'panama':           'パナマ',
+  'martinique':       'マルティニーク',
+  'dominica':         'ドミニカ',
+  'saint lucia':      'セントルシア',
+  'st. lucia':        'セントルシア',
+  'st lucia':         'セントルシア',
+  'puerto rico':      'プエルトリコ',
+  'french guiana':    'フランス領ギアナ',
+  'guiana':           'ギアナ',
+  'argentina':        'アルゼンチン',
+  'paraguay':         'パラグアイ',
+  'uruguay':          'ウルグアイ',
+  'chile':            'チリ',
+  'cuba':             'キューバ',
+  'jamaica':          'ジャマイカ',
+};
+
+// [y3] 英語産地表記をカタカナに変換 (ヒットしなければ元のまま)
+function _ylNormalizeOriginKatakana(origin) {
+  if (!origin) return '';
+  const trimmed = String(origin)
+    .trim()
+    .replace(/\s*(island|is\.?|島)\s*$/i, '');
+  const key = trimmed.toLowerCase();
+  return YL_ORIGIN_KATAKANA[key] || trimmed;
+}
+
+// [y3] 種名を短縮表記化 (ラベル用)
+//   ヘラクレス系: 「DHヘラクレス」(Dynastes Hercules の慣用略称)
+//   ネプチューン系: 「DNネプチューン」
+//   サタン系: 「DSサタン」
+//   その他は原文のまま
+function _ylNormalizeSpeciesShort(species) {
+  if (!species) return 'DHヘラクレス';
+  const sp = String(species).trim();
+  if (/ヘラクレス|hercules/i.test(sp)) return 'DHヘラクレス';
+  if (/ネプチューン|neptunus/i.test(sp)) return 'DNネプチューン';
+  if (/サタン|satanas/i.test(sp))       return 'DSサタン';
+  if (/ティティウス|tityus/i.test(sp))   return 'DTティティウス';
+  return sp;
+}
+
+// [y3] ラベル用タイトル組み立て
+//   例: ("ヘラクレスオオカブト", "Guadeloupe") → "DHヘラクレス グアドループ産"
+function _ylBuildLabelTitle(species, origin) {
+  const sp  = _ylNormalizeSpeciesShort(species);
+  const ori = _ylNormalizeOriginKatakana(origin);
+  return ori ? `${sp} ${ori}産` : sp;
+}
 
 // 既定NGワードと推奨言い換え (ユーザーがマスタ画面で編集可能)
 const YL_DEFAULT_NG_WORDS = [
@@ -998,8 +1082,11 @@ Pages.yahooListing = function (params = {}) {
     }).join('\n');
 
     // ライン情報整形 (重複排除・line_code除外)
+    // [y3] さらに種親♂♀をラインごとに集約してナンバリング用リストを作成
     const seenLines = new Set();
     const parentBlocks = [];
+    const fatherList = []; // [{size, blood, memo, lineRef}]
+    const motherList = [];
     ctx.individuals.forEach(ic => {
       const key = ic.line.line_name || ic.line.species + '|' + ic.line.origin;
       if (seenLines.has(key)) return;
@@ -1009,7 +1096,35 @@ Pages.yahooListing = function (params = {}) {
       const fInfo = f ? `\n  ♂親情報: ${f.size_mm?f.size_mm+'mm':'(サイズ不明)'} ${f.paternal_raw?'(血統表記: '+f.paternal_raw+')':''}${f.memo?' メモ:'+f.memo:''}` : '';
       const mInfo = m ? `\n  ♀親情報: ${m.size_mm?m.size_mm+'mm':'(サイズ不明)'} ${m.maternal_raw?'(血統表記: '+m.maternal_raw+')':''}${m.memo?' メモ:'+m.memo:''}` : '';
       parentBlocks.push(`[${ic.line.species}${ic.line.origin?' '+ic.line.origin+'産':''}]${lineMemo}${fInfo}${mInfo}`);
+      // [y3] ナンバリング用リスト
+      if (f) fatherList.push({
+        size:  f.size_mm  || '',
+        blood: f.paternal_raw || '',
+        memo:  f.memo || '',
+      });
+      if (m) motherList.push({
+        size:  m.size_mm  || '',
+        blood: m.maternal_raw || '',
+        memo:  m.memo || '',
+      });
     });
+
+    // [y3] AIへ渡す「種親リスト (♂①②③ ♀①②③)」のテキスト整形
+    //   血統原文(blood)を必ずカッコ書きで全文記載させる狙い
+    const fatherListText = fatherList.length
+      ? fatherList.map((p, i) => {
+          const num = '①②③④⑤⑥⑦⑧⑨'[i] || `(${i+1})`;
+          const blood = p.blood ? `(血統原文: ${p.blood})` : '(血統原文: なし)';
+          return `  ♂${num} ${p.size?p.size+'mm':'サイズ不明'} ${blood}`;
+        }).join('\n')
+      : '  (♂親情報なし)';
+    const motherListText = motherList.length
+      ? motherList.map((p, i) => {
+          const num = '①②③④⑤⑥⑦⑧⑨'[i] || `(${i+1})`;
+          const blood = p.blood ? `(血統原文: ${p.blood})` : '(血統原文: なし)';
+          return `  ♀${num} ${p.size?p.size+'mm':'サイズ不明'} ${blood}`;
+        }).join('\n')
+      : '  (♀親情報なし)';
 
     // 参考出品文 (line別最大1件、テキストの先頭500文字まで)
     const refBlocks = [];
@@ -1098,6 +1213,10 @@ ${isLarva && hatchSummary ? `孵化日: ${hatchSummary}\nステージ: ${stages.
 【ライン背景情報】
 ${parentBlocks.join('\n\n')}
 
+【種親リスト (この番号順で①②③として記載すること)】
+${fatherListText}
+${motherListText}
+
 【出品個体】
 ${indLines}
 
@@ -1118,14 +1237,20 @@ ${sf.extraAppeal ? '【出品者アピール (必ず本文に盛り込む)】\n'
 1) リード文 (2〜3行): 何の出品か明示しつつ血統価値を訴求。例:
    「ヘラクレスオオカブトの3令幼虫5頭セットの出品です。\n大型血統を中心としたブリードラインで、将来サイズ狙いが可能な組み合わせになります。」
 
-2) 【種親情報】セクション:
-   ♂と♀それぞれ、サイズと血統表記を①②③形式で列挙する。
-   例:
+2) 【種親情報】セクション (🔥 重要・必ず以下のルールを厳守):
+   ・♂と♀それぞれ、上記「種親リスト」の番号順に①②③形式で列挙する。
+   ・サイズの右隣に**産地名(Guadeloupe産・グアドループ産 等)を絶対に書かない**。
+     産地はリード文で既に触れているため、種親情報セクションでは記載しない。
+   ・サイズの後には、与えられた**血統原文(paternal_raw / maternal_raw)を必ずカッコ書きで完全に転記**する。
+     血統原文が「なし」の場合のみサイズだけ書く。
+   ・血統原文は改変・要約せず、原文をそのまま括弧内に入れる。
+   実例 (HERAKABU MARCHÉ 過去出品):
      【種親情報】
      ♂:①164mm
-        ②165mm(U6SA-/GTR.RU01...血統表記)
+        ②165mm(U6SA-/GTR.RU01U6SAティーガー 168-165TREX-199MTREX・1660AKS × 0F136FOX-FOX.FF1710F)
      ♀:①75mm(U71イン×165T-REX.T-115)
         ②77mm(FFOFA2No113×T117R(2)MD)
+        ③74.2mm(T-117FFOAKSvol3×00-181)
    末尾に「※発送時には雌雄・想定血統・サイズ等分かるよう個体ごとにラベリングして発送いたします。」と「いずれも大型血統由来です。」(該当する場合)を付記。
 
 3) ${isLarva ? '【幼虫情報】' : '【成虫情報】'}セクション:
@@ -1315,12 +1440,10 @@ HTML版は <h3> でセクション見出し、<p> で本文、<ul><li> で箇条
   function _ylBuildLabelHTML(ind, ctx) {
     const ic = ctx.individuals.find(c => c.ind.uid === ind.uid) || ctx.individuals[0];
     const line = ic.line || {};
-    const sp   = line.species || 'ヘラクレスオオカブト';
-    const origin = line.origin || '';
-    // [y2 final] 種名表示は短縮形を優先 (DH = ディナステス・ヘラクレス、または「ヘラクレス」)
-    //   提供画像1のスタイルに合わせて「DHヘラクレス グアドループ産」のように
-    //   接頭+種名+産地。ヘラクレス系以外でも汎用に使えるよう種名そのまま表示。
-    const titleStr = origin ? `${sp} ${origin}産` : sp;
+    // [y3] タイトルを「DHヘラクレス グアドループ産」スタイルに正規化
+    //   ヘラクレス系種名 → 「DHヘラクレス」略称化
+    //   英語産地 → カタカナ自動変換 (Guadeloupe → グアドループ 等)
+    const titleStr = _ylBuildLabelTitle(line.species, line.origin);
 
     // 種親 (サイズ + 血統表記 全文 — 複数行折り返しで表示)
     const f = ic.father, m = ic.mother;
@@ -2050,4 +2173,4 @@ ${h.body_html || '<pre>'+_ylEsc(h.body_plain)+'</pre>'}
   `;
 };
 
-console.log('[YL] yahoo_listing.js loaded build=20260426y2');
+console.log('[YL] yahoo_listing.js loaded build=20260426y3');
