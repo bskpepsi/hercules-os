@@ -2,7 +2,17 @@
 // ════════════════════════════════════════════════════════════════
 // parent_bloodline_extract.js — 種親血統情報の Vision 抽出機能
 //
-// build: 20260426y6.3
+// build: 20260426y6.4
+//
+// ── y6.4 での修正点 ────────────────────────────────────────────
+// ・🔥 大きなスクショ複数枚で「トークン上限切り捨て」が頻発する問題を解決
+//   原因: 1枚 1.6MB のような大きなスクショを3枚送ると、Vision の入力が
+//        膨大になり、出力 8192 トークンを使い切る前に切り捨てられる。
+//   対策の組み合わせ:
+//     1) 初期圧縮を強化: 1280px/1MB → 960px/700KB
+//     2) リトライ時にさらに再圧縮: 720px/400KB の縮小版を送信
+//     3) リトライ時のプロンプト軽量化: raw_text を空に、kinship上限10件
+//     4) ファイル選択時に枚数+合計サイズ表示&推奨超過警告
 //
 // ── y6.3 での修正点 ────────────────────────────────────────────
 // ・🔥 「設定画面でAPIキーを設定済みなのに『未設定』と表示される」問題を解決
@@ -90,9 +100,17 @@
 // ════════════════════════════════════════════════════════════════
 const PBE_GEMINI_MODEL = 'gemini-2.5-flash';
 const PBE_API_KEY_LS   = 'hercules_gemini_key';     // yahoo_listing.js と共用
-const PBE_MAX_IMAGE_SIZE_BYTES = 1024 * 1024;       // 1MB
-const PBE_MAX_IMAGE_DIMENSION  = 1280;              // 長辺 1280px
-const PBE_THUMB_DIMENSION      = 240;               // サムネ長辺
+// [y6.4] 画像サイズ定数: トークン消費削減のため積極的に圧縮
+//   Vision API はピクセル数が多いほど入力トークンを多く消費する。
+//   大きすぎる画像は出力 (8192トークン) を圧迫するため、解像度・ファイルサイズを抑制。
+const PBE_MAX_IMAGE_SIZE_BYTES = 700 * 1024;        // [y6.4] 1MB → 700KB
+const PBE_MAX_IMAGE_DIMENSION  = 960;               // [y6.4] 1280px → 960px (長辺)
+const PBE_THUMB_DIMENSION      = 240;               // サムネ長辺 (表示用)
+// [y6.4] Vision API送信前の追加圧縮 (リトライ時に使用)
+const PBE_RETRY_MAX_DIMENSION  = 720;               // リトライ時の長辺
+const PBE_RETRY_MAX_SIZE_BYTES = 400 * 1024;        // リトライ時 400KB
+// [y6.4] 推奨枚数上限 (これを超えると警告)
+const PBE_WARN_FILE_COUNT      = 3;
 
 // 同腹兄弟実績の指標
 const PBE_KINSHIP_METRICS = {
@@ -169,9 +187,11 @@ async function _pbePatchParent(parId, patch) {
 }
 
 // ════════════════════════════════════════════════════════════════
-// 画像圧縮: File / DataURL → 1MB以下の JPEG DataURL
+// 画像圧縮: File / DataURL → 指定サイズ以下の JPEG DataURL
+// [y6.4] sizeLimitBytes 引数を追加し、リトライ時はより強く圧縮できるように
 // ════════════════════════════════════════════════════════════════
-function _pbeCompressImage(srcDataUrl, maxDim, qualityStart) {
+function _pbeCompressImage(srcDataUrl, maxDim, qualityStart, sizeLimitBytes) {
+  const limit = sizeLimitBytes || PBE_MAX_IMAGE_SIZE_BYTES;
   return new Promise(function (resolve, reject) {
     const img = new Image();
     img.onload = function () {
@@ -186,11 +206,11 @@ function _pbeCompressImage(srcDataUrl, maxDim, qualityStart) {
       ctx.fillRect(0, 0, w, h);
       ctx.drawImage(img, 0, 0, w, h);
 
-      // 段階的に quality を下げて 1MB 以下に
+      // 段階的に quality を下げて目標サイズ以下に
       let quality = qualityStart || 0.85;
       let dataUrl = canvas.toDataURL('image/jpeg', quality);
       let attempts = 0;
-      while (dataUrl.length * 0.75 > PBE_MAX_IMAGE_SIZE_BYTES && quality > 0.4 && attempts < 6) {
+      while (dataUrl.length * 0.75 > limit && quality > 0.35 && attempts < 8) {
         quality -= 0.1;
         dataUrl = canvas.toDataURL('image/jpeg', quality);
         attempts++;
@@ -213,14 +233,27 @@ function _pbeFileToDataUrl(file) {
 
 async function _pbeProcessImageFile(file) {
   const rawDataUrl = await _pbeFileToDataUrl(file);
-  const main = await _pbeCompressImage(rawDataUrl, PBE_MAX_IMAGE_DIMENSION, 0.85);
-  const thumb = await _pbeCompressImage(rawDataUrl, PBE_THUMB_DIMENSION,  0.7);
+  const main = await _pbeCompressImage(rawDataUrl, PBE_MAX_IMAGE_DIMENSION, 0.85, PBE_MAX_IMAGE_SIZE_BYTES);
+  const thumb = await _pbeCompressImage(rawDataUrl, PBE_THUMB_DIMENSION,  0.7, 100 * 1024);
   return {
     image_data_url:     main.dataUrl,
     thumbnail_data_url: thumb.dataUrl,
     width:              main.width,
     height:             main.height,
+    raw_data_url:       rawDataUrl,    // [y6.4] リトライ時に再圧縮するために保持
   };
+}
+
+// [y6.4] リトライ時用: より強く圧縮した画像データURLを生成
+async function _pbeRecompressForRetry(processedImage) {
+  if (!processedImage.raw_data_url) return processedImage.image_data_url;
+  const recompressed = await _pbeCompressImage(
+    processedImage.raw_data_url,
+    PBE_RETRY_MAX_DIMENSION,
+    0.7,
+    PBE_RETRY_MAX_SIZE_BYTES
+  );
+  return recompressed.dataUrl;
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -419,7 +452,13 @@ async function _pbeCallVisionMulti(imageDataUrls, apiKey, opts) {
 
   // 複数画像用に少しプロンプトを調整 (画像が複数ある旨を伝える)
   // [y6.3] リトライ時は raw_text を短く制限してトークン節約
-  const rawTextLimit = isRetry ? 800 : 2000;
+  // [y6.4] リトライ時は raw_text を完全に空にして、構造化フィールドのみに集中
+  const rawTextLimit = isRetry ? 0 : 1500;
+  const rawTextInstruction = isRetry
+    ? '・raw_text は空文字列 "" で返す (構造化フィールドのみに集中するため)\n'
+      + '・kinship_records も最大10件までに絞る (重要な実績だけ)\n'
+      + '・feature_notes は1文・60文字以内に収める'
+    : '・raw_text は重要部分のみ抜粋し ' + rawTextLimit + ' 文字以内に収める';
   const multiPrompt = _pbeBuildVisionPrompt()
     + '\n\n━━━ 複数画像の取り扱い ━━━\n'
     + 'これから ' + imageDataUrls.length + '枚 の画像を渡します。これらはすべて同じ種親個体に関する出品ページの異なる部分(商品タイトル・商品説明1ページ目・2ページ目・画像など)です。\n'
@@ -427,7 +466,7 @@ async function _pbeCallVisionMulti(imageDataUrls, apiKey, opts) {
     + '・同じ情報が複数の画像にある場合は重複させない\n'
     + '・補完的な情報がある場合は両方を活かす(例: 1枚目に♂血統、2枚目に♀血統)\n'
     + '・kinship_records は全画像の情報を統合して1つの配列にまとめる\n'
-    + '・raw_text は重要部分のみ抜粋し ' + rawTextLimit + ' 文字以内に収める';
+    + rawTextInstruction;
 
   const responseSchema = {
     type: 'OBJECT',
@@ -664,9 +703,22 @@ Pages._pbeOpenExtractor = function (parId, opts) {
       const prev = document.getElementById('pbe-file-preview');
       if (!prev) return;
       if (!files.length) { prev.innerHTML = ''; return; }
+      // [y6.4] 合計サイズ計算と警告判定
+      const totalKb = Math.round(files.reduce(function (s, f) { return s + f.size; }, 0) / 1024);
+      const tooMany = files.length > PBE_WARN_FILE_COUNT;
+      const tooLarge = totalKb > 2500;
+      const warningHtml = (tooMany || tooLarge)
+        ? '<div style="background:rgba(230,150,0,.12);border:1px solid rgba(230,150,0,.35);padding:6px 10px;border-radius:6px;font-size:.74rem;color:var(--amber);margin-bottom:6px;line-height:1.5">'
+          + '⚠️ '
+          + (tooMany ? files.length + '枚は多めです。' : '')
+          + (tooLarge ? '合計サイズが大きいため' : '')
+          + 'AIが応答しきれない可能性があります。失敗した場合は枚数を減らしてください。'
+          + '</div>'
+        : '';
       // 各ファイルをサムネイルとしてグリッド表示
-      prev.innerHTML = '<div style="font-size:.78rem;color:var(--text2);margin-bottom:6px">'
-        + '📁 ' + files.length + ' 枚選択中'
+      prev.innerHTML = warningHtml
+        + '<div style="font-size:.78rem;color:var(--text2);margin-bottom:6px">'
+        + '📁 ' + files.length + ' 枚選択中 (合計 ' + totalKb + 'KB)'
         + '</div>'
         + '<div id="pbe-thumbs-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(80px,1fr));gap:6px"></div>';
       const grid = document.getElementById('pbe-thumbs-grid');
@@ -751,6 +803,7 @@ Pages._pbeRunExtraction = async function (parId) {
 
     // [y6.2] 全画像をまとめて Vision API に送信。AIが統合された1セットの構造化データを返す
     // [y6.3] 自動リトライ: 1回目失敗時は温度を下げて再試行
+    // [y6.4] リトライ時は画像をさらに強く再圧縮して入力トークンも削減
     const imageUrls = processedAll.map(function (p) { return p.image_data_url; });
     let raw;
     try {
@@ -760,9 +813,13 @@ Pages._pbeRunExtraction = async function (parId) {
       // パース失敗・切り捨ての場合のみリトライ (API認証エラー等は即時失敗)
       const isRetriable = msg.includes('JSON') || msg.includes('切り捨て') || msg.includes('パース');
       if (isRetriable) {
-        console.warn('[PBE] retrying with lower temperature...', e1);
-        if (stat) stat.innerHTML = '🔄 再試行中... (より短く生成します)';
-        raw = await _pbeCallVisionMulti(imageUrls, key, { isRetry: true });
+        console.warn('[PBE] retrying with stronger compression + lower temperature...', e1);
+        if (stat) stat.innerHTML = '🔄 再試行中... (画像を再圧縮して短く生成します)';
+        // [y6.4] リトライ時の画像をさらに圧縮
+        const retryImageUrls = await Promise.all(processedAll.map(function (p) {
+          return _pbeRecompressForRetry(p);
+        }));
+        raw = await _pbeCallVisionMulti(retryImageUrls, key, { isRetry: true });
       } else {
         throw e1;
       }
@@ -1209,4 +1266,4 @@ Pages._pbeExportCsv = function (parId) {
 window.Pages = window.Pages || {};
 Pages._pbeRenderBloodlineCard = _pbeRenderBloodlineCard;
 
-console.log('[PBE] parent_bloodline_extract.js loaded build=20260426y6.3');
+console.log('[PBE] parent_bloodline_extract.js loaded build=20260426y6.4');
