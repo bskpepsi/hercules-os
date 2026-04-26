@@ -2,7 +2,19 @@
 // ════════════════════════════════════════════════════════════════
 // parent_bloodline_extract.js — 種親血統情報の Vision 抽出機能
 //
-// build: 20260426y6.2
+// build: 20260426y6.3
+//
+// ── y6.3 での修正点 ────────────────────────────────────────────
+// ・🔥 「設定画面でAPIキーを設定済みなのに『未設定』と表示される」問題を解決
+//   原因: 設定画面 (settings.js) は localStorage 'hcos_gemini_key' / Store.getSetting('gemini_key')
+//        を使うが、本モジュールは 'hercules_gemini_key' しか読んでいなかった。
+//   対策: 3つのキー名を優先順位で読む & 保存時は3つすべてに書き込む。
+// ・🔥 JSON パース失敗時の自動リトライ実装
+//   ・1回目失敗 → 温度を 0.3→0.15 に下げて自動再試行 (yahoo_listing.jsと同等)
+//   ・raw_text の文字数制限を 2000→800 に下げてトークン節約
+// ・🔥 切り捨てJSONの自動補修
+//   MAX_TOKENS で切り捨てられたJSONを末尾補修して部分復元 (yahoo_listing.jsと同等)
+// ・🔥 finishReason をチェックし、切り捨て時は明確なエラーメッセージ
 //
 // ── y6.2 での修正点 ────────────────────────────────────────────
 // ・🔥 複数スクリーンショット同時アップロード対応
@@ -108,15 +120,36 @@ function _pbeUid(prefix) {
   return prefix + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
 
-// API キー取得 (yahoo_listing.js と共用)
+// API キー取得 (yahoo_listing.js / sale_listing.js / settings.js 全てと共用)
+// [y6.3] 設定画面と他モジュールで使用されている複数のキー名を順に確認:
+//   1. Store.getSetting('gemini_key')  ← 設定画面が使う公式キー
+//   2. localStorage 'hcos_gemini_key'  ← config.js 経由 (CONFIG.LS_KEYS.GEMINI_KEY)
+//   3. localStorage 'hercules_gemini_key' ← sale_listing.js / yahoo_listing.js が使うキー
 function _pbeGetApiKey() {
-  try { return localStorage.getItem(PBE_API_KEY_LS) || ''; }
-  catch (_) { return ''; }
+  try {
+    // 1. 設定画面の保存先 (Store ヘルパー経由)
+    if (window.Store && typeof Store.getSetting === 'function') {
+      const k = Store.getSetting('gemini_key');
+      if (k) return k;
+    }
+    // 2. config.js 経由のキー
+    const k2 = localStorage.getItem('hcos_gemini_key');
+    if (k2) return k2;
+    // 3. yahoo_listing/sale_listing と同じキー
+    return localStorage.getItem(PBE_API_KEY_LS) || '';
+  } catch (_) { return ''; }
 }
 
-// API キー保存
+// API キー保存 (3つの保存先すべてに書き込んで確実に同期)
 function _pbeSetApiKey(key) {
-  try { localStorage.setItem(PBE_API_KEY_LS, key); } catch (_) {}
+  try {
+    if (window.Store && typeof Store.setSetting === 'function') {
+      Store.setSetting('gemini_key', key);
+    }
+    localStorage.setItem('hcos_gemini_key', key);
+    localStorage.setItem(PBE_API_KEY_LS, key);
+    if (window.CONFIG) CONFIG.GEMINI_KEY = key;
+  } catch (_) {}
 }
 
 // 種親レコード取得・更新 (Store.getDB / patchDBItem を利用)
@@ -258,7 +291,9 @@ note: 補足
 }`;
 }
 
-async function _pbeCallVision(imageDataUrl, apiKey) {
+async function _pbeCallVision(imageDataUrl, apiKey, opts) {
+  opts = opts || {};
+  const isRetry = !!opts.isRetry;
   // image_data_url は "data:image/jpeg;base64,xxxx" 形式
   const m = String(imageDataUrl).match(/^data:(image\/[a-zA-Z]+);base64,(.+)$/);
   if (!m) throw new Error('画像データの形式が不正です');
@@ -308,9 +343,9 @@ async function _pbeCallVision(imageDataUrl, apiKey) {
       ],
     }],
     generationConfig: {
-      temperature:      0.3,             // 抽出系は低温度で安定化
+      temperature:      isRetry ? 0.15 : 0.3,
       maxOutputTokens:  8192,
-      topP:             0.85,
+      topP:             isRetry ? 0.7 : 0.85,
       responseMimeType: 'application/json',
       responseSchema:   responseSchema,
     },
@@ -362,14 +397,15 @@ async function _pbeCallVision(imageDataUrl, apiKey) {
 //   一度のリクエストで送信し、AIに統合された1セットの構造化データを
 //   返してもらう。同腹兄弟実績などスクショ間で重複する情報も統合される。
 // ════════════════════════════════════════════════════════════════
-async function _pbeCallVisionMulti(imageDataUrls, apiKey) {
+async function _pbeCallVisionMulti(imageDataUrls, apiKey, opts) {
   if (!imageDataUrls || !imageDataUrls.length) {
     throw new Error('画像が選択されていません');
   }
   if (imageDataUrls.length === 1) {
-    // 1枚なら従来関数を呼ぶ
-    return _pbeCallVision(imageDataUrls[0], apiKey);
+    return _pbeCallVision(imageDataUrls[0], apiKey, opts);
   }
+  opts = opts || {};
+  const isRetry = !!opts.isRetry;
 
   // 複数枚の場合
   const imageParts = imageDataUrls.map(function (dataUrl, idx) {
@@ -382,6 +418,8 @@ async function _pbeCallVisionMulti(imageDataUrls, apiKey) {
             + PBE_GEMINI_MODEL + ':generateContent?key=' + encodeURIComponent(apiKey);
 
   // 複数画像用に少しプロンプトを調整 (画像が複数ある旨を伝える)
+  // [y6.3] リトライ時は raw_text を短く制限してトークン節約
+  const rawTextLimit = isRetry ? 800 : 2000;
   const multiPrompt = _pbeBuildVisionPrompt()
     + '\n\n━━━ 複数画像の取り扱い ━━━\n'
     + 'これから ' + imageDataUrls.length + '枚 の画像を渡します。これらはすべて同じ種親個体に関する出品ページの異なる部分(商品タイトル・商品説明1ページ目・2ページ目・画像など)です。\n'
@@ -389,7 +427,7 @@ async function _pbeCallVisionMulti(imageDataUrls, apiKey) {
     + '・同じ情報が複数の画像にある場合は重複させない\n'
     + '・補完的な情報がある場合は両方を活かす(例: 1枚目に♂血統、2枚目に♀血統)\n'
     + '・kinship_records は全画像の情報を統合して1つの配列にまとめる\n'
-    + '・raw_text は全画像から読み取れた本文を結合する';
+    + '・raw_text は重要部分のみ抜粋し ' + rawTextLimit + ' 文字以内に収める';
 
   const responseSchema = {
     type: 'OBJECT',
@@ -432,9 +470,9 @@ async function _pbeCallVisionMulti(imageDataUrls, apiKey) {
   const body = {
     contents: [{ parts: parts }],
     generationConfig: {
-      temperature:      0.3,
+      temperature:      isRetry ? 0.15 : 0.3,
       maxOutputTokens:  8192,
-      topP:             0.85,
+      topP:             isRetry ? 0.7 : 0.85,
       responseMimeType: 'application/json',
       responseSchema:   responseSchema,
     },
@@ -460,6 +498,9 @@ async function _pbeCallVisionMulti(imageDataUrls, apiKey) {
     }
     throw new Error('Gemini レスポンスが空でした (finishReason=' + (finishReason || 'unknown') + ')');
   }
+  // [y6.3] 切り捨て検知
+  const wasTruncated = (finishReason === 'MAX_TOKENS');
+  if (wasTruncated) console.warn('[PBE] Gemini response was truncated (MAX_TOKENS).');
 
   // JSON パース
   let jsonStr = text.trim();
@@ -467,14 +508,44 @@ async function _pbeCallVisionMulti(imageDataUrls, apiKey) {
   if (fence) jsonStr = fence[1].trim();
   let parsed;
   try { parsed = JSON.parse(jsonStr); }
-  catch (_) {
+  catch (_) {}
+  if (!parsed) {
     const m2 = jsonStr.match(/\{[\s\S]*\}/);
     if (m2) {
       try { parsed = JSON.parse(m2[0]); } catch (_e) {}
     }
   }
+  // [y6.3] 切り捨てJSON補修: 末尾の不完全な文字列を閉じ、{}を補完
+  if (!parsed && wasTruncated) {
+    const m3 = jsonStr.match(/\{[\s\S]*/);
+    if (m3) {
+      let s = m3[0];
+      let inS = false, esc = false;
+      let lastSafeIdx = -1;
+      for (let i = 0; i < s.length; i++) {
+        const ch = s[i];
+        if (esc) { esc = false; continue; }
+        if (ch === '\\') { esc = true; continue; }
+        if (ch === '"') { inS = !inS; if (!inS) lastSafeIdx = i; continue; }
+        if (!inS && ch === ',') lastSafeIdx = i;
+      }
+      if (lastSafeIdx > 0) {
+        let tail = s.slice(0, lastSafeIdx + 1).replace(/,\s*$/, '');
+        const opens = (tail.match(/\{/g) || []).length - (tail.match(/\}/g) || []).length;
+        const opensA = (tail.match(/\[/g) || []).length - (tail.match(/\]/g) || []).length;
+        for (let i = 0; i < opensA; i++) tail += ']';
+        for (let i = 0; i < opens; i++) tail += '}';
+        try { parsed = JSON.parse(tail); console.warn('[PBE] Recovered partial JSON.'); }
+        catch (_e) {}
+      }
+    }
+  }
   if (!parsed) {
-    console.warn('[PBE] JSON parse failed (multi). Raw response head:', text.slice(0, 500));
+    console.warn('[PBE] JSON parse failed (multi). finishReason=' + finishReason
+      + ', raw response head:', text.slice(0, 500));
+    if (wasTruncated) {
+      throw new Error('レスポンスがトークン上限で切り捨てられました。スクショを減らすか再試行してください。');
+    }
     throw new Error('抽出結果のJSONパースに失敗しました。再試行してください。');
   }
   return parsed;
@@ -679,10 +750,23 @@ Pages._pbeRunExtraction = async function (parId) {
     }
 
     // [y6.2] 全画像をまとめて Vision API に送信。AIが統合された1セットの構造化データを返す
-    const raw = await _pbeCallVisionMulti(
-      processedAll.map(function (p) { return p.image_data_url; }),
-      key
-    );
+    // [y6.3] 自動リトライ: 1回目失敗時は温度を下げて再試行
+    const imageUrls = processedAll.map(function (p) { return p.image_data_url; });
+    let raw;
+    try {
+      raw = await _pbeCallVisionMulti(imageUrls, key);
+    } catch (e1) {
+      const msg = String(e1.message || '');
+      // パース失敗・切り捨ての場合のみリトライ (API認証エラー等は即時失敗)
+      const isRetriable = msg.includes('JSON') || msg.includes('切り捨て') || msg.includes('パース');
+      if (isRetriable) {
+        console.warn('[PBE] retrying with lower temperature...', e1);
+        if (stat) stat.innerHTML = '🔄 再試行中... (より短く生成します)';
+        raw = await _pbeCallVisionMulti(imageUrls, key, { isRetry: true });
+      } else {
+        throw e1;
+      }
+    }
 
     // サニタイズ
     const data = _pbeSanitizeBloodlineData(raw);
@@ -1125,4 +1209,4 @@ Pages._pbeExportCsv = function (parId) {
 window.Pages = window.Pages || {};
 Pages._pbeRenderBloodlineCard = _pbeRenderBloodlineCard;
 
-console.log('[PBE] parent_bloodline_extract.js loaded build=20260426y6.2');
+console.log('[PBE] parent_bloodline_extract.js loaded build=20260426y6.3');
