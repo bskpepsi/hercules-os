@@ -2,9 +2,36 @@
 // ════════════════════════════════════════════════════════════════
 // yahoo_listing.js — ヤフオク出品AIジェネレーター（手動入力モード）
 //
-// build: 20260426y3
+// build: 20260426y4
 // 要件定義書: HerculesOS_ヤフオク出品AIジェネレーター_要件定義書_v1.0
 //
+// ── y4 での修正点 ─────────────────────────────────────────────
+// ・🔥 ラベルサイズを 60×30mm → 62×30mm に変更
+//   ユーザーのDK-2205は62mm幅連続テープのため、60mm幅指定では
+//   Brother iPrint&Labelがスケーリングをミスして真っ白印刷になっていた。
+//   62mm幅で指定することで既存の産卵セットラベルと完全互換に。
+// ・🔥 種親情報「(なし)」表記を完全除去
+//   血統原文がない場合はサイズのみ表記 (実例完全準拠):
+//   旧: ♂:①164mm(なし)
+//   新: ♂:①164mm
+// ・🔥 管理番号の二重出力を解消
+//   AI本文に管理番号を書かせない指示に変更し、フッターでのみ出力
+// ・🔥 ※項目の中点(・)混入を防止
+//   旧: ・※輸送時のストレスで...
+//   新: ※輸送時のストレスで...
+//   実例の通り、※項目には中点を付けず、・項目のみ中点。
+// ・🔥 体重測定日のフォーマットをスラッシュ区切りに正規化
+//   旧: (2026-04-24時点)
+//   新: (2026/4/24時点)
+// ・🔥 タイトルの冗長表記を抑制
+//   旧: 【大型血統】ヘラクレスオオカブト 3令幼虫 ♂1頭 ♂164mm♀73mm直系 グアドループ産
+//   新: 【大型血統】ヘラクレス 3令幼虫 1頭セット (実例準拠)
+//   タイトルには種親サイズの詳細を入れない。
+// ・🔥 注意事項の文言を実例完全準拠に修正
+//   旧: ◆生体につき、到着時事故補償はいたしかねます。
+//   新: ◆死着保証はございません。
+// ・🔥 JSON パースのフォールバック強化
+//   ```json``` フェンス除去・末尾不正文字トリム・複数JSONブロック対応
 // ── y3 での修正点 ─────────────────────────────────────────────
 // ・🔥 AI本文の【種親情報】セクションでサイズ右隣の産地表記を削除し、
 //   代わりに血統原文(paternal_raw / maternal_raw)を括弧書きで完全記載
@@ -26,7 +53,7 @@
 //   プロンプトに「ライン管理コードを出品文/タイトルに含めないこと」と明示禁止。
 //   ラベル種名表示も "species + origin" のみに変更。
 // ・🔥 ラベル印刷を既存 label.js (_buildLabelPNG) と同じ html2canvas + PNG +
-//   Blob URL 方式に統一。これで Brother iPrint&Label が正しく60×30mmで印刷する。
+//   Blob URL 方式に統一。これで Brother iPrint&Label が正しく62×30mmで印刷する。
 //   y1 では <iframe srcdoc> 埋め込みで Brother アプリが認識できず縮小されていた。
 // ・🔥 ラベル文字サイズを大幅アップ (タイトル9px→14px、種親4.5-6.5px→8.5px、
 //   日付6.5px→11px、♂♀記号11px→18px、ロゴ9mm→11mm)。
@@ -50,7 +77,7 @@
 // ── 機能範囲 (要件定義書 §3 準拠) ────────────────────────────
 // §3.1 入力画面: セット種別選択(幼虫/成虫) → 個体動的追加 → セット全体情報
 // §3.3 出品本文構造: AI生成パート + 固定テンプレート結合
-// §3.4 発送ラベル: 60×30mm DK-2205 カット運用、HERAKABU MARCHÉ ブランド
+// §3.4 発送ラベル: 62×30mm DK-2205 カット運用、HERAKABU MARCHÉ ブランド
 // §3.5 ロゴ管理: /assets/logos/herakabu-marche-logo.png (ユーザー提供画像の背景透過処理版・y2)
 // §3.6 NGワード/言い換えマスタ: localStorage管理
 // §3.7 出品文HTML/プレーン両対応: タブ切替、デフォルトHTML
@@ -72,7 +99,7 @@ window.PAGES['yahoo-listing-history'] = () => Pages.yahooListingHistory(Store.ge
 const YL_LS_KEY        = 'hercules_yahoo_listing_v1';      // メインデータ保存先
 const YL_API_KEY_LS    = 'hercules_gemini_key';            // 既存sale_listing.jsと共用
 const YL_DRAFT_KEY     = 'hercules_yahoo_listing_draft';   // 入力中の下書き
-const YL_LOGO_PATH     = 'assets/logos/herakabu-marche-logo.png?v=20260426y3';
+const YL_LOGO_PATH     = 'assets/logos/herakabu-marche-logo.png?v=20260426y4';
 const YL_GEMINI_MODEL  = 'gemini-2.5-flash';
 
 // ────────────────────────────────────────────────────────────────
@@ -520,7 +547,7 @@ Pages.yahooListing = function (params = {}) {
         <div style="margin-top:24px;padding:12px;background:rgba(45,122,82,.06);border:1px solid rgba(45,122,82,.18);border-radius:8px;font-size:.78rem;color:var(--text2);line-height:1.6">
           <b>💡 このページについて</b><br>
           要件定義書 v1.0 に基づく手動入力モードです。個体登録未開始でも、ライン情報・親個体情報を参照して
-          プロ品質の出品文を Gemini AI で生成できます。発送ラベル(60×30mm) も自動生成されます。
+          プロ品質の出品文を Gemini AI で生成できます。発送ラベル(62×30mm) も自動生成されます。
         </div>
       </div>
     `;
@@ -680,10 +707,10 @@ Pages.yahooListing = function (params = {}) {
           </div>
 
           <!-- 発送ラベル -->
-          <div class="yl-card-title" style="margin-top:14px">🏷️ 発送ラベル (60×30mm)</div>
+          <div class="yl-card-title" style="margin-top:14px">🏷️ 発送ラベル (62×30mm)</div>
           <div style="font-size:.74rem;color:var(--text3);margin-bottom:8px;line-height:1.5">
-            ヘッドが各ラベルの「🖨️ #N を印刷」をタップするとBrother iPrint&Labelが起動します。<br>
-            プリンタ側の用紙サイズは「29mm 連続テープ (DK-2205を30mmで自動カット)」または「60×30mm」を選択してください。
+            各ラベルの「🖨️ #N を印刷」をタップするとBrother iPrint&Labelが起動します。<br>
+            プリンタ側の用紙設定は <b>62mm 連続テープ (DK-2205)</b> を選択し、長さ30mmで自動カットされます。
           </div>
           <div id="yl-labels-preview" class="yl-labels-preview"></div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
@@ -1111,18 +1138,24 @@ Pages.yahooListing = function (params = {}) {
 
     // [y3] AIへ渡す「種親リスト (♂①②③ ♀①②③)」のテキスト整形
     //   血統原文(blood)を必ずカッコ書きで全文記載させる狙い
+    //   [y4] 血統原文が無い場合は「(なし)」と書かず、サイズだけにする。
+    //   AIには「血統原文がない場合は何も書かない」と明示指示。
     const fatherListText = fatherList.length
       ? fatherList.map((p, i) => {
           const num = '①②③④⑤⑥⑦⑧⑨'[i] || `(${i+1})`;
-          const blood = p.blood ? `(血統原文: ${p.blood})` : '(血統原文: なし)';
-          return `  ♂${num} ${p.size?p.size+'mm':'サイズ不明'} ${blood}`;
+          const sizeStr = p.size ? `${p.size}mm` : 'サイズ不明';
+          return p.blood
+            ? `  ♂${num} ${sizeStr} 血統原文あり: 「${p.blood}」`
+            : `  ♂${num} ${sizeStr} 血統原文なし(括弧書きを書かないこと)`;
         }).join('\n')
       : '  (♂親情報なし)';
     const motherListText = motherList.length
       ? motherList.map((p, i) => {
           const num = '①②③④⑤⑥⑦⑧⑨'[i] || `(${i+1})`;
-          const blood = p.blood ? `(血統原文: ${p.blood})` : '(血統原文: なし)';
-          return `  ♀${num} ${p.size?p.size+'mm':'サイズ不明'} ${blood}`;
+          const sizeStr = p.size ? `${p.size}mm` : 'サイズ不明';
+          return p.blood
+            ? `  ♀${num} ${sizeStr} 血統原文あり: 「${p.blood}」`
+            : `  ♀${num} ${sizeStr} 血統原文なし(括弧書きを書かないこと)`;
         }).join('\n')
       : '  (♀親情報なし)';
 
@@ -1194,6 +1227,16 @@ Pages.yahooListing = function (params = {}) {
       ? `タイトル冒頭は【${sf.appealHeadline}】の訴求を入れること`
       : `タイトル冒頭に血統訴求を【】で入れる(例:【大型血統】【太角血統】【ワイドボディ】等。種親情報から判断)`;
 
+    // [y4] 体重測定日を「YYYY/M/D」スラッシュ形式に正規化
+    //   旧: 2026-04-24時点 → 新: 2026/4/24時点
+    function _ylFmtMeasureDate(s) {
+      if (!s) return '';
+      const m = String(s).match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})/);
+      if (!m) return s;
+      return `${m[1]}/${parseInt(m[2],10)}/${parseInt(m[3],10)}`;
+    }
+    const weightDateFmt = _ylFmtMeasureDate(sf.weightDate);
+
     return `あなたはヘラクレスオオカブトの繁殖個体をヤフオクで販売するプロ出品者(出品者名: HERAKABU MARCHÉ)です。
 過去の HERAKABU MARCHÉ 出品文と同じスタイルで、誠実かつ訴求力のある出品文を作成してください。
 
@@ -1208,7 +1251,7 @@ Pages.yahooListing = function (params = {}) {
 販売形態: ${pattern}
 セット種別: ${isLarva ? '幼虫セット' : '成虫セット'}
 雌雄内訳: ${sexBreakdown}
-${isLarva && hatchSummary ? `孵化日: ${hatchSummary}\nステージ: ${stages.join('・')}\n` : ''}${isLarva ? `現在の体重${sf.weightDate ? '('+sf.weightDate+'時点)' : ''}: ${maleWeights.length?'♂'+maleWeights.join('、'):''}${maleWeights.length&&femaleWeights.length?' / ':''}${femaleWeights.length?'♀'+femaleWeights.join('、'):''}${unknownWeights.length?' / 性別未判別:'+unknownWeights.join('、'):''}\n` : ''}
+${isLarva && hatchSummary ? `孵化日: ${hatchSummary}\nステージ: ${stages.join('・')}\n` : ''}${isLarva ? `現在の体重${weightDateFmt ? '('+weightDateFmt+'時点)' : ''}: ${maleWeights.length?'♂'+maleWeights.join('、'):''}${maleWeights.length&&femaleWeights.length?' / ':''}${femaleWeights.length?'♀'+femaleWeights.join('、'):''}${unknownWeights.length?' / 性別未判別:'+unknownWeights.join('、'):''}\n` : ''}
 
 【ライン背景情報】
 ${parentBlocks.join('\n\n')}
@@ -1227,7 +1270,7 @@ ${sf.extraAppeal ? '【出品者アピール (必ず本文に盛り込む)】\n'
 以下の純粋なJSON形式のみで返してください。マークダウンのコードブロック(\\\`\\\`\\\`)などの装飾は付けないでください。
 
 {
-  "title": "(商品タイトル。65文字以内。${headlineHint}。種名・令・頭数・種親サイズ等の要点を簡潔に。社内ライン名は絶対に入れない。)",
+  "title": "(商品タイトル。45文字以内・簡潔に。${headlineHint}。実例「【大型血統】ヘラクレス 3令幼虫 5頭セット」のように、種名(短縮形「ヘラクレス」可)・令・頭数のみ。種親サイズ詳細(♂164mm♀73mm等)・産地・社内ライン名はタイトルに**絶対に入れない**。1頭出品の場合も「1頭セット」と記載。)",
   "body_html": "(HTML装飾付きの商品説明文。下記の<本文構造>に厳密に従うこと)",
   "body_plain": "(プレーンテキスト版の商品説明文。HTMLタグなしで同じ構造)",
   "appeal_summary": "(購買意欲を高める短い要約。50字以内。発送メッセージ転用用。)"
@@ -1241,8 +1284,8 @@ ${sf.extraAppeal ? '【出品者アピール (必ず本文に盛り込む)】\n'
    ・♂と♀それぞれ、上記「種親リスト」の番号順に①②③形式で列挙する。
    ・サイズの右隣に**産地名(Guadeloupe産・グアドループ産 等)を絶対に書かない**。
      産地はリード文で既に触れているため、種親情報セクションでは記載しない。
-   ・サイズの後には、与えられた**血統原文(paternal_raw / maternal_raw)を必ずカッコ書きで完全に転記**する。
-     血統原文が「なし」の場合のみサイズだけ書く。
+   ・サイズの後には、**血統原文がある場合のみ**カッコ書きで完全に転記する。
+   ・🚫 血統原文がない場合は **「(なし)」「(未記載)」「(記載なし)」「(不明)」など何も書かず、サイズだけ書いて改行する**。
    ・血統原文は改変・要約せず、原文をそのまま括弧内に入れる。
    実例 (HERAKABU MARCHÉ 過去出品):
      【種親情報】
@@ -1251,18 +1294,19 @@ ${sf.extraAppeal ? '【出品者アピール (必ず本文に盛り込む)】\n'
      ♀:①75mm(U71イン×165T-REX.T-115)
         ②77mm(FFOFA2No113×T117R(2)MD)
         ③74.2mm(T-117FFOAKSvol3×00-181)
+   ※上記実例で①164mmには血統原文がないので括弧書き無し、それ以外は血統原文あり。
    末尾に「※発送時には雌雄・想定血統・サイズ等分かるよう個体ごとにラベリングして発送いたします。」と「いずれも大型血統由来です。」(該当する場合)を付記。
 
 3) ${isLarva ? '【幼虫情報】' : '【成虫情報】'}セクション:
    ${isLarva ? `中点(・)リストで以下を列記:
      ・頭数:〇頭
-     ・孵化日:YYYY年〇月〇旬
+     ・孵化日:YYYY年〇月〇旬 (例: 2025年11月上旬)
      ・ステージ:〇令
      ・雌雄内訳:♂〇頭/♀〇頭
-     ・現在の体重 ${sf.weightDate?'('+sf.weightDate+'時点)':'(測定日記載なし)'}
+     ・現在の体重 ${weightDateFmt?'('+weightDateFmt+'時点)':'(測定日記載なし)'}
      ♂:〇g、〇g
      ♀:〇g、〇g、〇g
-   末尾に以下の※項目を列記(箇条書き):
+   末尾に以下の項目を列記。🚫 ※項目には絶対に中点(・)を付けない。・項目だけに中点を付ける。
      ※輸送時のストレスで一時的に体重減少の可能性あり
      ・状態:健康個体のみを選別
      ・温度管理約22℃前後
@@ -1276,7 +1320,7 @@ ${sf.extraAppeal ? '【出品者アピール (必ず本文に盛り込む)】\n'
      ・状態:完品 / フセツ欠け等
      ・活動状況:成熟・活動中 / 未成熟 / 休眠中
      ♀がいる場合は・交尾状況:未交尾/交尾済み/不明
-   末尾に以下の※項目:
+   末尾に以下の項目を列記。🚫 ※項目には絶対に中点(・)を付けない。・項目だけに中点を付ける。
      ※輸送時のストレスで一時的に体力消耗の可能性あり
      ※細心の注意を払って梱包に努めますがダニ、コバエなどの混入の可能性あり`}
 
@@ -1284,9 +1328,9 @@ ${sf.extraAppeal ? '【出品者アピール (必ず本文に盛り込む)】\n'
    中点(・)リストで3〜5項目。実際の血統情報・サイズ・成長状態から具体的な訴求を作る。
    ${sf.extraAppeal ? '※必ず出品者アピールの内容を反映させる。' : ''}
 
-5) 【注意事項】セクション (◆マーク列記):
-   以下のテンプレートを基本に、HERAKABU MARCHÉ の標準的な注意事項を列記する。
-   ${customShippingBlock ? '発送関連:\n' + customShippingBlock + '\n' : ''}${customTermsBlock ? '免責関連:\n' + customTermsBlock + '\n' : ''}実例フォーマット:
+5) 【注意事項】セクション (◆マーク列記・実例完全準拠):
+   以下のテンプレートを**一字一句そのまま**列記すること。文言を変えない。
+   ${customShippingBlock ? '発送関連カスタム:\n' + customShippingBlock + '\n' : ''}${customTermsBlock ? '免責関連カスタム:\n' + customTermsBlock + '\n' : ''}
    ◆雌雄誤判別の可能性がある点ご了承ください。
    ◆発送はゆうパック(100〜120サイズ)です。(梱包費別途${sf.shippingByBuyer?'落札者負担':'300円'})
    ◆季節に応じて発泡箱やダンボールに保冷剤やカイロを入れて梱包いたします。
@@ -1301,7 +1345,7 @@ ${sf.extraAppeal ? '【出品者アピール (必ず本文に盛り込む)】\n'
    ※可能な限り到着希望日で対応いたしますが、希望に添えない場合もございます。
    ◆ご不明な点がありましたら質問よりご連絡ください。
 
-6) ${customSellerBlock ? `【出品者より】セクション:\n   ${customSellerBlock.replace(/\n/g, '\n   ')}\n\n` : ''}${sf.manageNo ? `7) 末尾に「管理番号:${sf.manageNo}」を1行で記載。` : '7) 管理番号は記載しない。'}
+6) ${customSellerBlock ? `【出品者より】セクション:\n   ${customSellerBlock.replace(/\n/g, '\n   ')}\n\n` : ''}7) 🚫 管理番号は本文に**絶対に書かない**。後段で固定フッターとして自動付加されるため、AIが本文中で「管理番号:」を出力すると重複する。
 
 HTML版は <h3> でセクション見出し、<p> で本文、<ul><li> で箇条書きを使うこと。
 プレーン版は実際の改行で構造を表現すること。`;
@@ -1332,21 +1376,60 @@ HTML版は <h3> でセクション見出し、<p> で本文、<ul><li> で箇条
                   data.candidates[0].content.parts[0] && data.candidates[0].content.parts[0].text) || '';
     if (!text) throw new Error('Gemini レスポンスが空でした');
 
-    // JSON抽出 (Gemini が稀に ```json ``` に包んでくる対策)
+    // [y4] JSON抽出フォールバック強化
+    //   1) ```json ... ``` フェンス除去
+    //   2) 制御文字除去 (改行が文字列内に裸で入る Gemini ミス対策)
+    //   3) 末尾の余分なテキスト切り捨て
+    //   4) 中括弧範囲だけ切り出して再試行
     let jsonStr = text.trim();
     const fence = jsonStr.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
     if (fence) jsonStr = fence[1].trim();
-    try {
-      const obj = JSON.parse(jsonStr);
-      return obj;
-    } catch (e) {
-      // 最終手段: 中括弧範囲だけを切り出して再試行
-      const m = jsonStr.match(/\{[\s\S]*\}/);
-      if (m) {
-        try { return JSON.parse(m[0]); } catch (_) {}
-      }
-      throw new Error('Gemini レスポンスの JSON パースに失敗しました');
+
+    function _ylTryParse(s) {
+      try { return JSON.parse(s); } catch (_) { return null; }
     }
+
+    // 試行1: そのまま
+    let obj = _ylTryParse(jsonStr);
+    if (obj) return obj;
+
+    // 試行2: 中括弧範囲のみ抽出
+    const m = jsonStr.match(/\{[\s\S]*\}/);
+    if (m) {
+      obj = _ylTryParse(m[0]);
+      if (obj) return obj;
+    }
+
+    // 試行3: 文字列値内の生改行を \n にエスケープ
+    //   Gemini が稀に "body_plain": "1行目\n2行目" の \n を生改行で返す
+    if (m) {
+      const fixed = m[0].replace(/("(?:[^"\\]|\\.)*")|([\r\n])/g, function(_, str, ctrl) {
+        if (str) return str;       // 文字列リテラルは保持
+        return '\\n';              // 構造外の生改行は \n にエスケープ
+      });
+      obj = _ylTryParse(fixed);
+      if (obj) return obj;
+    }
+
+    // 試行4: 各値の生改行のみエスケープ (より緩いアプローチ)
+    if (m) {
+      let depth = 0, inStr = false, esc = false;
+      let out = '';
+      for (let i = 0; i < m[0].length; i++) {
+        const ch = m[0][i];
+        if (esc) { out += ch; esc = false; continue; }
+        if (ch === '\\') { out += ch; esc = true; continue; }
+        if (ch === '"') { inStr = !inStr; out += ch; continue; }
+        if (inStr && (ch === '\n' || ch === '\r')) { out += '\\n'; continue; }
+        if (inStr && ch === '\t') { out += '\\t'; continue; }
+        out += ch;
+      }
+      obj = _ylTryParse(out);
+      if (obj) return obj;
+    }
+
+    console.warn('[YL] JSON parse failed. Raw response:', text.slice(0, 500));
+    throw new Error('Gemini レスポンスの JSON パースに失敗しました');
   }
 
   // 出力描画
@@ -1416,7 +1499,7 @@ HTML版は <h3> でセクション見出し、<p> で本文、<ul><li> で箇条
   }
 
   // ════════════════════════════════════════════════════════════
-  // 発送ラベル (60×30mm) — HERAKABU MARCHÉ ブランド準拠
+  // 発送ラベル (62×30mm) — HERAKABU MARCHÉ ブランド準拠
   // ────────────────────────────────────────────────────────────
   // y2: 文字サイズを全体的に拡大。レイアウトは:
   //   ・上段(高さ約8mm): タイトル(種名+産地) — 大きめ
@@ -1426,16 +1509,19 @@ HTML版は <h3> でセクション見出し、<p> で本文、<ul><li> で箇条
   //   ・右下: HERAKABU MARCHÉ ロゴ
   // フォントサイズは px で指定し html2canvas でラスタライズ → PNG生成。
   // 既存の label.js _buildLabelPNG / _lblBrotherPrint と同じ仕組みで
-  // 生成・印刷するので Brother iPrint&Label で60×30mm として認識される。
+  // 生成・印刷するので Brother iPrint&Label で62×30mm として認識される。
   // ════════════════════════════════════════════════════════════
 
   // ラベル印刷用の物理寸法 / ピクセル寸法
   // 60mm × 30mm @ 300DPI → 709×354 px (Brotherの解像度に合わせる) だが
-  // html2canvas の scale=3 を使うので 60×30 mm を 236×118 px ベースで
+  // html2canvas の scale=3 を使うので 62×30 mm を 236×118 px ベースで
   // 計算し、scale=3 で 708×354 px として PNG 化する。既存ラベルは
   // 62×70mm を 234×265 px(scale=3) で扱っており、本ラベルもその系列に
   // 合わせ 1mm ≒ 3.93 px → 60mm = 236 px / 30mm = 118 px とした。
-  const YL_LABEL_DIMS = { wMm: 60, hMm: 30, wPx: 236, hPx: 118, scale: 3 };
+  // [y4] ラベル寸法: 62mm幅 × 30mm 高さ。DK-2205連続テープに完全一致。
+  //   wPx/hPx は 96dpi 換算: 62mm = 234px / 30mm = 113px
+  //   scale=3 で 702×339 の高解像度PNGを生成
+  const YL_LABEL_DIMS = { wMm: 62, hMm: 30, wPx: 234, hPx: 113, scale: 3 };
 
   function _ylBuildLabelHTML(ind, ctx) {
     const ic = ctx.individuals.find(c => c.ind.uid === ind.uid) || ctx.individuals[0];
@@ -1472,13 +1558,13 @@ HTML版は <h3> でセクション見出し、<p> で本文、<ul><li> で箇条
     })();
 
     return '<!DOCTYPE html>\n<html><head><meta charset="utf-8">\n<style>\n'
-      + '  @page { size: 60mm 30mm; margin: 0; }\n'
+      + '  @page { size: 62mm 30mm; margin: 0; }\n'
       + '  * { margin:0; padding:0; box-sizing:border-box; }\n'
-      + '  body { width:60mm; height:30mm; font-family: "Noto Serif JP","Yu Mincho","Hiragino Mincho ProN",serif; background:#fff; color:#000; overflow:hidden; }\n'
+      + '  body { width:62mm; height:30mm; font-family: "Noto Serif JP","Yu Mincho","Hiragino Mincho ProN",serif; background:#fff; color:#000; overflow:hidden; }\n'
       + '  @media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }\n'
       + '</style></head><body>\n'
       // ラベル全体: padding は左右広め、上下狭め (画像1のレイアウトに準拠)
-      + '<div style="width:60mm;height:30mm;position:relative;padding:1mm 1.8mm 0.8mm;box-sizing:border-box;overflow:hidden">\n'
+      + '<div style="width:62mm;height:30mm;position:relative;padding:1mm 1.8mm 0.8mm;box-sizing:border-box;overflow:hidden">\n'
       // ──── タイトル行 (種名+産地) — 中央寄せ・大きめ・セリフ ────
       + '  <div style="text-align:center;font-size:' + titleFs + ';font-weight:700;line-height:1.15;letter-spacing:-0.2px;padding:0 1mm">' + _ylEsc(titleStr) + '</div>\n'
       // ──── 本文領域 (左:情報 / 右下:ロゴ) ────
@@ -1596,7 +1682,7 @@ HTML版は <h3> でセクション見出し、<p> で本文、<ul><li> で箇条
 
   // ── 1ラベル印刷 (Brother iPrint&Label 仕様準拠) ─────────────
   // 既存の Pages._lblBrotherPrint と同じ単一PNGの印刷ドキュメント方式。
-  // <img width="236" height="118"> で固定すれば Brother 側で60×30mm用紙
+  // <img width="236" height="118"> で固定すれば Brother 側で62×30mm用紙
   // として正しく認識される。
   async function _ylPrintSingleLabel(uid) {
     const ind = individuals.find(x => x.uid === uid);
@@ -1613,17 +1699,13 @@ HTML版は <h3> でセクション見出し、<p> で本文、<ul><li> で箇条
     if (!png) { UI.toast('ラベルPNGの生成に失敗しました', 'error'); return; }
 
     const wPx = YL_LABEL_DIMS.wPx, hPx = YL_LABEL_DIMS.hPx;
-    const printDoc = '<!DOCTYPE html><html><head><meta charset="utf-8">'
-      + '<meta name="viewport" content="width=' + wPx + '">'
-      + '<title>HERAKABU MARCHÉ Label</title>'
-      + '<style>@page{size:60mm 30mm;margin:0;}'
-      + 'html{margin:0;padding:0;background:#fff;}'
-      + 'body{margin:0;padding:0;background:#fff;width:' + wPx + 'px;}'
-      + 'img{display:block;width:' + wPx + 'px;height:' + hPx + 'px;margin:0;padding:0;'
-      + '-webkit-print-color-adjust:exact;print-color-adjust:exact;}'
+    // [y4] 既存 label.js の _lblBrotherPrint と完全一致のフォーマットに統一
+    //   title タグを削除、@page を 62mm 30mm に修正、改行・空白も既存と揃える
+    const printDoc = '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=' + wPx + '">'
+      + '<style>@page{size:62mm 30mm;margin:0;}html{margin:0;padding:0;background:#fff;}body{margin:0;padding:0;background:#fff;width:' + wPx + 'px;}'
+      + 'img{display:block;width:' + wPx + 'px;height:' + hPx + 'px;margin:0;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact;}'
       + '</style></head><body><img src="' + png + '" width="' + wPx + '" height="' + hPx + '">'
-      + '<script>window.addEventListener("load",function(){setTimeout(function(){window.print();},500);});<' + '/script>'
-      + '</body></html>';
+      + '<script>window.addEventListener("load",function(){setTimeout(function(){window.print();},500);});<' + '/script></body></html>';
     const blob = new Blob([printDoc], { type: 'text/html;charset=utf-8' });
     const url  = URL.createObjectURL(blob);
     const win  = window.open(url, '_blank');
@@ -2173,4 +2255,4 @@ ${h.body_html || '<pre>'+_ylEsc(h.body_plain)+'</pre>'}
   `;
 };
 
-console.log('[YL] yahoo_listing.js loaded build=20260426y3');
+console.log('[YL] yahoo_listing.js loaded build=20260426y4');
