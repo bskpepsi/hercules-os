@@ -2,8 +2,27 @@
 // ════════════════════════════════════════════════════════════════
 // yahoo_listing.js — ヤフオク出品AIジェネレーター（手動入力モード）
 //
-// build: 20260426y1
+// build: 20260426y2
 // 要件定義書: HerculesOS_ヤフオク出品AIジェネレーター_要件定義書_v1.0
+//
+// ── y2 での修正点 ──────────────────────────────────────────────
+// ・🔥 ライン管理コード(A1, B2 等)を AI プロンプトから完全除外
+//   ライン管理コードは社内識別子であり、購入者向け出品文に含めるべきでないため。
+//   プロンプトに「ライン管理コードを出品文/タイトルに含めないこと」と明示禁止。
+//   ラベル種名表示も "species + origin" のみに変更。
+// ・🔥 ラベル印刷を既存 label.js (_buildLabelPNG) と同じ html2canvas + PNG +
+//   Blob URL 方式に統一。これで Brother iPrint&Label が正しく60×30mmで印刷する。
+//   y1 では <iframe srcdoc> 埋め込みで Brother アプリが認識できず縮小されていた。
+// ・🔥 ラベル文字サイズを大幅アップ (タイトル9px→14px、種親4.5-6.5px→8.5px、
+//   日付6.5px→11px、♂♀記号11px→18px、ロゴ9mm→11mm)。
+// ・🔥 出品本文フォーマットを実例 (HERAKABU MARCHÉ 過去出品) に準拠
+//   ・タイトル: 【血統訴求】ヘラクレス 〇令幼虫 〇頭セット スタイル
+//   ・種親情報: ♂①②③ ♀①②③ ナンバリング表記 (複数親対応)
+//   ・幼虫情報: 中点リスト + 体重を雌雄別に列記 + 測定日記載
+//   ・注意事項: ◆マーク列記 (実例と完全同一フォーマット)
+//   ・※項目で各種免責、最後に管理番号
+// ・「管理番号」「体重測定日」の入力欄を追加 (任意)
+// ── build 20260426y1 (初版): 全機能を新規実装 ─────────────────
 //
 // ── 設計方針 ──────────────────────────────────────────────────
 // ・既存の sale_listing.js (build 20260416e) はそのまま残し、本機能は別ページとして実装。
@@ -17,7 +36,7 @@
 // §3.1 入力画面: セット種別選択(幼虫/成虫) → 個体動的追加 → セット全体情報
 // §3.3 出品本文構造: AI生成パート + 固定テンプレート結合
 // §3.4 発送ラベル: 60×30mm DK-2205 カット運用、HERAKABU MARCHÉ ブランド
-// §3.5 ロゴ管理: /assets/logos/herakabu-marche-logo.svg (透過SVG暫定)
+// §3.5 ロゴ管理: /assets/logos/herakabu-marche-logo.png (ユーザー提供画像の背景透過処理版・y2)
 // §3.6 NGワード/言い換えマスタ: localStorage管理
 // §3.7 出品文HTML/プレーン両対応: タブ切替、デフォルトHTML
 // §4   データモデル: localStorageキー hercules_yahoo_listing_v1
@@ -38,7 +57,7 @@ window.PAGES['yahoo-listing-history'] = () => Pages.yahooListingHistory(Store.ge
 const YL_LS_KEY        = 'hercules_yahoo_listing_v1';      // メインデータ保存先
 const YL_API_KEY_LS    = 'hercules_gemini_key';            // 既存sale_listing.jsと共用
 const YL_DRAFT_KEY     = 'hercules_yahoo_listing_draft';   // 入力中の下書き
-const YL_LOGO_PATH     = 'assets/logos/herakabu-marche-logo.svg?v=20260426y1';
+const YL_LOGO_PATH     = 'assets/logos/herakabu-marche-logo.png?v=20260426y2';
 const YL_GEMINI_MODEL  = 'gemini-2.5-flash';
 
 // 既定NGワードと推奨言い換え (ユーザーがマスタ画面で編集可能)
@@ -146,6 +165,9 @@ Pages.yahooListing = function (params = {}) {
     shippingByBuyer: false,       // 落札者負担なら true
     shippingMethod: 'ヤマト便',
     extraAppeal:   '',
+    manageNo:      '',            // [y2] 管理番号 (任意・社内番号、出品文末尾に出す)
+    weightDate:    '',            // [y2] 体重測定日 (任意・幼虫の体重表記の根拠日)
+    appealHeadline: '',           // [y2] タイトル冒頭の血統訴求 (例:「大型血統」「太角血統」)
   };
   let outputFmt = 'html';   // 'html' | 'plain'
 
@@ -175,13 +197,15 @@ Pages.yahooListing = function (params = {}) {
   }
 
   // ── ライン選択肢取得 ──────────────────────────────────────
+  // [y2] line_code は社内識別子なので画面上のセレクト項目にも出さない方針。
+  //   ただし内部的に line_id でひもづけるため、ユーザーがどのラインかわかるよう
+  //   line_name(と species) のみ表示する。
   function _lineOptions(selected) {
     const lines = (Store.getDB && Store.getDB('lines')) || [];
     const opts = lines.map(l => {
       const sp = l.species ? `[${l.species}] ` : '';
-      const code = l.line_code ? `${l.line_code} ` : '';
-      const name = l.line_name || l.bloodline_name || '';
-      const lbl = `${sp}${code}${name}`.trim() || l.line_id || '(無名ライン)';
+      const name = l.line_name || l.bloodline_name || l.line_code || '(無名ライン)';
+      const lbl = `${sp}${name}`.trim();
       const sel = l.line_id === selected ? 'selected' : '';
       return `<option value="${_ylEsc(l.line_id)}" ${sel}>${_ylEsc(lbl)}</option>`;
     }).join('');
@@ -483,11 +507,33 @@ Pages.yahooListing = function (params = {}) {
         <div class="yl-card">
           <div class="yl-card-title">◆ AIへの追加指示</div>
           <div class="yl-field">
+            <label class="yl-lbl">タイトル冒頭の訴求 <span class="yl-opt">任意・例:「大型血統」「太角血統」「ワイドボディ」</span></label>
+            <input class="yl-input" type="text"
+              value="${_ylEsc(saleInfo.appealHeadline)}"
+              oninput="Pages._ylSetSaleInfoField('appealHeadline', this.value)"
+              placeholder="例: 大型血統">
+          </div>
+          <div class="yl-field">
             <label class="yl-lbl">アピールポイント・特記事項 <span class="yl-opt">任意・自由記述</span></label>
             <textarea class="yl-input" rows="3"
               oninput="Pages._ylSetSaleInfoField('extraAppeal', this.value)"
               placeholder="例: ♀親はワイドボディ系統、♂親は太角傾向。3令初期で順調な成長中。"
             >${_ylEsc(saleInfo.extraAppeal)}</textarea>
+          </div>
+          <div class="yl-row2">
+            <div class="yl-field">
+              <label class="yl-lbl">体重測定日 <span class="yl-opt">幼虫のみ・任意</span></label>
+              <input class="yl-input" type="date"
+                value="${_ylEsc(saleInfo.weightDate)}"
+                onchange="Pages._ylSetSaleInfoField('weightDate', this.value)">
+            </div>
+            <div class="yl-field">
+              <label class="yl-lbl">管理番号 <span class="yl-opt">任意・社内番号</span></label>
+              <input class="yl-input" type="text"
+                value="${_ylEsc(saleInfo.manageNo)}"
+                oninput="Pages._ylSetSaleInfoField('manageNo', this.value)"
+                placeholder="例: 40-1.2">
+            </div>
           </div>
         </div>
 
@@ -551,11 +597,14 @@ Pages.yahooListing = function (params = {}) {
 
           <!-- 発送ラベル -->
           <div class="yl-card-title" style="margin-top:14px">🏷️ 発送ラベル (60×30mm)</div>
+          <div style="font-size:.74rem;color:var(--text3);margin-bottom:8px;line-height:1.5">
+            ヘッドが各ラベルの「🖨️ #N を印刷」をタップするとBrother iPrint&Labelが起動します。<br>
+            プリンタ側の用紙サイズは「29mm 連続テープ (DK-2205を30mmで自動カット)」または「60×30mm」を選択してください。
+          </div>
           <div id="yl-labels-preview" class="yl-labels-preview"></div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
-            <button class="yl-ghost-btn yl-btn-sm" onclick="Pages._ylPreviewLabels()">👁 プレビュー再描画</button>
-            <button class="yl-ghost-btn yl-btn-sm" onclick="Pages._ylPrintLabels()">🖨️ Brother印刷</button>
-            <button class="yl-primary-btn yl-btn-sm" onclick="Pages._ylSaveToHistory()">💾 履歴に保存</button>
+            <button class="yl-ghost-btn yl-btn-sm" onclick="Pages._ylPreviewLabels()">🔄 プレビュー再生成</button>
+            <button class="yl-primary-btn yl-btn-sm" style="margin-left:auto" onclick="Pages._ylSaveToHistory()">💾 履歴に保存</button>
           </div>
         </div>
 
@@ -843,7 +892,8 @@ Pages.yahooListing = function (params = {}) {
       const json = await _callGemini(prompt, apiKey);
       _renderGeneratedOutput(json, ctx);
       if (outCard) outCard.style.display = 'block';
-      _ylPreviewLabels();
+      // ラベルプレビュー (PNG生成は時間がかかるので await; エラーは握り潰す)
+      try { await _ylPreviewLabels(); } catch (_e) { console.warn('[YL] preview failed', _e); }
       UI.toast('生成完了 ✅', 'success');
       // 出力エリアまでスクロール
       setTimeout(() => {
@@ -865,6 +915,10 @@ Pages.yahooListing = function (params = {}) {
   }
 
   // ── プロンプト用コンテキスト構築 ──────────────────────────
+  // [y2] line_code は社内識別子のため絶対に AI に渡さない。
+  //   line_name (例:「Line-A」「グアドループ大型血統」) のみ AI に渡せばよい。
+  //   さらに line_name 自体も「LineA」「A1」など内部コード臭がする場合があるため、
+  //   AI へは「血統名・系統名」として参考程度に渡し、出力には載せない指示も出す。
   function _buildPromptContext() {
     const lines    = (Store.getDB && Store.getDB('lines'))    || [];
     const parents  = (Store.getDB && Store.getDB('parents'))  || [];
@@ -888,7 +942,7 @@ Pages.yahooListing = function (params = {}) {
         idx: idx + 1,
         kind: ind.kind,
         line: {
-          line_code:    line.line_code   || '',
+          // [y2] line_code は除外。line_name と種・産地のみ。
           line_name:    line.line_name   || line.bloodline_name || '',
           species:      line.species     || 'ヘラクレスオオカブト',
           origin:       line.origin      || line.locality || '',
@@ -925,88 +979,207 @@ Pages.yahooListing = function (params = {}) {
     const ACT_LABEL   = { pre_mature:'未成熟', mature:'成熟・活動中', dormant:'休眠中' };
     const MATE_LABEL  = { unmated:'未交尾', mated:'交尾済み', unknown:'不明' };
     const isLarva     = ctx.setType === 'larva';
+    const sf          = ctx.saleInfo || {};
 
-    // 個体情報整形
+    // 個体情報整形 (※AIには line_name は伝えるが、出力に出さない方針)
     const indLines = ctx.individuals.map(ic => {
       const ind = ic.ind;
+      // [y2] AI に line_name は渡すが、出力に出さないよう後段で禁止指示。
+      //   line_name は血統判断の参考程度に使ってもらう。
+      const lineRef = ic.line.line_name ? `(社内ライン名:${ic.line.line_name})` : '';
       if (ind.kind === 'larva') {
-        return `[幼虫#${ic.idx}] ライン:${ic.line.line_code} ${ic.line.line_name} / ${STAGE_LABEL[ind.stage]||ind.stage} / 体重${ind.weight_g}g / 孵化${ind.hatch_date}${ind.sex?' / '+ind.sex:''}${ind.memo?' / メモ:'+ind.memo:''}`;
+        return `[幼虫#${ic.idx}] ${ic.line.species}${ic.line.origin?'('+ic.line.origin+'産)':''}${lineRef} / ${STAGE_LABEL[ind.stage]||ind.stage} / 体重${ind.weight_g}g / 孵化${ind.hatch_date}${ind.sex?' / '+ind.sex:'/性別未判別'}${ind.memo?' / メモ:'+ind.memo:''}`;
       }
       const cond = ind.condition === '完品' ? '完品' : `${ind.condition}${ind.condition_detail?'('+ind.condition_detail+')':''}`;
       const feeding = ind.no_feeding_yet ? '未後食' : (ind.feeding_date || '');
       const horn = ind.sex === '♂' ? `頭角${ind.horn_included?'含む':'除く'}` : '';
       const mate = ind.sex === '♀' && ind.mating_status ? `交尾:${MATE_LABEL[ind.mating_status]||ind.mating_status}` : '';
-      return `[成虫#${ic.idx}] ライン:${ic.line.line_code} ${ic.line.line_name} / ${ind.sex} ${ind.body_mm}mm${horn?'('+horn+')':''} / 羽化${ind.eclosion_date}${feeding?' / 後食:'+feeding:''} / ${ACT_LABEL[ind.activity]||ind.activity} / ${cond}${mate?' / '+mate:''}${ind.memo?' / メモ:'+ind.memo:''}`;
+      return `[成虫#${ic.idx}] ${ic.line.species}${ic.line.origin?'('+ic.line.origin+'産)':''}${lineRef} / ${ind.sex} ${ind.body_mm}mm${horn?'('+horn+')':''} / 羽化${ind.eclosion_date}${feeding?' / 後食:'+feeding:''} / ${ACT_LABEL[ind.activity]||ind.activity} / ${cond}${mate?' / '+mate:''}${ind.memo?' / メモ:'+ind.memo:''}`;
     }).join('\n');
 
-    // 親情報整形 (重複ライン排除)
+    // ライン情報整形 (重複排除・line_code除外)
     const seenLines = new Set();
     const parentBlocks = [];
     ctx.individuals.forEach(ic => {
-      if (seenLines.has(ic.line.line_code || ic.line.line_name)) return;
-      seenLines.add(ic.line.line_code || ic.line.line_name);
+      const key = ic.line.line_name || ic.line.species + '|' + ic.line.origin;
+      if (seenLines.has(key)) return;
+      seenLines.add(key);
       const f = ic.father, m = ic.mother;
       const lineMemo = ic.line.memo ? `\n  ライン背景: ${ic.line.memo}` : '';
-      const fInfo = f ? `\n  ♂親: ${f.size_mm?f.size_mm+'mm':''} ${f.paternal_raw?'(父系: '+f.paternal_raw+')':''}${f.memo?' メモ:'+f.memo:''}` : '';
-      const mInfo = m ? `\n  ♀親: ${m.size_mm?m.size_mm+'mm':''} ${m.maternal_raw?'(母系: '+m.maternal_raw+')':''}${m.memo?' メモ:'+m.memo:''}` : '';
-      parentBlocks.push(`[ライン: ${ic.line.line_code} ${ic.line.line_name} / ${ic.line.species}${ic.line.origin?' / '+ic.line.origin:''}]${lineMemo}${fInfo}${mInfo}`);
+      const fInfo = f ? `\n  ♂親情報: ${f.size_mm?f.size_mm+'mm':'(サイズ不明)'} ${f.paternal_raw?'(血統表記: '+f.paternal_raw+')':''}${f.memo?' メモ:'+f.memo:''}` : '';
+      const mInfo = m ? `\n  ♀親情報: ${m.size_mm?m.size_mm+'mm':'(サイズ不明)'} ${m.maternal_raw?'(血統表記: '+m.maternal_raw+')':''}${m.memo?' メモ:'+m.memo:''}` : '';
+      parentBlocks.push(`[${ic.line.species}${ic.line.origin?' '+ic.line.origin+'産':''}]${lineMemo}${fInfo}${mInfo}`);
     });
 
     // 参考出品文 (line別最大1件、テキストの先頭500文字まで)
     const refBlocks = [];
     const usedLines = new Set();
     ctx.individuals.forEach(ic => {
-      if (usedLines.has(ic.line.line_code)) return;
+      if (usedLines.has(ic.line.line_name)) return;
       const ref = (ic.refs || [])[0];
       if (ref) {
-        usedLines.add(ic.line.line_code);
+        usedLines.add(ic.line.line_name);
         const txt = String(ref.raw_text || ref.notes || '').slice(0, 500);
-        if (txt) refBlocks.push(`[参考(${ic.line.line_code}): ${txt}]`);
+        if (txt) refBlocks.push(`[${ic.line.species}用 参考: ${txt}]`);
       }
     });
 
     // 販売形態ラベル
     let pattern = '';
-    if (ctx.saleInfo.salePattern === 'single_male')   pattern = '単体販売 (♂)';
-    if (ctx.saleInfo.salePattern === 'single_female') pattern = '単体販売 (♀)';
-    if (ctx.saleInfo.salePattern === 'pair')          pattern = 'ペア販売';
-    if (ctx.saleInfo.salePattern === 'trio')          pattern = 'トリオ販売';
-    if (ctx.saleInfo.salePattern === 'larva_n')       pattern = `${ctx.individuals.length}頭セット`;
+    if (sf.salePattern === 'single_male')   pattern = '単体販売 (♂)';
+    if (sf.salePattern === 'single_female') pattern = '単体販売 (♀)';
+    if (sf.salePattern === 'pair')          pattern = 'ペア販売';
+    if (sf.salePattern === 'trio')          pattern = 'トリオ販売';
+    if (sf.salePattern === 'larva_n')       pattern = `${ctx.individuals.length}頭セット`;
+
+    // 集計用 (♂♀別の体重・サイズ・頭数)
+    const males   = ctx.individuals.filter(ic => ic.ind.sex === '♂');
+    const females = ctx.individuals.filter(ic => ic.ind.sex === '♀');
+    const unknownSex = ctx.individuals.filter(ic => !ic.ind.sex);
+
+    const sexBreakdown = isLarva
+      ? `♂${males.length}頭/♀${females.length}頭${unknownSex.length?'/性別未判別'+unknownSex.length+'頭':''}`
+      : `♂${males.length}頭/♀${females.length}頭`;
+
+    // 幼虫体重まとめ (♂体重列, ♀体重列, 未判別体重列)
+    const maleWeights    = males.map(ic => ic.ind.weight_g + 'g').filter(Boolean);
+    const femaleWeights  = females.map(ic => ic.ind.weight_g + 'g').filter(Boolean);
+    const unknownWeights = unknownSex.map(ic => ic.ind.weight_g + 'g').filter(Boolean);
+
+    // 孵化日まとめ (重複排除、最も古い日付の月)
+    const hatchDates = isLarva
+      ? Array.from(new Set(ctx.individuals.map(ic => ic.ind.hatch_date).filter(Boolean)))
+      : [];
+    let hatchSummary = '';
+    if (hatchDates.length === 1) {
+      hatchSummary = _ylJunMonthLabel(hatchDates[0]);
+    } else if (hatchDates.length > 1) {
+      const sorted = hatchDates.slice().sort();
+      hatchSummary = `${_ylJunMonthLabel(sorted[0])}〜${_ylJunMonthLabel(sorted[sorted.length-1])}`;
+    }
+
+    // ステージまとめ
+    const stages = isLarva
+      ? Array.from(new Set(ctx.individuals.map(ic => STAGE_LABEL[ic.ind.stage] || ic.ind.stage)))
+      : [];
+
+    // 注意事項テンプレート (実例HERAKABU MARCHÉ準拠)
+    const t = ctx.templates || YL_DEFAULT_TEMPLATES;
+    const customTermsBlock = t.terms || '';
+    const customShippingBlock = t.shipping || '';
+    const customSellerBlock = t.seller || '';
 
     // NGワード整形
     const ngLine = (ctx.ngWords || []).map(w =>
       `「${w.ng}」→「${w.reword || '使用しない'}」 (${w.reason||''})`
     ).join(', ');
 
-    return `あなたはヘラクレスオオカブトの繁殖個体をヤフオクで販売するプロ出品者(HERAKABU MARCHÉ)です。
-購入希望者の購買意欲を高める、誠実かつ魅力的な出品文を作成してください。
-ヤフオクガイドラインに違反する表現は避けてください。
+    // タイトル冒頭訴求
+    const headlineHint = sf.appealHeadline
+      ? `タイトル冒頭は【${sf.appealHeadline}】の訴求を入れること`
+      : `タイトル冒頭に血統訴求を【】で入れる(例:【大型血統】【太角血統】【ワイドボディ】等。種親情報から判断)`;
 
-━━━ NGワード/言い換え (厳守) ━━━
-${ngLine || '(なし)'}
+    return `あなたはヘラクレスオオカブトの繁殖個体をヤフオクで販売するプロ出品者(出品者名: HERAKABU MARCHÉ)です。
+過去の HERAKABU MARCHÉ 出品文と同じスタイルで、誠実かつ訴求力のある出品文を作成してください。
+
+━━━ 🚫 厳守ルール ━━━
+1. 「社内ライン名」(例: Line-A, A1, B-2 等の管理コード)は出品文・タイトルに**絶対に含めない**こと。
+   これは社内識別子であり、購入者には意味のない情報のため、完全に除外する。
+2. NGワード厳守: ${ngLine || '(なし)'}
+3. ヤフオクガイドラインに違反する誇大表現は避ける。
+4. 体長・体重・孵化日・羽化日の数字は与えられた値を改変しない。
 
 ━━━ 出品情報 ━━━
 販売形態: ${pattern}
 セット種別: ${isLarva ? '幼虫セット' : '成虫セット'}
+雌雄内訳: ${sexBreakdown}
+${isLarva && hatchSummary ? `孵化日: ${hatchSummary}\nステージ: ${stages.join('・')}\n` : ''}${isLarva ? `現在の体重${sf.weightDate ? '('+sf.weightDate+'時点)' : ''}: ${maleWeights.length?'♂'+maleWeights.join('、'):''}${maleWeights.length&&femaleWeights.length?' / ':''}${femaleWeights.length?'♀'+femaleWeights.join('、'):''}${unknownWeights.length?' / 性別未判別:'+unknownWeights.join('、'):''}\n` : ''}
 
-【ライン情報】
+【ライン背景情報】
 ${parentBlocks.join('\n\n')}
 
 【出品個体】
 ${indLines}
 
-${refBlocks.length ? '【参考出品文 (種親購入時)】\n' + refBlocks.join('\n\n') + '\n' : ''}
-${ctx.saleInfo.extraAppeal ? '【出品者アピール (必ず本文に盛り込む)】\n' + ctx.saleInfo.extraAppeal + '\n' : ''}
+${refBlocks.length ? '【参考出品文 (種親購入時の血統情報)】\n' + refBlocks.join('\n\n') + '\n' : ''}
+${sf.extraAppeal ? '【出品者アピール (必ず本文に盛り込む)】\n' + sf.extraAppeal + '\n' : ''}
 
-━━━ 出力フォーマット (厳守) ━━━
+━━━ 出力フォーマット (必須) ━━━
 以下の純粋なJSON形式のみで返してください。マークダウンのコードブロック(\\\`\\\`\\\`)などの装飾は付けないでください。
 
 {
-  "title": "(商品タイトル。ヤフオク制限65文字以内。種名・販売形態・サイズ要点・血統要点を簡潔に)",
-  "body_html": "(HTML装飾付きの商品説明文。<h3><p><ul><li><b>等を使い読みやすく整形。出品個体の魅力・血統価値を強調。最後に注意事項と発送について。)",
-  "body_plain": "(プレーンテキスト版の商品説明文。HTMLタグなし、改行と記号で読みやすく整形。)",
-  "appeal_summary": "(購買意欲を高める短い要約。ラベル裏や発送メッセージに転用可。50字以内。)"
-}`;
+  "title": "(商品タイトル。65文字以内。${headlineHint}。種名・令・頭数・種親サイズ等の要点を簡潔に。社内ライン名は絶対に入れない。)",
+  "body_html": "(HTML装飾付きの商品説明文。下記の<本文構造>に厳密に従うこと)",
+  "body_plain": "(プレーンテキスト版の商品説明文。HTMLタグなしで同じ構造)",
+  "appeal_summary": "(購買意欲を高める短い要約。50字以内。発送メッセージ転用用。)"
+}
+
+━━━ <本文構造> (HERAKABU MARCHÉ 過去出品スタイル) ━━━
+1) リード文 (2〜3行): 何の出品か明示しつつ血統価値を訴求。例:
+   「ヘラクレスオオカブトの3令幼虫5頭セットの出品です。\n大型血統を中心としたブリードラインで、将来サイズ狙いが可能な組み合わせになります。」
+
+2) 【種親情報】セクション:
+   ♂と♀それぞれ、サイズと血統表記を①②③形式で列挙する。
+   例:
+     【種親情報】
+     ♂:①164mm
+        ②165mm(U6SA-/GTR.RU01...血統表記)
+     ♀:①75mm(U71イン×165T-REX.T-115)
+        ②77mm(FFOFA2No113×T117R(2)MD)
+   末尾に「※発送時には雌雄・想定血統・サイズ等分かるよう個体ごとにラベリングして発送いたします。」と「いずれも大型血統由来です。」(該当する場合)を付記。
+
+3) ${isLarva ? '【幼虫情報】' : '【成虫情報】'}セクション:
+   ${isLarva ? `中点(・)リストで以下を列記:
+     ・頭数:〇頭
+     ・孵化日:YYYY年〇月〇旬
+     ・ステージ:〇令
+     ・雌雄内訳:♂〇頭/♀〇頭
+     ・現在の体重 ${sf.weightDate?'('+sf.weightDate+'時点)':'(測定日記載なし)'}
+     ♂:〇g、〇g
+     ♀:〇g、〇g、〇g
+   末尾に以下の※項目を列記(箇条書き):
+     ※輸送時のストレスで一時的に体重減少の可能性あり
+     ・状態:健康個体のみを選別
+     ・温度管理約22℃前後
+     ※雌雄判別は目視によるもので、誤判別の可能性がある点はご了承ください
+     ※取引中に加令する場合がございます。
+     ※細心の注意を払って梱包に努めますがダニ、コバエなどの雑虫がマットに混入している場合がございます。`
+   : `成虫個体ごとに以下を列記:
+     ・サイズ:〇mm(♂は頭角含む/除くを明記)
+     ・羽化日:YYYY/MM/DD
+     ・後食開始日:YYYY/MM/DD or 未後食
+     ・状態:完品 / フセツ欠け等
+     ・活動状況:成熟・活動中 / 未成熟 / 休眠中
+     ♀がいる場合は・交尾状況:未交尾/交尾済み/不明
+   末尾に以下の※項目:
+     ※輸送時のストレスで一時的に体力消耗の可能性あり
+     ※細心の注意を払って梱包に努めますがダニ、コバエなどの混入の可能性あり`}
+
+4) 【おすすめポイント】セクション:
+   中点(・)リストで3〜5項目。実際の血統情報・サイズ・成長状態から具体的な訴求を作る。
+   ${sf.extraAppeal ? '※必ず出品者アピールの内容を反映させる。' : ''}
+
+5) 【注意事項】セクション (◆マーク列記):
+   以下のテンプレートを基本に、HERAKABU MARCHÉ の標準的な注意事項を列記する。
+   ${customShippingBlock ? '発送関連:\n' + customShippingBlock + '\n' : ''}${customTermsBlock ? '免責関連:\n' + customTermsBlock + '\n' : ''}実例フォーマット:
+   ◆雌雄誤判別の可能性がある点ご了承ください。
+   ◆発送はゆうパック(100〜120サイズ)です。(梱包費別途${sf.shippingByBuyer?'落札者負担':'300円'})
+   ◆季節に応じて発泡箱やダンボールに保冷剤やカイロを入れて梱包いたします。
+   ◆包装資材は中古資材を使用する場合がありますのでご容赦ください。
+   ◆大阪府からの発送になります。
+   ◆海外への発送は致しません。
+   ◆死着保証はございません。
+   ※到着まで中1日以上かかる地域へお住まいの方については死着の可能性が高まる為、リスクを承知の上でご入札いただきますようお願いします。
+   ◆輸送中のトラブルなどの補償もお受けすることができません。
+   ◆落札後は48時間以内にご入金手続きが出来る方のみご入札下さい。
+   ◆受取り希望日がある方は落札後の取引連絡より希望日をお知らせ下さい。
+   ※可能な限り到着希望日で対応いたしますが、希望に添えない場合もございます。
+   ◆ご不明な点がありましたら質問よりご連絡ください。
+
+6) ${customSellerBlock ? `【出品者より】セクション:\n   ${customSellerBlock.replace(/\n/g, '\n   ')}\n\n` : ''}${sf.manageNo ? `7) 末尾に「管理番号:${sf.manageNo}」を1行で記載。` : '7) 管理番号は記載しない。'}
+
+HTML版は <h3> でセクション見出し、<p> で本文、<ul><li> で箇条書きを使うこと。
+プレーン版は実際の改行で構造を表現すること。`;
   }
 
   async function _callGemini(prompt, apiKey) {
@@ -1071,8 +1244,9 @@ ${ctx.saleInfo.extraAppeal ? '【出品者アピール (必ず本文に盛り込
       titleCount.textContent = l + ' / 65文字';
       titleCount.style.color = l > 65 ? '#e05050' : l > 55 ? '#c8993a' : '#7a7672';
     }
-    const htmlFull  = html  + (html  ? '<hr style="border:none;border-top:1px dashed #aaa;margin:14px 0">' : '') + ctxFooterHtml;
-    const plainFull = plain + (plain ? '\n\n────────\n' : '') + ctxFooter;
+    // [y2] フッターは管理番号がある場合だけ。区切り装飾は付けない(本文の流れを断ち切らないため)
+    const htmlFull  = html  + (ctxFooterHtml ? '\n' + ctxFooterHtml : '');
+    const plainFull = plain + (ctxFooter     ? '\n\n' + ctxFooter   : '');
 
     if (htmlPrev)  htmlPrev.innerHTML  = htmlFull;
     if (htmlText)  htmlText.value      = htmlFull;
@@ -1087,19 +1261,14 @@ ${ctx.saleInfo.extraAppeal ? '【出品者アピール (必ず本文に盛り込
   }
 
   function _buildFixedFooter(ctx, fmt) {
-    const t = ctx.templates || YL_DEFAULT_TEMPLATES;
+    // [y2] 注意事項・発送・出品者の文言は新プロンプトで AI 本文側に組み込まれるため、
+    //   ここでは管理番号と最終調整だけを返す。重複防止。
     const sf = ctx.saleInfo || {};
-    const shipping = `${t.shipping}\n・送料: ${sf.shippingByBuyer ? '落札者負担' : '出品者負担'} (${sf.shippingMethod})`;
+    if (!sf.manageNo) return '';
     if (fmt === 'plain') {
-      return [shipping, t.terms, t.seller].filter(Boolean).join('\n\n');
+      return `管理番号:${sf.manageNo}`;
     }
-    // html
-    const escNl = (s) => _ylEsc(s).replace(/\n/g, '<br>');
-    return `<h3 style="font-size:.95rem;margin-top:14px">📦 発送・お支払いについて</h3>
-<p style="line-height:1.7">${escNl(shipping)}</p>
-<h3 style="font-size:.95rem;margin-top:14px">⚠️ ご注意ください</h3>
-<p style="line-height:1.7">${escNl(t.terms)}</p>
-<p style="line-height:1.7;margin-top:10px;color:#5a5a5a">${escNl(t.seller)}</p>`;
+    return `<p style="margin-top:14px;color:#5a5a5a;font-size:.82rem">管理番号:${_ylEsc(sf.manageNo)}</p>`;
   }
 
   // ── コピー処理 ────────────────────────────────────────
@@ -1123,118 +1292,246 @@ ${ctx.saleInfo.extraAppeal ? '【出品者アピール (必ず本文に盛り込
 
   // ════════════════════════════════════════════════════════════
   // 発送ラベル (60×30mm) — HERAKABU MARCHÉ ブランド準拠
+  // ────────────────────────────────────────────────────────────
+  // y2: 文字サイズを全体的に拡大。レイアウトは:
+  //   ・上段(高さ約8mm): タイトル(種名+産地) — 大きめ
+  //   ・中段: ◆種親 ♂サイズ・♀サイズ (血統表記は控えめ)
+  //   ・下段: ◆孵化日(or羽化日)
+  //   ・右上: ♂♀記号 (判別済時のみ)
+  //   ・右下: HERAKABU MARCHÉ ロゴ
+  // フォントサイズは px で指定し html2canvas でラスタライズ → PNG生成。
+  // 既存の label.js _buildLabelPNG / _lblBrotherPrint と同じ仕組みで
+  // 生成・印刷するので Brother iPrint&Label で60×30mm として認識される。
   // ════════════════════════════════════════════════════════════
+
+  // ラベル印刷用の物理寸法 / ピクセル寸法
+  // 60mm × 30mm @ 300DPI → 709×354 px (Brotherの解像度に合わせる) だが
+  // html2canvas の scale=3 を使うので 60×30 mm を 236×118 px ベースで
+  // 計算し、scale=3 で 708×354 px として PNG 化する。既存ラベルは
+  // 62×70mm を 234×265 px(scale=3) で扱っており、本ラベルもその系列に
+  // 合わせ 1mm ≒ 3.93 px → 60mm = 236 px / 30mm = 118 px とした。
+  const YL_LABEL_DIMS = { wMm: 60, hMm: 30, wPx: 236, hPx: 118, scale: 3 };
+
   function _ylBuildLabelHTML(ind, ctx) {
     const ic = ctx.individuals.find(c => c.ind.uid === ind.uid) || ctx.individuals[0];
     const line = ic.line || {};
     const sp   = line.species || 'ヘラクレスオオカブト';
     const origin = line.origin || '';
-    const titleStr = `${sp}${origin ? ' ' + origin + '産' : ''}`;
-    // 種親
+    // [y2 final] 種名表示は短縮形を優先 (DH = ディナステス・ヘラクレス、または「ヘラクレス」)
+    //   提供画像1のスタイルに合わせて「DHヘラクレス グアドループ産」のように
+    //   接頭+種名+産地。ヘラクレス系以外でも汎用に使えるよう種名そのまま表示。
+    const titleStr = origin ? `${sp} ${origin}産` : sp;
+
+    // 種親 (サイズ + 血統表記 全文 — 複数行折り返しで表示)
     const f = ic.father, m = ic.mother;
-    const fStr = f ? `${f.size_mm || '__'}mm${f.paternal_raw ? ' (' + String(f.paternal_raw).slice(0, 60) + ')' : ''}` : '__mm';
-    const mStr = m ? `${m.size_mm || '__'}mm${m.maternal_raw ? ' (' + String(m.maternal_raw).slice(0, 60) + ')' : ''}` : '__mm';
+    const fSize  = f && f.size_mm ? `${f.size_mm}mm` : '—mm';
+    const mSize  = m && m.size_mm ? `${m.size_mm}mm` : '—mm';
+    // 血統表記は60mm幅で複数行折り返しさせるため省略しない (が長すぎる場合は60字でカット)
+    const fBlood = f && f.paternal_raw ? String(f.paternal_raw).slice(0, 80) : '';
+    const mBlood = m && m.maternal_raw ? String(m.maternal_raw).slice(0, 60) : '';
+
     // 孵化日 / 羽化日
     const hatchDateRaw = ind.hatch_date || ind.eclosion_date || '';
-    const dateLabel = ind.kind === 'larva' ? '◆孵化日' : '◆羽化日';
+    const dateLabel = ind.kind === 'larva' ? '孵化日' : '羽化日';
     const dateStr = _ylJunMonthLabel(hatchDateRaw);
-    const sex = ind.sex || '';
-    // 文字長に応じたフォントサイズ自動調整
-    const fStrLen = fStr.length, mStrLen = mStr.length;
-    const padFontSize = Math.max(fStrLen, mStrLen) > 50 ? '4px' : Math.max(fStrLen, mStrLen) > 35 ? '4.5px' : Math.max(fStrLen, mStrLen) > 25 ? '5.5px' : '6.5px';
 
-    return `<!DOCTYPE html>
-<html><head><meta charset="utf-8">
-<style>
-  @page { size: 60mm 30mm; margin: 0; }
-  * { margin:0; padding:0; box-sizing:border-box; }
-  body { width:60mm; height:30mm; font-family: 'Noto Sans JP','Hiragino Kaku Gothic ProN', sans-serif; background:#fff; color:#000; overflow:hidden; }
-  @media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }
-  .yl-label { width:60mm; height:30mm; position:relative; padding:1.5mm 2mm 1mm; box-sizing:border-box; }
-  .yl-l-title { font-size:9px; font-weight:700; line-height:1.1; padding-right:8mm; }
-  .yl-l-sex { position:absolute; top:1.2mm; right:1.5mm; font-size:11px; font-weight:900; line-height:1; color:#000; }
-  .yl-l-section { font-size:6px; font-weight:700; margin-top:1mm; line-height:1.2; }
-  .yl-l-pair { font-size:${padFontSize}; line-height:1.25; padding-left:1mm; }
-  .yl-l-pair .lbl { display:inline-block; width:3mm; font-weight:700; }
-  .yl-l-date { font-size:6.5px; font-weight:700; padding-left:1mm; }
-  .yl-l-logo { position:absolute; bottom:0.3mm; right:1.2mm; width:14mm; height:9mm; opacity:0.85; }
-  .yl-l-logo img { width:100%; height:100%; object-fit:contain; }
-</style></head><body>
-<div class="yl-label">
-  ${sex ? `<div class="yl-l-sex">${sex}</div>` : ''}
-  <div class="yl-l-title">${_ylEsc(titleStr)}</div>
-  <div class="yl-l-section">◆種親</div>
-  <div class="yl-l-pair"><span class="lbl">♂</span>${_ylEsc(fStr)}</div>
-  <div class="yl-l-pair"><span class="lbl">♀</span>${_ylEsc(mStr)}</div>
-  <div class="yl-l-section" style="margin-top:0.8mm">${dateLabel}</div>
-  <div class="yl-l-date">${_ylEsc(dateStr || '__/__ /__')}</div>
-  <div class="yl-l-logo"><img src="${YL_LOGO_PATH}" alt="HERAKABU MARCHÉ"></div>
-</div>
-</body></html>`;
+    // タイトル長に応じて自動でフォント縮小
+    const titleFs = titleStr.length > 22 ? '11px' : titleStr.length > 18 ? '12.5px' : '14px';
+    // 血統の文字長に応じて血統行のフォント自動調整 (折り返し前提)
+    const bloodMaxLen = Math.max(fBlood.length, mBlood.length);
+    const bloodFs = bloodMaxLen > 50 ? '5.5px' : bloodMaxLen > 35 ? '6px' : bloodMaxLen > 22 ? '6.5px' : '7px';
+    const bloodLh = bloodMaxLen > 35 ? '1.15' : '1.2';
+
+    // ロゴパス (印刷時に確実に読み込めるよう絶対URL化)
+    const logoUrl = (function(){
+      try { return new URL(YL_LOGO_PATH, location.href).href; }
+      catch (_) { return YL_LOGO_PATH; }
+    })();
+
+    return '<!DOCTYPE html>\n<html><head><meta charset="utf-8">\n<style>\n'
+      + '  @page { size: 60mm 30mm; margin: 0; }\n'
+      + '  * { margin:0; padding:0; box-sizing:border-box; }\n'
+      + '  body { width:60mm; height:30mm; font-family: "Noto Serif JP","Yu Mincho","Hiragino Mincho ProN",serif; background:#fff; color:#000; overflow:hidden; }\n'
+      + '  @media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }\n'
+      + '</style></head><body>\n'
+      // ラベル全体: padding は左右広め、上下狭め (画像1のレイアウトに準拠)
+      + '<div style="width:60mm;height:30mm;position:relative;padding:1mm 1.8mm 0.8mm;box-sizing:border-box;overflow:hidden">\n'
+      // ──── タイトル行 (種名+産地) — 中央寄せ・大きめ・セリフ ────
+      + '  <div style="text-align:center;font-size:' + titleFs + ';font-weight:700;line-height:1.15;letter-spacing:-0.2px;padding:0 1mm">' + _ylEsc(titleStr) + '</div>\n'
+      // ──── 本文領域 (左:情報 / 右下:ロゴ) ────
+      + '  <div style="position:relative;margin-top:0.6mm;padding-right:18mm">\n'
+      // ◆種親
+      + '    <div style="font-size:7.5px;font-weight:700;line-height:1.2;margin-bottom:0.2mm">◆ 種親</div>\n'
+      // ♂ サイズ + 血統表記 (改行込み)
+      + '    <div style="padding-left:2mm;line-height:1.2">\n'
+      + '      <div style="font-size:9.5px;font-weight:700">♂' + _ylEsc(fSize) + '</div>\n'
+      + (fBlood
+        ? '      <div style="font-size:' + bloodFs + ';line-height:' + bloodLh + ';color:#222;padding-left:0.5mm;word-break:break-all">(' + _ylEsc(fBlood) + ')</div>\n'
+        : '')
+      + '    </div>\n'
+      // ♀ サイズ + 血統表記 (改行込み)
+      + '    <div style="padding-left:2mm;line-height:1.2;margin-top:0.4mm">\n'
+      + '      <div style="font-size:9.5px;font-weight:700">♀' + _ylEsc(mSize) + '</div>\n'
+      + (mBlood
+        ? '      <div style="font-size:' + bloodFs + ';line-height:' + bloodLh + ';color:#222;padding-left:0.5mm;word-break:break-all">(' + _ylEsc(mBlood) + ')</div>\n'
+        : '')
+      + '    </div>\n'
+      // ◆孵化日
+      + '    <div style="font-size:7.5px;font-weight:700;line-height:1.2;margin-top:0.6mm">◆ ' + _ylEsc(dateLabel) + '</div>\n'
+      + '    <div style="font-size:10.5px;font-weight:700;padding-left:2mm;letter-spacing:0.2px;line-height:1.2">' + _ylEsc(dateStr || '____/__ /__') + '</div>\n'
+      + '  </div>\n'
+      // ──── 右下ロゴ (画像1のスタイルに合わせて大きめ配置) ────
+      + '  <div style="position:absolute;right:1.2mm;bottom:0.5mm;width:17mm;height:13mm;line-height:0;display:flex;align-items:flex-end;justify-content:center">\n'
+      + '    <img src="' + logoUrl + '" alt="HERAKABU MARCHÉ" style="max-width:17mm;max-height:13mm;width:auto;height:auto;object-fit:contain;display:block">\n'
+      + '  </div>\n'
+      + '</div>\n'
+      + '</body></html>';
   }
 
-  function _ylPreviewLabels() {
-    const ctx = window.__ylLastGenerated && window.__ylLastGenerated.ctx
-              ? window.__ylLastGenerated.ctx
-              : _buildPromptContext();
+  // ── ラベル PNG 生成 ────────────────────────────────────────
+  // label.js のグローバル関数 _buildLabelPNG を再利用。なければ
+  // フォールバックとして html2canvas を直接呼ぶ。
+  async function _ylGenerateLabelPNG(ind, ctx) {
+    const html = _ylBuildLabelHTML(ind, ctx);
+    if (typeof _buildLabelPNG === 'function') {
+      try {
+        const png = await _buildLabelPNG(html, YL_LABEL_DIMS);
+        if (png) return png;
+      } catch (e) {
+        console.warn('[YL] _buildLabelPNG failed', e);
+      }
+    }
+    // フォールバック: html2canvas 直叩き
+    if (typeof html2canvas === 'function') {
+      try {
+        const styleMatch = html.match(/<style>([\s\S]*?)<\/style>/i);
+        const bodyMatch  = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+        const rawStyle   = styleMatch ? styleMatch[1].replace(/@page\s*\{[^}]*\}/g, '') : '';
+        const bodyHtml   = bodyMatch  ? bodyMatch[1] : html;
+        const host = document.createElement('div');
+        host.style.cssText = `position:fixed;left:-99999px;top:0;width:${YL_LABEL_DIMS.wPx}px;height:${YL_LABEL_DIMS.hPx}px;overflow:hidden;background:#fff;box-sizing:border-box`;
+        host.innerHTML = `<style>${rawStyle}</style>${bodyHtml}`;
+        document.body.appendChild(host);
+        // 画像読み込み待ち
+        const imgs = Array.from(host.querySelectorAll('img'));
+        await Promise.all(imgs.map(img => {
+          if (img.complete && img.naturalWidth > 0) return Promise.resolve();
+          return new Promise(r => { img.onload = r; img.onerror = r; setTimeout(r, 2000); });
+        }));
+        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+        const canvas = await html2canvas(host, {
+          scale: YL_LABEL_DIMS.scale,
+          width: YL_LABEL_DIMS.wPx,
+          height: YL_LABEL_DIMS.hPx,
+          useCORS: true, allowTaint: true, logging: false,
+          backgroundColor: '#ffffff',
+          windowWidth: YL_LABEL_DIMS.wPx,
+          windowHeight: YL_LABEL_DIMS.hPx,
+          imageTimeout: 5000,
+        });
+        try { document.body.removeChild(host); } catch (_) {}
+        return canvas.toDataURL('image/png');
+      } catch (e) {
+        console.warn('[YL] html2canvas fallback failed', e);
+      }
+    }
+    return null;
+  }
+
+  // ── プレビュー (PNG 表示) ──────────────────────────────────
+  async function _ylPreviewLabels() {
+    if (!individuals.length) return;
+    const ctx = (window.__ylLastGenerated && window.__ylLastGenerated.ctx)
+              ? window.__ylLastGenerated.ctx : _buildPromptContext();
     const wrap = document.getElementById('yl-labels-preview');
     if (!wrap) return;
-    wrap.innerHTML = '';
-    individuals.forEach((ind) => {
-      const html = _ylBuildLabelHTML(ind, ctx);
-      const iframe = document.createElement('iframe');
-      iframe.className = 'yl-label-iframe';
-      iframe.style.width  = '60mm';
-      iframe.style.height = '30mm';
-      iframe.style.border = '1px solid #ccc';
-      iframe.style.background = '#fff';
-      iframe.style.transform = 'scale(1.4)';
-      iframe.style.transformOrigin = 'top left';
-      iframe.style.marginRight = '8mm';
-      iframe.style.marginBottom = '14mm';
-      iframe.srcdoc = html;
-      wrap.appendChild(iframe);
-    });
+    wrap.innerHTML = '<div style="padding:14px;text-align:center;color:#888;font-size:.78rem">ラベル画像を生成中...</div>';
+
+    // 各個体の PNG を生成し、キャッシュに保持 (印刷時に再利用)
+    window.__ylLabelPngs = window.__ylLabelPngs || {};
+    const blocks = [];
+    for (let i = 0; i < individuals.length; i++) {
+      const ind = individuals[i];
+      let png;
+      try { png = await _ylGenerateLabelPNG(ind, ctx); } catch (e) { png = null; }
+      window.__ylLabelPngs[ind.uid] = png;
+      blocks.push({ idx: i + 1, ind, png });
+    }
+    wrap.innerHTML = blocks.map(b => `
+      <div class="yl-label-block">
+        <div class="yl-label-block-title">ラベル #${b.idx}${b.ind.sex ? ' (' + _ylEsc(b.ind.sex) + ')' : ''}</div>
+        ${b.png
+          ? `<img class="yl-label-img" src="${b.png}" alt="ラベル #${b.idx}">`
+          : '<div style="padding:14px;color:#c44;font-size:.74rem">PNG生成失敗</div>'}
+        <button class="yl-primary-btn yl-btn-sm yl-label-print-btn"
+          onclick="Pages._ylPrintSingleLabel('${b.ind.uid}')">
+          🖨️ #${b.idx} を印刷
+        </button>
+      </div>
+    `).join('');
   }
 
-  function _ylPrintLabels() {
+  // ── 1ラベル印刷 (Brother iPrint&Label 仕様準拠) ─────────────
+  // 既存の Pages._lblBrotherPrint と同じ単一PNGの印刷ドキュメント方式。
+  // <img width="236" height="118"> で固定すれば Brother 側で60×30mm用紙
+  // として正しく認識される。
+  async function _ylPrintSingleLabel(uid) {
+    const ind = individuals.find(x => x.uid === uid);
+    if (!ind) { UI.toast('対象が見つかりません', 'error'); return; }
+    const ctx = (window.__ylLastGenerated && window.__ylLastGenerated.ctx)
+              ? window.__ylLastGenerated.ctx : _buildPromptContext();
+    let png = (window.__ylLabelPngs || {})[uid];
+    if (!png) {
+      UI.toast('ラベルPNGを生成中...', 'success');
+      png = await _ylGenerateLabelPNG(ind, ctx);
+      window.__ylLabelPngs = window.__ylLabelPngs || {};
+      window.__ylLabelPngs[uid] = png;
+    }
+    if (!png) { UI.toast('ラベルPNGの生成に失敗しました', 'error'); return; }
+
+    const wPx = YL_LABEL_DIMS.wPx, hPx = YL_LABEL_DIMS.hPx;
+    const printDoc = '<!DOCTYPE html><html><head><meta charset="utf-8">'
+      + '<meta name="viewport" content="width=' + wPx + '">'
+      + '<title>HERAKABU MARCHÉ Label</title>'
+      + '<style>@page{size:60mm 30mm;margin:0;}'
+      + 'html{margin:0;padding:0;background:#fff;}'
+      + 'body{margin:0;padding:0;background:#fff;width:' + wPx + 'px;}'
+      + 'img{display:block;width:' + wPx + 'px;height:' + hPx + 'px;margin:0;padding:0;'
+      + '-webkit-print-color-adjust:exact;print-color-adjust:exact;}'
+      + '</style></head><body><img src="' + png + '" width="' + wPx + '" height="' + hPx + '">'
+      + '<script>window.addEventListener("load",function(){setTimeout(function(){window.print();},500);});<' + '/script>'
+      + '</body></html>';
+    const blob = new Blob([printDoc], { type: 'text/html;charset=utf-8' });
+    const url  = URL.createObjectURL(blob);
+    const win  = window.open(url, '_blank');
+    if (!win) {
+      UI.toast('ポップアップを許可してください (アドレスバー右端のアイコン)', 'error', 5000);
+      return;
+    }
+    setTimeout(function () { URL.revokeObjectURL(url); }, 15000);
+  }
+
+  // ── 全ラベル一括印刷 (1枚目だけ印刷ダイアログ起動。続きは個別ボタンで) ──
+  // Brother iPrint&Label は1枚毎の印刷が前提のため、複数頭セットは
+  // プレビュー画面の各「#N を印刷」ボタンを順次タップする運用とする。
+  async function _ylPrintLabels() {
     if (!individuals.length) {
       UI.toast('ラベル対象がありません', 'error');
       return;
     }
-    const ctx = window.__ylLastGenerated && window.__ylLastGenerated.ctx
-              ? window.__ylLastGenerated.ctx
-              : _buildPromptContext();
-    // 印刷ウィンドウを開いて全ラベルを縦列で配置 (Brother QL-820NWB は連続印刷可)
-    const printHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Yahoo Listing Labels</title>
-<style>
-  @page { size: 60mm 30mm; margin: 0; }
-  * { margin:0; padding:0; box-sizing:border-box; }
-  body { background:#fff; }
-  .label-page { width:60mm; height:30mm; page-break-after:always; }
-  .label-page:last-child { page-break-after:auto; }
-  iframe { width:60mm; height:30mm; border:none; display:block; }
-</style></head><body>
-${individuals.map((ind, i) => `
-  <div class="label-page" id="lp-${i}"></div>
-`).join('')}
-<script>
-  const labels = ${JSON.stringify(individuals.map(ind => _ylBuildLabelHTML(ind, ctx)))};
-  labels.forEach((html, i) => {
-    const host = document.getElementById('lp-' + i);
-    host.innerHTML = html;
-  });
-  setTimeout(() => window.print(), 600);
-<\/script>
-</body></html>`;
-    const w = window.open('', '_blank', 'width=400,height=400');
-    if (!w) {
-      UI.toast('ポップアップがブロックされました', 'error');
-      return;
+    // 全ラベルのPNGを再生成 (プレビュー描画と同じ)
+    await _ylPreviewLabels();
+    // 1枚目を印刷
+    if (individuals[0]) {
+      _ylPrintSingleLabel(individuals[0].uid);
     }
-    w.document.write(printHtml);
-    w.document.close();
+    if (individuals.length > 1) {
+      UI.toast(`#1 を印刷します。残り ${individuals.length - 1} 枚は各「#N を印刷」ボタンから`, 'success', 4500);
+    }
   }
+
+  // 公開 (onclick から呼べるよう登録)
+  Pages._ylPrintSingleLabel = _ylPrintSingleLabel;
 
   // ── 履歴保存 ────────────────────────────────────────────
   function _ylSaveToHistory() {
@@ -1365,8 +1662,15 @@ function _ylInjectCSS() {
     .yl-html-preview h3 { font-size:.95rem; font-weight:700; margin-top:10px; margin-bottom:4px; }
     .yl-html-preview p { margin-bottom:6px; }
     .yl-html-preview ul { padding-left:18px; margin:6px 0; }
-    .yl-labels-preview { display:flex; flex-wrap:wrap; gap:4px; padding:8px 0;
-      max-height:520px; overflow-y:auto; background:#f5f5f5; border-radius:6px; padding:14px; }
+    .yl-labels-preview { display:flex; flex-wrap:wrap; gap:14px; padding:14px;
+      max-height:560px; overflow-y:auto; background:#f5f5f5; border-radius:6px; }
+    .yl-label-block { display:flex; flex-direction:column; align-items:center; gap:6px;
+      background:#fff; padding:10px; border-radius:6px; box-shadow:0 1px 3px rgba(0,0,0,.08); }
+    .yl-label-block-title { font-size:.74rem; font-weight:700; color:#444; }
+    .yl-label-img { display:block; width:240px; height:auto; max-width:100%;
+      border:1px solid #d0d0d0; background:#fff; }
+    .yl-label-print-btn { width:100%; max-width:240px; padding:9px 10px;
+      font-size:.84rem; font-weight:700; }
   `;
 }
 
@@ -1746,4 +2050,4 @@ ${h.body_html || '<pre>'+_ylEsc(h.body_plain)+'</pre>'}
   `;
 };
 
-console.log('[YL] yahoo_listing.js loaded build=20260426y1');
+console.log('[YL] yahoo_listing.js loaded build=20260426y2');
