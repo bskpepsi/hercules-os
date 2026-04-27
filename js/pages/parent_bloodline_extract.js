@@ -2,7 +2,20 @@
 // ════════════════════════════════════════════════════════════════
 // parent_bloodline_extract.js — 種親血統情報の Vision 抽出機能
 //
-// build: 20260426y6.7
+// build: 20260426y6.8
+//
+// ── y6.8 での修正点 ────────────────────────────────────────────
+// ・🔥 Gemini Vision の「同じ文字を延々と繰り返す異常出力」(degenerate output)を解決
+//   症状: レスポンスが {"species_full": "Dynastes hercules hercules
+//        ෛෛෛෛෛෛෛෛ... (同じ文字×大量)」のように、JSON構造が壊れた
+//        異常なテキスト繰り返しになり、JSONパースが100%失敗していた。
+//   原因: 私が y6.4/y6.5 で温度を 0.3 → 0.15 まで下げすぎていた。
+//        低温度は Gemini の生成を「同じ確率的選択を繰り返す」状態に陥らせる。
+//   対策:
+//     1) 温度を上げ直す: 通常 0.5 / リトライ 0.7 (degenerate回避)
+//     2) degenerate 出力検知: 同じ文字が連続40回以上出たらエラーとして扱い
+//        自動リトライさせる(温度を上げて再試行)
+//     3) リトライ判定キーワードに「繰り返し」を追加
 //
 // ── y6.7 での修正点 ────────────────────────────────────────────
 // ・🔥 「学名フィールドにAIが注釈付きで値を入れてくる」問題を修正
@@ -399,6 +412,23 @@ async function _pbeRecompressForRetry(processedImage) {
 // ════════════════════════════════════════════════════════════════
 // Gemini Vision API 呼び出し
 // ════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════
+// [y6.8] degenerate 出力検知
+//   Gemini Vision が稀に「同じ文字を延々と繰り返す」異常レスポンスを返す
+//   ことがある(特に低温度時)。このパターンを検知してリトライ対象にする。
+//   検知ルール: 同じ非ASCII文字が連続40回以上現れる
+// ════════════════════════════════════════════════════════════════
+function _pbeDetectDegenerate(text) {
+  if (!text) return false;
+  // 同じ文字が連続40回以上 (非ASCII優先)
+  const m = text.match(/(.)\1{40,}/);
+  if (m) return true;
+  // 同じ短いパターンが20回以上
+  const m2 = text.match(/(.{2,5})\1{20,}/);
+  if (m2) return true;
+  return false;
+}
+
 function _pbeBuildVisionPrompt() {
   return `あなたはヘラクレスオオカブトの繁殖個体の出品ページを分析する専門家です。
 以下の出品ページのスクリーンショット画像を読み取り、種親の血統情報を構造化して抽出してください。
@@ -523,7 +553,7 @@ async function _pbeCallVision(imageDataUrl, apiKey, opts) {
       ],
     }],
     generationConfig: {
-      temperature:      isRetry ? 0.15 : 0.3,
+      temperature:      isRetry ? 0.7 : 0.5,    // [y6.8] 0.15→0.7, 0.3→0.5 (低温度はdegenerate繰り返しを誘発する)
       maxOutputTokens:  8192,
       topP:             isRetry ? 0.7 : 0.85,
       responseMimeType: 'application/json',
@@ -550,6 +580,12 @@ async function _pbeCallVision(imageDataUrl, apiKey, opts) {
       throw new Error('Geminiのセーフティフィルタにブロックされました');
     }
     throw new Error('Gemini レスポンスが空でした (finishReason=' + (finishReason || 'unknown') + ')');
+  }
+
+  // [y6.8] degenerate 出力 (同じ文字の異常繰り返し) を検知してリトライ対象に
+  if (_pbeDetectDegenerate(text)) {
+    console.warn('[PBE] Degenerate output detected (single). Head:', text.slice(0, 200));
+    throw new Error('Gemini が異常な繰り返し出力を返しました。再試行してください。');
   }
 
   // JSON パース (yahoo_listing.js と同等のフォールバック)
@@ -656,7 +692,7 @@ async function _pbeCallVisionMulti(imageDataUrls, apiKey, opts) {
   const body = {
     contents: [{ parts: parts }],
     generationConfig: {
-      temperature:      isRetry ? 0.15 : 0.3,
+      temperature:      isRetry ? 0.7 : 0.5,    // [y6.8] 0.15→0.7, 0.3→0.5 (低温度はdegenerate繰り返しを誘発する)
       maxOutputTokens:  8192,
       topP:             isRetry ? 0.7 : 0.85,
       responseMimeType: 'application/json',
@@ -687,6 +723,12 @@ async function _pbeCallVisionMulti(imageDataUrls, apiKey, opts) {
   // [y6.3] 切り捨て検知
   const wasTruncated = (finishReason === 'MAX_TOKENS');
   if (wasTruncated) console.warn('[PBE] Gemini response was truncated (MAX_TOKENS).');
+
+  // [y6.8] degenerate 出力 (同じ文字の異常繰り返し) を検知してリトライ対象に
+  if (_pbeDetectDegenerate(text)) {
+    console.warn('[PBE] Degenerate output detected (multi). Head:', text.slice(0, 200));
+    throw new Error('Gemini が異常な繰り返し出力を返しました。再試行してください。');
+  }
 
   // JSON パース
   let jsonStr = text.trim();
@@ -1054,7 +1096,7 @@ Pages._pbeRunExtraction = async function (parId) {
         raw = await _pbeCallVision(processedAll[0].image_data_url, key);
       } catch (e1) {
         const msg = String(e1.message || '');
-        const isRetriable = msg.includes('JSON') || msg.includes('切り捨て') || msg.includes('パース');
+        const isRetriable = msg.includes('JSON') || msg.includes('切り捨て') || msg.includes('パース') || msg.includes('繰り返し');
         if (isRetriable) {
           console.warn('[PBE] retrying single image with stronger compression...', e1);
           if (stat) stat.innerHTML = '🔄 再試行中... (画像を再圧縮)';
@@ -1083,7 +1125,7 @@ Pages._pbeRunExtraction = async function (parId) {
           partials.push(_pbeSanitizeBloodlineData(r));
         } catch (e1) {
           const msg = String(e1.message || '');
-          const isRetriable = msg.includes('JSON') || msg.includes('切り捨て') || msg.includes('パース');
+          const isRetriable = msg.includes('JSON') || msg.includes('切り捨て') || msg.includes('パース') || msg.includes('繰り返し');
           if (isRetriable) {
             console.warn('[PBE] retrying image #' + (i + 1) + ' with stronger compression...', e1);
             if (stat) stat.innerHTML = '🔄 ' + (i + 1) + '/' + processedAll.length + ' 枚目を再試行中...';
@@ -1602,4 +1644,4 @@ function _pbeMergeIntoStore() {
 // 外部からも呼べるように公開 (画面再描画前に明示的に呼ぶ用途)
 Pages._pbeMergeIntoStore = _pbeMergeIntoStore;
 
-console.log('[PBE] parent_bloodline_extract.js loaded build=20260426y6.7');
+console.log('[PBE] parent_bloodline_extract.js loaded build=20260426y6.8');
