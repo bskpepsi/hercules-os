@@ -2,7 +2,20 @@
 // ════════════════════════════════════════════════════════════════
 // parent_bloodline_extract.js — 種親血統情報の Vision 抽出機能
 //
-// build: 20260426y6.6
+// build: 20260426y6.7
+//
+// ── y6.7 での修正点 ────────────────────────────────────────────
+// ・🔥 「学名フィールドにAIが注釈付きで値を入れてくる」問題を修正
+//   症状: "Dynastes hercules hercules (D.Hヘラクレスと表記されているため、
+//        補完しています。画像内には明示されていません。)" のように、
+//        AIが指示を曲解して値の末尾に注釈を付けていた。
+//   対策:
+//     1) プロンプトで「注釈・補足・括弧書きは絶対に付けない」と明示
+//     2) 「画像内に書かれていない値は補完せず必ず null」と強調
+//     3) サニタイズ関数で末尾の注釈括弧書きを機械的に除去
+// ・🔥 マージ後ではなく各 partial のサニタイズタイミングを早期化
+//   注釈除去・null正規化を partial の段階で実施することで、
+//   マージで「長い文字列を優先」するロジックが注釈付き文字列を選ばないように。
 //
 // ── y6.6 での修正点 ────────────────────────────────────────────
 // ・🔥 「保存した血統情報がページ再読み込みで消える」バグを修正
@@ -396,6 +409,13 @@ function _pbeBuildVisionPrompt() {
 3. 購入条件・購入制約 (「幼虫販売目的不可」など) は**抽出しない**
 4. 画像内に書かれていない情報は捏造しない (推測値は null にする)
 5. 数値は画像内の表記を**そのまま**転記し、改変しない
+6. 🔥 各フィールドの値には**注釈・補足・括弧書きを絶対に付けない**。
+   悪い例: "Dynastes hercules hercules (D.Hヘラクレスと表記されているため、補完しています)"
+   良い例: "Dynastes hercules hercules"
+   補足が必要な情報は feature_notes フィールドに集約する。
+7. 🔥 画像内に明示されていない値は**補完せず、必ず null** を返す。
+   例: 学名が画像にないのに「D.Hヘラクレス」から学名を補完して書く → ❌ 必ず null に。
+8. 🔥 出力 JSON はプレーンな1段の構造化データのみ。注釈テキストや解説文を JSON の前後に書かない。
 
 ━━━ 抽出対象 ━━━
 出品ページから以下の情報を読み取ってください:
@@ -817,6 +837,25 @@ function _pbeSanitizeBloodlineData(data) {
   allowed.forEach(function (k) {
     if (data[k] !== undefined) out[k] = data[k];
   });
+
+  // [y6.7] 各文字列フィールドから注釈・括弧書きを自動除去
+  //   AI が指示を曲解して "Dynastes hercules hercules (D.Hヘラクレスと表記されているため、補完しています)"
+  //   のように長文の注釈を付けてくることがあるため、半角/全角括弧で囲まれた
+  //   注釈ぽい部分を機械的に除去する。
+  const stripFields = ['species_full', 'common_name', 'origin', 'generation',
+                       'eclosion_period', 'paternal_blood', 'maternal_blood'];
+  stripFields.forEach(function (f) {
+    if (out[f] && typeof out[f] === 'string') {
+      // 末尾の (注釈) を除去 (半角・全角両対応)
+      let v = String(out[f]).trim();
+      // 「補完しています」「明示されていません」「と表記」など、注釈らしい文言を含む括弧書きを除去
+      v = v.replace(/[\s　]*[(（][^)）]{6,}(?:補完|明示|表記|推測|思われ|可能性|該当|読み取れ)[^)）]*[)）][\s　]*$/g, '').trim();
+      // それでも残った長い末尾括弧を除去 (15文字超の括弧書きは注釈と判定)
+      v = v.replace(/[\s　]*[(（][^)）]{15,}[)）][\s　]*$/g, '').trim();
+      out[f] = v || null;
+    }
+  });
+
   // body_size_mm は数値化
   if (out.body_size_mm != null && typeof out.body_size_mm !== 'number') {
     const n = parseFloat(out.body_size_mm);
@@ -1040,7 +1079,8 @@ Pages._pbeRunExtraction = async function (parId) {
         }
         try {
           const r = await _pbeCallVision(processedAll[i].image_data_url, key);
-          partials.push(r);
+          // [y6.7] 各 partial をサニタイズしてからマージ。注釈除去・null正規化を先行実施。
+          partials.push(_pbeSanitizeBloodlineData(r));
         } catch (e1) {
           const msg = String(e1.message || '');
           const isRetriable = msg.includes('JSON') || msg.includes('切り捨て') || msg.includes('パース');
@@ -1050,7 +1090,7 @@ Pages._pbeRunExtraction = async function (parId) {
             const retryUrl = await _pbeRecompressForRetry(processedAll[i]);
             try {
               const r = await _pbeCallVision(retryUrl, key, { isRetry: true });
-              partials.push(r);
+              partials.push(_pbeSanitizeBloodlineData(r));
             } catch (e2) {
               console.warn('[PBE] image #' + (i + 1) + ' failed twice, skipping', e2);
               // この1枚は諦めて次へ (1枚失敗しても他の枚で抽出続行)
@@ -1562,4 +1602,4 @@ function _pbeMergeIntoStore() {
 // 外部からも呼べるように公開 (画面再描画前に明示的に呼ぶ用途)
 Pages._pbeMergeIntoStore = _pbeMergeIntoStore;
 
-console.log('[PBE] parent_bloodline_extract.js loaded build=20260426y6.6');
+console.log('[PBE] parent_bloodline_extract.js loaded build=20260426y6.7');
