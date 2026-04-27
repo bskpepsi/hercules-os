@@ -2,7 +2,24 @@
 // ════════════════════════════════════════════════════════════════
 // parent_bloodline_extract.js — 種親血統情報の Vision 抽出機能
 //
-// build: 20260426y6.8
+// build: 20260426y6.9
+//
+// ── y6.9 での修正点 ────────────────────────────────────────────
+// ・🔥 「同じ注釈フレーズが繰り返される」degenerate パターンに対応
+//   症状: y6.8の単一文字繰り返し対策後、AIが今度は
+//         「Dynastes hercules hercules と表記されているため、補完しています。
+//          Dynastes hercules hercules と表記されているため、補完しています。
+//          ...」のように長文を繰り返す形に変化。レスポンス末尾は
+//         「Dynastes hercules h」で切り捨てられJSON parse失敗。
+//   対策:
+//     1) degenerate検知ルール強化:
+//        ・同じ長文(10〜200字)が3回以上繰り返しのパターンを検知
+//        ・1000字超のレスポンスで20字スライスが5回以上現れるかをチェック
+//     2) 各フィールドに長さ上限を設定 (species_full=60字 等)
+//        超えた値は null として捨てる(マージで誤って採用されるのを防ぐ)
+//     3) 「と表記されているため」「補完しています」等の注釈フレーズが
+//        フィールド値の途中に含まれていたら、その手前で機械的に切る
+//     4) 各フィールド単位でも degenerate 検知を実施
 //
 // ── y6.8 での修正点 ────────────────────────────────────────────
 // ・🔥 Gemini Vision の「同じ文字を延々と繰り返す異常出力」(degenerate output)を解決
@@ -416,16 +433,35 @@ async function _pbeRecompressForRetry(processedImage) {
 // [y6.8] degenerate 出力検知
 //   Gemini Vision が稀に「同じ文字を延々と繰り返す」異常レスポンスを返す
 //   ことがある(特に低温度時)。このパターンを検知してリトライ対象にする。
-//   検知ルール: 同じ非ASCII文字が連続40回以上現れる
+// [y6.9] 検知ルール強化
+//   ・同じ単一文字が連続40回以上 (ෛෛෛෛ... 等)
+//   ・同じ短いパターン(2〜5字)が20回以上
+//   ・同じ長文(10〜200字)が3回以上連続 ← y6.9で追加
+//     例: 「Dynastes hercules hercules と表記されているため、補完しています。」
+//     のような注釈フレーズが何度も繰り返されるケース。
 // ════════════════════════════════════════════════════════════════
 function _pbeDetectDegenerate(text) {
   if (!text) return false;
-  // 同じ文字が連続40回以上 (非ASCII優先)
-  const m = text.match(/(.)\1{40,}/);
-  if (m) return true;
-  // 同じ短いパターンが20回以上
-  const m2 = text.match(/(.{2,5})\1{20,}/);
-  if (m2) return true;
+  // ルール1: 同じ文字が連続40回以上
+  if (text.match(/(.)\1{40,}/)) return true;
+  // ルール2: 同じ短いパターンが20回以上
+  if (text.match(/(.{2,5})\1{20,}/)) return true;
+  // [y6.9] ルール3: 同じ長文(10〜200字)が3回以上繰り返し
+  //   注: 短文の繰り返しは普通の文章でも起きうるので 10字以上に絞る
+  if (text.match(/(.{10,200}?)\1{2,}/)) return true;
+  // [y6.9] ルール4: 出力全体に対する重複率チェック
+  //   レスポンス長 > 1000字 かつ、同じ20字の連続が文書全体で5回以上現れる
+  if (text.length > 1000) {
+    const sliced = text.slice(0, 5000);
+    // 任意の20字スライスが5回以上現れる場合
+    for (let i = 0; i < sliced.length - 20; i += 50) {
+      const sample = sliced.slice(i, i + 20);
+      if (!sample.trim()) continue;
+      const escaped = sample.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const matches = sliced.match(new RegExp(escaped, 'g'));
+      if (matches && matches.length >= 5) return true;
+    }
+  }
   return false;
 }
 
@@ -867,6 +903,21 @@ function _pbeMergePartials(partials) {
 // ════════════════════════════════════════════════════════════════
 // 抽出結果のサニタイズ (販売者名等が混入していたら除去)
 // ════════════════════════════════════════════════════════════════
+//
+// [y6.9] フィールドの妥当性チェック表
+//   学名・累代・産地などは「常識的にこの長さに収まる」べきフィールド。
+//   AI が長文の注釈や本文を混入させてきたら、ここで弾く。
+const PBE_FIELD_MAX_LEN = {
+  species_full:    60,    // "Dynastes hercules hercules" = 26字
+  common_name:     30,    // "ヘラクレスオオカブト" = 10字
+  origin:          40,    // "グアドループ" / "Guadeloupe"
+  generation:      10,    // "CB" / "WD" / "CBF2" など
+  eclosion_period: 30,    // "2025/8/中旬" / "2024年12月"
+  paternal_blood:  300,   // 血統表記は長くなりうる
+  maternal_blood:  300,
+  feature_notes:   500,   // 特徴説明
+};
+
 function _pbeSanitizeBloodlineData(data) {
   if (!data || typeof data !== 'object') return null;
   // 想定外フィールドが万一混入してもこの段階で除去
@@ -881,20 +932,47 @@ function _pbeSanitizeBloodlineData(data) {
   });
 
   // [y6.7] 各文字列フィールドから注釈・括弧書きを自動除去
-  //   AI が指示を曲解して "Dynastes hercules hercules (D.Hヘラクレスと表記されているため、補完しています)"
-  //   のように長文の注釈を付けてくることがあるため、半角/全角括弧で囲まれた
-  //   注釈ぽい部分を機械的に除去する。
   const stripFields = ['species_full', 'common_name', 'origin', 'generation',
                        'eclosion_period', 'paternal_blood', 'maternal_blood'];
   stripFields.forEach(function (f) {
     if (out[f] && typeof out[f] === 'string') {
-      // 末尾の (注釈) を除去 (半角・全角両対応)
       let v = String(out[f]).trim();
-      // 「補完しています」「明示されていません」「と表記」など、注釈らしい文言を含む括弧書きを除去
+      // 末尾の括弧書き注釈を除去 (注釈キーワード含む)
       v = v.replace(/[\s　]*[(（][^)）]{6,}(?:補完|明示|表記|推測|思われ|可能性|該当|読み取れ)[^)）]*[)）][\s　]*$/g, '').trim();
-      // それでも残った長い末尾括弧を除去 (15文字超の括弧書きは注釈と判定)
+      // 残った長い末尾括弧を除去 (15文字超)
       v = v.replace(/[\s　]*[(（][^)）]{15,}[)）][\s　]*$/g, '').trim();
+      // [y6.9] 「と表記されているため」「補完しています」等の注釈フレーズが含まれていたら、その手前で切る
+      const annotationPatterns = [
+        /[\s　]*と表記されているため.*$/,
+        /[\s　]*補完しています.*$/,
+        /[\s　]*明示されていません.*$/,
+        /[\s　]*画像内には.*$/,
+        /[\s　]*推測.*$/,
+        /[\s　]*記載されていません.*$/,
+        /[\s　]*ですが.*$/,           // 学名以降に文章が続いてる場合
+      ];
+      annotationPatterns.forEach(function (re) {
+        v = v.replace(re, '').trim();
+      });
       out[f] = v || null;
+    }
+  });
+
+  // [y6.9] 各フィールドの長さ上限チェック: 超えたら null に
+  Object.keys(PBE_FIELD_MAX_LEN).forEach(function (f) {
+    const max = PBE_FIELD_MAX_LEN[f];
+    if (out[f] && typeof out[f] === 'string' && out[f].length > max) {
+      console.warn('[PBE] field "' + f + '" too long (' + out[f].length + ' chars > ' + max + '), discarding:', out[f].slice(0, 100));
+      out[f] = null;
+    }
+  });
+
+  // [y6.9] 各文字列フィールドが degenerate パターン (同じ短文の繰り返し) なら null に
+  ['species_full', 'common_name', 'origin', 'generation', 'eclosion_period',
+   'paternal_blood', 'maternal_blood', 'feature_notes'].forEach(function (f) {
+    if (out[f] && typeof out[f] === 'string' && _pbeDetectDegenerate(out[f])) {
+      console.warn('[PBE] field "' + f + '" contains degenerate pattern, discarding');
+      out[f] = null;
     }
   });
 
@@ -1644,4 +1722,4 @@ function _pbeMergeIntoStore() {
 // 外部からも呼べるように公開 (画面再描画前に明示的に呼ぶ用途)
 Pages._pbeMergeIntoStore = _pbeMergeIntoStore;
 
-console.log('[PBE] parent_bloodline_extract.js loaded build=20260426y6.8');
+console.log('[PBE] parent_bloodline_extract.js loaded build=20260426y6.9');
