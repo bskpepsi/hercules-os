@@ -2,7 +2,22 @@
 // ════════════════════════════════════════════════════════════════
 // parent_bloodline_extract.js — 種親血統情報の Vision 抽出機能
 //
-// build: 20260426y6.10
+// build: 20260426y6.11
+//
+// ── y6.11 での修正点 ──────────────────────────────────────────
+// ・🔥 GAS バックエンド連携でクラウド同期対応 (複数人運用OK)
+//   PC で抽出 → スマホで参照、その逆も可能になる。
+//   ・bloodline_data: 種親台帳シートの bloodline_data_json 列に JSON保存
+//   ・source_screenshots: メタデータを source_screenshots_json 列に保存
+//   ・スクショ画像本体: Google Drive (HerculesOS_Screenshots) に保存
+//   ・更新日時: bloodline_updated_at 列に記録
+// ・前提となる GAS 側の作業 (build 20260428c parent_bloodline.gs):
+//   ・hcosSetupBloodlineSync() で列追加・Drive フォルダ作成
+//   ・doPost に uploadParentScreenshot / updateParentBloodline を追加
+// ・既存の localStorage 永続化はオフライン用バックアップとして維持
+// ・syncAll で取得した parents の *_json 列を JSON.parse して展開
+// ・画像表示: image_data_url(ローカル) → drive_view_url(クラウド) の順
+// ・GAS 通信失敗時もアプリは止まらず、ローカル保存だけで完結する設計
 //
 // ── y6.10 での修正点 ───────────────────────────────────────────
 // ・🔥 プロンプトを抜本的に書き直し
@@ -348,10 +363,11 @@ function _pbeGetParent(parId) {
 }
 
 // 種親レコード更新 (PBE 専用 localStorage に保存し、Store にもメモリ反映)
+// [y6.11] クラウド同期対応: GAS API にも保存する
 async function _pbePatchParent(parId, patch) {
   const realParId = _pbeResolveParId(parId);
 
-  // [y6.6] PBE 専用 localStorage に永続化 (syncAll で消えない)
+  // [y6.6] PBE 専用 localStorage に永続化 (syncAll で消えない・オフライン用バックアップ)
   const store = _pbeLoadStore();
   const existing = store[realParId] || {};
   const next = {
@@ -364,11 +380,121 @@ async function _pbePatchParent(parId, patch) {
   store[realParId] = next;
   _pbeSaveStore(store);
 
-  // Store のメモリ DB にもメモリ反映 (画面再描画用)。これは syncAll で上書きされても
-  // 次回の _pbeGetParent でまた PBE レイヤーから補完されるので問題ない。
+  // [y6.6] Store のメモリ DB にもメモリ反映 (画面再描画用)
   if (Store.patchDBItem) {
     Store.patchDBItem('parents', 'par_id', realParId, patch);
   }
+
+  // [y6.11] GAS にも保存 (デバイス間同期)
+  //   ・bloodline_data: JSON.stringify して bloodline_data_json 列に保存
+  //   ・source_screenshots: 画像本体は除いてメタデータのみ source_screenshots_json 列に保存
+  //   ・更新時刻: bloodline_updated_at 列に保存
+  //   ・失敗してもアプリ全体を止めず、ローカル保存だけで完結する
+  try {
+    const cloudPayload = { par_id: realParId };
+    if (next.bloodline_data !== undefined) {
+      cloudPayload.bloodline_data_json = next.bloodline_data
+        ? JSON.stringify(next.bloodline_data) : '';
+    }
+    if (next.source_screenshots !== undefined) {
+      // 画像本体 (image_data_url / thumbnail_data_url) は GAS には送らない
+      // (Sheets セル容量制限・ペイロード肥大化防止のため)
+      const stripped = (next.source_screenshots || []).map(function (s) {
+        return {
+          id:                 s.id,
+          uploaded_at:        s.uploaded_at,
+          drive_file_id:      s.drive_file_id || null,
+          drive_view_url:     s.drive_view_url || null,
+          drive_file_url:     s.drive_file_url || null,
+          extraction_status:  s.extraction_status,
+          extracted_at:       s.extracted_at,
+          filename:           s.filename || null,
+        };
+      });
+      cloudPayload.source_screenshots_json = JSON.stringify(stripped);
+    }
+    cloudPayload.bloodline_updated_at = next.updated_at;
+
+    const result = await _pbeCallGAS('updateParentBloodline', cloudPayload);
+    if (result && result.ok === false) {
+      console.warn('[PBE] GAS sync warning:', result.error);
+    } else {
+      console.log('[PBE] cloud sync success', { par_id: realParId });
+    }
+  } catch (e) {
+    // GAS 通信失敗してもローカルには保存できているので、アプリ全体は止めない
+    console.warn('[PBE] cloud sync failed (localStorage は保存済み):', e.message || e);
+  }
+}
+
+// ════════════════════════════════════════════════════════════════
+// [y6.11] GAS API ラッパー
+// ────────────────────────────────────────────────────────────────
+// 既存の API.js (call) はクロージャ内に閉じているため直接呼べない。
+// CONFIG.GAS_URL を読んで自前で fetch する。
+// 既存の call() と同じ仕様 (GET, payload を JSON.stringify してクエリに乗せる)。
+// ════════════════════════════════════════════════════════════════
+async function _pbeCallGAS(action, payload) {
+  const url = (window.CONFIG && CONFIG.GAS_URL)
+            || localStorage.getItem('hcos_gas_url')
+            || '';
+  if (!url) throw new Error('GAS URL が設定されていません');
+  const params = new URLSearchParams({
+    action: action,
+    payload: JSON.stringify(payload || {}),
+  });
+  const fullUrl = url + '?' + params.toString();
+  const ctrl = new AbortController();
+  const tid  = setTimeout(function () { ctrl.abort(); }, 60000);  // 60秒タイムアウト
+  try {
+    const res = await fetch(fullUrl, {
+      method:   'GET',
+      redirect: 'follow',
+      signal:   ctrl.signal,
+    });
+    clearTimeout(tid);
+    if (!res.ok) throw new Error('HTTP ' + res.status + ' (action=' + action + ')');
+    const text = await res.text();
+    let json;
+    try { json = JSON.parse(text); }
+    catch (_) {
+      throw new Error('GAS が JSON を返しませんでした');
+    }
+    if (!json.ok) throw new Error(json.error || 'GASエラー (action=' + action + ')');
+    return json.data;
+  } catch (e) {
+    clearTimeout(tid);
+    throw e;
+  }
+}
+
+// [y6.11] スクショを Drive にアップロード
+//   Drive へのアップロードに成功したら drive_file_id, drive_view_url を返す
+async function _pbeUploadScreenshotToDrive(parId, processedImage, shotId) {
+  // image_data_url からヘッダーを除去して base64 部分だけ取り出す
+  const m = String(processedImage.image_data_url || '').match(/^data:([^;]+);base64,(.+)$/);
+  if (!m) {
+    throw new Error('画像データの形式が不正です');
+  }
+  const mimeType = m[1];
+  const base64   = m[2];
+
+  const result = await _pbeCallGAS('uploadParentScreenshot', {
+    par_id:    parId,
+    base64:    base64,
+    mime_type: mimeType,
+    shot_id:   shotId,
+  });
+
+  if (!result || result.ok === false) {
+    throw new Error((result && result.error) || 'Drive へのアップロードに失敗');
+  }
+  return {
+    drive_file_id:  result.file_id,
+    drive_view_url: result.view_url,
+    drive_file_url: result.file_url,
+    filename:       result.filename,
+  };
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -1433,6 +1559,7 @@ Pages._pbeSaveEditor = async function () {
   });
 
   // [y6.2] 全スクショを source_screenshots に追加
+  // [y6.11] Drive にもアップロード
   const imagesArr = ctx.processedImages || [];
   const newShots = imagesArr.map(function (img) {
     return {
@@ -1449,6 +1576,29 @@ Pages._pbeSaveEditor = async function () {
   if (parId) {
     const par = _pbeGetParent(parId);
     const existingShots = (par && par.source_screenshots) || [];
+
+    // [y6.11] Drive に新スクショを並列アップロード
+    if (newShots.length > 0) {
+      UI.toast('スクショを Drive にアップロード中... (' + newShots.length + '枚)', 'info');
+      const uploadResults = await Promise.allSettled(newShots.map(function (shot, idx) {
+        return _pbeUploadScreenshotToDrive(parId, imagesArr[idx], shot.id);
+      }));
+      uploadResults.forEach(function (r, idx) {
+        if (r.status === 'fulfilled' && r.value) {
+          newShots[idx].drive_file_id  = r.value.drive_file_id;
+          newShots[idx].drive_view_url = r.value.drive_view_url;
+          newShots[idx].drive_file_url = r.value.drive_file_url;
+          newShots[idx].filename       = r.value.filename;
+        } else {
+          console.warn('[PBE] Drive upload failed for shot #' + (idx + 1),
+                       r.reason && r.reason.message);
+          // Drive アップロード失敗してもローカルには保存される
+        }
+      });
+      const successCount = uploadResults.filter(function (r) { return r.status === 'fulfilled'; }).length;
+      console.log('[PBE] Drive uploads: ' + successCount + '/' + newShots.length + ' 成功');
+    }
+
     const patch = {
       bloodline_data:        bld,
       bloodline_updated_at:  _pbeNowIso(),
@@ -1529,7 +1679,10 @@ function _pbeRenderBloodlineCard(par) {
     : '';
 
   const shotsThumbs = (par.source_screenshots || []).map(function (s) {
-    return '<img src="' + s.thumbnail_data_url + '" '
+    // [y6.11] thumbnail_data_url が無ければ Drive URL を使う (クラウド経由で読み込んだ場合)
+    const imgSrc = s.thumbnail_data_url || s.drive_view_url || '';
+    if (!imgSrc) return '';
+    return '<img src="' + imgSrc + '" '
       + 'style="width:48px;height:48px;object-fit:cover;border-radius:4px;border:1px solid var(--surface3);cursor:pointer" '
       + 'onclick="Pages._pbeViewScreenshot(\'' + _pbeEsc(par.par_id) + '\',\'' + _pbeEsc(s.id) + '\')">';
   }).join('');
@@ -1593,10 +1746,19 @@ Pages._pbeViewScreenshot = function (parId, shotId) {
   if (!par) return;
   const shot = (par.source_screenshots || []).find(function (s) { return s.id === shotId; });
   if (!shot) return;
+  // [y6.11] image_data_url 優先 (端末ローカル) → 無ければ drive_view_url (クラウド)
+  const imgSrc = shot.image_data_url || shot.drive_view_url || shot.thumbnail_data_url || '';
+  const driveLink = shot.drive_file_url
+    ? '<a href="' + shot.drive_file_url + '" target="_blank" '
+      + 'style="font-size:.72rem;color:var(--accent);text-decoration:underline;margin-left:8px">'
+      + '📁 Driveで開く</a>'
+    : '';
   const html = '<div class="modal-title">📷 スクリーンショット</div>'
     + '<div style="text-align:center;padding:8px">'
-    + '  <img src="' + shot.image_data_url + '" style="max-width:100%;max-height:70vh;border-radius:6px">'
-    + '  <div style="font-size:.74rem;color:var(--text3);margin-top:6px">アップロード: ' + _pbeEsc(shot.uploaded_at) + '</div>'
+    + '  <img src="' + imgSrc + '" style="max-width:100%;max-height:70vh;border-radius:6px">'
+    + '  <div style="font-size:.74rem;color:var(--text3);margin-top:6px">'
+    + '    アップロード: ' + _pbeEsc(shot.uploaded_at) + driveLink
+    + '  </div>'
     + '</div>'
     + '<div class="modal-footer">'
     + '  <button class="btn btn-ghost" style="flex:1"'
@@ -1682,8 +1844,10 @@ Pages._pbeRenderBloodlineCard = _pbeRenderBloodlineCard;
 // [y6.6] Store.parents に PBE データを自動マージするフック
 //   syncAll で parents が GAS から再取得されても、その直後に PBE レイヤーの
 //   bloodline_data / source_screenshots を自動で各 parent オブジェクトに注入する。
-//   これにより yahoo_listing.js などの他モジュールも普通に
-//   par.bloodline_data でアクセスできる。
+// [y6.11] クラウド同期対応:
+//   GAS から取得した parents の bloodline_data_json / source_screenshots_json
+//   を JSON.parse して bloodline_data / source_screenshots に展開する。
+//   さらにその結果を localStorage にキャッシュ(オフライン用)。
 // ════════════════════════════════════════════════════════════════
 function _pbeMergeIntoStore() {
   if (!window.Store || typeof Store.getDB !== 'function') return;
@@ -1691,7 +1855,45 @@ function _pbeMergeIntoStore() {
   if (!Array.isArray(parents) || !parents.length) return;
   const pbeStore = _pbeLoadStore();
   let modified = false;
+  let cloudUpdated = false;
+
   parents.forEach(function (par) {
+    // [y6.11] クラウドデータの展開 (GAS から来た bloodline_data_json をパース)
+    if (par.bloodline_data_json && !par.bloodline_data) {
+      try {
+        par.bloodline_data = JSON.parse(par.bloodline_data_json);
+        modified = true;
+        cloudUpdated = true;
+      } catch (e) {
+        console.warn('[PBE] bloodline_data_json parse failed for', par.par_id, e);
+      }
+    }
+    // [y6.11] source_screenshots_json をパース (画像本体は Drive URL から取得)
+    if (par.source_screenshots_json && !par.source_screenshots) {
+      try {
+        par.source_screenshots = JSON.parse(par.source_screenshots_json);
+        modified = true;
+        cloudUpdated = true;
+      } catch (e) {
+        console.warn('[PBE] source_screenshots_json parse failed for', par.par_id, e);
+      }
+    }
+    if (par.bloodline_updated_at && cloudUpdated) {
+      // 更新日時はクラウドの値をそのまま使う
+    }
+
+    // [y6.11] クラウドから取得したデータを localStorage にもキャッシュ
+    //   (将来的にオフライン時でも参照できるよう)
+    if (cloudUpdated && par.par_id && (par.bloodline_data || par.source_screenshots)) {
+      pbeStore[par.par_id] = {
+        bloodline_data:     par.bloodline_data,
+        source_screenshots: par.source_screenshots,
+        updated_at:         par.bloodline_updated_at || _pbeNowIso(),
+      };
+    }
+
+    // [y6.6] localStorage 側にデータがあって parent にまだセットされていない場合は補完
+    //   (オフライン環境やクラウド同期失敗時のバックアップ層)
     const rec = pbeStore[par.par_id];
     if (rec) {
       if (rec.bloodline_data !== undefined && par.bloodline_data === undefined) {
@@ -1708,6 +1910,11 @@ function _pbeMergeIntoStore() {
       }
     }
   });
+  // [y6.11] クラウドから新しいデータを取得した場合、localStorage キャッシュに永続化
+  if (cloudUpdated) {
+    _pbeSaveStore(pbeStore);
+    console.log('[PBE] cloud data cached to localStorage');
+  }
   return modified;
 }
 
@@ -1728,4 +1935,4 @@ function _pbeMergeIntoStore() {
 // 外部からも呼べるように公開 (画面再描画前に明示的に呼ぶ用途)
 Pages._pbeMergeIntoStore = _pbeMergeIntoStore;
 
-console.log('[PBE] parent_bloodline_extract.js loaded build=20260426y6.10');
+console.log('[PBE] parent_bloodline_extract.js loaded build=20260426y6.11');
