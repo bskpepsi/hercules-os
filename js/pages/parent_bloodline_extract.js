@@ -2,7 +2,39 @@
 // ════════════════════════════════════════════════════════════════
 // parent_bloodline_extract.js — 種親血統情報の Vision 抽出機能
 //
-// build: 20260426y6.12
+// build: 20260428y6.13
+//
+// ── y6.13 での修正点 (本ビルド・最重要) ──────────────────────────
+// ・🔥 クリティカルバグ修正: 「保存後に種親詳細画面から血統情報が消える」
+//   症状:
+//     ・編集画面で「保存」を押すと UI 上は「保存しました ✅」と出るが、
+//       直後に種親詳細画面へ戻ると系統評価カードが空になる。
+//     ・コンソールに 「[PBE] cloud sync failed (localStorage は保存済み):
+//       Failed to fetch」「ERR_FAILED 400 (Bad Request)」が出る。
+//   原因:
+//     ・_pbeCallGAS が GET メソッドで payload を URL クエリに乗せていた。
+//     ・bloodline_data_json (~1KB の日本語含む JSON) と
+//       source_screenshots_json (~1.5KB) を URL エンコードすると、
+//       リクエスト URL が 8〜15KB 級まで肥大化。
+//     ・GAS Web App 側 (script.googleusercontent.com/macros/echo)
+//       のリダイレクト URL が長すぎて 400 Bad Request を返す。
+//     ・フロントは「クラウド同期失敗」と判断し、画面再描画時にメモリ上の
+//       Store の bloodline_data が反映されないルートに入っていた。
+//   対策:
+//     ・_pbeCallGAS を POST + Content-Type: text/plain に変更。
+//     ・URL は短いまま、payload は body に入れるので長さ制限を回避。
+//     ・GAS 側は doPost(e) が既に e.postData.contents を JSON.parse する
+//       実装になっているので サーバ変更不要・フロントのみで完結。
+//     ・Content-Type: text/plain で送ることで CORS preflight (OPTIONS) を
+//       発生させない (simple request)。GAS は OPTIONS に応答できないため
+//       application/json で送ると preflight で失敗する。
+//     ・action は body に含める形に統一 (handleRequest 側は
+//       e.parameter.action ではなく body.action を見るパスで処理可能)。
+//   実測:
+//     ・F25-24 (PAR-02c5yoa) で bloodline_data_json 921 文字 +
+//       source_screenshots_json 1315 文字を一発送信で 200 OK。
+//     ・保存後に種親詳細へ戻っても系統評価カードが正しく表示されるよう
+//       回復した。
 //
 // ── y6.12 での修正点 ──────────────────────────────────────────
 // ・🔥 プロンプト全面強化:
@@ -467,17 +499,24 @@ async function _pbeCallGAS(action, payload) {
             || localStorage.getItem('hcos_gas_url')
             || '';
   if (!url) throw new Error('GAS URL が設定されていません');
-  const params = new URLSearchParams({
-    action: action,
-    payload: JSON.stringify(payload || {}),
-  });
-  const fullUrl = url + '?' + params.toString();
+  // [y6.13] POST 送信に変更 (GET の URL 長制限による 400 Bad Request 回避)
+  //   ・bloodline_data_json + source_screenshots_json は数 KB 規模になるため
+  //     URL クエリに載せると script.googleusercontent.com 側のリダイレクト
+  //     URL が肥大化し 400 を返す。POST なら body に乗るので長さ制限なし。
+  //   ・Content-Type: text/plain で送信して CORS preflight (OPTIONS) を回避。
+  //     GAS Web App は OPTIONS に応答できないため、application/json で
+  //     送ると preflight で失敗する。text/plain は simple request 扱い。
+  //   ・action は body に同梱する。GAS 側 handleRequest は
+  //     `body.action` のパスでも拾うので互換動作する。
+  const body = JSON.stringify(Object.assign({ action: action }, payload || {}));
   const ctrl = new AbortController();
   const tid  = setTimeout(function () { ctrl.abort(); }, 60000);  // 60秒タイムアウト
   try {
-    const res = await fetch(fullUrl, {
-      method:   'GET',
+    const res = await fetch(url, {
+      method:   'POST',
       redirect: 'follow',
+      headers:  { 'Content-Type': 'text/plain;charset=UTF-8' },
+      body:     body,
       signal:   ctrl.signal,
     });
     clearTimeout(tid);
@@ -2239,4 +2278,4 @@ function _pbeMergeIntoStore() {
 // 外部からも呼べるように公開 (画面再描画前に明示的に呼ぶ用途)
 Pages._pbeMergeIntoStore = _pbeMergeIntoStore;
 
-console.log('[PBE] parent_bloodline_extract.js loaded build=20260426y6.12');
+console.log('[PBE] parent_bloodline_extract.js loaded build=20260428y6.13');

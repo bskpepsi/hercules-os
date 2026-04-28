@@ -2,8 +2,47 @@
 // ════════════════════════════════════════════════════════════════
 // yahoo_listing.js — ヤフオク出品AIジェネレーター（手動入力モード）
 //
-// build: 20260426y6
+// build: 20260428y6.3
 // 要件定義書: HerculesOS_ヤフオク出品AIジェネレーター_要件定義書_v1.0
+//
+// ── y6.3 での修正点 (本ビルド) ──────────────────────────────────
+// ・🔥 種親情報の完全血統表記を実装 (paternal_raw（祖父サイズmm）×maternal_raw（祖母サイズmm）)
+//   症状:
+//     ・出品文の【種親情報】セクションに paternal_raw のみ転記され
+//       「♂:①172.1mm(SDU A-11.大和)」のように祖父祖母情報が欠落していた。
+//     ・本来の期待は「♂:①172.1mm（SDU A-11.大和（175mm）×大和（77mm）)」
+//       のような完全な血統表記。
+//   対応:
+//     ・father / mother オブジェクトに par_id / father_parent_size_mm /
+//       mother_parent_size_mm / bloodline_data を追加。
+//     ・_buildFullBloodline ヘルパーで paternal_raw（XXmm）×maternal_raw（YYmm）
+//       の形を生成し、fatherList[*].blood_full / motherList[*].blood_full に保持。
+//     ・AIプロンプトで blood_full を渡し、完全表記を本文中に転記させる。
+// ・🔥 種親番号付与ルールの変更 (1人なら ① 省略, 複数なら ①②③)
+//   症状:
+//     ・♂親が1種類だけなのに出品文中に「♂:①172.1mm」と ① が付き不自然だった。
+//   対応:
+//     ・_formatParentListText を新設し、リストの長さが 1 なら番号空文字、
+//       2 以上なら ①②③… で列挙する形に統一。
+//     ・AIプロンプト本体の 【種親情報】セクション説明文を新ルールに更新。
+// ・🔥 種親親リストの重複排除を line ベース → par_id ベースに変更
+//   ・複数 line セットで同じ種親♂を共有しているケースで二重表示されない。
+//   ・par_id が無い親は paternal_raw + maternal_raw + size_mm のフィンガー
+//     プリントで近似排除。
+// ・🔥 ラベル微調整 UI (インライン編集) を新設
+//   症状:
+//     ・ラベルがそのまま発行されて修正できない。血統原文・サイズ・孵化日
+//       など多少修正してから印刷したいケースに対応していなかった。
+//   対応:
+//     ・各ラベルプレビューカード下に「✏️ 編集」ボタンを追加。
+//     ・タイトル / ♂サイズ / ♂血統 / ♀サイズ / ♀血統 / 日付ラベル / 日付値
+//       をインラインで編集可能に。
+//     ・「🔄 反映してプレビュー再生成」で当該ラベルだけ PNG 再生成。
+//     ・「↩ 元に戻す」で当該個体のオーバーライドを破棄してデフォルトに戻す。
+//     ・編集値は window.__ylLabelOverrides[uid] に保持され、印刷時にも適用。
+// ・🔥 ラベル本体のデフォルト血統表記も完全形に
+//   ・_ylBuildLabelHTML で paternal_raw のみ → blood_full に切り替え。
+//   ・60mm幅で長文の折り返し対応は既存ロジック (フォント自動縮小) のまま継続。
 //
 // ── y6 での修正点 ─────────────────────────────────────────────
 // ・🔥 種親に紐づく Vision 抽出データ (bloodline_data) を出品文生成に統合
@@ -1101,16 +1140,28 @@ Pages.yahooListing = function (params = {}) {
           memo:         line.memo        || '',
         },
         father: father ? {
-          size_mm:       father.size_mm  || '',
-          paternal_raw:  father.paternal_raw || '',
-          maternal_raw:  father.maternal_raw || '',
-          memo:          father.memo     || '',
+          // [y6.3] 種親情報を完全表記にするため par_id・祖父祖母サイズを追加
+          //   出品文の【種親情報】セクションで「paternal_raw（祖父サイズ mm）×
+          //   maternal_raw（祖母サイズ mm）」の完全血統表記を生成するために使う。
+          par_id:                  father.par_id || '',
+          size_mm:                 father.size_mm || '',
+          paternal_raw:            father.paternal_raw || '',
+          maternal_raw:            father.maternal_raw || '',
+          father_parent_size_mm:   father.father_parent_size_mm || '',
+          mother_parent_size_mm:   father.mother_parent_size_mm || '',
+          // [y6] Vision抽出された系統評価データ (parent_bloodline_extract.js が注入)
+          bloodline_data:          father.bloodline_data || null,
+          memo:                    father.memo || '',
         } : null,
         mother: mother ? {
-          size_mm:       mother.size_mm  || '',
-          paternal_raw:  mother.paternal_raw || '',
-          maternal_raw:  mother.maternal_raw || '',
-          memo:          mother.memo     || '',
+          par_id:                  mother.par_id || '',
+          size_mm:                 mother.size_mm || '',
+          paternal_raw:            mother.paternal_raw || '',
+          maternal_raw:            mother.maternal_raw || '',
+          father_parent_size_mm:   mother.father_parent_size_mm || '',
+          mother_parent_size_mm:   mother.mother_parent_size_mm || '',
+          bloodline_data:          mother.bloodline_data || null,
+          memo:                    mother.memo || '',
         } : null,
         refs,
         ind, // そのまま
@@ -1151,57 +1202,120 @@ Pages.yahooListing = function (params = {}) {
 
     // ライン情報整形 (重複排除・line_code除外)
     // [y3] さらに種親♂♀をラインごとに集約してナンバリング用リストを作成
-    const seenLines = new Set();
-    const parentBlocks = [];
-    const fatherList = []; // [{size, blood, memo, lineRef}]
-    const motherList = [];
+    // [y6.3] 種親♂♀の重複排除を par_id ベースに変更
+    //   ・複数 line のセット出品で、たまたま同じ種親♂を共有しているケースで
+    //     ① ② として重複表示されないようにする。
+    //   ・par_id 不明な親は paternal_raw + size のフィンガープリントで近似排除。
+    //   ・また父親血統表記の完全形は paternal_raw（祖父サイズmm）×maternal_raw
+    //     （祖母サイズmm）の形を作って blood_full として持たせる。
+    const seenLines     = new Set();
+    const parentBlocks  = [];
+    const fatherList    = []; // [{par_id, size, blood, blood_full, memo, bloodline_data}]
+    const motherList    = [];
+    const seenFatherKey = new Set();
+    const seenMotherKey = new Set();
+
+    // [y6.3] 完全血統表記を組み立てるヘルパー
+    //   入力: { paternal_raw, father_parent_size_mm, maternal_raw, mother_parent_size_mm }
+    //   出力例:
+    //     ・両方あり: "MT-FF1710F.FFOAKS（175mm）×00-181（74mm）"
+    //     ・♂のみ: "MT-FF1710F.FFOAKS（175mm）"
+    //     ・原文1つだけサイズなし: "MT-FF1710F.FFOAKS"
+    //     ・全て無し: ""
+    function _buildFullBloodline(p) {
+      if (!p) return '';
+      const pat = String(p.paternal_raw || '').trim();
+      const mat = String(p.maternal_raw || '').trim();
+      const pSize = p.father_parent_size_mm;
+      const mSize = p.mother_parent_size_mm;
+      function withSize(rawStr, size) {
+        if (!rawStr) return '';
+        const sz = (size === 0 || size) ? String(size).trim() : '';
+        return sz ? `${rawStr}（${sz}mm）` : rawStr;
+      }
+      const patStr = withSize(pat, pSize);
+      const matStr = withSize(mat, mSize);
+      if (patStr && matStr) return patStr + '×' + matStr;
+      return patStr || matStr || '';
+    }
+
+    function _fingerprintParent(p) {
+      if (!p) return '';
+      if (p.par_id) return 'PID:' + p.par_id;
+      return 'FP:' + (p.paternal_raw || '') + '|' + (p.maternal_raw || '') + '|' + (p.size_mm || '');
+    }
+
     ctx.individuals.forEach(ic => {
       const key = ic.line.line_name || ic.line.species + '|' + ic.line.origin;
-      if (seenLines.has(key)) return;
-      seenLines.add(key);
+      const lineSeen = seenLines.has(key);
+      if (!lineSeen) {
+        seenLines.add(key);
+        const f = ic.father, m = ic.mother;
+        const lineMemo = ic.line.memo ? `\n  ライン背景: ${ic.line.memo}` : '';
+        // [y6.3] AIに渡すライン情報も完全血統表記を含める
+        const fFull = _buildFullBloodline(f);
+        const mFull = _buildFullBloodline(m);
+        const fInfo = f ? `\n  ♂親情報: ${f.size_mm?f.size_mm+'mm':'(サイズ不明)'}${fFull?' (血統表記: '+fFull+')':''}${f.memo?' メモ:'+f.memo:''}` : '';
+        const mInfo = m ? `\n  ♀親情報: ${m.size_mm?m.size_mm+'mm':'(サイズ不明)'}${mFull?' (血統表記: '+mFull+')':''}${m.memo?' メモ:'+m.memo:''}` : '';
+        parentBlocks.push(`[${ic.line.species}${ic.line.origin?' '+ic.line.origin+'産':''}]${lineMemo}${fInfo}${mInfo}`);
+      }
+
+      // [y6.3] 親リスト構築は line ベースではなく par_id ベースで重複排除
       const f = ic.father, m = ic.mother;
-      const lineMemo = ic.line.memo ? `\n  ライン背景: ${ic.line.memo}` : '';
-      const fInfo = f ? `\n  ♂親情報: ${f.size_mm?f.size_mm+'mm':'(サイズ不明)'} ${f.paternal_raw?'(血統表記: '+f.paternal_raw+')':''}${f.memo?' メモ:'+f.memo:''}` : '';
-      const mInfo = m ? `\n  ♀親情報: ${m.size_mm?m.size_mm+'mm':'(サイズ不明)'} ${m.maternal_raw?'(血統表記: '+m.maternal_raw+')':''}${m.memo?' メモ:'+m.memo:''}` : '';
-      parentBlocks.push(`[${ic.line.species}${ic.line.origin?' '+ic.line.origin+'産':''}]${lineMemo}${fInfo}${mInfo}`);
-      // [y3] ナンバリング用リスト
-      // [y6] bloodline_data (Vision抽出された系統評価データ) も含める
-      if (f) fatherList.push({
-        size:           f.size_mm  || '',
-        blood:          f.paternal_raw || '',
-        memo:           f.memo || '',
-        bloodline_data: f.bloodline_data || null,
-      });
-      if (m) motherList.push({
-        size:           m.size_mm  || '',
-        blood:          m.maternal_raw || '',
-        memo:           m.memo || '',
-        bloodline_data: m.bloodline_data || null,
-      });
+      if (f) {
+        const fkey = _fingerprintParent(f);
+        if (!seenFatherKey.has(fkey)) {
+          seenFatherKey.add(fkey);
+          fatherList.push({
+            par_id:         f.par_id || '',
+            size:           f.size_mm || '',
+            blood:          f.paternal_raw || '',                     // 旧来の paternal_raw のみ (後方互換)
+            blood_full:     _buildFullBloodline(f),                   // [y6.3] 完全血統表記
+            memo:           f.memo || '',
+            bloodline_data: f.bloodline_data || null,
+          });
+        }
+      }
+      if (m) {
+        const mkey = _fingerprintParent(m);
+        if (!seenMotherKey.has(mkey)) {
+          seenMotherKey.add(mkey);
+          motherList.push({
+            par_id:         m.par_id || '',
+            size:           m.size_mm || '',
+            blood:          m.maternal_raw || '',                     // 旧来の maternal_raw のみ (後方互換)
+            blood_full:     _buildFullBloodline(m),                   // [y6.3] 完全血統表記
+            memo:           m.memo || '',
+            bloodline_data: m.bloodline_data || null,
+          });
+        }
+      }
     });
 
     // [y3] AIへ渡す「種親リスト (♂①②③ ♀①②③)」のテキスト整形
     //   血統原文(blood)を必ずカッコ書きで全文記載させる狙い
     //   [y4] 血統原文が無い場合は「(なし)」と書かず、サイズだけにする。
     //   AIには「血統原文がない場合は何も書かない」と明示指示。
-    const fatherListText = fatherList.length
-      ? fatherList.map((p, i) => {
-          const num = '①②③④⑤⑥⑦⑧⑨'[i] || `(${i+1})`;
-          const sizeStr = p.size ? `${p.size}mm` : 'サイズ不明';
-          return p.blood
-            ? `  ♂${num} ${sizeStr} 血統原文あり: 「${p.blood}」`
-            : `  ♂${num} ${sizeStr} 血統原文なし(括弧書きを書かないこと)`;
-        }).join('\n')
-      : '  (♂親情報なし)';
-    const motherListText = motherList.length
-      ? motherList.map((p, i) => {
-          const num = '①②③④⑤⑥⑦⑧⑨'[i] || `(${i+1})`;
-          const sizeStr = p.size ? `${p.size}mm` : 'サイズ不明';
-          return p.blood
-            ? `  ♀${num} ${sizeStr} 血統原文あり: 「${p.blood}」`
-            : `  ♀${num} ${sizeStr} 血統原文なし(括弧書きを書かないこと)`;
-        }).join('\n')
-      : '  (♀親情報なし)';
+    // [y6.3] ★番号付与ルール変更★
+    //   ・♂親が1種類のみ → ① 番号を省略 (例: 「♂172.1mm（SDU A-11.大和（175mm）×大和（77mm）)」)
+    //   ・♂親が2種類以上 → ①②③ で列挙
+    //   ・♀親も同じルール
+    //   さらに blood ではなく blood_full (paternal_raw（祖父サイズmm）×maternal_raw（祖母サイズmm）) を渡す。
+    function _formatParentListText(list, role) {
+      // role: '♂' or '♀'
+      if (!list.length) return '  (' + role + '親情報なし)';
+      const single = (list.length === 1);
+      return list.map((p, i) => {
+        // [y6.3] 単一の場合は番号空文字、複数の場合は ①②③
+        const num = single ? '' : ('①②③④⑤⑥⑦⑧⑨'[i] || `(${i+1})`);
+        const sizeStr = p.size ? `${p.size}mm` : 'サイズ不明';
+        return p.blood_full
+          ? `  ${role}${num} ${sizeStr} 血統原文あり(完全表記): 「${p.blood_full}」`
+          : `  ${role}${num} ${sizeStr} 血統原文なし(括弧書きを書かないこと)`;
+      }).join('\n');
+    }
+    const fatherListText = _formatParentListText(fatherList, '♂');
+    const motherListText = _formatParentListText(motherList, '♀');
 
     // [y6] 系統評価情報 (Vision抽出された bloodline_data)
     //   出品者名・店舗名・購入価格は含まれない (抽出時に除外済み)。
@@ -1368,20 +1482,31 @@ ${sf.extraAppeal ? '【出品者アピール (必ず本文に盛り込む)】\n'
    「ヘラクレスオオカブトの3令幼虫5頭セットの出品です。\n大型血統を中心としたブリードラインで、将来サイズ狙いが可能な組み合わせになります。」
 
 2) 【種親情報】セクション (🔥 重要・必ず以下のルールを厳守):
-   ・♂と♀それぞれ、上記「種親リスト」の番号順に①②③形式で列挙する。
+   ・♂と♀それぞれを行頭ラベルとして列挙する。
+   ・🌟 [y6.3] 番号ルール:
+     - **♂親が1種類のみ → ① の番号を省略する** (例: 「♂:172.1mm（...）」)
+     - **♂親が2種類以上 → ①②③ で順番に列挙する** (例: 「♂:①172.1mm（...）／②165mm（...）」を改行で並べる)
+     - ♀親も同じルール (1種類のみなら番号省略・複数なら ①②③)
    ・サイズの右隣に**産地名(Guadeloupe産・グアドループ産 等)を絶対に書かない**。
      産地はリード文で既に触れているため、種親情報セクションでは記載しない。
    ・サイズの後には、**血統原文がある場合のみ**カッコ書きで完全に転記する。
+     ・🌟 [y6.3] 上記「種親リスト」の「血統原文あり(完全表記): 「...」」の文字列をそのままカッコ内に入れること。
+       これは祖父血統（祖父サイズmm）×祖母血統（祖母サイズmm）の完全形であり、要約・短縮・改変は禁止。
    ・🚫 血統原文がない場合は **「(なし)」「(未記載)」「(記載なし)」「(不明)」など何も書かず、サイズだけ書いて改行する**。
    ・血統原文は改変・要約せず、原文をそのまま括弧内に入れる。
-   実例 (HERAKABU MARCHÉ 過去出品):
+   実例 (HERAKABU MARCHÉ 過去出品・♂♀それぞれ1種類のみのケース):
+     【種親情報】
+     ♂:172.1mm（SDU A-11.大和（175mm）×大和（77mm）)
+     ♀:79mm(MT-FF1710F.FFOAKS（175mm）×00-181（74mm）)
+   実例 (♂が複数・♀が複数のケース):
      【種親情報】
      ♂:①164mm
-        ②165mm(U6SA-/GTR.RU01U6SAティーガー 168-165TREX-199MTREX・1660AKS × 0F136FOX-FOX.FF1710F)
-     ♀:①75mm(U71イン×165T-REX.T-115)
-        ②77mm(FFOFA2No113×T117R(2)MD)
+        ②165mm(U6SA-/GTR.RU01U6SAティーガー（163mm）×0F136FOX-FOX.FF1710F（73mm）)
+     ♀:①75mm(U71イン（160mm）×165T-REX.T-115（69mm）)
+        ②77mm(FFOFA2No113（160mm）×T117R(2)MD（68mm）)
         ③74.2mm(T-117FFOAKSvol3×00-181)
    ※上記実例で①164mmには血統原文がないので括弧書き無し、それ以外は血統原文あり。
+   ※♂♀それぞれ1種類しかない場合は ① を省略して「♂:172.1mm（...）」のように書く。
    末尾に「※発送時には雌雄・想定血統・サイズ等分かるよう個体ごとにラベリングして発送いたします。」と「いずれも大型血統由来です。」(該当する場合)を付記。
 
 3) ${isLarva ? '【幼虫情報】' : '【成虫情報】'}セクション:
@@ -1691,23 +1816,53 @@ HTML版は <h3> でセクション見出し、<p> で本文、<ul><li> で箇条
   function _ylBuildLabelHTML(ind, ctx) {
     const ic = ctx.individuals.find(c => c.ind.uid === ind.uid) || ctx.individuals[0];
     const line = ic.line || {};
+    // [y6.3] 各ラベルのインライン編集オーバーライド (個体UID単位)
+    //   `Pages._ylApplyLabelEdit(uid)` で記録された値があれば、そちらを優先する。
+    //   存在しないキーはデフォルト計算値を使う (= 編集なし扱い)。
+    const ov = (window.__ylLabelOverrides && window.__ylLabelOverrides[ind.uid]) || {};
+
     // [y3] タイトルを「DHヘラクレス グアドループ産」スタイルに正規化
     //   ヘラクレス系種名 → 「DHヘラクレス」略称化
     //   英語産地 → カタカナ自動変換 (Guadeloupe → グアドループ 等)
-    const titleStr = _ylBuildLabelTitle(line.species, line.origin);
+    let titleStr = _ylBuildLabelTitle(line.species, line.origin);
+    if (ov.titleStr !== undefined && ov.titleStr !== null) titleStr = String(ov.titleStr);
 
     // 種親 (サイズ + 血統表記 全文 — 複数行折り返しで表示)
     const f = ic.father, m = ic.mother;
-    const fSize  = f && f.size_mm ? `${f.size_mm}mm` : '—mm';
-    const mSize  = m && m.size_mm ? `${m.size_mm}mm` : '—mm';
-    // 血統表記は60mm幅で複数行折り返しさせるため省略しない (が長すぎる場合は60字でカット)
-    const fBlood = f && f.paternal_raw ? String(f.paternal_raw).slice(0, 80) : '';
-    const mBlood = m && m.maternal_raw ? String(m.maternal_raw).slice(0, 60) : '';
+    let fSize  = f && f.size_mm ? `${f.size_mm}mm` : '—mm';
+    let mSize  = m && m.size_mm ? `${m.size_mm}mm` : '—mm';
+    if (ov.fSize !== undefined && ov.fSize !== null) fSize = String(ov.fSize);
+    if (ov.mSize !== undefined && ov.mSize !== null) mSize = String(ov.mSize);
+
+    // 血統表記は60mm幅で複数行折り返しさせるため省略しない (が長すぎる場合は80字でカット)
+    // [y6.3] デフォルトを完全血統表記 (paternal_raw（祖父サイズmm）×maternal_raw（祖母サイズmm）) に変更
+    //   _buildFullBloodline は _buildPrompt 関数内のヘルパーで作っているため、
+    //   ラベル側でも同じ組み立てを inline で行う。
+    function _ylInlineFullBloodline(p) {
+      if (!p) return '';
+      const pat = String(p.paternal_raw || '').trim();
+      const mat = String(p.maternal_raw || '').trim();
+      function wz(rawStr, size) {
+        if (!rawStr) return '';
+        const sz = (size === 0 || size) ? String(size).trim() : '';
+        return sz ? `${rawStr}（${sz}mm）` : rawStr;
+      }
+      const patStr = wz(pat, p.father_parent_size_mm);
+      const matStr = wz(mat, p.mother_parent_size_mm);
+      if (patStr && matStr) return patStr + '×' + matStr;
+      return patStr || matStr || '';
+    }
+    let fBlood = _ylInlineFullBloodline(f).slice(0, 80);
+    let mBlood = _ylInlineFullBloodline(m).slice(0, 80);
+    if (ov.fBlood !== undefined && ov.fBlood !== null) fBlood = String(ov.fBlood).slice(0, 120);
+    if (ov.mBlood !== undefined && ov.mBlood !== null) mBlood = String(ov.mBlood).slice(0, 120);
 
     // 孵化日 / 羽化日
     const hatchDateRaw = ind.hatch_date || ind.eclosion_date || '';
-    const dateLabel = ind.kind === 'larva' ? '孵化日' : '羽化日';
-    const dateStr = _ylJunMonthLabel(hatchDateRaw);
+    let dateLabel = ind.kind === 'larva' ? '孵化日' : '羽化日';
+    let dateStr   = _ylJunMonthLabel(hatchDateRaw);
+    if (ov.dateLabel !== undefined && ov.dateLabel !== null) dateLabel = String(ov.dateLabel);
+    if (ov.dateStr   !== undefined && ov.dateStr   !== null) dateStr   = String(ov.dateStr);
 
     // タイトル長に応じて自動でフォント縮小
     const titleFs = titleStr.length > 22 ? '11px' : titleStr.length > 18 ? '12.5px' : '14px';
@@ -1821,6 +1976,11 @@ HTML版は <h3> でセクション見出し、<p> で本文、<ul><li> で箇条
     if (!wrap) return;
     wrap.innerHTML = '<div style="padding:14px;text-align:center;color:#888;font-size:.78rem">ラベル画像を生成中...</div>';
 
+    // [y6.3] ラベル微調整オーバーライドストアを初期化
+    window.__ylLabelOverrides = window.__ylLabelOverrides || {};
+    // 編集UI 開閉状態 (個体UID → bool)
+    window.__ylLabelEditOpen  = window.__ylLabelEditOpen  || {};
+
     // 各個体の PNG を生成し、キャッシュに保持 (印刷時に再利用)
     window.__ylLabelPngs = window.__ylLabelPngs || {};
     const blocks = [];
@@ -1831,19 +1991,167 @@ HTML版は <h3> でセクション見出し、<p> で本文、<ul><li> で箇条
       window.__ylLabelPngs[ind.uid] = png;
       blocks.push({ idx: i + 1, ind, png });
     }
-    wrap.innerHTML = blocks.map(b => `
+    wrap.innerHTML = blocks.map(b => {
+      const editorHtml = _ylBuildLabelEditorHTML(b.ind, b.idx, ctx);
+      return `
       <div class="yl-label-block">
         <div class="yl-label-block-title">ラベル #${b.idx}${b.ind.sex ? ' (' + _ylEsc(b.ind.sex) + ')' : ''}</div>
         ${b.png
           ? `<img class="yl-label-img" src="${b.png}" alt="ラベル #${b.idx}">`
           : '<div style="padding:14px;color:#c44;font-size:.74rem">PNG生成失敗</div>'}
-        <button class="yl-primary-btn yl-btn-sm yl-label-print-btn"
-          onclick="Pages._ylPrintSingleLabel('${b.ind.uid}')">
-          🖨️ #${b.idx} を印刷
-        </button>
+        <div class="yl-label-actions">
+          <button class="yl-primary-btn yl-btn-sm yl-label-print-btn"
+            onclick="Pages._ylPrintSingleLabel('${b.ind.uid}')">
+            🖨️ #${b.idx} を印刷
+          </button>
+          <button class="yl-ghost-btn yl-btn-sm yl-label-edit-toggle"
+            onclick="Pages._ylToggleLabelEdit('${b.ind.uid}')">
+            ✏️ 編集
+          </button>
+        </div>
+        ${editorHtml}
       </div>
-    `).join('');
+      `;
+    }).join('');
   }
+
+  // ── [y6.3] ラベル微調整 (インライン編集UI) ─────────────────────────
+  // 各ラベルプレビューの下に折り畳み式のフォームを表示し、ユーザーが
+  // タイトル / ♂サイズ / ♂血統 / ♀サイズ / ♀血統 / 孵化日(or羽化日) を
+  // 上書きできるようにする。
+  //
+  // ・編集値は window.__ylLabelOverrides[uid] に保持され、再描画されても
+  //   消えない (履歴保存・印刷ボタンで _ylBuildLabelHTML から参照される)。
+  // ・「↩ 元に戻す」で当該個体のオーバーライドを破棄してデフォルトに戻す。
+  // ・「🔄 反映」で当該個体だけ PNG を再生成して差し替える (全件再生成しない)。
+  // ─────────────────────────────────────────────────────────────────
+  function _ylBuildLabelEditorHTML(ind, idx, ctx) {
+    const isOpen = !!(window.__ylLabelEditOpen || {})[ind.uid];
+    if (!isOpen) {
+      return `<div class="yl-label-editor" id="yl-label-editor-${ind.uid}" style="display:none"></div>`;
+    }
+    // 現在のレンダ値 (オーバーライド適用後) を初期値としてフォームに表示
+    const ic = ctx.individuals.find(c => c.ind.uid === ind.uid) || ctx.individuals[0];
+    const ov = (window.__ylLabelOverrides && window.__ylLabelOverrides[ind.uid]) || {};
+    // タイトル
+    let titleStr = (ov.titleStr !== undefined && ov.titleStr !== null)
+      ? String(ov.titleStr) : _ylBuildLabelTitle(ic.line.species, ic.line.origin);
+    // 種親
+    const f = ic.father, m = ic.mother;
+    let fSize  = f && f.size_mm ? `${f.size_mm}mm` : '—mm';
+    let mSize  = m && m.size_mm ? `${m.size_mm}mm` : '—mm';
+    if (ov.fSize !== undefined && ov.fSize !== null) fSize = String(ov.fSize);
+    if (ov.mSize !== undefined && ov.mSize !== null) mSize = String(ov.mSize);
+    // 完全血統表記 (override がなければデフォルトを計算)
+    function _ylInlineFullBloodlineLocal(p) {
+      if (!p) return '';
+      const pat = String(p.paternal_raw || '').trim();
+      const mat = String(p.maternal_raw || '').trim();
+      function wz(rawStr, size) {
+        if (!rawStr) return '';
+        const sz = (size === 0 || size) ? String(size).trim() : '';
+        return sz ? `${rawStr}（${sz}mm）` : rawStr;
+      }
+      const patStr = wz(pat, p.father_parent_size_mm);
+      const matStr = wz(mat, p.mother_parent_size_mm);
+      if (patStr && matStr) return patStr + '×' + matStr;
+      return patStr || matStr || '';
+    }
+    let fBlood = (ov.fBlood !== undefined && ov.fBlood !== null) ? String(ov.fBlood) : _ylInlineFullBloodlineLocal(f);
+    let mBlood = (ov.mBlood !== undefined && ov.mBlood !== null) ? String(ov.mBlood) : _ylInlineFullBloodlineLocal(m);
+    // 日付
+    const hatchDateRaw = ind.hatch_date || ind.eclosion_date || '';
+    let dateLabel = (ov.dateLabel !== undefined && ov.dateLabel !== null) ? String(ov.dateLabel)
+      : (ind.kind === 'larva' ? '孵化日' : '羽化日');
+    let dateStr   = (ov.dateStr   !== undefined && ov.dateStr   !== null) ? String(ov.dateStr)
+      : _ylJunMonthLabel(hatchDateRaw);
+
+    const u = ind.uid;
+    return `
+      <div class="yl-label-editor" id="yl-label-editor-${u}">
+        <div class="yl-label-editor-title">✏️ ラベル #${idx} を微調整</div>
+        <div class="yl-label-editor-grid">
+          <label class="yl-label-editor-row">
+            <span>タイトル</span>
+            <input type="text" id="yl-le-title-${u}" value="${_ylEsc(titleStr)}" maxlength="60">
+          </label>
+          <label class="yl-label-editor-row">
+            <span>♂サイズ</span>
+            <input type="text" id="yl-le-fsize-${u}" value="${_ylEsc(fSize)}" maxlength="30">
+          </label>
+          <label class="yl-label-editor-row">
+            <span>♂血統原文</span>
+            <input type="text" id="yl-le-fblood-${u}" value="${_ylEsc(fBlood)}" maxlength="120" placeholder="例: SDU A-11.大和（175mm）×大和（77mm）">
+          </label>
+          <label class="yl-label-editor-row">
+            <span>♀サイズ</span>
+            <input type="text" id="yl-le-msize-${u}" value="${_ylEsc(mSize)}" maxlength="30">
+          </label>
+          <label class="yl-label-editor-row">
+            <span>♀血統原文</span>
+            <input type="text" id="yl-le-mblood-${u}" value="${_ylEsc(mBlood)}" maxlength="120" placeholder="例: MT-FF1710F.FFOAKS（175mm）×00-181（74mm）">
+          </label>
+          <label class="yl-label-editor-row">
+            <span>日付ラベル</span>
+            <input type="text" id="yl-le-datelabel-${u}" value="${_ylEsc(dateLabel)}" maxlength="10">
+          </label>
+          <label class="yl-label-editor-row">
+            <span>日付値</span>
+            <input type="text" id="yl-le-datestr-${u}" value="${_ylEsc(dateStr)}" maxlength="20" placeholder="例: 2026/01/上旬">
+          </label>
+        </div>
+        <div class="yl-label-editor-actions">
+          <button class="yl-primary-btn yl-btn-sm" onclick="Pages._ylApplyLabelEdit('${u}')">🔄 反映してプレビュー再生成</button>
+          <button class="yl-ghost-btn yl-btn-sm" onclick="Pages._ylResetLabelEdit('${u}')">↩ 元に戻す</button>
+        </div>
+      </div>
+    `;
+  }
+
+  // 編集UIの開閉トグル
+  Pages._ylToggleLabelEdit = function (uid) {
+    window.__ylLabelEditOpen = window.__ylLabelEditOpen || {};
+    window.__ylLabelEditOpen[uid] = !window.__ylLabelEditOpen[uid];
+    // 該当カードだけ再描画する代わりに、シンプルに全プレビューを再描画。
+    // (PNG 生成は __ylLabelPngs にキャッシュされているのでメモリ上は再利用される)
+    _ylPreviewLabels();
+  };
+
+  // 編集内容を反映して当該ラベルだけ PNG 再生成
+  Pages._ylApplyLabelEdit = async function (uid) {
+    const ind = individuals.find(x => x.uid === uid);
+    if (!ind) return;
+    function v(id) {
+      const el = document.getElementById(id);
+      return el ? String(el.value || '') : '';
+    }
+    const patch = {
+      titleStr:  v('yl-le-title-' + uid),
+      fSize:     v('yl-le-fsize-' + uid),
+      fBlood:    v('yl-le-fblood-' + uid),
+      mSize:     v('yl-le-msize-' + uid),
+      mBlood:    v('yl-le-mblood-' + uid),
+      dateLabel: v('yl-le-datelabel-' + uid),
+      dateStr:   v('yl-le-datestr-' + uid),
+    };
+    window.__ylLabelOverrides = window.__ylLabelOverrides || {};
+    window.__ylLabelOverrides[uid] = patch;
+    // 当該個体のキャッシュ済 PNG を破棄 → プレビュー再描画で再生成される
+    if (window.__ylLabelPngs) delete window.__ylLabelPngs[uid];
+    UI.toast('ラベルを反映中...', 'success');
+    await _ylPreviewLabels();
+    UI.toast('ラベルを更新しました ✅', 'success');
+  };
+
+  // 編集内容を破棄してデフォルトに戻す
+  Pages._ylResetLabelEdit = async function (uid) {
+    const ind = individuals.find(x => x.uid === uid);
+    if (!ind) return;
+    if (window.__ylLabelOverrides) delete window.__ylLabelOverrides[uid];
+    if (window.__ylLabelPngs)      delete window.__ylLabelPngs[uid];
+    UI.toast('ラベルをデフォルトに戻しました', 'success');
+    await _ylPreviewLabels();
+  };
 
   // ── 1ラベル印刷 (Brother iPrint&Label 仕様準拠) ─────────────
   // 既存の Pages._lblBrotherPrint と同じ単一PNGの印刷ドキュメント方式。
@@ -2039,8 +2347,25 @@ function _ylInjectCSS() {
     .yl-label-block-title { font-size:.74rem; font-weight:700; color:#444; }
     .yl-label-img { display:block; width:240px; height:auto; max-width:100%;
       border:1px solid #d0d0d0; background:#fff; }
+    .yl-label-actions { display:flex; flex-direction:column; gap:6px; width:100%; max-width:240px; }
     .yl-label-print-btn { width:100%; max-width:240px; padding:9px 10px;
       font-size:.84rem; font-weight:700; }
+    .yl-label-edit-toggle { width:100%; max-width:240px; padding:7px 10px;
+      font-size:.78rem; font-weight:600; }
+    /* [y6.3] ラベル微調整 (インライン編集) UI ─────────────────────── */
+    .yl-label-editor { width:260px; max-width:100%; margin-top:6px; padding:10px;
+      background:#fafafa; border:1px dashed #c0c0c0; border-radius:6px; box-sizing:border-box; }
+    .yl-label-editor-title { font-size:.78rem; font-weight:700; color:#333; margin-bottom:8px;
+      padding-bottom:4px; border-bottom:1px solid #e0e0e0; }
+    .yl-label-editor-grid { display:flex; flex-direction:column; gap:6px; }
+    .yl-label-editor-row { display:flex; flex-direction:column; gap:2px; font-size:.7rem; color:#444; }
+    .yl-label-editor-row span { font-weight:600; color:#555; }
+    .yl-label-editor-row input { width:100%; padding:5px 7px; font-size:.78rem;
+      border:1px solid #c8c8c8; border-radius:4px; background:#fff; color:#222; box-sizing:border-box;
+      font-family: ui-sans-serif,system-ui,-apple-system,'Segoe UI','Helvetica Neue',sans-serif; }
+    .yl-label-editor-row input:focus { outline:none; border-color:#2c8e3a; box-shadow:0 0 0 2px rgba(44,142,58,.15); }
+    .yl-label-editor-actions { display:flex; flex-direction:column; gap:6px; margin-top:10px; }
+    .yl-label-editor-actions button { width:100%; padding:7px 10px; font-size:.78rem; font-weight:700; }
   `;
 }
 
@@ -2420,4 +2745,4 @@ ${h.body_html || '<pre>'+_ylEsc(h.body_plain)+'</pre>'}
   `;
 };
 
-console.log('[YL] yahoo_listing.js loaded build=20260426y6');
+console.log('[YL] yahoo_listing.js loaded build=20260428y6.3');
