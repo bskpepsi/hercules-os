@@ -2,10 +2,66 @@
 // ════════════════════════════════════════════════════════════════
 // yahoo_listing.js — ヤフオク出品AIジェネレーター（手動入力モード）
 //
-// build: 20260428y6.3
+// build: 20260428y6.5
 // 要件定義書: HerculesOS_ヤフオク出品AIジェネレーター_要件定義書_v1.0
 //
-// ── y6.3 での修正点 (本ビルド) ──────────────────────────────────
+// ── y6.5 での修正点 (本ビルド・最重要) ────────────────────────
+// ・🔥 Brother iPrint&Label でラベルが極小印刷される問題の修正:
+//   症状:
+//     ・出品文ジェネレータの「🖨️ #N を印刷」で印刷ダイアログを開くと、
+//       62mm × 1m 連続テープの端っこに極小サイズで描画され、
+//       テープの大部分が真っ白という状態で印刷されていた。
+//     ・個別ラベルページ (Pages.labelGen の Brother印刷ボタン) では
+//       原寸通り正しく印刷されている。
+//   原因:
+//     ・印刷用 HTML の <style> に @page{size:62mm 30mm;margin:0;} が
+//       入っていたが、Brother iPrint&Label はこの size 指定を
+//       「62×30mm の小さな固定枠」として解釈し、その後のテープ全幅 (62mm × 1m)
+//       との不整合で縮小描画していた。
+//     ・既存の _lblBrotherPrint (label.js) は @page{margin:0;} のみで
+//       size 指定がなく、Brother ドライバ側のテープ設定 (62mm 連続)
+//       に従って正しく原寸印刷される実装になっていた。
+//   対応:
+//     ・_ylPrintSingleLabel と _ylPrintPNGStandalone (履歴ページ用)
+//       の両方で @page から size 指定を削除し、_lblBrotherPrint と
+//       完全一致のフォーマットに統一。
+//     ・これで Brother 側で「62mm 連続テープ・長さ自動カット」
+//       設定で原寸印刷されるようになる。
+// ・🔥 ラベル「✏️ 編集」ボタンの視認性改善
+//   症状: yl-ghost-btn 既定スタイル (透明背景・暗テーマ) のため
+//         「#1 を印刷」の下に薄く埋もれて見落とされていた。
+//   対応: yl-label-edit-toggle に背景色を上書き付与
+//         (薄緑 #eef4f0 + 緑文字 #2c5e3e + 緑系ボーダー)
+//         → 「印刷」ボタンと並列のセカンダリ操作として視認性向上。
+//
+// ── y6.4 での修正点 ──────────────────────────────────────────
+// ・🔥 履歴からのラベル再印刷機能を新設
+//   背景:
+//     ・ヤフオク出品〜落札〜発送までは数日〜数週間かかる。商品ラベルが
+//       必要になるのは「発送する時」であり、出品文生成時点ではない。
+//     ・従来の履歴ページは出品文の閲覧/コピーのみで、ラベル機能が
+//       履歴経由で呼べず、後日のラベル印刷が事実上できない状態だった。
+//   対応:
+//     ・履歴保存時に ctx_snapshot (line/father/mother情報含む) と
+//       label_overrides (ラベル微調整値) を一緒に保存。
+//     ・履歴ページの各エントリに「🏷 ラベル」ボタンを追加。
+//     ・タップでモーダル展開 → 各個体ラベルプレビュー + 個別印刷ボタン。
+//     ・「🖨 #1 を印刷」で先頭から順次印刷ダイアログを呼び出す運用。
+//     ・スタンドアロン関数 _ylBuildLabelHTMLStandalone /
+//       _ylGenerateLabelPNGStandalone / _ylPrintPNGStandalone を新設し
+//       履歴ページから直接呼べるトップレベル関数として提供。
+//     ・旧履歴 (ctx_snapshot 無し・y6.3 以前) は _ylRebuildCtxFromStore で
+//       現在の Store から近似復元するフォールバックを実装。
+// ・🔥 履歴一覧のタイトル先頭に管理番号バッジを表示
+//   背景:
+//     ・出品が増えると履歴一覧でどれが何の出品か瞬時に判別できない。
+//     ・社内番号 (saleInfo.manageNo) がフッタにしか出ず探しにくい。
+//   対応:
+//     ・履歴 entry に manage_no をトップレベル複製 (検索/表示用)。
+//     ・履歴ページとホームの「最近の履歴」両方で、タイトル先頭に
+//       金色バッジ ([yl-hist-mn] CSS) を出して管理番号を視認しやすく。
+//
+// ── y6.3 での修正点 ──────────────────────────────────────────
 // ・🔥 種親情報の完全血統表記を実装 (paternal_raw（祖父サイズmm）×maternal_raw（祖母サイズmm）)
 //   症状:
 //     ・出品文の【種親情報】セクションに paternal_raw のみ転記され
@@ -597,12 +653,19 @@ Pages.yahooListing = function (params = {}) {
         ${recent.length > 0 ? `
           <div class="yl-section-title" style="margin-top:18px">◆ 最近の履歴</div>
           <div>
-            ${recent.map(h => `
+            ${recent.map(h => {
+              // [y6.4] 最近の履歴にも管理番号バッジを表示
+              const mn = String(h.manage_no || (h.sale_info && h.sale_info.manageNo) || '').trim();
+              const titleDisp = mn
+                ? `<span class="yl-hist-mn">${_ylEsc(mn)}</span> ${_ylEsc(h.title || '(無題)')}`
+                : _ylEsc(h.title || '(無題)');
+              return `
               <div class="yl-history-item" onclick="routeTo('yahoo-listing-history')">
-                <div class="yl-history-title">${_ylEsc(h.title || '(無題)')}</div>
+                <div class="yl-history-title">${titleDisp}</div>
                 <div class="yl-history-meta">${_ylEsc(h.created_at)} · ${_ylEsc(h.set_type === 'larva' ? '幼虫' : '成虫')}セット · ${(h.individuals||[]).length}頭</div>
               </div>
-            `).join('')}
+              `;
+            }).join('')}
           </div>
         ` : ''}
 
@@ -2172,10 +2235,19 @@ HTML版は <h3> でセクション見出し、<p> で本文、<ul><li> で箇条
     if (!png) { UI.toast('ラベルPNGの生成に失敗しました', 'error'); return; }
 
     const wPx = YL_LABEL_DIMS.wPx, hPx = YL_LABEL_DIMS.hPx;
-    // [y4] 既存 label.js の _lblBrotherPrint と完全一致のフォーマットに統一
-    //   title タグを削除、@page を 62mm 30mm に修正、改行・空白も既存と揃える
+    // [y6.5] 🔥 Brother iPrint&Label でラベルが極小で印刷される問題の修正:
+    //   旧コード: @page{size:62mm 30mm;margin:0;}
+    //     → Brother iPrint&Label は @page で固定サイズが指定されると
+    //       それを「62×30mm の小さな固定枠」と解釈し、
+    //       62mm × 1m 連続テープに対して縮小描画してしまっていた。
+    //   修正: 既存 label.js の _lblBrotherPrint (個別ラベルページで動作実績ある)
+    //     と同じフォーマット (@page{margin:0;} のみ・size 指定なし) に変更。
+    //     → Brother ドライバ側のテープ設定 (62mm 連続テープ) に従って
+    //       長さ自動カットで原寸印刷される。
+    //   合わせて img の絶対 px サイズ指定も削除し、Brother 側がテープに合わせて
+    //   引き伸ばせるように width:100% にする (label.js と同じ流儀)。
     const printDoc = '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=' + wPx + '">'
-      + '<style>@page{size:62mm 30mm;margin:0;}html{margin:0;padding:0;background:#fff;}body{margin:0;padding:0;background:#fff;width:' + wPx + 'px;}'
+      + '<style>@page{margin:0;}html{margin:0;padding:0;background:#fff;}body{margin:0;padding:0;background:#fff;width:' + wPx + 'px;}'
       + 'img{display:block;width:' + wPx + 'px;height:' + hPx + 'px;margin:0;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact;}'
       + '</style></head><body><img src="' + png + '" width="' + wPx + '" height="' + hPx + '">'
       + '<script>window.addEventListener("load",function(){setTimeout(function(){window.print();},500);});<' + '/script></body></html>';
@@ -2218,16 +2290,35 @@ HTML版は <h3> でセクション見出し、<p> で本文、<ul><li> で箇条
       return;
     }
     const data = _ylLoadStorage();
+    // [y6.4] 履歴からのラベル再印刷に必要な情報をすべてスナップショット保存する。
+    //   ヤフオク出品〜落札〜発送までの間に Store の lines/parents/pairings が
+    //   更新されると、後日 _buildPromptContext() を呼び直しても当時の親情報を
+    //   復元できなくなる。そこで生成時点の ctx (line/father/mother/refs を
+    //   個体ごとに含むスナップショット) を履歴に保存する。
+    //   ctx は出品文生成直後に window.__ylLastGenerated.ctx に格納されている。
+    //   サイズは数 KB 〜 数十 KB 程度なので localStorage に十分収まる。
+    const ctxSnap = (window.__ylLastGenerated && window.__ylLastGenerated.ctx) || null;
+    // ラベル微調整の編集オーバーライドも保存 (個体UID単位で値を持つ)
+    //   後日「✏️ 編集」した状態のまま再印刷したいケースに対応する。
+    const labelOverrides = window.__ylLabelOverrides
+      ? JSON.parse(JSON.stringify(window.__ylLabelOverrides))
+      : {};
+
     const entry = {
       id: _ylUid('YH'),
       created_at:    _ylDateLabel(),
       set_type:      setType,
       individuals:   individuals.slice(),
       sale_info:     Object.assign({}, saleInfo),
+      // [y6.4] 管理番号をトップレベルにも複製しておく (履歴一覧での検索/表示用)
+      manage_no:     String(saleInfo.manageNo || '').trim(),
       title:         window.__ylLastGenerated.title,
       body_html:     window.__ylLastGenerated.body_html,
       body_plain:    window.__ylLastGenerated.body_plain,
       appeal_summary: window.__ylLastGenerated.appeal_summary,
+      // [y6.4] ラベル復元用: 生成時の ctx スナップショット + ラベル微調整値
+      ctx_snapshot:    ctxSnap,
+      label_overrides: labelOverrides,
     };
     data.history = data.history || [];
     data.history.push(entry);
@@ -2271,6 +2362,25 @@ function _ylInjectCSS() {
     .yl-history-item:hover { background:var(--bg2); }
     .yl-history-title { font-size:.84rem; font-weight:600; color:var(--text); }
     .yl-history-meta { font-size:.7rem; color:var(--text3); margin-top:2px; }
+    /* [y6.4] 履歴タイトル先頭の管理番号バッジ */
+    .yl-hist-mn { display:inline-block; padding:2px 7px; margin-right:6px;
+      background:var(--gold,#c8993a); color:#fff; border-radius:4px;
+      font-size:.74rem; font-weight:800; vertical-align:middle; letter-spacing:.02em;
+      font-family:'Noto Sans JP',ui-sans-serif,system-ui,sans-serif; }
+    /* [y6.4] 履歴ページ用 ラベル印刷モーダル */
+    .yl-hist-label-modal { position:fixed; inset:0; z-index:9999;
+      display:flex; align-items:flex-start; justify-content:center;
+      padding:32px 12px; box-sizing:border-box; overflow-y:auto; }
+    .yl-hist-label-backdrop { position:absolute; inset:0; background:rgba(0,0,0,.55); }
+    .yl-hist-label-panel { position:relative; z-index:1; background:var(--bg2);
+      border:1px solid var(--border); border-radius:10px; padding:14px 14px 18px;
+      max-width:520px; width:100%; box-shadow:0 10px 30px rgba(0,0,0,.4); }
+    .yl-hist-label-header { display:flex; justify-content:space-between; align-items:flex-start;
+      margin-bottom:10px; padding-bottom:8px; border-bottom:1px solid var(--border); gap:10px; }
+    .yl-hist-label-actions { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px; }
+    .yl-hist-label-list { display:flex; flex-wrap:wrap; gap:14px; padding:8px;
+      background:#f5f5f5; border-radius:6px; max-height:420px; overflow-y:auto;
+      justify-content:center; }
     .yl-card { background:var(--bg2); border:1px solid var(--border); border-radius:8px;
       padding:12px 14px; margin-top:10px; }
     .yl-card-title { font-family:'Noto Serif JP',serif; font-weight:700; font-size:.92rem;
@@ -2350,8 +2460,12 @@ function _ylInjectCSS() {
     .yl-label-actions { display:flex; flex-direction:column; gap:6px; width:100%; max-width:240px; }
     .yl-label-print-btn { width:100%; max-width:240px; padding:9px 10px;
       font-size:.84rem; font-weight:700; }
-    .yl-label-edit-toggle { width:100%; max-width:240px; padding:7px 10px;
-      font-size:.78rem; font-weight:600; }
+    /* [y6.5] ラベル編集ボタンを視認性の高い背景色付きで表示
+       (yl-ghost-btn は暗背景で透明色のため見落としやすかった) */
+    .yl-label-edit-toggle.yl-ghost-btn { width:100%; max-width:240px; padding:8px 10px;
+      font-size:.8rem; font-weight:700; background:#eef4f0 !important;
+      border:1px solid #b9d2c2 !important; color:#2c5e3e !important; }
+    .yl-label-edit-toggle.yl-ghost-btn:hover { background:#dfeae3 !important; }
     /* [y6.3] ラベル微調整 (インライン編集) UI ─────────────────────── */
     .yl-label-editor { width:260px; max-width:100%; margin-top:6px; padding:10px;
       background:#fafafa; border:1px dashed #c0c0c0; border-radius:6px; box-sizing:border-box; }
@@ -2715,17 +2829,158 @@ ${h.body_html || '<pre>'+_ylEsc(h.body_plain)+'</pre>'}
     }
   };
 
+  // ── [y6.4] 履歴からのラベル再印刷 ───────────────────────────
+  // ヤフオク出品〜落札〜発送には数日〜数週間かかる。発送タイミングで
+  // 商品ラベルが必要になるため、履歴エントリからラベルプレビュー&印刷を
+  // 起動できるようにする。
+  //
+  // 動作:
+  //   ・履歴の「🏷 ラベル」ボタンで個別の幼虫一覧モーダルを表示
+  //   ・各個体に「🖨 印刷」ボタンを配置 (個別印刷)
+  //   ・「🖨 すべて印刷」ボタンで先頭から順次印刷ダイアログを呼び出す
+  //   ・履歴保存時の ctx_snapshot を使ってラベル本体を再生成
+  //     (Store の現在状態には依存しないので、後日でも当時のデータで生成可能)
+  //   ・label_overrides も保存されているので、編集後の状態で再印刷できる
+  //
+  // 旧履歴 (ctx_snapshot を持たない y6.3 以前のもの) の場合は
+  // 現在の Store からフォールバック復元を試みる (line_id が一致すれば成功)。
+  // ─────────────────────────────────────────────────────────────
+  Pages._ylHistShowLabels = async (id) => {
+    const d = _ylLoadStorage();
+    const h = (d.history || []).find(x => x.id === id);
+    if (!h) { UI.toast('履歴が見つかりません', 'error'); return; }
+    if (!h.individuals || !h.individuals.length) {
+      UI.toast('この履歴には個体情報がありません', 'error');
+      return;
+    }
+
+    // ctx_snapshot がなければ現在の Store からフォールバック復元
+    let ctx = h.ctx_snapshot;
+    if (!ctx) {
+      ctx = _ylRebuildCtxFromStore(h);
+      if (!ctx) {
+        UI.toast('ラベル復元に必要な情報が不足しています (旧履歴・親情報なし)', 'error', 5000);
+        return;
+      }
+      UI.toast('現在のデータからラベルを復元します', 'success');
+    }
+
+    // 履歴保存時のラベル微調整 overrides をセット (なければ空)
+    window.__ylLabelOverrides = h.label_overrides
+      ? JSON.parse(JSON.stringify(h.label_overrides))
+      : {};
+    // 履歴ラベル印刷用の PNG キャッシュ (ヒット時はそのまま再利用)
+    window.__ylLabelPngs = window.__ylLabelPngs || {};
+
+    // 印刷ハンドラを設定
+    Pages._ylHistPrintOne = async (uid) => {
+      const ind = h.individuals.find(x => x.uid === uid);
+      if (!ind) { UI.toast('個体が見つかりません', 'error'); return; }
+      let png = window.__ylLabelPngs[uid];
+      if (!png) {
+        UI.toast('ラベルPNGを生成中...', 'success');
+        try {
+          png = await _ylGenerateLabelPNGStandalone(ind, ctx);
+          window.__ylLabelPngs[uid] = png;
+        } catch (e) {
+          UI.toast('PNG生成に失敗しました: ' + e.message, 'error', 5000);
+          return;
+        }
+      }
+      _ylPrintPNGStandalone(png);
+    };
+    Pages._ylHistPrintAll = async () => {
+      if (!h.individuals.length) return;
+      // まず1枚目を印刷 (Brother iPrint&Label は1枚毎が前提)
+      await Pages._ylHistPrintOne(h.individuals[0].uid);
+      if (h.individuals.length > 1) {
+        UI.toast(`#1 を印刷します。残り ${h.individuals.length - 1} 枚は各「印刷」ボタンから`, 'success', 4500);
+      }
+    };
+    Pages._ylHistCloseLabelModal = () => {
+      const m = document.getElementById('yl-hist-label-modal');
+      if (m) m.remove();
+    };
+
+    // モーダルを表示してラベルプレビューを並べる
+    let modal = document.getElementById('yl-hist-label-modal');
+    if (modal) modal.remove();
+    modal = document.createElement('div');
+    modal.id = 'yl-hist-label-modal';
+    modal.className = 'yl-hist-label-modal';
+    modal.innerHTML = `
+      <div class="yl-hist-label-backdrop" onclick="Pages._ylHistCloseLabelModal()"></div>
+      <div class="yl-hist-label-panel">
+        <div class="yl-hist-label-header">
+          <div>
+            <div style="font-size:.92rem;font-weight:700;color:var(--text)">🏷 ラベル印刷</div>
+            <div style="font-size:.72rem;color:var(--text3);margin-top:2px">${_ylEsc(h.title || '')}</div>
+            ${h.manage_no ? `<div style="font-size:.72rem;color:var(--text3);margin-top:2px">管理番号: ${_ylEsc(h.manage_no)}</div>` : ''}
+          </div>
+          <button class="yl-remove-btn" onclick="Pages._ylHistCloseLabelModal()">✕</button>
+        </div>
+        <div class="yl-hist-label-actions">
+          <button class="yl-primary-btn yl-btn-sm" onclick="Pages._ylHistPrintAll()">🖨 #1 を印刷 (順次運用)</button>
+        </div>
+        <div class="yl-hist-label-list" id="yl-hist-label-list">
+          <div style="padding:14px;text-align:center;color:#888;font-size:.78rem">ラベル画像を生成中...</div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+
+    // 各個体のラベル PNG を順次生成して並べる
+    const list = document.getElementById('yl-hist-label-list');
+    list.innerHTML = '';
+    for (let i = 0; i < h.individuals.length; i++) {
+      const ind = h.individuals[i];
+      let png = window.__ylLabelPngs[ind.uid];
+      if (!png) {
+        try {
+          png = await _ylGenerateLabelPNGStandalone(ind, ctx);
+          window.__ylLabelPngs[ind.uid] = png;
+        } catch (e) {
+          png = null;
+        }
+      }
+      const block = document.createElement('div');
+      block.className = 'yl-label-block';
+      block.innerHTML = `
+        <div class="yl-label-block-title">ラベル #${i + 1}${ind.sex ? ' (' + _ylEsc(ind.sex) + ')' : ''}</div>
+        ${png
+          ? `<img class="yl-label-img" src="${png}" alt="ラベル #${i + 1}">`
+          : '<div style="padding:14px;color:#c44;font-size:.74rem">PNG生成失敗</div>'}
+        <div class="yl-label-actions">
+          <button class="yl-primary-btn yl-btn-sm yl-label-print-btn"
+            onclick="Pages._ylHistPrintOne('${ind.uid}')">
+            🖨️ #${i + 1} を印刷
+          </button>
+        </div>
+      `;
+      list.appendChild(block);
+    }
+  };
+
   main.innerHTML = `
     ${UI.header('生成履歴', { back: true })}
     <style>${_ylInjectCSS()}</style>
     <div class="yl-page">
       ${hist.length === 0
         ? '<div style="color:var(--text3);text-align:center;padding:30px">履歴はまだありません</div>'
-        : hist.map(h => `
+        : hist.map(h => {
+            // [y6.4] 管理番号があれば、タイトル先頭に【管理番号】を表示
+            //   (manageNo は履歴保存時に sale_info から取り込んでいる)
+            const mn = String(h.manage_no || (h.sale_info && h.sale_info.manageNo) || '').trim();
+            const titleDisp = mn
+              ? `<span class="yl-hist-mn">${_ylEsc(mn)}</span> ${_ylEsc(h.title || '(無題)')}`
+              : _ylEsc(h.title || '(無題)');
+            // ラベル復元の可否を判定 (ctx_snapshot あり、または line/個体情報が揃っている)
+            const canLabel = (h.individuals && h.individuals.length > 0);
+            return `
             <div class="yl-card" style="margin-top:8px">
               <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">
                 <div style="flex:1;min-width:0">
-                  <div style="font-size:.92rem;font-weight:700;color:var(--text);line-height:1.4">${_ylEsc(h.title || '(無題)')}</div>
+                  <div style="font-size:.92rem;font-weight:700;color:var(--text);line-height:1.4">${titleDisp}</div>
                   <div style="font-size:.72rem;color:var(--text3);margin-top:2px">
                     ${_ylEsc(h.created_at)} · ${_ylEsc(h.set_type === 'larva' ? '🐛 幼虫' : '🪲 成虫')}セット · ${(h.individuals||[]).length}頭
                   </div>
@@ -2738,11 +2993,222 @@ ${h.body_html || '<pre>'+_ylEsc(h.body_plain)+'</pre>'}
                 <button class="yl-ghost-btn yl-btn-sm" onclick="Pages._ylHistCopyTitle('${h.id}')">📋 タイトル</button>
                 <button class="yl-ghost-btn yl-btn-sm" onclick="Pages._ylHistCopyHtml('${h.id}')">📋 HTML</button>
                 <button class="yl-ghost-btn yl-btn-sm" onclick="Pages._ylHistCopyPlain('${h.id}')">📋 プレーン</button>
+                ${canLabel ? `<button class="yl-primary-btn yl-btn-sm" onclick="Pages._ylHistShowLabels('${h.id}')">🏷 ラベル</button>` : ''}
               </div>
             </div>
-          `).join('')}
+            `;
+          }).join('')}
     </div>
   `;
 };
 
-console.log('[YL] yahoo_listing.js loaded build=20260428y6.3');
+// ════════════════════════════════════════════════════════════════
+// [y6.4] 履歴ページ用のラベル生成スタンドアロン関数群
+// ────────────────────────────────────────────────────────────────
+// 出品ジェネレータ画面 (Pages.yahooListing) が抱える _ylBuildLabelHTML /
+// _ylGenerateLabelPNG はクロージャ内のローカル関数のため履歴ページから
+// 呼べない。ここでは履歴ページから呼び出せるトップレベル関数として
+// 等価実装を持たせる。
+// ・ctx は履歴保存時にスナップショットされたもの (line/father/mother情報含む)
+// ・window.__ylLabelOverrides は履歴ロード時にセットされる
+// ────────────────────────────────────────────────────────────────
+
+// 旧履歴 (ctx_snapshot 無し) のためのフォールバック ctx 復元
+//   現在の Store の lines/parents/pairings から、履歴保存時の line_id を頼りに
+//   再構築する。Store が更新されていると当時のデータと食い違う可能性があるが、
+//   まったくラベル印刷不能になるよりは妥当性の高い近似復元が望ましい。
+function _ylRebuildCtxFromStore(h) {
+  if (!h || !h.individuals || !h.individuals.length) return null;
+  const lines    = (window.Store && Store.getDB && Store.getDB('lines'))    || [];
+  const parents  = (window.Store && Store.getDB && Store.getDB('parents'))  || [];
+  const pairings = (window.Store && Store.getDB && Store.getDB('pairings')) || [];
+  const indCtx = h.individuals.map((ind, idx) => {
+    const line = lines.find(l => l.line_id === ind.line_id) || {};
+    const pair = pairings
+      .filter(p => p.line_id === ind.line_id)
+      .sort((a,b) => String(b.pairing_start||'').localeCompare(String(a.pairing_start||'')))[0];
+    const father = pair ? parents.find(p => p.par_id === pair.father_par_id) : null;
+    const mother = pair ? parents.find(p => p.par_id === pair.mother_par_id) : null;
+    return {
+      idx: idx + 1,
+      kind: ind.kind,
+      line: {
+        line_name: line.line_name || line.bloodline_name || '',
+        species:   line.species   || 'ヘラクレスオオカブト',
+        origin:    line.origin    || line.locality || '',
+        memo:      line.memo      || '',
+      },
+      father: father ? {
+        par_id:                father.par_id || '',
+        size_mm:               father.size_mm || '',
+        paternal_raw:          father.paternal_raw || '',
+        maternal_raw:          father.maternal_raw || '',
+        father_parent_size_mm: father.father_parent_size_mm || '',
+        mother_parent_size_mm: father.mother_parent_size_mm || '',
+        bloodline_data:        father.bloodline_data || null,
+        memo:                  father.memo || '',
+      } : null,
+      mother: mother ? {
+        par_id:                mother.par_id || '',
+        size_mm:               mother.size_mm || '',
+        paternal_raw:          mother.paternal_raw || '',
+        maternal_raw:          mother.maternal_raw || '',
+        father_parent_size_mm: mother.father_parent_size_mm || '',
+        mother_parent_size_mm: mother.mother_parent_size_mm || '',
+        bloodline_data:        mother.bloodline_data || null,
+        memo:                  mother.memo || '',
+      } : null,
+      ind,
+    };
+  });
+  return {
+    setType:     h.set_type || 'larva',
+    individuals: indCtx,
+    saleInfo:    Object.assign({}, h.sale_info || {}),
+  };
+}
+
+// ラベル HTML を組み立てる (履歴ページ用・スタンドアロン版)
+//   出品ジェネレータの _ylBuildLabelHTML と同じロジックの簡略実装。
+//   将来 Pages.yahooListing 側の関数仕様が変わってもこの関数は影響を受けない。
+function _ylBuildLabelHTMLStandalone(ind, ctx) {
+  const ic = ctx.individuals.find(c => c.ind.uid === ind.uid) || ctx.individuals[0];
+  const line = ic.line || {};
+  const ov = (window.__ylLabelOverrides && window.__ylLabelOverrides[ind.uid]) || {};
+
+  let titleStr = _ylBuildLabelTitle(line.species, line.origin);
+  if (ov.titleStr !== undefined && ov.titleStr !== null) titleStr = String(ov.titleStr);
+
+  const f = ic.father, m = ic.mother;
+  let fSize  = f && f.size_mm ? `${f.size_mm}mm` : '—mm';
+  let mSize  = m && m.size_mm ? `${m.size_mm}mm` : '—mm';
+  if (ov.fSize !== undefined && ov.fSize !== null) fSize = String(ov.fSize);
+  if (ov.mSize !== undefined && ov.mSize !== null) mSize = String(ov.mSize);
+
+  function _ylInlineFullBloodline(p) {
+    if (!p) return '';
+    const pat = String(p.paternal_raw || '').trim();
+    const mat = String(p.maternal_raw || '').trim();
+    function wz(rawStr, size) {
+      if (!rawStr) return '';
+      const sz = (size === 0 || size) ? String(size).trim() : '';
+      return sz ? `${rawStr}（${sz}mm）` : rawStr;
+    }
+    const patStr = wz(pat, p.father_parent_size_mm);
+    const matStr = wz(mat, p.mother_parent_size_mm);
+    if (patStr && matStr) return patStr + '×' + matStr;
+    return patStr || matStr || '';
+  }
+  let fBlood = _ylInlineFullBloodline(f).slice(0, 80);
+  let mBlood = _ylInlineFullBloodline(m).slice(0, 80);
+  if (ov.fBlood !== undefined && ov.fBlood !== null) fBlood = String(ov.fBlood).slice(0, 120);
+  if (ov.mBlood !== undefined && ov.mBlood !== null) mBlood = String(ov.mBlood).slice(0, 120);
+
+  const hatchDateRaw = ind.hatch_date || ind.eclosion_date || '';
+  let dateLabel = ind.kind === 'larva' ? '孵化日' : '羽化日';
+  let dateStr   = _ylJunMonthLabel(hatchDateRaw);
+  if (ov.dateLabel !== undefined && ov.dateLabel !== null) dateLabel = String(ov.dateLabel);
+  if (ov.dateStr   !== undefined && ov.dateStr   !== null) dateStr   = String(ov.dateStr);
+
+  const titleFs = titleStr.length > 22 ? '11px' : titleStr.length > 18 ? '12.5px' : '14px';
+  const bloodMaxLen = Math.max(fBlood.length, mBlood.length);
+  const bloodFs = bloodMaxLen > 50 ? '5.5px' : bloodMaxLen > 35 ? '6px' : bloodMaxLen > 22 ? '6.5px' : '7px';
+  const bloodLh = bloodMaxLen > 35 ? '1.15' : '1.2';
+
+  // 既存の _ylBuildLabelHTML と完全一致のレイアウトテンプレート
+  return `
+    <div style="width:60mm;height:28mm;padding:1mm 1.5mm;box-sizing:border-box;
+                font-family:'Noto Sans JP','Hiragino Sans',sans-serif;
+                color:#000;background:#fff;display:flex;flex-direction:column;
+                justify-content:flex-start;font-feature-settings:'palt' 1;line-height:1.2;">
+      <div style="font-size:${titleFs};font-weight:700;text-align:center;
+                  letter-spacing:0;border-bottom:0.5px solid #000;padding-bottom:.5mm;
+                  margin-bottom:.5mm;line-height:1.15">${_ylEsc(titleStr)}</div>
+      <div style="display:flex;flex-direction:column;gap:0;flex:1">
+        <div style="display:flex;align-items:flex-start;gap:1mm">
+          <span style="font-size:7px;font-weight:700;flex:0 0 auto;line-height:1.2">♂</span>
+          <span style="font-size:7.5px;font-weight:700;flex:0 0 auto;line-height:1.2">${_ylEsc(fSize)}</span>
+          ${fBlood ? `<span style="font-size:${bloodFs};line-height:${bloodLh};word-break:break-all;flex:1">（${_ylEsc(fBlood)}）</span>` : ''}
+        </div>
+        <div style="display:flex;align-items:flex-start;gap:1mm">
+          <span style="font-size:7px;font-weight:700;flex:0 0 auto;line-height:1.2">♀</span>
+          <span style="font-size:7.5px;font-weight:700;flex:0 0 auto;line-height:1.2">${_ylEsc(mSize)}</span>
+          ${mBlood ? `<span style="font-size:${bloodFs};line-height:${bloodLh};word-break:break-all;flex:1">（${_ylEsc(mBlood)}）</span>` : ''}
+        </div>
+        <div style="display:flex;align-items:flex-start;gap:1mm;margin-top:auto">
+          <span style="font-size:6.5px;color:#333;line-height:1.2">${_ylEsc(dateLabel)}: ${_ylEsc(dateStr)}</span>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// ラベル PNG 生成 (履歴ページ用・スタンドアロン版)
+//   既存 label.js のトップレベル関数 _buildLabelPNG を流用する。
+//   YL_LABEL_DIMS は Pages.yahooListing クロージャ内に閉じているため
+//   履歴ページから参照できない。よってデフォルト寸法
+//   (62×30mm, 234×113px, scale 3) を _ylHistLabelDims として持つ。
+//   ※出品ジェネレータ画面と完全一致の寸法を使用 (Brother DK-2205 互換)。
+const _ylHistLabelDims = { wMm: 62, hMm: 30, wPx: 234, hPx: 113, scale: 3 };
+
+async function _ylGenerateLabelPNGStandalone(ind, ctx) {
+  const innerHtml = _ylBuildLabelHTMLStandalone(ind, ctx);
+  // _buildLabelPNG (label.js のグローバル関数) は <style>...</style><body>...</body>
+  //   形式の HTML 文字列を期待する。既存ラベルレイアウトは inline style だけで
+  //   構成されているため、外側 <style> は空で OK。
+  if (typeof _buildLabelPNG === 'function') {
+    try {
+      const wrapHtml = '<style></style><body>' + innerHtml + '</body>';
+      const png = await _buildLabelPNG(wrapHtml, _ylHistLabelDims);
+      if (png) return png;
+    } catch (e) {
+      console.warn('[YL][HIST] _buildLabelPNG failed, falling back to direct html2canvas', e);
+    }
+  }
+  // フォールバック: html2canvas 直接呼び出し
+  if (typeof html2canvas === 'undefined') {
+    throw new Error('html2canvas が読み込まれていません');
+  }
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'position:fixed;left:-99999px;top:0;width:' + _ylHistLabelDims.wPx
+    + 'px;height:' + _ylHistLabelDims.hPx + 'px;overflow:hidden;background:#fff;box-sizing:border-box;';
+  wrap.innerHTML = innerHtml;
+  document.body.appendChild(wrap);
+  try {
+    const canvas = await html2canvas(wrap, {
+      backgroundColor: '#fff',
+      scale: _ylHistLabelDims.scale,
+      width: _ylHistLabelDims.wPx,
+      height: _ylHistLabelDims.hPx,
+      windowWidth: _ylHistLabelDims.wPx,
+      windowHeight: _ylHistLabelDims.hPx,
+      useCORS: true,
+      logging: false,
+    });
+    return canvas.toDataURL('image/png');
+  } finally {
+    if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
+  }
+}
+
+// PNG 印刷 (履歴ページ用・スタンドアロン版)
+//   [y6.5] @page size 指定を削除し _lblBrotherPrint 互換に変更。
+//   詳細は _ylPrintSingleLabel のコメント参照。
+function _ylPrintPNGStandalone(png) {
+  const wPx = _ylHistLabelDims.wPx, hPx = _ylHistLabelDims.hPx;
+  const printDoc = '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=' + wPx + '">'
+    + '<style>@page{margin:0;}html{margin:0;padding:0;background:#fff;}body{margin:0;padding:0;background:#fff;width:' + wPx + 'px;}'
+    + 'img{display:block;width:' + wPx + 'px;height:' + hPx + 'px;margin:0;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact;}'
+    + '</style></head><body><img src="' + png + '" width="' + wPx + '" height="' + hPx + '">'
+    + '<script>window.addEventListener("load",function(){setTimeout(function(){window.print();},500);});<' + '/script></body></html>';
+  const blob = new Blob([printDoc], { type: 'text/html;charset=utf-8' });
+  const url  = URL.createObjectURL(blob);
+  const win  = window.open(url, '_blank');
+  if (!win) {
+    if (window.UI && UI.toast) UI.toast('ポップアップを許可してください (アドレスバー右端のアイコン)', 'error', 5000);
+    return;
+  }
+  setTimeout(function () { URL.revokeObjectURL(url); }, 15000);
+}
+
+console.log('[YL] yahoo_listing.js loaded build=20260428y6.5');

@@ -81,11 +81,13 @@
 <!-- ════ JS 読み込み（順序厳守） ════ -->
 <script src="js/config.js?v=20260413bi"></script>
 <script src="js/api.js?v=20260424r"></script>
-  <!-- [20260428y6-3] 本セッションでの実装内容反映:
+  <!-- [20260428y6-5] 本セッションでの実装内容反映:
        ・parent_bloodline_extract.js y6.13: クラウド同期を GET → POST に変更
          (URL 長制限による 400 Bad Request → 「保存後に画面から消える」を解消)
-       ・yahoo_listing.js y6.3: 種親情報の完全血統表記化 + ラベル微調整UI -->
-  <script>window.__INDEX_BUILD= '20260428y6-13';console.log("[INDEX_BUILD]",window.__INDEX_BUILD,"loaded");</script>
+       ・yahoo_listing.js y6.5: 種親情報の完全血統表記化 + ラベル微調整UI
+         + 履歴からのラベル再印刷 + 履歴タイトルに管理番号バッジ
+         + 🔥 Brother iPrint&Label でラベル極小印刷問題を修正 (@page size削除) -->
+  <script>window.__INDEX_BUILD= '20260428y6-15';console.log("[INDEX_BUILD]",window.__INDEX_BUILD,"loaded");</script>
   <!-- [20260424j] 自己修復: api.js のビルドが古ければ強制リロード
        Android Chrome が index.html を古いままキャッシュした状態で誤って
        開かれるケースの救済。index.html が最新 (20260424j) なのに
@@ -161,7 +163,7 @@
      ・62×30mm 発送ラベル (Brother iPrint&Label 互換 PNG 印刷)
      ・Gemini 2.5 Flash + responseSchema + 自動リトライ
      ・種親 bloodline_data (Vision抽出データ) を本文に統合 -->
-<script src="js/pages/yahoo_listing.js?v=20260428y6-3"></script>
+<script src="js/pages/yahoo_listing.js?v=20260428y6-5"></script>
 
 </body>
 </html>
