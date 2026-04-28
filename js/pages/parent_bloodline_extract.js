@@ -2,7 +2,22 @@
 // ════════════════════════════════════════════════════════════════
 // parent_bloodline_extract.js — 種親血統情報の Vision 抽出機能
 //
-// build: 20260426y6.9
+// build: 20260426y6.10
+//
+// ── y6.10 での修正点 ───────────────────────────────────────────
+// ・🔥 プロンプトを抜本的に書き直し
+//   従来は「禁止ルール」を列挙する形だったが、AIが無意識に「null=失敗」と
+//   思って補完しようとする傾向があった。新方針:
+//     ・「null は正解」と最初に明示
+//     ・推測・補完が「悪い」のではなく「不要」と伝える
+//     ・具体的な良い例・悪い例を3パターン提示
+//     ・指示量を半減して圧縮
+// ・🔥 サニタイズの過剰除去を修正
+//   ・「ですが」パターンが正常値を巻き込む可能性があったため削除
+//   ・「推測」は単独だと普通の文章にも現れるため削除
+// ・🔥 degenerate検知ルール3 (10〜200字の繰返し) を削除
+//   通常の出品文でも誤検知する可能性があったため、ルール1/2/4のみに緩和。
+//   ルール4の閾値も 20字×5回 → 30字×5回 に緩めて誤検知を減らす。
 //
 // ── y6.9 での修正点 ────────────────────────────────────────────
 // ・🔥 「同じ注釈フレーズが繰り返される」degenerate パターンに対応
@@ -431,32 +446,22 @@ async function _pbeRecompressForRetry(processedImage) {
 // ════════════════════════════════════════════════════════════════
 // ════════════════════════════════════════════════════════════════
 // [y6.8] degenerate 出力検知
-//   Gemini Vision が稀に「同じ文字を延々と繰り返す」異常レスポンスを返す
-//   ことがある(特に低温度時)。このパターンを検知してリトライ対象にする。
-// [y6.9] 検知ルール強化
-//   ・同じ単一文字が連続40回以上 (ෛෛෛෛ... 等)
-//   ・同じ短いパターン(2〜5字)が20回以上
-//   ・同じ長文(10〜200字)が3回以上連続 ← y6.9で追加
-//     例: 「Dynastes hercules hercules と表記されているため、補完しています。」
-//     のような注釈フレーズが何度も繰り返されるケース。
+// [y6.10] ルール3 (10〜200字の繰返し) は通常の出品文でも稀にヒットする
+//   ことが分かったため削除。ルール1/2/4のみで運用。
 // ════════════════════════════════════════════════════════════════
 function _pbeDetectDegenerate(text) {
   if (!text) return false;
-  // ルール1: 同じ文字が連続40回以上
+  // ルール1: 同じ文字が連続40回以上 (ෛෛෛෛ... 等)
   if (text.match(/(.)\1{40,}/)) return true;
   // ルール2: 同じ短いパターンが20回以上
   if (text.match(/(.{2,5})\1{20,}/)) return true;
-  // [y6.9] ルール3: 同じ長文(10〜200字)が3回以上繰り返し
-  //   注: 短文の繰り返しは普通の文章でも起きうるので 10字以上に絞る
-  if (text.match(/(.{10,200}?)\1{2,}/)) return true;
-  // [y6.9] ルール4: 出力全体に対する重複率チェック
-  //   レスポンス長 > 1000字 かつ、同じ20字の連続が文書全体で5回以上現れる
+  // ルール4: 1000字超のレスポンスで、特定の30字スライスが文書全体で5回以上現れる
+  //   (注釈フレーズが何度も繰り返される長文 degenerate を検知)
   if (text.length > 1000) {
     const sliced = text.slice(0, 5000);
-    // 任意の20字スライスが5回以上現れる場合
-    for (let i = 0; i < sliced.length - 20; i += 50) {
-      const sample = sliced.slice(i, i + 20);
-      if (!sample.trim()) continue;
+    for (let i = 0; i < sliced.length - 30; i += 80) {
+      const sample = sliced.slice(i, i + 30);
+      if (!sample.trim() || sample.length < 30) continue;
       const escaped = sample.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const matches = sliced.match(new RegExp(escaped, 'g'));
       if (matches && matches.length >= 5) return true;
@@ -466,61 +471,60 @@ function _pbeDetectDegenerate(text) {
 }
 
 function _pbeBuildVisionPrompt() {
-  return `あなたはヘラクレスオオカブトの繁殖個体の出品ページを分析する専門家です。
-以下の出品ページのスクリーンショット画像を読み取り、種親の血統情報を構造化して抽出してください。
+  return `あなたはヘラクレスオオカブトの繁殖個体の出品ページから情報を抽出するアシスタントです。
+画像を読み取り、書かれている情報だけを構造化JSONで返してください。
 
-━━━ 🚫 厳守ルール (絶対守ること) ━━━
-1. 販売者名・店舗名・出品者名は**抽出しない**(seller_name フィールドは作らない)
-2. 購入価格・落札金額は**抽出しない**
-3. 購入条件・購入制約 (「幼虫販売目的不可」など) は**抽出しない**
-4. 画像内に書かれていない情報は捏造しない (推測値は null にする)
-5. 数値は画像内の表記を**そのまま**転記し、改変しない
-6. 🔥 各フィールドの値には**注釈・補足・括弧書きを絶対に付けない**。
-   悪い例: "Dynastes hercules hercules (D.Hヘラクレスと表記されているため、補完しています)"
-   良い例: "Dynastes hercules hercules"
-   補足が必要な情報は feature_notes フィールドに集約する。
-7. 🔥 画像内に明示されていない値は**補完せず、必ず null** を返す。
-   例: 学名が画像にないのに「D.Hヘラクレス」から学名を補完して書く → ❌ 必ず null に。
-8. 🔥 出力 JSON はプレーンな1段の構造化データのみ。注釈テキストや解説文を JSON の前後に書かない。
+━━━ 🌟 最重要ルール: null は正解 ━━━
+画像に書かれていない項目は **null** を返してください。これは失敗ではなく正解です。
+推測・補完・補足は一切不要。書かれていることだけを抜き出してください。
+
+━━━ 良い例・悪い例 ━━━
+
+【シーン: 画像に学名が書かれていない場合】
+✅ 良い例: "species_full": null
+❌ 悪い例: "species_full": "Dynastes hercules hercules"  (推測で書かない)
+❌ 悪い例: "species_full": "Dynastes hercules hercules と表記されているため補完"  (注釈書かない)
+
+【シーン: 画像に「D.Hヘラクレス」と書かれている】
+✅ 良い例: "species_full": null, "common_name": "D.Hヘラクレス"
+❌ 悪い例: "species_full": "Dynastes hercules hercules"  (D.H から学名を勝手に補完しない)
+
+【シーン: 画像に「Dynastes hercules hercules」と明示されている】
+✅ 良い例: "species_full": "Dynastes hercules hercules"
+
+━━━ 🚫 禁止事項 ━━━
+1. 販売者名・店舗名・出品者名は抽出しない (フィールドを作らない)
+2. 購入価格・落札金額は抽出しない
+3. 購入条件・購入制約は抽出しない
+4. フィールドの値に注釈・補足・括弧書きを付けない
+5. JSONの前後に解説文を書かない (純粋なJSONのみ)
 
 ━━━ 抽出対象 ━━━
-出品ページから以下の情報を読み取ってください:
-
-- species_full:    学名 (例: "Dynastes hercules hercules")
-- common_name:     和名 (例: "ヘラクレスオオカブト" / "DHヘラクレス")
-- origin:          産地 (例: "グアドループ" / "Guadeloupe")
-- generation:      累代 (例: "CB" / "WD" / "F1" / "WF1" / "CBF2")
-- eclosion_period: 羽化日・羽化期 (例: "2025/8/中旬" / "2024年12月")
-- body_size_mm:    体長 (mm 単位の数値のみ。例: 79)
-- paternal_blood:  ♂親(父系)の血統表記原文 (例: "MT-FF1710F.FFOAKS")
-- maternal_blood:  ♀親(母系)の血統表記原文 (例: "00-181")
-- kinship_records: 同腹兄弟・同系統の実績 (構造化配列、後述)
-- feature_notes:   系統的な特徴・優位点を中立的にまとめた1-2文 (例: "胸角の伸びが優秀。サイズ系・長角系統。")
-- raw_text:        出品文の本文テキスト全文 (画像から読み取れた範囲で)
+- species_full:    学名 ("Dynastes hercules hercules" など。画像になければ null)
+- common_name:     和名 ("ヘラクレスオオカブト" / "DHヘラクレス" など)
+- origin:          産地 ("グアドループ" / "Guadeloupe" など)
+- generation:      累代 ("CB" / "WD" / "F1" など)
+- eclosion_period: 羽化日 ("2025/8/中旬" / "2024年12月" など)
+- body_size_mm:    体長 (数値のみ。例: 79)
+- paternal_blood:  ♂親血統表記 ("MT-FF1710F.FFOAKS" など。原文そのまま)
+- maternal_blood:  ♀親血統表記 ("00-181" など。原文そのまま)
+- kinship_records: 同腹兄弟・同系統の実績 (構造化配列、後述。なければ空配列 [])
+- feature_notes:   系統的特徴を中立的にまとめた短い文 (1〜2文・100字以内)
+- raw_text:        出品文の本文 (画像から読み取れた範囲で・最大500字)
 
 ━━━ kinship_records の構造 ━━━
-「174mm筆頭・170mm up 6頭・168mm up 3頭・前蛹150g up 筆頭・140g台複数」のような
-同腹兄弟実績が書かれている場合、以下の形式で配列にする:
+「174mm筆頭・170mm up 6頭」のような実績が書かれている場合、以下の配列にする:
 
 [
-  { "metric": "body_size",       "threshold": 174, "count": 1,    "unit": "mm", "is_top": true },
-  { "metric": "body_size",       "threshold": 170, "count": 6,    "unit": "mm", "is_top": false },
-  { "metric": "body_size",       "threshold": 168, "count": 3,    "unit": "mm", "is_top": false },
-  { "metric": "body_size",       "threshold": 165, "count": null, "unit": "mm", "note": "数えていない" },
-  { "metric": "pre_pupa_weight", "threshold": 150, "count": 1,    "unit": "g",  "is_top": true,  "note": "前蛹" },
-  { "metric": "pre_pupa_weight", "threshold": 140, "count": null, "unit": "g",  "note": "複数" }
+  { "metric": "body_size", "threshold": 174, "count": 1, "unit": "mm", "is_top": true },
+  { "metric": "body_size", "threshold": 170, "count": 6, "unit": "mm", "is_top": false }
 ]
 
-metric 値: "body_size" (体長) | "pre_pupa_weight" (前蛹体重) | "larva_weight" (幼虫体重) | "thorax_horn" (胸角) | "head_horn" (頭角)
-threshold: 数値のしきい値
-count: 該当頭数 (不明なら null、note に「複数」「数えていない」等を入れる)
-unit: "mm" | "g"
-is_top: 筆頭 (最大個体) なら true
-note: 補足
+metric: "body_size" (体長) | "pre_pupa_weight" (前蛹体重) | "larva_weight" (幼虫体重) | "thorax_horn" (胸角) | "head_horn" (頭角)
 
-━━━ 出力フォーマット (必須) ━━━
-以下の純粋なJSON形式のみで返してください。マークダウンのコードブロック装飾は付けないでください。
-画像から読み取れない項目は null としてください (空文字列ではなく)。
+━━━ 出力フォーマット ━━━
+以下のJSONのみを返してください (マークダウン装飾なし)。
+記載のない項目は null にしてください (空文字列ではなく):
 
 {
   "species_full":    "...",
@@ -942,14 +946,16 @@ function _pbeSanitizeBloodlineData(data) {
       // 残った長い末尾括弧を除去 (15文字超)
       v = v.replace(/[\s　]*[(（][^)）]{15,}[)）][\s　]*$/g, '').trim();
       // [y6.9] 「と表記されているため」「補完しています」等の注釈フレーズが含まれていたら、その手前で切る
+      // [y6.10] 「ですが」のような汎用的な単語は削除(正常値を巻き込む)。
+      //   注釈フレーズは「補完」「明示されていません」「画像内には」のように
+      //   AI注釈に特有の表現に限定。
       const annotationPatterns = [
         /[\s　]*と表記されているため.*$/,
         /[\s　]*補完しています.*$/,
         /[\s　]*明示されていません.*$/,
         /[\s　]*画像内には.*$/,
-        /[\s　]*推測.*$/,
         /[\s　]*記載されていません.*$/,
-        /[\s　]*ですが.*$/,           // 学名以降に文章が続いてる場合
+        /[\s　]*画像から読み取れ.*$/,
       ];
       annotationPatterns.forEach(function (re) {
         v = v.replace(re, '').trim();
@@ -1722,4 +1728,4 @@ function _pbeMergeIntoStore() {
 // 外部からも呼べるように公開 (画面再描画前に明示的に呼ぶ用途)
 Pages._pbeMergeIntoStore = _pbeMergeIntoStore;
 
-console.log('[PBE] parent_bloodline_extract.js loaded build=20260426y6.9');
+console.log('[PBE] parent_bloodline_extract.js loaded build=20260426y6.10');
