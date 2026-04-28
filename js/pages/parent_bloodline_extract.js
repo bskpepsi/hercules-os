@@ -2,7 +2,23 @@
 // ════════════════════════════════════════════════════════════════
 // parent_bloodline_extract.js — 種親血統情報の Vision 抽出機能
 //
-// build: 20260426y6.11.1
+// build: 20260426y6.12
+//
+// ── y6.12 での修正点 ──────────────────────────────────────────
+// ・🔥 プロンプト全面強化:
+//   ・raw_text を最重要項目として明示・全文転記を要求
+//   ・kinship_records の例を 6 種類に充実 (174mm/170mm/168mm/前蛹150g/胸角121 等)
+//   ・「取りこぼし厳禁」を強調
+//   ・各項目の指示を詳細化 (1〜11 番付き)
+// ・🔥 raw_text の文字数上限を明示 (PBE_FIELD_MAX_LEN に追加: 2500字)
+// ・🔥 feature_notes 上限拡張 (500→800字)
+// ・🔥 新機能: 編集画面に「📋 本文から AI で補完」ボタン追加
+//   ・raw_text(本文)を貼り付けて補完ボタンを押すと、Gemini にテキストだけを
+//     送って kinship_records / feature_notes 等を再抽出する
+//   ・Vision で取りこぼした実績を、本文ペーストで確実に補完できる
+//   ・テキスト処理なので Vision より精度が高い
+//   ・既存の入力値は上書きしない (空欄のみ補完)
+//   ・既存の kinship_records には重複しない実績だけを追加
 //
 // ── y6.11.1 (緊急修正) ──────────────────────────────────────────
 // ・🔥 クリティカルバグ修正: y6.11 で「読み込んだデータが消える」問題
@@ -610,59 +626,91 @@ function _pbeDetectDegenerate(text) {
 
 function _pbeBuildVisionPrompt() {
   return `あなたはヘラクレスオオカブトの繁殖個体の出品ページから情報を抽出するアシスタントです。
-画像を読み取り、書かれている情報だけを構造化JSONで返してください。
+画像から書かれている情報を正確に読み取り、構造化JSONで返してください。
 
-━━━ 🌟 最重要ルール: null は正解 ━━━
-画像に書かれていない項目は **null** を返してください。これは失敗ではなく正解です。
-推測・補完・補足は一切不要。書かれていることだけを抜き出してください。
+━━━ 🌟 最重要原則 ━━━
+1. **画像内に書かれた文字を一字一句忠実に読み取ること**
+2. **存在する情報は決して取りこぼさないこと**(特に raw_text と kinship_records)
+3. **画像にない情報は null** (推測・補完しない)
+4. **長文の本文(商品説明)は必ず raw_text に全文転記**
 
-━━━ 良い例・悪い例 ━━━
+━━━ 抽出対象 (詳細) ━━━
 
-【シーン: 画像に学名が書かれていない場合】
-✅ 良い例: "species_full": null
-❌ 悪い例: "species_full": "Dynastes hercules hercules"  (推測で書かない)
-❌ 悪い例: "species_full": "Dynastes hercules hercules と表記されているため補完"  (注釈書かない)
+【1】species_full: 学名
+- 画像に "Dynastes hercules hercules" のように明示されている場合のみ
+- "D.Hヘラクレス" のような略称しか無いなら null (common_name に入れる)
 
-【シーン: 画像に「D.Hヘラクレス」と書かれている】
-✅ 良い例: "species_full": null, "common_name": "D.Hヘラクレス"
-❌ 悪い例: "species_full": "Dynastes hercules hercules"  (D.H から学名を勝手に補完しない)
+【2】common_name: 和名・通称
+- "D.Hヘラクレス" / "ヘラクレスオオカブト" / "DHH" など
 
-【シーン: 画像に「Dynastes hercules hercules」と明示されている】
-✅ 良い例: "species_full": "Dynastes hercules hercules"
+【3】origin: 産地
+- "グアドループ" / "Guadeloupe" / "コロンビア" など
+
+【4】generation: 累代
+- "CB" / "WD" / "F1" / "WF1" / "CBF2" など
+
+【5】eclosion_period: 羽化日・羽化期
+- "2025/8/中旬" / "8月中旬" / "2024年12月" など (原文そのまま)
+
+【6】body_size_mm: 体長 (数値のみ)
+- 「79mm程度」→ 79
+- 「78〜79mm」→ 79
+
+【7】paternal_blood: ♂親(父系)の血統表記
+- 例: "MT-FF1710F.FFOAKS"
+- 「血統：xxx」「種親♂ xxx」のように書かれている部分の値を**原文そのまま**
+
+【8】maternal_blood: ♀親(母系)の血統表記
+- 例: "00-181"
+
+【9】kinship_records: 🔥 同腹兄弟・同系統の実績 (絶対に取りこぼさない)
+   出品文によく出てくる以下のような表現を全て構造化:
+   - 「174ミリ筆頭」「174mm 1頭」→ {metric:"body_size", threshold:174, count:1, unit:"mm", is_top:true}
+   - 「170ミリup 6頭」「170mm up 6頭」→ {metric:"body_size", threshold:170, count:6, unit:"mm"}
+   - 「168ミリup 3頭」→ {metric:"body_size", threshold:168, count:3, unit:"mm"}
+   - 「165ミリupは数えていません」→ {metric:"body_size", threshold:165, count:null, unit:"mm", note:"数えていない"}
+   - 「前蛹150g up 筆頭」→ {metric:"pre_pupa_weight", threshold:150, count:1, unit:"g", is_top:true, note:"前蛹"}
+   - 「140g台複数」→ {metric:"pre_pupa_weight", threshold:140, count:null, unit:"g", note:"複数"}
+   - 「胸角121ミリ」→ {metric:"thorax_horn", threshold:121, count:1, unit:"mm", note:"種親♂"}
+
+   metric の選択基準:
+   - "body_size" — 体長 (mm)
+   - "pre_pupa_weight" — 前蛹体重 (g)・「前蛹」「蛹」の文脈
+   - "larva_weight" — 幼虫体重 (g)・「幼虫」「終令」の文脈
+   - "thorax_horn" — 胸角 (mm)
+   - "head_horn" — 頭角 (mm)
+
+   ⚠️ ⚠️ ⚠️ 重要:
+   - 「現状で170up6頭出ている」のように同じ実績が文中で複数回書かれている場合、
+     重複して配列に入れる必要は無い (同じ実績なので1回でOK)
+   - しかし、「174ミリ筆頭・170ミリup 6頭・168ミリup 3頭」のように違う数値の実績は
+     必ず別々のレコードとして全部抽出すること
+   - 上記の例で1件しか抽出しないのは大きな取りこぼし扱い
+
+【10】feature_notes: 系統的特徴をまとめた中立的な短文 (1〜2文・100〜200字)
+   - 出品者の主観的な意見ではなく、客観的な特徴を要約
+   - 例: "胸角の伸びが優秀。174mm筆頭・170mm up 6頭出ている長角サイズ系統。種親♂は胸角121mmのハイスペック個体。"
+
+【11】raw_text: 🔥 商品説明本文を全文転記 (重要・取りこぼし厳禁)
+   - 出品ページの説明文(本文)を**画像に書かれているまま**全文転記
+   - 改行も保持(\\n を使う)
+   - 最大2000字までは入れて良い
+   - **販売者名・購入価格・購入条件は除外**
+   - 「ご閲覧いただきありがとうございます」のような挨拶文も含めて転記
+   - 「[学名] ...」「[産地] ...」のような項目も全部転記OK
 
 ━━━ 🚫 禁止事項 ━━━
-1. 販売者名・店舗名・出品者名は抽出しない (フィールドを作らない)
+1. 販売者名・店舗名・出品者名は抽出しない
 2. 購入価格・落札金額は抽出しない
-3. 購入条件・購入制約は抽出しない
+3. 購入条件・購入制約は抽出しない (「幼虫販売目的不可」など)
 4. フィールドの値に注釈・補足・括弧書きを付けない
-5. JSONの前後に解説文を書かない (純粋なJSONのみ)
-
-━━━ 抽出対象 ━━━
-- species_full:    学名 ("Dynastes hercules hercules" など。画像になければ null)
-- common_name:     和名 ("ヘラクレスオオカブト" / "DHヘラクレス" など)
-- origin:          産地 ("グアドループ" / "Guadeloupe" など)
-- generation:      累代 ("CB" / "WD" / "F1" など)
-- eclosion_period: 羽化日 ("2025/8/中旬" / "2024年12月" など)
-- body_size_mm:    体長 (数値のみ。例: 79)
-- paternal_blood:  ♂親血統表記 ("MT-FF1710F.FFOAKS" など。原文そのまま)
-- maternal_blood:  ♀親血統表記 ("00-181" など。原文そのまま)
-- kinship_records: 同腹兄弟・同系統の実績 (構造化配列、後述。なければ空配列 [])
-- feature_notes:   系統的特徴を中立的にまとめた短い文 (1〜2文・100字以内)
-- raw_text:        出品文の本文 (画像から読み取れた範囲で・最大500字)
-
-━━━ kinship_records の構造 ━━━
-「174mm筆頭・170mm up 6頭」のような実績が書かれている場合、以下の配列にする:
-
-[
-  { "metric": "body_size", "threshold": 174, "count": 1, "unit": "mm", "is_top": true },
-  { "metric": "body_size", "threshold": 170, "count": 6, "unit": "mm", "is_top": false }
-]
-
-metric: "body_size" (体長) | "pre_pupa_weight" (前蛹体重) | "larva_weight" (幼虫体重) | "thorax_horn" (胸角) | "head_horn" (頭角)
+   悪い例: "Dynastes hercules hercules (補完)"
+   良い例: "Dynastes hercules hercules"
+5. JSONの前後に解説文を書かない
 
 ━━━ 出力フォーマット ━━━
-以下のJSONのみを返してください (マークダウン装飾なし)。
-記載のない項目は null にしてください (空文字列ではなく):
+純粋なJSONのみを返してください (マークダウン装飾なし)。
+記載のない項目は null (空文字列ではなく):
 
 {
   "species_full":    "...",
@@ -1057,7 +1105,8 @@ const PBE_FIELD_MAX_LEN = {
   eclosion_period: 30,    // "2025/8/中旬" / "2024年12月"
   paternal_blood:  300,   // 血統表記は長くなりうる
   maternal_blood:  300,
-  feature_notes:   500,   // 特徴説明
+  feature_notes:   800,   // [y6.12] 特徴説明 (500→800に拡張)
+  raw_text:        2500,  // [y6.12] 出品本文の全文 (上限を明示)
 };
 
 function _pbeSanitizeBloodlineData(data) {
@@ -1479,9 +1528,19 @@ function _pbeOpenEditor(parId, data, processedImages) {
     + '    <label style="font-size:.78rem;font-weight:600;display:block;margin-bottom:2px">系統的特徴</label>'
     + '    <textarea id="pbe-ed-feature_notes" class="input" rows="2" placeholder="胸角の伸びが優秀。サイズ系・長角系統。">' + _pbeEsc(data.feature_notes || '') + '</textarea>'
     + '  </div>'
-    + '  <details style="margin-bottom:8px">'
-    + '    <summary style="cursor:pointer;font-size:.78rem;color:var(--text3)">📄 抽出した本文 (編集可・ヤフオク出品時のヒント用)</summary>'
-    + '    <textarea id="pbe-ed-raw_text" class="input" rows="6" style="margin-top:4px;font-size:.78rem">' + _pbeEsc(data.raw_text || '') + '</textarea>'
+    + '  <details id="pbe-ed-raw_text-details" style="margin-bottom:8px" open>'
+    + '    <summary style="cursor:pointer;font-size:.78rem;color:var(--text3)">📄 抽出した本文 (編集可・ヤフオク出品時のヒント用・補完元)</summary>'
+    + '    <textarea id="pbe-ed-raw_text" class="input" rows="6" style="margin-top:4px;font-size:.78rem"'
+    + '              placeholder="ここに出品ページの本文を貼り付けて 📋 補完ボタンを押すと、AIが同腹兄弟実績や系統的特徴を自動抽出します">' + _pbeEsc(data.raw_text || '') + '</textarea>'
+    + '    <div style="margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">'
+    + '      <button type="button" class="btn btn-ghost btn-sm" style="font-size:.78rem"'
+    + '              onclick="Pages._pbeReExtractFromText()">'
+    + '        📋 本文から AI で補完'
+    + '      </button>'
+    + '      <span style="font-size:.7rem;color:var(--text3)">'
+    + '        本文を編集→このボタンで実績や特徴を再抽出'
+    + '      </span>'
+    + '    </div>'
     + '  </details>'
     + '</div>'
     + '<div class="modal-footer">'
@@ -1531,6 +1590,225 @@ Pages._pbeAddKinshipRow = function () {
   div.innerHTML = _pbeKinshipRowHtml(null, idx);
   wrap.appendChild(div.firstElementChild);
 };
+
+// ════════════════════════════════════════════════════════════════
+// [y6.12] 本文から AI で構造化情報を再抽出
+// ────────────────────────────────────────────────────────────────
+// 編集画面の "raw_text" 欄に貼り付けたテキストを Gemini に送り、
+// kinship_records / feature_notes / その他のフィールドを再抽出する。
+// 画像経由 (Vision) よりも本文を直接渡す方が高精度になりやすい。
+// ════════════════════════════════════════════════════════════════
+Pages._pbeReExtractFromText = async function () {
+  const rawTextEl = document.getElementById('pbe-ed-raw_text');
+  if (!rawTextEl) return;
+  const text = String(rawTextEl.value || '').trim();
+  if (text.length < 30) {
+    UI.toast('本文が短すぎます (30字以上必要)', 'error');
+    return;
+  }
+
+  const apiKey = (window.CONFIG && CONFIG.GEMINI_KEY)
+              || localStorage.getItem('hcos_gemini_key') || '';
+  if (!apiKey) {
+    UI.toast('Gemini APIキーが未設定です', 'error');
+    return;
+  }
+
+  // 確認
+  if (!confirm('本文の内容を AI に解析させて、同腹兄弟実績や系統的特徴を自動抽出します。\n既存の入力内容は上書きされる可能性があります。\n続けますか?')) {
+    return;
+  }
+
+  UI.toast('本文を AI で解析中...', 'info');
+
+  try {
+    const result = await _pbeCallGeminiForText(text, apiKey);
+    if (!result || typeof result !== 'object') {
+      UI.toast('AIからの応答が解析できませんでした', 'error');
+      return;
+    }
+
+    // 既存値があるフィールドは上書きしない (ユーザー入力を尊重)
+    function setIfEmpty(id, value) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      if (!el.value || el.value.trim() === '') {
+        if (value != null && value !== '') {
+          el.value = String(value);
+        }
+      }
+    }
+
+    setIfEmpty('pbe-ed-common_name',     result.common_name);
+    setIfEmpty('pbe-ed-species_full',    result.species_full);
+    setIfEmpty('pbe-ed-origin',          result.origin);
+    setIfEmpty('pbe-ed-generation',      result.generation);
+    setIfEmpty('pbe-ed-eclosion_period', result.eclosion_period);
+    setIfEmpty('pbe-ed-body_size_mm',    result.body_size_mm);
+    setIfEmpty('pbe-ed-paternal_blood',  result.paternal_blood);
+    setIfEmpty('pbe-ed-maternal_blood',  result.maternal_blood);
+    setIfEmpty('pbe-ed-feature_notes',   result.feature_notes);
+
+    // kinship_records は既存が空なら全置換、既存があれば追加
+    const kinshipWrap = document.getElementById('pbe-ed-kinship-rows');
+    if (kinshipWrap && Array.isArray(result.kinship_records) && result.kinship_records.length) {
+      const hasExisting = kinshipWrap.querySelectorAll('.pbe-kin-row').length > 0;
+      if (!hasExisting) {
+        // 既存無し → 全部置換
+        kinshipWrap.innerHTML = _pbeRenderKinshipRows(result.kinship_records);
+      } else {
+        // 既存あり → 重複しない実績を追加
+        // 既存の "metric@threshold" を集める
+        const existingKeys = new Set();
+        kinshipWrap.querySelectorAll('.pbe-kin-row').forEach(function (row) {
+          const m = (row.querySelector('.pbe-kin-metric')    || {}).value || '';
+          const t = (row.querySelector('.pbe-kin-threshold') || {}).value || '';
+          if (m && t) existingKeys.add(m + '@' + t);
+        });
+        result.kinship_records.forEach(function (r) {
+          if (!r || !r.metric || r.threshold == null) return;
+          const key = r.metric + '@' + r.threshold;
+          if (existingKeys.has(key)) return;
+          // 新規行を追加
+          const idx = kinshipWrap.querySelectorAll('.pbe-kin-row').length;
+          const div = document.createElement('div');
+          div.innerHTML = _pbeKinshipRowHtml(r, idx);
+          if (div.firstElementChild) kinshipWrap.appendChild(div.firstElementChild);
+        });
+      }
+    }
+
+    UI.toast('AI 補完が完了しました ✅', 'success');
+  } catch (e) {
+    console.error('[PBE] reExtractFromText failed:', e);
+    UI.toast('AI 補完失敗: ' + (e.message || '通信エラー'), 'error');
+  }
+};
+
+// テキスト専用モードで Gemini を呼び出す (画像なし)
+async function _pbeCallGeminiForText(text, apiKey) {
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/'
+            + PBE_GEMINI_MODEL + ':generateContent?key=' + encodeURIComponent(apiKey);
+
+  const prompt = `以下はヘラクレスオオカブトの繁殖個体の出品ページの本文です。
+この本文から、構造化された血統情報を抽出してください。
+
+━━━ 本文 ━━━
+${text}
+━━━ 本文ここまで ━━━
+
+━━━ 抽出ルール ━━━
+1. 本文に書かれていない情報は null
+2. 推測や補完はしない
+3. kinship_records は本文に出てくる全ての実績を取りこぼさず抽出すること
+   例: 「174ミリ筆頭・170ミリup 6頭・168ミリup 3頭」なら3件全部
+4. raw_text には本文をそのまま転記 (販売者情報は除く)
+5. JSON のみを返す (マークダウン装飾なし)
+
+━━━ kinship_records の例 ━━━
+- 「174ミリ筆頭」 → {"metric":"body_size", "threshold":174, "count":1, "unit":"mm", "is_top":true}
+- 「170ミリup 6頭」 → {"metric":"body_size", "threshold":170, "count":6, "unit":"mm"}
+- 「165ミリupは数えていません」 → {"metric":"body_size", "threshold":165, "count":null, "unit":"mm", "note":"数えていない"}
+- 「前蛹150g up 筆頭」 → {"metric":"pre_pupa_weight", "threshold":150, "count":1, "unit":"g", "is_top":true}
+- 「140g台複数」 → {"metric":"pre_pupa_weight", "threshold":140, "count":null, "unit":"g", "note":"複数"}
+- 「胸角121ミリ」 → {"metric":"thorax_horn", "threshold":121, "count":1, "unit":"mm", "note":"種親♂"}
+
+metric: "body_size" | "pre_pupa_weight" | "larva_weight" | "thorax_horn" | "head_horn"
+
+━━━ 出力フォーマット (純JSON) ━━━
+{
+  "species_full":    "...",
+  "common_name":     "...",
+  "origin":          "...",
+  "generation":      "...",
+  "eclosion_period": "...",
+  "body_size_mm":    79,
+  "paternal_blood":  "...",
+  "maternal_blood":  "...",
+  "kinship_records": [...],
+  "feature_notes":   "...",
+  "raw_text":        "..."
+}`;
+
+  const responseSchema = {
+    type: 'OBJECT',
+    properties: {
+      species_full:    { type: 'STRING', nullable: true },
+      common_name:     { type: 'STRING', nullable: true },
+      origin:          { type: 'STRING', nullable: true },
+      generation:      { type: 'STRING', nullable: true },
+      eclosion_period: { type: 'STRING', nullable: true },
+      body_size_mm:    { type: 'NUMBER', nullable: true },
+      paternal_blood:  { type: 'STRING', nullable: true },
+      maternal_blood:  { type: 'STRING', nullable: true },
+      feature_notes:   { type: 'STRING', nullable: true },
+      raw_text:        { type: 'STRING', nullable: true },
+      kinship_records: {
+        type: 'ARRAY',
+        items: {
+          type: 'OBJECT',
+          properties: {
+            metric:    { type: 'STRING' },
+            threshold: { type: 'NUMBER' },
+            count:     { type: 'NUMBER', nullable: true },
+            unit:      { type: 'STRING', nullable: true },
+            is_top:    { type: 'BOOLEAN', nullable: true },
+            note:      { type: 'STRING', nullable: true },
+          },
+        },
+      },
+    },
+  };
+
+  const body = {
+    contents: [{
+      role: 'user',
+      parts: [{ text: prompt }],
+    }],
+    generationConfig: {
+      temperature:      0.3,    // テキスト処理は低温度で確実に
+      maxOutputTokens:  8192,
+      topP:             0.85,
+      responseMimeType: 'application/json',
+      responseSchema:   responseSchema,
+    },
+  };
+
+  const ctrl = new AbortController();
+  const tid  = setTimeout(function () { ctrl.abort(); }, 60000);
+
+  try {
+    const res = await fetch(url, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(body),
+      signal:  ctrl.signal,
+    });
+    clearTimeout(tid);
+    if (!res.ok) {
+      const errText = await res.text().catch(function () { return ''; });
+      throw new Error('Gemini API ' + res.status + ': ' + errText.slice(0, 200));
+    }
+    const json = await res.json();
+    const cand = json && json.candidates && json.candidates[0];
+    if (!cand) throw new Error('AIからの応答が空です');
+    const partText = cand.content && cand.content.parts && cand.content.parts[0]
+                  && cand.content.parts[0].text;
+    if (!partText) throw new Error('AIからのテキスト応答が空です');
+    let parsed;
+    try { parsed = JSON.parse(partText); }
+    catch (e) {
+      // マークダウンを剥がしてリトライ
+      const stripped = partText.replace(/```json\s*/g, '').replace(/```\s*$/g, '').trim();
+      parsed = JSON.parse(stripped);
+    }
+    // サニタイズして返す
+    return _pbeSanitizeBloodlineData(parsed);
+  } catch (e) {
+    clearTimeout(tid);
+    throw e;
+  }
+}
 
 // 編集モーダルから保存
 Pages._pbeSaveEditor = async function () {
@@ -1961,4 +2239,4 @@ function _pbeMergeIntoStore() {
 // 外部からも呼べるように公開 (画面再描画前に明示的に呼ぶ用途)
 Pages._pbeMergeIntoStore = _pbeMergeIntoStore;
 
-console.log('[PBE] parent_bloodline_extract.js loaded build=20260426y6.11.1');
+console.log('[PBE] parent_bloodline_extract.js loaded build=20260426y6.12');
