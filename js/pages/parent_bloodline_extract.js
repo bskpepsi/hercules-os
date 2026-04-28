@@ -2,7 +2,19 @@
 // ════════════════════════════════════════════════════════════════
 // parent_bloodline_extract.js — 種親血統情報の Vision 抽出機能
 //
-// build: 20260426y6.11
+// build: 20260426y6.11.1
+//
+// ── y6.11.1 (緊急修正) ──────────────────────────────────────────
+// ・🔥 クリティカルバグ修正: y6.11 で「読み込んだデータが消える」問題
+//   原因: _pbeMergeIntoStore 内の cloudUpdated フラグが forEach の外で
+//        宣言されていたため、1つの parent でクラウドデータが見つかると
+//        それ以降の全 parent でも cloudUpdated=true のままになり、
+//        空の bloodline_data で localStorage キャッシュを上書きしていた。
+//   対策:
+//     1) cloudUpdated を forEach 内のローカル変数に変更
+//     2) 全体の更新有無は anyCloudUpdate で別途追跡
+//     3) 安全装置: クラウドのタイムスタンプより localStorage が新しければ
+//        上書きスキップ (タイミング上 GAS 側書き込みが遅れる場合の保険)
 //
 // ── y6.11 での修正点 ──────────────────────────────────────────
 // ・🔥 GAS バックエンド連携でクラウド同期対応 (複数人運用OK)
@@ -1855,9 +1867,14 @@ function _pbeMergeIntoStore() {
   if (!Array.isArray(parents) || !parents.length) return;
   const pbeStore = _pbeLoadStore();
   let modified = false;
-  let cloudUpdated = false;
+  let anyCloudUpdate = false;  // [y6.11.1] 全 parent を通じて1つでもクラウド更新があったか
 
   parents.forEach(function (par) {
+    // [y6.11.1] クリティカル修正: cloudUpdated は parent ごとにローカル変数にする
+    //   forEach 外で let cloudUpdated = false 宣言していたため、1つでもクラウドデータが
+    //   見つかると以降全 parent で true のままになり、空データで localStorage を上書きしていた。
+    let cloudUpdated = false;
+
     // [y6.11] クラウドデータの展開 (GAS から来た bloodline_data_json をパース)
     if (par.bloodline_data_json && !par.bloodline_data) {
       try {
@@ -1878,18 +1895,27 @@ function _pbeMergeIntoStore() {
         console.warn('[PBE] source_screenshots_json parse failed for', par.par_id, e);
       }
     }
-    if (par.bloodline_updated_at && cloudUpdated) {
-      // 更新日時はクラウドの値をそのまま使う
-    }
 
     // [y6.11] クラウドから取得したデータを localStorage にもキャッシュ
     //   (将来的にオフライン時でも参照できるよう)
+    // [y6.11.1] このパーセントが実際にクラウドからデータを取得した場合のみキャッシュ。
+    //   既存の localStorage データを空で上書きしないように、必ず実データの存在を確認する。
+    // [y6.11.1] さらに安全装置: 既存の localStorage データの方が新しいなら上書きしない
     if (cloudUpdated && par.par_id && (par.bloodline_data || par.source_screenshots)) {
-      pbeStore[par.par_id] = {
-        bloodline_data:     par.bloodline_data,
-        source_screenshots: par.source_screenshots,
-        updated_at:         par.bloodline_updated_at || _pbeNowIso(),
-      };
+      const existing = pbeStore[par.par_id];
+      const existingTs = existing && existing.updated_at ? new Date(existing.updated_at).getTime() : 0;
+      const cloudTs    = par.bloodline_updated_at ? new Date(par.bloodline_updated_at).getTime() : 0;
+      // クラウドの方が新しい、またはローカルにデータが無い場合のみ上書き
+      if (!existing || cloudTs >= existingTs) {
+        pbeStore[par.par_id] = {
+          bloodline_data:     par.bloodline_data,
+          source_screenshots: par.source_screenshots,
+          updated_at:         par.bloodline_updated_at || _pbeNowIso(),
+        };
+        anyCloudUpdate = true;
+      } else {
+        console.log('[PBE] localStorage は新しいので上書きスキップ:', par.par_id);
+      }
     }
 
     // [y6.6] localStorage 側にデータがあって parent にまだセットされていない場合は補完
@@ -1910,8 +1936,8 @@ function _pbeMergeIntoStore() {
       }
     }
   });
-  // [y6.11] クラウドから新しいデータを取得した場合、localStorage キャッシュに永続化
-  if (cloudUpdated) {
+  // [y6.11.1] クラウドから新しいデータを取得した場合、localStorage キャッシュに永続化
+  if (anyCloudUpdate) {
     _pbeSaveStore(pbeStore);
     console.log('[PBE] cloud data cached to localStorage');
   }
@@ -1935,4 +1961,4 @@ function _pbeMergeIntoStore() {
 // 外部からも呼べるように公開 (画面再描画前に明示的に呼ぶ用途)
 Pages._pbeMergeIntoStore = _pbeMergeIntoStore;
 
-console.log('[PBE] parent_bloodline_extract.js loaded build=20260426y6.11');
+console.log('[PBE] parent_bloodline_extract.js loaded build=20260426y6.11.1');
