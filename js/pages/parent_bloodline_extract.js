@@ -2613,7 +2613,7 @@ async function _pbeDiagnose(parId) {
   function log(s) { lines.push(s); console.log('[PBE-DIAG]', s); }
   log('═══ PBE 自己診断 ═══');
   log('対象 par_id: ' + parId);
-  log('build: 20260428y6.14');
+  log('build: 20260429y6.18');
   log('時刻: ' + new Date().toISOString());
   log('');
 
@@ -2845,27 +2845,38 @@ function _pbeRenderDiagFab() {
 setInterval(_pbeRenderDiagFab, 800);
 
 // ════════════════════════════════════════════════════════════════
-// [y6.18] 🔥 localStorage から系統評価カードを直接DOM注入
+// [y6.18] 🔥 GAS クラウド優先で系統評価カードを直接DOM注入
 // ────────────────────────────────────────────────────────────────
 // 背景:
-//   ・Store.parents が空 (件数=0) の状態が頻発し、parent_v2.js の
-//     系統評価カードのマウント処理で `p.bloodline_data` が undefined
-//     になって描画されない問題が長く解決できなかった。
-//   ・しかし localStorage の pbeStore には bloodline_data が完全な形で
-//     キャッシュされている (診断レポートで確認済み)。
-//   ・なので Store.parents の状態に依存せず、localStorage から直接
-//     データを取得して系統評価カードのマウントポイントに注入すれば
-//     確実に表示できる。
+//   ・端末ごとに localStorage の pbeStore に**異なるバージョン**のデータが
+//     入っているケースが判明:
+//       - スマホ: 古いスクショ 3枚のスナップショット
+//       - PC:    最新スクショ 9枚のスナップショット
+//   ・原因は scan.js / parent_bloodline_extract.js が個別端末の localStorage
+//     にしかキャッシュしないため、PC で追加スクショして Sheets に保存しても
+//     スマホ側の localStorage は古いまま。
+//   ・Store.parents が空という別問題もあり、parent_v2.js の正常系では
+//     系統評価カードが描画されない状況が続いていた。
 //
-// 仕組み:
-//   ・1秒間隔で「pbe-bloodline-card-mount」要素の有無を監視
-//   ・存在し、かつ空 (innerHTML が空) なら、URL ハッシュから par_id を
-//     取得し、pbeStore から bloodline_data を取り出して
-//     _pbeRenderBloodlineCard で HTML を生成、innerHTML に直接代入
-//   ・既に内容がある場合は何もしない (parent_v2.js による正常系を尊重)
+// 解決策:
+//   ・**GAS クラウド (Sheets) を最優先データソースとする**
+//   ・1秒間隔で「pbe-bloodline-card-mount」を監視
+//   ・空なら GAS getParents を呼んで最新データを取得 (POST・~14KB)
+//   ・取得した bloodline_data_json をパースして HTML 生成・DOM 注入
+//   ・取得できたデータは localStorage にも上書き保存し、次回からは
+//     キャッシュ + バックグラウンド更新の二段構えで高速化
+//   ・GAS 通信失敗時は localStorage キャッシュをフォールバックとして使う
+//
+// この実装により:
+//   ・端末ごとの localStorage バージョン差異が解消される
+//   ・Store.parents の状態に依存しない
+//   ・syncAll や setDB の挙動に依存しない
+//   ・常にクラウドの最新データが画面に表示される
 // ════════════════════════════════════════════════════════════════
 let _pbeLastInjectedParId = null;
-function _pbeInjectBloodlineCardFromCache() {
+let _pbeCloudFetchInflight = false;  // 同一 par_id への二重リクエスト防止
+
+async function _pbeInjectBloodlineCardFromCloud() {
   const mount = document.getElementById('pbe-bloodline-card-mount');
   if (!mount) {
     _pbeLastInjectedParId = null;
@@ -2877,34 +2888,121 @@ function _pbeInjectBloodlineCardFromCache() {
   const m = (location.hash || '').match(/parId=([^&]+)/);
   if (!m) return;
   const parId = decodeURIComponent(m[1]);
-  // localStorage から取得
+
+  // ── ステップ1: localStorage キャッシュで即時表示 (高速化) ──
+  //   ただし古いキャッシュの可能性があるため、後段で GAS から最新を取得
+  //   して上書き更新する。
   const pbeStore = _pbeLoadStore();
   const rec = pbeStore && pbeStore[parId];
-  if (!rec || !rec.bloodline_data) return;
-  // 仮の par オブジェクトを作って _pbeRenderBloodlineCard に渡す
-  const fakePar = {
-    par_id:             parId,
-    bloodline_data:     rec.bloodline_data,
-    source_screenshots: rec.source_screenshots,
-  };
+  if (rec && rec.bloodline_data) {
+    const fakePar = {
+      par_id:             parId,
+      bloodline_data:     rec.bloodline_data,
+      source_screenshots: rec.source_screenshots,
+    };
+    try {
+      const html = _pbeRenderBloodlineCard(fakePar);
+      if (html && (!mount.innerHTML || mount.innerHTML.trim().length === 0)) {
+        mount.innerHTML = html;
+        if (_pbeLastInjectedParId !== parId) {
+          console.log('[PBE] 🎯 系統評価カードを localStorage から即時表示 par_id=' + parId);
+          _pbeLastInjectedParId = parId;
+        }
+      }
+    } catch (e) {
+      console.warn('[PBE] localStorage レンダ失敗:', e);
+    }
+  }
+
+  // ── ステップ2: GAS から最新データを取得して上書き (バックグラウンド) ──
+  //   既に同一リクエスト実行中ならスキップ (二重起動防止)
+  if (_pbeCloudFetchInflight) return;
+  _pbeCloudFetchInflight = true;
   try {
-    const html = _pbeRenderBloodlineCard(fakePar);
-    if (html) {
-      mount.innerHTML = html;
-      if (_pbeLastInjectedParId !== parId) {
-        console.log('[PBE] 🎯 系統評価カードを localStorage から DOM 注入しました par_id=' + parId);
-        _pbeLastInjectedParId = parId;
+    const data = await _pbeCallGAS('getParents', {});
+    if (data && Array.isArray(data.parents)) {
+      const cloudPar = data.parents.find(p => p && p.par_id === parId);
+      if (cloudPar && cloudPar.bloodline_data_json) {
+        // パース
+        let bloodlineData = null;
+        let sourceScreenshots = null;
+        try { bloodlineData = JSON.parse(cloudPar.bloodline_data_json); } catch (e) {}
+        try { if (cloudPar.source_screenshots_json) sourceScreenshots = JSON.parse(cloudPar.source_screenshots_json); } catch (e) {}
+
+        // 新しいデータかどうかタイムスタンプで判定
+        const cloudTs = cloudPar.bloodline_updated_at
+          ? new Date(cloudPar.bloodline_updated_at).getTime() : 0;
+        const cacheTs = (rec && rec.updated_at)
+          ? new Date(rec.updated_at).getTime() : 0;
+
+        if (bloodlineData) {
+          // 1) クラウド側が新しいなら DOM 再描画 + localStorage 上書き
+          if (cloudTs > cacheTs) {
+            const cloudFakePar = {
+              par_id:             parId,
+              bloodline_data:     bloodlineData,
+              source_screenshots: sourceScreenshots,
+            };
+            try {
+              const html = _pbeRenderBloodlineCard(cloudFakePar);
+              if (html) {
+                // クラウド側を最新として強制再描画 (既存 innerHTML 上書き)
+                mount.innerHTML = html;
+                console.log('[PBE] 🌐 系統評価カードをクラウド最新版で更新 par_id=' + parId
+                  + ' (スクショ ' + (sourceScreenshots ? sourceScreenshots.length : 0) + '枚)');
+              }
+            } catch (e) { console.warn('[PBE] クラウドレンダ失敗:', e); }
+            // localStorage を最新で上書き
+            try {
+              pbeStore[parId] = {
+                bloodline_data:     bloodlineData,
+                source_screenshots: sourceScreenshots,
+                updated_at:         cloudPar.bloodline_updated_at || _pbeNowIso(),
+              };
+              _pbeSaveStore(pbeStore);
+              console.log('[PBE] 💾 localStorage キャッシュをクラウド最新版で上書き par_id=' + parId);
+            } catch (e) { console.warn('[PBE] localStorage 保存失敗:', e); }
+          }
+          // 2) DOM がまだ空 (ステップ1の localStorage も空) ならクラウドのデータで描画
+          else if (!mount.innerHTML || mount.innerHTML.trim().length === 0) {
+            const cloudFakePar = {
+              par_id:             parId,
+              bloodline_data:     bloodlineData,
+              source_screenshots: sourceScreenshots,
+            };
+            try {
+              const html = _pbeRenderBloodlineCard(cloudFakePar);
+              if (html) {
+                mount.innerHTML = html;
+                console.log('[PBE] 🌐 系統評価カードをクラウドから初回描画 par_id=' + parId);
+              }
+            } catch (e) { console.warn('[PBE] クラウドレンダ失敗:', e); }
+            // localStorage 初期セット
+            try {
+              pbeStore[parId] = {
+                bloodline_data:     bloodlineData,
+                source_screenshots: sourceScreenshots,
+                updated_at:         cloudPar.bloodline_updated_at || _pbeNowIso(),
+              };
+              _pbeSaveStore(pbeStore);
+            } catch (e) {}
+          }
+        }
       }
     }
   } catch (e) {
-    console.warn('[PBE] DOM 注入失敗:', e);
+    // GAS 失敗時は何もしない (既に localStorage で描画済みなら継続表示)
+    console.warn('[PBE] クラウド取得失敗 (localStorage で代替):', e.message);
+  } finally {
+    _pbeCloudFetchInflight = false;
   }
 }
-// 1秒間隔でマウントポイントを監視
-setInterval(_pbeInjectBloodlineCardFromCache, 1000);
-// 即時実行も
-setTimeout(_pbeInjectBloodlineCardFromCache, 200);
-setTimeout(_pbeInjectBloodlineCardFromCache, 800);
-setTimeout(_pbeInjectBloodlineCardFromCache, 2000);
+
+// 1秒間隔でマウントポイントを監視 (描画と更新両方の機会を逃さない)
+setInterval(_pbeInjectBloodlineCardFromCloud, 1000);
+// 即時実行も (画面表示直後の遅延を最小化)
+setTimeout(_pbeInjectBloodlineCardFromCloud, 200);
+setTimeout(_pbeInjectBloodlineCardFromCloud, 800);
+setTimeout(_pbeInjectBloodlineCardFromCloud, 2000);
 
 console.log('[PBE] parent_bloodline_extract.js loaded build=20260429y6.18');
