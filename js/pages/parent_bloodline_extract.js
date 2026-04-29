@@ -2,9 +2,32 @@
 // ════════════════════════════════════════════════════════════════
 // parent_bloodline_extract.js — 種親血統情報の Vision 抽出機能
 //
-// build: 20260428y6.13
+// build: 20260428y6.14
 //
-// ── y6.13 での修正点 (本ビルド・最重要) ──────────────────────────
+// ── y6.14 での修正点 (本ビルド) ────────────────────────────────
+// ・🔥 自己診断機能 (_pbeDiagnose) を追加:
+//   背景:
+//     ・「保存後に種親詳細画面から血統情報が消える」現象が、
+//       PCでは古いデータが見えている / スマホでは何も見えないと
+//       端末ごとに異なる挙動を示している。
+//     ・スマホで DevTools が見られないと、Sheets→GAS→フロントの
+//       どこで詰まっているか切り分けが困難。
+//   実装:
+//     ・Pages._pbeDiagnose(parId) / window._pbeDiagnose(parId) で呼べる
+//       自己診断関数。デフォルト par_id は 'PAR-02c5yoa' (F25-24)。
+//     ・各レイヤを順に確認しモーダルでレポート表示:
+//       1. GAS URL 設定状況
+//       2. POST 疎通 (getParents 呼び出し)
+//       3. レスポンスに bloodline_data_json 等 3 列が含まれているか
+//          (含まれていなければ GAS 側 COL_DEF.PARENT 拡張が未適用)
+//       4. その値が空でないか (= Sheets に保存されているか)
+//       5. パース可能か
+//       6. Store.parents に展開されているか
+//       7. localStorage の pbeStore キャッシュ状況
+//       8. 強制マージ実行
+//     ・「📋 コピー」ボタンで全文をクリップボードへ保存。
+//
+// ── y6.13 での修正点 ────────────────────────────────────────
 // ・🔥 クリティカルバグ修正: 「保存後に種親詳細画面から血統情報が消える」
 //   症状:
 //     ・編集画面で「保存」を押すと UI 上は「保存しました ✅」と出るが、
@@ -2278,4 +2301,191 @@ function _pbeMergeIntoStore() {
 // 外部からも呼べるように公開 (画面再描画前に明示的に呼ぶ用途)
 Pages._pbeMergeIntoStore = _pbeMergeIntoStore;
 
-console.log('[PBE] parent_bloodline_extract.js loaded build=20260428y6.13');
+// ════════════════════════════════════════════════════════════════
+// [y6.14] 自己診断機能 (PBE Diagnostic)
+// ────────────────────────────────────────────────────────────────
+// 「保存後に種親詳細画面から血統情報が消える」の原因切り分け用。
+// Sheets → GAS → フロント (Store/localStorage) の各レイヤを順に確認し
+// レポートを画面表示する。スマホで DevTools が見づらい状況でも、
+// ボタン1つで状態を確認できる。
+//
+// 呼び出し方法:
+//   ・Console から: Pages._pbeDiagnose('PAR-02c5yoa')
+//   ・グローバルに公開しているので URL バーから javascript: で呼び出しも可能。
+//
+// チェック項目:
+//   1) 現在の build バージョン
+//   2) GAS URL と疎通確認 (POST + getParents)
+//   3) GAS のレスポンスに bloodline_data_json 列が含まれているか (= GAS デプロイ済か)
+//   4) その値が空でないか (= Sheets に保存されているか)
+//   5) パース可能か / Store の parents に展開されているか
+//   6) localStorage の pbeStore キャッシュ状況
+// ════════════════════════════════════════════════════════════════
+async function _pbeDiagnose(parId) {
+  parId = parId || 'PAR-02c5yoa';
+  const lines = [];
+  function log(s) { lines.push(s); console.log('[PBE-DIAG]', s); }
+  log('═══ PBE 自己診断 ═══');
+  log('対象 par_id: ' + parId);
+  log('build: 20260428y6.14');
+  log('時刻: ' + new Date().toISOString());
+  log('');
+
+  // 1) GAS URL
+  const gasUrl = (window.CONFIG && CONFIG.GAS_URL)
+              || localStorage.getItem('hcos_gas_url') || '';
+  if (!gasUrl) {
+    log('❌ GAS URL 未設定');
+    return _pbeDiagShow(lines.join('\n'));
+  }
+  log('✅ GAS URL 設定済み: ' + gasUrl.slice(0, 60) + '...');
+
+  // 2) GAS POST 疎通 + getParents
+  log('');
+  log('── GAS getParents 呼び出し中... ──');
+  let parentsFromGas;
+  try {
+    parentsFromGas = await _pbeCallGAS('getParents', {});
+  } catch (e) {
+    log('❌ GAS 呼び出し失敗: ' + e.message);
+    log('   → 原因候補: GAS 未デプロイ・URL誤り・ネットワーク切断');
+    return _pbeDiagShow(lines.join('\n'));
+  }
+  log('✅ GAS から取得: parents 件数 = ' + (parentsFromGas.parents || []).length);
+
+  // 3) bloodline_data_json 列の有無
+  const par = (parentsFromGas.parents || []).find(p => p.par_id === parId);
+  if (!par) {
+    log('❌ par_id ' + parId + ' が GAS のレスポンスに含まれない');
+    return _pbeDiagShow(lines.join('\n'));
+  }
+  log('');
+  log('── 対象 parent のレスポンス内容 ──');
+  log('  par_id:                     ' + par.par_id);
+  log('  display_name:               ' + (par.display_name || '(空)'));
+  log('  size_mm:                    ' + (par.size_mm || '(空)'));
+  log('  paternal_raw:               ' + (par.paternal_raw || '(空)'));
+  log('  maternal_raw:               ' + (par.maternal_raw || '(空)'));
+  log('  father_parent_size_mm:      ' + (par.father_parent_size_mm || '(空)'));
+  log('  mother_parent_size_mm:      ' + (par.mother_parent_size_mm || '(空)'));
+
+  // 重要 3 列
+  const has1 = ('bloodline_data_json'     in par);
+  const has2 = ('source_screenshots_json' in par);
+  const has3 = ('bloodline_updated_at'    in par);
+  log('');
+  log('── COL_DEF.PARENT 拡張チェック (3列) ──');
+  log('  bloodline_data_json:        ' + (has1 ? '✅ 列あり' : '❌ 列なし (GAS 未デプロイ・COL_DEF 拡張未適用)'));
+  log('  source_screenshots_json:    ' + (has2 ? '✅ 列あり' : '❌ 列なし'));
+  log('  bloodline_updated_at:       ' + (has3 ? '✅ 列あり' : '❌ 列なし'));
+  if (!has1) {
+    log('');
+    log('  → GAS 側の parent_bloodline.gs (build 20260428e) を保存し');
+    log('     「デプロイ管理」→既存デプロイ編集→「新しいバージョン」を選択して');
+    log('     再デプロイしてください。');
+    return _pbeDiagShow(lines.join('\n'));
+  }
+
+  // 4) 値の有無
+  const v1 = par.bloodline_data_json;
+  const v2 = par.source_screenshots_json;
+  const v3 = par.bloodline_updated_at;
+  log('');
+  log('── 値チェック ──');
+  log('  bloodline_data_json: ' + (v1 ? '✅ ' + String(v1).length + '文字' : '⚠️ 空 (Sheets に未保存)'));
+  log('  source_screenshots_json: ' + (v2 ? '✅ ' + String(v2).length + '文字' : '⚠️ 空'));
+  log('  bloodline_updated_at: ' + (v3 || '(空)'));
+
+  // 5) パース可能か
+  if (v1) {
+    try {
+      const obj = JSON.parse(v1);
+      const cnt = obj && obj.kinship_records ? obj.kinship_records.length : 0;
+      log('  パース: ✅ kinship_records ' + cnt + '件 / common_name=' + (obj.common_name || '(空)'));
+    } catch (e) {
+      log('  パース: ❌ JSON.parse 失敗: ' + e.message);
+    }
+  }
+
+  // 6) Store の parent に展開されているか
+  log('');
+  log('── Store (フロント) の状態 ──');
+  const localPars = (window.Store && Store.getDB) ? (Store.getDB('parents') || []) : [];
+  const localPar  = localPars.find(p => p.par_id === parId);
+  if (!localPar) {
+    log('  ❌ Store.parents に ' + parId + ' が存在しない');
+  } else {
+    log('  ✅ Store.parents に存在');
+    log('  par.bloodline_data:       ' + (localPar.bloodline_data ? '✅ 展開済み' : '❌ 未展開'));
+    log('  par.source_screenshots:   ' + (localPar.source_screenshots ? '✅ 展開済み' : '❌ 未展開'));
+    log('  par.bloodline_data_json:  ' + (localPar.bloodline_data_json ? '✅ 生JSONあり' : '❌ 生JSONなし'));
+  }
+
+  // 7) localStorage キャッシュ
+  log('');
+  log('── localStorage キャッシュ ──');
+  const pbeStore = _pbeLoadStore();
+  const cacheRec = pbeStore[parId];
+  if (cacheRec) {
+    log('  ✅ pbeStore に ' + parId + ' あり');
+    log('    bloodline_data:     ' + (cacheRec.bloodline_data ? '✅' : '❌'));
+    log('    source_screenshots: ' + (cacheRec.source_screenshots ? '✅' : '❌'));
+    log('    updated_at:         ' + (cacheRec.updated_at || '(空)'));
+  } else {
+    log('  ⚠️ pbeStore キャッシュなし (この端末では未同期)');
+  }
+
+  // 8) 最後に強制マージ実行
+  log('');
+  log('── 強制マージ実行 ──');
+  try {
+    const modified = _pbeMergeIntoStore();
+    log('  _pbeMergeIntoStore() returned: ' + modified);
+    log('  → 種親詳細画面に戻って表示が回復するか確認');
+  } catch (e) {
+    log('  ❌ マージ失敗: ' + e.message);
+  }
+
+  log('');
+  log('═══ 診断完了 ═══');
+  return _pbeDiagShow(lines.join('\n'));
+}
+
+function _pbeDiagShow(text) {
+  // 既存モーダルがあれば消す
+  let m = document.getElementById('pbe-diag-modal');
+  if (m) m.remove();
+  m = document.createElement('div');
+  m.id = 'pbe-diag-modal';
+  m.style.cssText = 'position:fixed;inset:0;z-index:99999;display:flex;align-items:center;'
+    + 'justify-content:center;padding:20px;background:rgba(0,0,0,.7);box-sizing:border-box;';
+  m.innerHTML = '<div style="background:#1a1a1a;border:1px solid #444;border-radius:8px;'
+    + 'max-width:560px;width:100%;max-height:85vh;display:flex;flex-direction:column">'
+    + '<div style="padding:10px 14px;border-bottom:1px solid #333;display:flex;'
+    + 'justify-content:space-between;align-items:center;font-weight:700;font-size:.92rem;color:#eee">'
+    + '🔧 PBE 診断レポート'
+    + '<button onclick="document.getElementById(\'pbe-diag-modal\').remove()" '
+    + 'style="background:transparent;border:none;color:#e06050;font-size:1.2rem;cursor:pointer">✕</button>'
+    + '</div>'
+    + '<pre id="pbe-diag-text" style="flex:1;overflow:auto;padding:10px 14px;margin:0;'
+    + 'font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;'
+    + 'font-size:.74rem;line-height:1.5;color:#cfe;background:#0e0e0e;white-space:pre-wrap;'
+    + 'word-break:break-all">' + text.replace(/[<&]/g, function(c) { return c === '<' ? '&lt;' : '&amp;'; }) + '</pre>'
+    + '<div style="padding:10px;border-top:1px solid #333;display:flex;gap:8px">'
+    + '<button onclick="navigator.clipboard.writeText(document.getElementById(\'pbe-diag-text\').textContent)'
+    + '.then(function(){alert(\'クリップボードにコピーしました\')})" '
+    + 'style="flex:1;padding:8px;background:#2c5e3e;border:none;border-radius:4px;color:#fff;'
+    + 'cursor:pointer;font-weight:700;font-size:.82rem">📋 コピー</button>'
+    + '<button onclick="document.getElementById(\'pbe-diag-modal\').remove()" '
+    + 'style="flex:1;padding:8px;background:transparent;border:1px solid #555;border-radius:4px;'
+    + 'color:#ccc;cursor:pointer;font-weight:700;font-size:.82rem">閉じる</button>'
+    + '</div></div>';
+  document.body.appendChild(m);
+  return text;
+}
+
+// 公開 (Console / 設定画面ボタン両方から呼べる)
+Pages._pbeDiagnose = _pbeDiagnose;
+window._pbeDiagnose = _pbeDiagnose;
+
+console.log('[PBE] parent_bloodline_extract.js loaded build=20260428y6.14');
