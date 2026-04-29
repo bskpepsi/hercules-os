@@ -2,10 +2,31 @@
 // ════════════════════════════════════════════════════════════════
 // parent_bloodline_extract.js — 種親血統情報の Vision 抽出機能
 //
-// build: 20260429z1
+// build: 20260429z3
 //
-// ── 20260429z1 (本ビルド) ────────────────────────────────────
-// ・系統評価カードから重複項目を削除:
+// ── 20260429z3 (本ビルド) ────────────────────────────────────
+// ・🔥 スマホでスクショサムネが表示されない問題を解決:
+//   症状: Sheets には Drive URL が保存されているのに、スマホ Chrome では
+//         サムネが「#1 #2 ...」のフォールバック表示になる。PC では表示OK。
+//   原因: GAS が返していた `drive.google.com/uc?id=...&export=view` 形式は
+//         2024年8月以降 Google がサードパーティ画像表示をブロック。
+//         PC はログインセッションで通るがスマホでは弾かれる。
+//   対策: フロント側に `_pbeNormalizeDriveImageUrl` ヘルパーを追加。
+//         既存 URL から file_id を抜き取って
+//         `https://lh3.googleusercontent.com/d/{fileId}=w300` 形式に変換。
+//         こちらは Google 公式画像CDNで認証不要・サードパーティ表示OK。
+//         サムネ用は =w300、拡大表示は =s0 (原寸) に切替。
+//   メリット:
+//         ・既存 Sheets に保存されている9枚分の URL も再アップロード不要で
+//           表示できる (フロント変換のみで対応)
+//         ・GAS 側も同時修正済 (parent_bloodline.gs z3) で新規アップは
+//           最初から新形式で保存される
+//
+// ── 20260429z2 ────────────────────────────────────────────
+// ・PBE 診断 FAB ボタン削除
+//
+// ── 20260429z1 ────────────────────────────────────────────
+// ・系統評価カードから重複8項目を削除
 //   旧: 種/学名/産地/累代/羽化期/体長/♂血統/♀血統 を表示していたが、
 //       これらはすべて parent_v2.js の「基本情報」「血統・親情報」セクションに
 //       既に存在しており重複していた。
@@ -338,6 +359,65 @@ function _pbeNowIso() {
 
 function _pbeUid(prefix) {
   return prefix + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+
+// ════════════════════════════════════════════════════════════════
+// [20260429z3] Drive 画像 URL を `<img src>` で表示可能な形式に正規化
+// ────────────────────────────────────────────────────────────────
+// 背景:
+//   ・Google Drive の `https://drive.google.com/uc?id={fileId}&export=view`
+//     形式は 2024年8月以降、サードパーティサイトからの直接アクセスが
+//     ブロックされるようになった。
+//   ・PC では Drive ログイン済セッションを Cookie で持っているため通るが、
+//     スマホ Chrome ではセッション共有がなく、画像が表示できない。
+//   ・代替は `https://lh3.googleusercontent.com/d/{fileId}=w300` 形式。
+//     Google 公式の画像CDNで、認証不要・サードパーティアクセスOK。
+//
+// 対応:
+//   ・古い形式の URL を新形式に自動変換する。
+//   ・既存 Sheets に保存されている URL も、フロント表示時に変換するので
+//     再アップロードは不要。
+//   ・新規アップロードは GAS 側 (parent_bloodline.gs) を z3 系で同時修正済。
+// ════════════════════════════════════════════════════════════════
+function _pbeNormalizeDriveImageUrl(url, fileId) {
+  if (!url && !fileId) return '';
+  // file_id が直接渡されていれば最優先で利用
+  let id = fileId || '';
+  if (!id && url) {
+    // URL から file_id を抽出
+    let m = url.match(/[?&]id=([^&]+)/);
+    if (m) id = m[1];
+    if (!id) {
+      m = url.match(/\/d\/([^/?]+)/);   // /file/d/{id}/view, /d/{id}=... 両対応
+      if (m) id = m[1];
+    }
+  }
+  if (id) {
+    // Google 公式画像CDN形式 (認証不要・サードパーティ表示可能)
+    //   =w300 でリサイズ済み画像を取得 (転送量削減)
+    return 'https://lh3.googleusercontent.com/d/' + id + '=w300';
+  }
+  // file_id が抽出できなければそのまま返す (image_data_url など)
+  return url || '';
+}
+
+// 元画像表示用 (拡大時) — リサイズ無しの大きいサイズ
+function _pbeNormalizeDriveFullUrl(url, fileId) {
+  if (!url && !fileId) return '';
+  let id = fileId || '';
+  if (!id && url) {
+    let m = url.match(/[?&]id=([^&]+)/);
+    if (m) id = m[1];
+    if (!id) {
+      m = url.match(/\/d\/([^/?]+)/);
+      if (m) id = m[1];
+    }
+  }
+  if (id) {
+    // =s0 で原寸サイズ
+    return 'https://lh3.googleusercontent.com/d/' + id + '=s0';
+  }
+  return url || '';
 }
 
 // API キー取得 (yahoo_listing.js / sale_listing.js / settings.js 全てと共用)
@@ -2036,21 +2116,31 @@ function _pbeRenderBloodlineCard(par) {
       + '🌟 ' + _pbeEsc(b.feature_notes) + '</div>'
     : '';
 
-  // [20260429z1] サムネール表示の堅牢化:
+  // [20260429z3] サムネール表示の堅牢化 (Drive 直アクセス問題の根本対策):
+  //   ・Google が 2024年8月に `drive.google.com/uc?id=...` 形式の直接画像
+  //     アクセスを廃止したため、PCでログイン済の Drive セッションがない
+  //     スマホからは Drive 直リンクで画像が取得できなくなった。
+  //   ・代替として `lh3.googleusercontent.com/d/{fileId}=w300` 形式の
+  //     Google 公式 CDN URL に変換して使う。これは認証不要で
+  //     サードパーティサイトからも `<img src>` で取得できる。
+  //   ・既存の9枚分は Sheets に古い形式の URL が保存されているが、
+  //     フロント側でこの変換を毎回挟むので再アップロード不要。
+  //   ・新規アップロードは GAS 側で新形式を返すよう同時に修正済み。
+  //
+  //   その他の堅牢化 (z1):
   //   ・クラウドから取得した最新データには thumbnail_data_url が含まれない
   //     (Sheets セル容量制限のため stripping されている)。
   //   ・端末ローカルで保存された thumbnail_data_url は古い枚数のみ持つ。
-  //   ・そのため drive_view_url または drive_file_url からの表示も許容する。
-  //   ・どちらも無ければ番号付きプレースホルダで枚数だけは反映する。
-  //   ・referrerpolicy="no-referrer" を付与して Drive 直アクセスの Referer ブロックを回避。
+  //   ・どちらもなければ番号付きプレースホルダで枚数だけは反映する。
   const allShots = par.source_screenshots || [];
   const shotsThumbs = allShots.map(function (s, idx) {
-    const imgSrc = s.thumbnail_data_url
-                || s.drive_view_url
-                || s.drive_file_url
-                || '';
+    // Drive URL → 公式CDN URL に変換 (古い uc?id=... 形式の救済)
+    const driveImg = _pbeNormalizeDriveImageUrl(s.drive_view_url || s.drive_file_url || '', s.drive_file_id);
+    const imgSrc = s.thumbnail_data_url || driveImg;
     const onclick = 'Pages._pbeViewScreenshot(\'' + _pbeEsc(par.par_id) + '\',\'' + _pbeEsc(s.id) + '\')';
     if (imgSrc) {
+      // [z3] referrerpolicy は image_data_url(base64) には不要、
+      //   googleusercontent.com には付けても大丈夫なので一律付与で問題なし。
       return '<img src="' + imgSrc + '" '
         + 'referrerpolicy="no-referrer" '
         + 'loading="lazy" '
@@ -2128,8 +2218,10 @@ Pages._pbeViewScreenshot = function (parId, shotId) {
   if (!par) return;
   const shot = (par.source_screenshots || []).find(function (s) { return s.id === shotId; });
   if (!shot) return;
-  // [y6.11] image_data_url 優先 (端末ローカル) → 無ければ drive_view_url (クラウド)
-  const imgSrc = shot.image_data_url || shot.drive_view_url || shot.thumbnail_data_url || '';
+  // [20260429z3] image_data_url 優先 (端末ローカル) → 無ければ Drive URL を正規化して使用
+  //   (古い uc?id=... 形式は表示できないので、新CDN形式に変換)
+  const driveImg = _pbeNormalizeDriveFullUrl(shot.drive_view_url || shot.drive_file_url || '', shot.drive_file_id);
+  const imgSrc = shot.image_data_url || driveImg || shot.thumbnail_data_url || '';
   const driveLink = shot.drive_file_url
     ? '<a href="' + shot.drive_file_url + '" target="_blank" '
       + 'style="font-size:.72rem;color:var(--accent);text-decoration:underline;margin-left:8px">'
@@ -2137,7 +2229,7 @@ Pages._pbeViewScreenshot = function (parId, shotId) {
     : '';
   const html = '<div class="modal-title">📷 スクリーンショット</div>'
     + '<div style="text-align:center;padding:8px">'
-    + '  <img src="' + imgSrc + '" style="max-width:100%;max-height:70vh;border-radius:6px">'
+    + '  <img src="' + imgSrc + '" referrerpolicy="no-referrer" style="max-width:100%;max-height:70vh;border-radius:6px">'
     + '  <div style="font-size:.74rem;color:var(--text3);margin-top:6px">'
     + '    アップロード: ' + _pbeEsc(shot.uploaded_at) + driveLink
     + '  </div>'
@@ -2645,7 +2737,7 @@ async function _pbeDiagnose(parId) {
   function log(s) { lines.push(s); console.log('[PBE-DIAG]', s); }
   log('═══ PBE 自己診断 ═══');
   log('対象 par_id: ' + parId);
-  log('build: 20260429z1');
+  log('build: 20260429z3');
   log('時刻: ' + new Date().toISOString());
   log('');
 
@@ -2835,46 +2927,25 @@ Pages._pbeDiagnose = _pbeDiagnose;
 window._pbeDiagnose = _pbeDiagnose;
 
 // ────────────────────────────────────────────────────────────────
-// [y6.14/y6.15/y6.17] フローティング診断ボタンを画面上部に表示
-//   ・[y6.17] window.__currentRoute では取れないケースがあったため、
-//     URL ハッシュ (#page=parent-detail) からも判定するよう改善
+// [20260429z2] 診断 FAB ボタン (フローティングUI) は削除
+//   ・元々はバグ調査用の一時機能だったが、原因解明後も画面右上に
+//     表示されたままになっていたため、UI を汚さないように削除。
+//   ・診断機能 _pbeDiagnose 自体は残しているので、必要なら
+//     コンソールから `Pages._pbeDiagnose('PAR-xxx')` で呼べる。
+//   ・以前のビルドで作成されたボタンが DOM に残っていた場合に備えて、
+//     起動時と1秒間隔で残骸の掃除を行う。
 // ────────────────────────────────────────────────────────────────
-function _pbeRenderDiagFab() {
-  const route   = window.__currentRoute || '';
-  const hash    = location.hash || '';
-  // [y6.17] route だけでなく URL からも parent-detail を判定
-  const isParentDetail = (route === 'parent-detail') || /[#&?]page=parent-detail/.test(hash);
-  let fab = document.getElementById('pbe-diag-fab');
-  if (!isParentDetail) {
-    if (fab) fab.remove();
-    return;
-  }
-  if (fab) return;  // 既に表示中
-  // 現在表示中の par_id を URL から拾う
-  const m = hash.match(/parId=([^&]+)/);
-  const parId = m ? decodeURIComponent(m[1]) : '';
-  fab = document.createElement('button');
-  fab.id = 'pbe-diag-fab';
-  fab.textContent = '🔧 PBE診断';
-  fab.title = 'PBE 自己診断を実行';
-  // [y6.15/y6.17] ナビバー干渉を避けて画面右上 (ヘッダ直下) に配置・大きめサイズ・赤系で目立たせる
-  fab.style.cssText = 'position:fixed;right:8px;top:64px;z-index:99999;'
-    + 'padding:8px 14px;background:#d04a4a;color:#fff;'
-    + 'border:2px solid #f08080;border-radius:18px;font-size:.78rem;'
-    + 'font-weight:800;cursor:pointer;box-shadow:0 3px 10px rgba(0,0,0,.5);'
-    + 'opacity:.95;font-family:inherit';
-  fab.onclick = function () {
-    _pbeDiagnose(parId || 'PAR-02c5yoa').catch(function (e) {
-      alert('診断中にエラー: ' + e.message);
-    });
-  };
-  document.body.appendChild(fab);
-  console.log('[PBE] 診断ボタンを画面右上に表示しました par_id=' + parId);
+function _pbeRemoveDiagFab() {
+  const fab = document.getElementById('pbe-diag-fab');
+  if (fab) fab.remove();
 }
-
-// ルート変更を 500ms 間隔でポーリングして FAB を出し入れ
-//   (アプリ全体に影響する hashchange 購読は避け、軽量ポーリングで対応)
-setInterval(_pbeRenderDiagFab, 800);
+_pbeRemoveDiagFab();
+setTimeout(_pbeRemoveDiagFab,  500);
+setTimeout(_pbeRemoveDiagFab, 2000);
+// 念のため DOM 監視 (前バージョンでロードされた script が残ってボタンを再生成する可能性に備える)
+const _pbeFabCleanupInterval = setInterval(_pbeRemoveDiagFab, 1500);
+// 30秒後には監視停止 (前バージョンの script が完全に置き換わったと判断)
+setTimeout(function () { clearInterval(_pbeFabCleanupInterval); }, 30000);
 
 // ════════════════════════════════════════════════════════════════
 // [y6.18] 🔥 GAS クラウド優先で系統評価カードを直接DOM注入
@@ -3037,4 +3108,4 @@ setTimeout(_pbeInjectBloodlineCardFromCloud, 200);
 setTimeout(_pbeInjectBloodlineCardFromCloud, 800);
 setTimeout(_pbeInjectBloodlineCardFromCloud, 2000);
 
-console.log('[PBE] parent_bloodline_extract.js loaded build=20260429z1');
+console.log('[PBE] parent_bloodline_extract.js loaded build=20260429z3');
