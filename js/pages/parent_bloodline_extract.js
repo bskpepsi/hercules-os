@@ -2,43 +2,33 @@
 // ════════════════════════════════════════════════════════════════
 // parent_bloodline_extract.js — 種親血統情報の Vision 抽出機能
 //
-// build: 20260429y6.16
+// build: 20260429y6.17
 //
-// ── y6.16 での修正点 (本ビルド・最重要) ────────────────────────
-// ・🔥 「保存後にデータが消える」問題の根本対策:
-//   症状:
-//     ・F25-24 (PAR-02c5yoa) で血統情報を抽出・保存しても、
-//       後で種親詳細画面を開くと「📷 スクショからAIで血統情報を抽出」
-//       ボタンが復活し、bloodline_data が消えた状態になる。
-//     ・PCで見ると古いデータが残っているがスマホで見ると消えている等、
-//       端末ごとに表示が異なる。
-//   既存修正で解決していた箇所:
-//     ・y6.13: フロント GAS 通信を POST 化 (URL長制限の400回避)
-//     ・GAS 20260428e: COL_DEF.PARENT に3列追加
-//     これらにより Sheets→GAS→localStorage の経路は完全に動作している。
-//   残っていた本当の原因 (y6.16 で対処):
-//     ・Store.parents に該当 par_id が「存在しない瞬間」がある。
-//       Store の syncAll が走った直後など、タイミングによって
-//       Store.parents が空または不完全な状態で _pbeMergeIntoStore が
-//       呼ばれることがあり、その場合何もせず終了していた。
-//     ・また、Store.parents に該当 par_id があっても bloodline_data_json
-//       列が落とされている経路があり、localStorage キャッシュからの補完
-//       しか効かないケースがあった。
-//     ・Pages.parentDetail (parent_v2.js) は描画直前に
-//       _pbeMergeIntoStore を呼ぶフックを持っていなかった。
-//   対策 (3段構え):
-//     ① _pbeMergeIntoStoreWithCloudFallback を新設
-//       Store.parents に主要 par_id がない場合、自動で GAS getParents
-//       を呼んで Store にデータを差し込む救済ルート。
-//     ② Pages.parentDetail を強制ラップ
-//       種親詳細画面が描画される直前に必ずマージを await 付きで実行。
-//       これによりレースコンディションを根絶。
-//     ③ ラップは _pbeWrapParentDetail を 1 秒間隔で監視
-//       parent_v2.js のロード順序に依存しない堅牢な仕組み。
+// ── y6.17 での修正点 (本ビルド・最終決着版) ────────────────────
+// ・🔥 Store.setDB を強制ラップ (究極の根本対策)
+//   背景:
+//     ・y6.16 で Pages.parentDetail をラップしたが、画面側の描画タイミングと
+//       マージ完了のタイミングが噛み合わず、画面に bloodline_data が
+//       反映されない問題が残っていた (parent_v2.js が parents.find した
+//       オブジェクト参照は古いまま)。
+//   対策:
+//     ・Store.setDB('parents', value) が呼ばれたとき、value を Store に
+//       入れる**前に**各要素の bloodline_data_json を JSON.parse して
+//       bloodline_data フィールドにセットする。
+//     ・localStorage キャッシュからの補完も同段階で実行。
+//     ・これにより setDB 完了時点で _db.parents の中身は既に展開済み、
+//       購読者通知時点でも画面に正しく反映される。
+//   さらに保険:
+//     ・起動時 500ms / 2秒 / 5秒で _pbeForceReparseExistingParents を実行し、
+//       setDB ラップが間に合わなかったケースでも既存 _db.parents を直接走査して
+//       bloodline_data_json を展開し、Store._notify で再描画を促す。
+// ・🔧 診断ボタン表示条件を URL ハッシュベースに改善
+//   ・window.__currentRoute だけでは parent-detail を取れないケースに対応
+//   ・URL ハッシュの #page=parent-detail も判定材料に追加
 //
-// ── y6.15 での修正点 ────────────────────────────────────────
-// ・診断機能 _pbeDiagnose を実装 (画面右上に赤色「🔧 PBE診断」ボタンで起動)
-// ・Store.parents の中身ダンプ機能を追加して原因切り分けを可能にした
+// ── y6.16 での修正点 ────────────────────────────────────────
+// ・Pages.parentDetail を強制ラップ (描画前マージ)
+// ・_pbeMergeIntoStoreWithCloudFallback で GAS 直叩きフォールバック追加
 //
 // ── y6.13 での修正点 ────────────────────────────────────────
 // ・🔥 クリティカルバグ修正: 「保存後に種親詳細画面から血統情報が消える」
@@ -2358,7 +2348,130 @@ function _pbeMergeIntoStore() {
       Store.on('db_parents', _pbeMergeIntoStore);
     } catch (e) { console.warn('[PBE] Store.on failed', e); }
   }
+
+  // [y6.17] 起動時に既存 Store.parents を強制再パース
+  //   setDB ラップが間に合わず、すでに parents が入った状態で y6.17 が
+  //   ロードされた場合の救済として、500ms / 2秒 / 5秒のタイミングで
+  //   既存配列を直接走査して bloodline_data_json を展開する。
+  function _pbeForceReparseExistingParents() {
+    if (!window.Store || typeof Store.getDB !== 'function') return;
+    const parents = Store.getDB('parents');
+    if (!Array.isArray(parents) || !parents.length) return;
+    const pbeStore = _pbeLoadStore();
+    let n = 0, m = 0;
+    parents.forEach(function (par) {
+      if (!par) return;
+      if (par.bloodline_data_json && !par.bloodline_data) {
+        try {
+          par.bloodline_data = JSON.parse(par.bloodline_data_json);
+          n++;
+        } catch (e) {}
+      }
+      if (par.source_screenshots_json && !par.source_screenshots) {
+        try { par.source_screenshots = JSON.parse(par.source_screenshots_json); }
+        catch (e) {}
+      }
+      const rec = par.par_id ? pbeStore[par.par_id] : null;
+      if (rec) {
+        if (rec.bloodline_data && !par.bloodline_data) {
+          par.bloodline_data = rec.bloodline_data;
+          m++;
+        }
+        if (rec.source_screenshots && !par.source_screenshots) {
+          par.source_screenshots = rec.source_screenshots;
+        }
+      }
+    });
+    if (n > 0 || m > 0) {
+      console.log('[PBE-force] 既存 Store.parents を再展開: JSON ' + n + '件 / localStorage ' + m + '件');
+      // Store の購読者に再描画させるため _notify を起こすには setDB の再呼び出しが必要だが
+      // 同じ参照を渡すと無限ループの恐れがあるため、_notify だけを直接呼ぶ
+      if (Store._notify) {
+        try { Store._notify('db_parents'); } catch (e) {}
+      }
+    }
+  }
+  setTimeout(_pbeForceReparseExistingParents,  500);
+  setTimeout(_pbeForceReparseExistingParents, 2000);
+  setTimeout(_pbeForceReparseExistingParents, 5000);
 })();
+
+// ════════════════════════════════════════════════════════════════
+// [y6.17] 🔥 Store.setDB を強制ラップ (究極の根本対策)
+//   背景:
+//     ・y6.16 で Pages.parentDetail をラップしたが、画面側の描画タイミングと
+//       マージ完了のタイミングが噛み合わず、画面に反映されないケースが残った。
+//     ・Store.setDB('parents', value) が呼ばれたあと _notify('db_parents') が
+//       発火し、それを受けて _pbeMergeIntoStore が走る流れだったが、
+//       既に画面側 (parent_v2.js) は parents.find() で取得した *古い* オブジェクト
+//       参照に対して描画してしまっていて、後からの bloodline_data 注入が
+//       表示に反映されない。
+//   対策:
+//     ・Store.setDB を直接ラップし、value (parents 配列) を Store に入れる
+//       *前に* 各要素の bloodline_data_json を JSON.parse して
+//       bloodline_data フィールドにセットする。
+//     ・また localStorage キャッシュ (pbeStore) からの補完もこの段階で実行。
+//     ・これにより setDB 完了時点で _db.parents の中身は既に
+//       bloodline_data 展開済みとなり、購読者に通知される時点でも
+//       画面に正しく反映される。
+//   このフックは setDB のすべての呼び出し経路 (syncAll / patch / 個別更新)
+//   をカバーするので、フロントから見て常に bloodline_data が展開された状態になる。
+// ════════════════════════════════════════════════════════════════
+let _pbeWrappedSetDB = false;
+function _pbeWrapStoreSetDB() {
+  if (_pbeWrappedSetDB) return;
+  if (!window.Store || typeof Store.setDB !== 'function') return;
+  const originalSetDB = Store.setDB;
+  Store.setDB = function (key, value) {
+    // parents をセットしようとしているときだけ介入
+    if (key === 'parents' && Array.isArray(value)) {
+      try {
+        const pbeStore = _pbeLoadStore();
+        value.forEach(function (par) {
+          if (!par) return;
+          // クラウドから来た JSON 文字列を展開
+          if (par.bloodline_data_json && !par.bloodline_data) {
+            try { par.bloodline_data = JSON.parse(par.bloodline_data_json); }
+            catch (e) { console.warn('[PBE-setDB] bloodline_data_json parse failed', par.par_id, e); }
+          }
+          if (par.source_screenshots_json && !par.source_screenshots) {
+            try { par.source_screenshots = JSON.parse(par.source_screenshots_json); }
+            catch (e) { console.warn('[PBE-setDB] source_screenshots_json parse failed', par.par_id, e); }
+          }
+          // localStorage キャッシュからの補完
+          //   (GAS が古いデータを返している・getAllData が3列を落としている等
+          //    の場合、localStorage の方に正しいデータがあれば使う)
+          const rec = par.par_id ? pbeStore[par.par_id] : null;
+          if (rec) {
+            if (rec.bloodline_data && !par.bloodline_data) {
+              par.bloodline_data = rec.bloodline_data;
+            }
+            if (rec.source_screenshots && !par.source_screenshots) {
+              par.source_screenshots = rec.source_screenshots;
+            }
+            if (rec.updated_at && !par.bloodline_updated_at) {
+              par.bloodline_updated_at = rec.updated_at;
+            }
+          }
+        });
+        // ログ出力 (どれだけ展開できたか確認用)
+        const expanded = value.filter(function (p) { return p && p.bloodline_data; }).length;
+        console.log('[PBE-setDB] parents setDB intercepted: 件数=' + value.length + ' / bloodline_data 展開済 ' + expanded + '件');
+      } catch (e) {
+        console.warn('[PBE-setDB] intercept failed:', e);
+      }
+    }
+    return originalSetDB.call(this, key, value);
+  };
+  _pbeWrappedSetDB = true;
+  console.log('[PBE] Store.setDB wrapped — parents 自動展開フック有効');
+}
+// 即時ラップ + Store がまだない場合は監視
+_pbeWrapStoreSetDB();
+const _pbeWrapSetDBInterval = setInterval(function () {
+  _pbeWrapStoreSetDB();
+  if (_pbeWrappedSetDB) clearInterval(_pbeWrapSetDBInterval);
+}, 200);
 
 // ════════════════════════════════════════════════════════════════
 // [y6.16] 🔥 Pages.parentDetail を強制ラップ
@@ -2618,15 +2731,15 @@ Pages._pbeDiagnose = _pbeDiagnose;
 window._pbeDiagnose = _pbeDiagnose;
 
 // ────────────────────────────────────────────────────────────────
-// [y6.14/y6.15] フローティング診断ボタンを画面上部に表示
-//   ・URLバーに javascript: を入力する方法は Chrome の安全策で
-//     プレフィックスが自動削除され使えないため、ボタンUIで提供する。
-//   ・[y6.15] 画面右上 (ナビバーから離れた目立つ位置) に拡大表示。
-//     種親詳細画面でだけ表示する (誤タップ防止)。
+// [y6.14/y6.15/y6.17] フローティング診断ボタンを画面上部に表示
+//   ・[y6.17] window.__currentRoute では取れないケースがあったため、
+//     URL ハッシュ (#page=parent-detail) からも判定するよう改善
 // ────────────────────────────────────────────────────────────────
 function _pbeRenderDiagFab() {
-  const route = window.__currentRoute || '';
-  const isParentDetail = (route === 'parent-detail');
+  const route   = window.__currentRoute || '';
+  const hash    = location.hash || '';
+  // [y6.17] route だけでなく URL からも parent-detail を判定
+  const isParentDetail = (route === 'parent-detail') || /[#&?]page=parent-detail/.test(hash);
   let fab = document.getElementById('pbe-diag-fab');
   if (!isParentDetail) {
     if (fab) fab.remove();
@@ -2634,13 +2747,13 @@ function _pbeRenderDiagFab() {
   }
   if (fab) return;  // 既に表示中
   // 現在表示中の par_id を URL から拾う
-  const m = location.hash.match(/parId=([^&]+)/);
+  const m = hash.match(/parId=([^&]+)/);
   const parId = m ? decodeURIComponent(m[1]) : '';
   fab = document.createElement('button');
   fab.id = 'pbe-diag-fab';
   fab.textContent = '🔧 PBE診断';
   fab.title = 'PBE 自己診断を実行';
-  // [y6.15] ナビバー干渉を避けて画面右上 (ヘッダ直下) に配置・大きめサイズ・赤系で目立たせる
+  // [y6.15/y6.17] ナビバー干渉を避けて画面右上 (ヘッダ直下) に配置・大きめサイズ・赤系で目立たせる
   fab.style.cssText = 'position:fixed;right:8px;top:64px;z-index:99999;'
     + 'padding:8px 14px;background:#d04a4a;color:#fff;'
     + 'border:2px solid #f08080;border-radius:18px;font-size:.78rem;'
@@ -2659,4 +2772,4 @@ function _pbeRenderDiagFab() {
 //   (アプリ全体に影響する hashchange 購読は避け、軽量ポーリングで対応)
 setInterval(_pbeRenderDiagFab, 800);
 
-console.log('[PBE] parent_bloodline_extract.js loaded build=20260429y6.16');
+console.log('[PBE] parent_bloodline_extract.js loaded build=20260429y6.17');
