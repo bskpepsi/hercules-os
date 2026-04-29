@@ -2844,4 +2844,67 @@ function _pbeRenderDiagFab() {
 //   (アプリ全体に影響する hashchange 購読は避け、軽量ポーリングで対応)
 setInterval(_pbeRenderDiagFab, 800);
 
+// ════════════════════════════════════════════════════════════════
+// [y6.18] 🔥 localStorage から系統評価カードを直接DOM注入
+// ────────────────────────────────────────────────────────────────
+// 背景:
+//   ・Store.parents が空 (件数=0) の状態が頻発し、parent_v2.js の
+//     系統評価カードのマウント処理で `p.bloodline_data` が undefined
+//     になって描画されない問題が長く解決できなかった。
+//   ・しかし localStorage の pbeStore には bloodline_data が完全な形で
+//     キャッシュされている (診断レポートで確認済み)。
+//   ・なので Store.parents の状態に依存せず、localStorage から直接
+//     データを取得して系統評価カードのマウントポイントに注入すれば
+//     確実に表示できる。
+//
+// 仕組み:
+//   ・1秒間隔で「pbe-bloodline-card-mount」要素の有無を監視
+//   ・存在し、かつ空 (innerHTML が空) なら、URL ハッシュから par_id を
+//     取得し、pbeStore から bloodline_data を取り出して
+//     _pbeRenderBloodlineCard で HTML を生成、innerHTML に直接代入
+//   ・既に内容がある場合は何もしない (parent_v2.js による正常系を尊重)
+// ════════════════════════════════════════════════════════════════
+let _pbeLastInjectedParId = null;
+function _pbeInjectBloodlineCardFromCache() {
+  const mount = document.getElementById('pbe-bloodline-card-mount');
+  if (!mount) {
+    _pbeLastInjectedParId = null;
+    return;
+  }
+  // 既に何かが描画されているなら触らない (parent_v2.js が正常系で動いた場合)
+  if (mount.innerHTML && mount.innerHTML.trim().length > 0) return;
+  // URL から par_id を取得
+  const m = (location.hash || '').match(/parId=([^&]+)/);
+  if (!m) return;
+  const parId = decodeURIComponent(m[1]);
+  // localStorage から取得
+  const pbeStore = _pbeLoadStore();
+  const rec = pbeStore && pbeStore[parId];
+  if (!rec || !rec.bloodline_data) return;
+  // 仮の par オブジェクトを作って _pbeRenderBloodlineCard に渡す
+  const fakePar = {
+    par_id:             parId,
+    bloodline_data:     rec.bloodline_data,
+    source_screenshots: rec.source_screenshots,
+  };
+  try {
+    const html = _pbeRenderBloodlineCard(fakePar);
+    if (html) {
+      mount.innerHTML = html;
+      if (_pbeLastInjectedParId !== parId) {
+        console.log('[PBE] 🎯 系統評価カードを localStorage から DOM 注入しました par_id=' + parId);
+        _pbeLastInjectedParId = parId;
+      }
+    }
+  } catch (e) {
+    console.warn('[PBE] DOM 注入失敗:', e);
+  }
+}
+// 1秒間隔でマウントポイントを監視
+setInterval(_pbeInjectBloodlineCardFromCache, 1000);
+// 即時実行も
+setTimeout(_pbeInjectBloodlineCardFromCache, 200);
+setTimeout(_pbeInjectBloodlineCardFromCache, 800);
+setTimeout(_pbeInjectBloodlineCardFromCache, 2000);
+
 console.log('[PBE] parent_bloodline_extract.js loaded build=20260429y6.18');
