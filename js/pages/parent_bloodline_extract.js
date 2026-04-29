@@ -2,9 +2,23 @@
 // ════════════════════════════════════════════════════════════════
 // parent_bloodline_extract.js — 種親血統情報の Vision 抽出機能
 //
-// build: 20260429z3
+// build: 20260429z4
 //
-// ── 20260429z3 (本ビルド) ────────────────────────────────────
+// ── 20260429z4 (本ビルド) ────────────────────────────────────
+// ・🔧 サムネ表示時に各スクショの URL 状態をコンソールに自動診断ログ出力
+//   ・thumbnail_data_url / drive_view_url / drive_file_url / drive_file_id /
+//     normalized URL / 最終 imgSrc の状態を一括ダンプ
+//   ・原因特定の手間を削減
+// ・⚠️ 画像URLが完全に無い「壊れたスクショ」がある場合、系統評価カード内に
+//   警告メッセージと「🗑 画像URLなしのスクショを一括削除」ボタンを表示
+//   ・典型ケース: スマホで Drive アップロードに失敗した古いスクショ
+//   ・「N枚は画像URLなし」のラベルも追加して状況を明確化
+//   ・ボタンタップで Drive URL も thumbnail もないスクショを一括削除
+//   ・削除後は PC から再アップロードすると確実に表示できるように案内
+// ・新関数 Pages._pbeRemoveBrokenShots を追加
+//
+// ── 20260429z3 ────────────────────────────────────────────
+// ・Drive 画像 URL を Google 公式CDN形式に正規化するヘルパー追加
 // ・🔥 スマホでスクショサムネが表示されない問題を解決:
 //   症状: Sheets には Drive URL が保存されているのに、スマホ Chrome では
 //         サムネが「#1 #2 ...」のフォールバック表示になる。PC では表示OK。
@@ -2133,6 +2147,39 @@ function _pbeRenderBloodlineCard(par) {
   //   ・端末ローカルで保存された thumbnail_data_url は古い枚数のみ持つ。
   //   ・どちらもなければ番号付きプレースホルダで枚数だけは反映する。
   const allShots = par.source_screenshots || [];
+  // [z4] サムネ表示時に各スクショの URL 状態を一括診断 (原因特定用ログ)
+  let _missingUrlCount = 0;
+  if (allShots.length && !window.__pbeShotsDiagLogged) {
+    console.group('[PBE] サムネ URL 診断 par_id=' + par.par_id + ' (' + allShots.length + '枚)');
+    allShots.forEach(function (s, i) {
+      const hasThumb = !!s.thumbnail_data_url;
+      const hasDriveView = !!s.drive_view_url;
+      const hasDriveFile = !!s.drive_file_url;
+      const hasDriveId = !!s.drive_file_id;
+      const normalized = _pbeNormalizeDriveImageUrl(s.drive_view_url || s.drive_file_url || '', s.drive_file_id);
+      console.log('#' + (i + 1) + ':', {
+        thumbnail_data_url: hasThumb ? 'あり' : 'なし',
+        drive_view_url:     s.drive_view_url || '(null)',
+        drive_file_url:     s.drive_file_url || '(null)',
+        drive_file_id:      s.drive_file_id || '(null)',
+        normalized:         normalized || '(空)',
+        '最終imgSrc':       s.thumbnail_data_url ? 'thumbnail (base64)'
+                          : normalized          ? 'normalized'
+                          : '(なし→#プレースホルダ)',
+      });
+      if (!s.thumbnail_data_url && !normalized) _missingUrlCount++;
+    });
+    console.groupEnd();
+    window.__pbeShotsDiagLogged = true;
+    setTimeout(function () { window.__pbeShotsDiagLogged = false; }, 5000);
+  } else {
+    // ログ出力スキップ時も _missingUrlCount は計算する
+    allShots.forEach(function (s) {
+      const normalized = _pbeNormalizeDriveImageUrl(s.drive_view_url || s.drive_file_url || '', s.drive_file_id);
+      if (!s.thumbnail_data_url && !normalized) _missingUrlCount++;
+    });
+  }
+
   const shotsThumbs = allShots.map(function (s, idx) {
     // Drive URL → 公式CDN URL に変換 (古い uc?id=... 形式の救済)
     const driveImg = _pbeNormalizeDriveImageUrl(s.drive_view_url || s.drive_file_url || '', s.drive_file_id);
@@ -2155,7 +2202,20 @@ function _pbeRenderBloodlineCard(par) {
   }).join('');
   // 枚数表示 (デバッグ性向上)
   const shotsCountLabel = allShots.length
-    ? '<div style="font-size:.72rem;color:var(--text3);margin-top:6px">スクショ ' + allShots.length + ' 枚</div>'
+    ? '<div style="font-size:.72rem;color:var(--text3);margin-top:6px">スクショ ' + allShots.length + ' 枚'
+      + (_missingUrlCount > 0 ? ' <span style="color:var(--amber)">(' + _missingUrlCount + '枚は画像URLなし)</span>' : '')
+      + '</div>'
+    : '';
+  // [z4] 画像URL が無いスクショがある場合は修復案内を表示
+  const repairBlock = _missingUrlCount > 0
+    ? '<div style="margin-top:8px;padding:8px 10px;background:rgba(230,150,0,.08);border:1px solid rgba(230,150,0,.3);border-radius:6px;font-size:.74rem;line-height:1.5;color:var(--text2)">'
+      + '<div style="font-weight:700;color:var(--amber);margin-bottom:4px">⚠️ 画像が表示できないスクショが ' + _missingUrlCount + ' 枚あります</div>'
+      + '<div style="margin-bottom:6px">アップロード時にDriveへの保存に失敗した可能性があります。<br>'
+      + '一度削除して、PCから再アップロードすると確実に表示されるようになります。</div>'
+      + '<button class="btn btn-ghost btn-sm" style="font-size:.74rem;padding:4px 10px;color:var(--red);border-color:var(--red)" '
+      + '        onclick="Pages._pbeRemoveBrokenShots(\'' + _pbeEsc(par.par_id) + '\')">'
+      + '🗑 画像URLなしのスクショを一括削除</button>'
+      + '</div>'
     : '';
 
   return '<div class="card" style="background:linear-gradient(135deg,rgba(200,168,75,.04),rgba(200,168,75,.01));border:1px solid rgba(200,168,75,.25)">'
@@ -2167,6 +2227,7 @@ function _pbeRenderBloodlineCard(par) {
     + (kinshipHtml ? '<div style="margin-top:10px"><div style="font-size:.78rem;font-weight:700;color:var(--text2);margin-bottom:4px">同腹兄弟・系統実績</div>' + kinshipHtml + '</div>' : '')
     + (shotsThumbs ? '<div style="margin-top:8px;display:flex;gap:4px;flex-wrap:wrap">' + shotsThumbs + '</div>' : '')
     + shotsCountLabel
+    + repairBlock
     + '<div style="display:flex;gap:6px;margin-top:10px">'
     + '  <button class="btn btn-ghost btn-sm" style="flex:1;font-size:.78rem" '
     + '          onclick="Pages._pbeOpenExtractor(\'' + _pbeEsc(par.par_id) + '\')">📷 スクショ追加</button>'
@@ -2253,6 +2314,42 @@ Pages._pbeDeleteScreenshot = async function (parId, shotId) {
   // 再描画
   if (window.__currentRoute === 'parent-detail') {
     Pages.parentDetail(parId);
+  }
+};
+
+// [20260429z4] 画像URLが無いスクショ (Drive アップロード失敗で thumbnail も Drive URL も持たないもの)
+//   を一括で削除する。削除後は再アップロードを促す。
+Pages._pbeRemoveBrokenShots = async function (parId) {
+  const par = _pbeGetParent(parId);
+  if (!par) return;
+  const allShots = par.source_screenshots || [];
+  const broken = allShots.filter(function (s) {
+    const normalized = _pbeNormalizeDriveImageUrl(s.drive_view_url || s.drive_file_url || '', s.drive_file_id);
+    return !s.thumbnail_data_url && !normalized;
+  });
+  if (!broken.length) {
+    UI.toast('削除対象のスクショはありません', 'info');
+    return;
+  }
+  if (!confirm('画像URLが無いスクショ ' + broken.length + ' 枚を削除しますか?\n'
+    + '削除後は「📷 スクショ追加」から PC で再アップロードしてください。')) return;
+
+  const next = allShots.filter(function (s) {
+    const normalized = _pbeNormalizeDriveImageUrl(s.drive_view_url || s.drive_file_url || '', s.drive_file_id);
+    return !!(s.thumbnail_data_url || normalized);
+  });
+  try {
+    UI.loading(true);
+    await _pbePatchParent(parId, { source_screenshots: next });
+    UI.toast(broken.length + ' 枚削除しました。再アップロードしてください。', 'success');
+    // 再描画
+    if (window.__currentRoute === 'parent-detail') {
+      Pages.parentDetail(parId);
+    }
+  } catch (e) {
+    UI.toast('削除失敗: ' + e.message, 'error');
+  } finally {
+    UI.loading(false);
   }
 };
 
@@ -2737,7 +2834,7 @@ async function _pbeDiagnose(parId) {
   function log(s) { lines.push(s); console.log('[PBE-DIAG]', s); }
   log('═══ PBE 自己診断 ═══');
   log('対象 par_id: ' + parId);
-  log('build: 20260429z3');
+  log('build: 20260429z4');
   log('時刻: ' + new Date().toISOString());
   log('');
 
@@ -3108,4 +3205,4 @@ setTimeout(_pbeInjectBloodlineCardFromCloud, 200);
 setTimeout(_pbeInjectBloodlineCardFromCloud, 800);
 setTimeout(_pbeInjectBloodlineCardFromCloud, 2000);
 
-console.log('[PBE] parent_bloodline_extract.js loaded build=20260429z3');
+console.log('[PBE] parent_bloodline_extract.js loaded build=20260429z4');
