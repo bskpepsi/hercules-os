@@ -2411,9 +2411,37 @@ async function _pbeDiagnose(parId) {
   log('');
   log('── Store (フロント) の状態 ──');
   const localPars = (window.Store && Store.getDB) ? (Store.getDB('parents') || []) : [];
+  log('  Store.parents 件数: ' + localPars.length);
   const localPar  = localPars.find(p => p.par_id === parId);
   if (!localPar) {
     log('  ❌ Store.parents に ' + parId + ' が存在しない');
+    // [y6.15] 詳細調査: Store.parents の中身を表示
+    log('');
+    log('  ── Store.parents の中身 (par_id 列挙・最大15件) ──');
+    localPars.slice(0, 15).forEach(function (p, i) {
+      log('    [' + i + '] par_id=' + (p.par_id || '(空)') + ' / display_id=' + (p.display_id || '(空)') + ' / display_name=' + (p.display_name || p.parent_display_id || '(空)'));
+    });
+    if (localPars.length > 15) log('    ... +' + (localPars.length - 15) + '件');
+    // F25-24 / R7-24 で検索
+    const byDispId = localPars.find(function (p) { return p.display_id === parId || p.parent_display_id === parId; });
+    if (byDispId) {
+      log('  → display_id 一致で見つかった: par_id=' + byDispId.par_id);
+    }
+    const byName = localPars.find(function (p) { return (p.display_name === 'F25-24' || p.display_name === 'R7-24'); });
+    if (byName) {
+      log('  → display_name 一致で見つかった: par_id=' + byName.par_id + ' / display_name=' + byName.display_name);
+    }
+    // Store の getParent() を試す
+    if (window.Store && Store.getParent) {
+      const got = Store.getParent(parId);
+      if (got) {
+        log('  → Store.getParent("' + parId + '") は見つけている: par_id=' + got.par_id);
+        log('     bloodline_data:       ' + (got.bloodline_data ? '✅' : '❌'));
+        log('     bloodline_data_json:  ' + (got.bloodline_data_json ? '✅' : '❌'));
+      } else {
+        log('  → Store.getParent("' + parId + '") も null');
+      }
+    }
   } else {
     log('  ✅ Store.parents に存在');
     log('  par.bloodline_data:       ' + (localPar.bloodline_data ? '✅ 展開済み' : '❌ 未展開'));
