@@ -2488,4 +2488,44 @@ function _pbeDiagShow(text) {
 Pages._pbeDiagnose = _pbeDiagnose;
 window._pbeDiagnose = _pbeDiagnose;
 
+// ────────────────────────────────────────────────────────────────
+// [y6.14] フローティング診断ボタンをページ右下に常時表示
+//   ・URLバーに javascript: を入力する方法は Chrome の安全策で
+//     プレフィックスが自動削除され使えないため、ボタンUIで提供する。
+//   ・小さな目立たないボタンで、種親詳細画面でだけ表示する
+//     (誤タップ防止)。
+// ────────────────────────────────────────────────────────────────
+function _pbeRenderDiagFab() {
+  const route = window.__currentRoute || '';
+  const isParentDetail = (route === 'parent-detail');
+  let fab = document.getElementById('pbe-diag-fab');
+  if (!isParentDetail) {
+    if (fab) fab.remove();
+    return;
+  }
+  if (fab) return;  // 既に表示中
+  // 現在表示中の par_id を URL から拾う
+  const m = location.hash.match(/parId=([^&]+)/);
+  const parId = m ? decodeURIComponent(m[1]) : '';
+  fab = document.createElement('button');
+  fab.id = 'pbe-diag-fab';
+  fab.textContent = '🔧 診断';
+  fab.title = 'PBE 自己診断を実行';
+  fab.style.cssText = 'position:fixed;right:10px;bottom:74px;z-index:9998;'
+    + 'padding:6px 10px;background:rgba(45,80,60,.85);color:#cfe;'
+    + 'border:1px solid #3d6052;border-radius:18px;font-size:.7rem;'
+    + 'font-weight:700;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.3);'
+    + 'opacity:.7;font-family:inherit';
+  fab.onclick = function () {
+    _pbeDiagnose(parId || 'PAR-02c5yoa').catch(function (e) {
+      alert('診断中にエラー: ' + e.message);
+    });
+  };
+  document.body.appendChild(fab);
+}
+
+// ルート変更を 500ms 間隔でポーリングして FAB を出し入れ
+//   (アプリ全体に影響する hashchange 購読は避け、軽量ポーリングで対応)
+setInterval(_pbeRenderDiagFab, 800);
+
 console.log('[PBE] parent_bloodline_extract.js loaded build=20260428y6.14');
