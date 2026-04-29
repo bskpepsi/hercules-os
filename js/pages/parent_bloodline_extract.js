@@ -2,30 +2,43 @@
 // ════════════════════════════════════════════════════════════════
 // parent_bloodline_extract.js — 種親血統情報の Vision 抽出機能
 //
-// build: 20260428y6.14
+// build: 20260429y6.16
 //
-// ── y6.14 での修正点 (本ビルド) ────────────────────────────────
-// ・🔥 自己診断機能 (_pbeDiagnose) を追加:
-//   背景:
-//     ・「保存後に種親詳細画面から血統情報が消える」現象が、
-//       PCでは古いデータが見えている / スマホでは何も見えないと
-//       端末ごとに異なる挙動を示している。
-//     ・スマホで DevTools が見られないと、Sheets→GAS→フロントの
-//       どこで詰まっているか切り分けが困難。
-//   実装:
-//     ・Pages._pbeDiagnose(parId) / window._pbeDiagnose(parId) で呼べる
-//       自己診断関数。デフォルト par_id は 'PAR-02c5yoa' (F25-24)。
-//     ・各レイヤを順に確認しモーダルでレポート表示:
-//       1. GAS URL 設定状況
-//       2. POST 疎通 (getParents 呼び出し)
-//       3. レスポンスに bloodline_data_json 等 3 列が含まれているか
-//          (含まれていなければ GAS 側 COL_DEF.PARENT 拡張が未適用)
-//       4. その値が空でないか (= Sheets に保存されているか)
-//       5. パース可能か
-//       6. Store.parents に展開されているか
-//       7. localStorage の pbeStore キャッシュ状況
-//       8. 強制マージ実行
-//     ・「📋 コピー」ボタンで全文をクリップボードへ保存。
+// ── y6.16 での修正点 (本ビルド・最重要) ────────────────────────
+// ・🔥 「保存後にデータが消える」問題の根本対策:
+//   症状:
+//     ・F25-24 (PAR-02c5yoa) で血統情報を抽出・保存しても、
+//       後で種親詳細画面を開くと「📷 スクショからAIで血統情報を抽出」
+//       ボタンが復活し、bloodline_data が消えた状態になる。
+//     ・PCで見ると古いデータが残っているがスマホで見ると消えている等、
+//       端末ごとに表示が異なる。
+//   既存修正で解決していた箇所:
+//     ・y6.13: フロント GAS 通信を POST 化 (URL長制限の400回避)
+//     ・GAS 20260428e: COL_DEF.PARENT に3列追加
+//     これらにより Sheets→GAS→localStorage の経路は完全に動作している。
+//   残っていた本当の原因 (y6.16 で対処):
+//     ・Store.parents に該当 par_id が「存在しない瞬間」がある。
+//       Store の syncAll が走った直後など、タイミングによって
+//       Store.parents が空または不完全な状態で _pbeMergeIntoStore が
+//       呼ばれることがあり、その場合何もせず終了していた。
+//     ・また、Store.parents に該当 par_id があっても bloodline_data_json
+//       列が落とされている経路があり、localStorage キャッシュからの補完
+//       しか効かないケースがあった。
+//     ・Pages.parentDetail (parent_v2.js) は描画直前に
+//       _pbeMergeIntoStore を呼ぶフックを持っていなかった。
+//   対策 (3段構え):
+//     ① _pbeMergeIntoStoreWithCloudFallback を新設
+//       Store.parents に主要 par_id がない場合、自動で GAS getParents
+//       を呼んで Store にデータを差し込む救済ルート。
+//     ② Pages.parentDetail を強制ラップ
+//       種親詳細画面が描画される直前に必ずマージを await 付きで実行。
+//       これによりレースコンディションを根絶。
+//     ③ ラップは _pbeWrapParentDetail を 1 秒間隔で監視
+//       parent_v2.js のロード順序に依存しない堅牢な仕組み。
+//
+// ── y6.15 での修正点 ────────────────────────────────────────
+// ・診断機能 _pbeDiagnose を実装 (画面右上に赤色「🔧 PBE診断」ボタンで起動)
+// ・Store.parents の中身ダンプ機能を追加して原因切り分けを可能にした
 //
 // ── y6.13 での修正点 ────────────────────────────────────────
 // ・🔥 クリティカルバグ修正: 「保存後に種親詳細画面から血統情報が消える」
@@ -2200,11 +2213,65 @@ Pages._pbeRenderBloodlineCard = _pbeRenderBloodlineCard;
 //   GAS から取得した parents の bloodline_data_json / source_screenshots_json
 //   を JSON.parse して bloodline_data / source_screenshots に展開する。
 //   さらにその結果を localStorage にキャッシュ(オフライン用)。
+// [y6.16] 🔥 根本対策:
+//   ・Store の syncAll が完了する前に _pbeMergeIntoStore が走るタイミング問題で
+//     Store.parents が空のまま空回りすることがあった。
+//   ・対策として、Store.parents を全件ループする際、
+//     ①parent 自身が bloodline_data_json を持っていればパース展開
+//     ②localStorage の pbeStore キャッシュに該当 par_id があれば必ず補完
+//     ③①も②もない場合のみスキップ
+//     という3段階に整理した。
+//   ・さらに、Store.parents に該当 par_id が「存在しない」ケースでも、
+//     localStorage キャッシュには情報があるので、cloudFetch でクラウドから
+//     GAS の最新 parents を取り込んで Store に setDB する救済ルートも追加。
 // ════════════════════════════════════════════════════════════════
+async function _pbeMergeIntoStoreWithCloudFallback() {
+  // [y6.16] 通常マージを試行
+  const ok1 = _pbeMergeIntoStore();
+  // Store.parents に主要 par_id がない、または bloodline_data がない場合の救済
+  //   (= Store がまだ syncAll 完了していない・または GAS が古いデータを返している)
+  if (!window.Store || typeof Store.getDB !== 'function') return ok1;
+  const parents = Store.getDB('parents') || [];
+  // 「localStorage キャッシュに bloodline_data はあるが Store.parents の対応 par が
+  //  bloodline_data を持っていない」状態を検出
+  const pbeStore = _pbeLoadStore();
+  const cachedIds = Object.keys(pbeStore || {});
+  let needsFallback = false;
+  cachedIds.forEach(function (pid) {
+    const par = parents.find(p => p.par_id === pid);
+    if (par && !par.bloodline_data && pbeStore[pid] && pbeStore[pid].bloodline_data) {
+      // パッチ可能なケース → 通常マージで処理されているはずなので何もしない
+    } else if (!par && pbeStore[pid] && pbeStore[pid].bloodline_data) {
+      // 🔥 Store.parents 自体に存在しないケース
+      needsFallback = true;
+    }
+  });
+  if (needsFallback) {
+    console.log('[PBE] Store.parents に該当 par_id がないので GAS から再取得します');
+    try {
+      const data = await _pbeCallGAS('getParents', {});
+      if (data && Array.isArray(data.parents)) {
+        // 既存 Store と新規取得をマージ (par_id 一意化)
+        const map = new Map();
+        parents.forEach(p => p.par_id && map.set(p.par_id, p));
+        data.parents.forEach(p => p.par_id && map.set(p.par_id, p));
+        const merged = Array.from(map.values());
+        Store.setDB('parents', merged);
+        console.log('[PBE] Store.parents を GAS から再取得して再構築 件数=' + merged.length);
+        // もう一度マージを実行して bloodline_data 展開
+        return _pbeMergeIntoStore();
+      }
+    } catch (e) {
+      console.warn('[PBE] cloud fallback failed:', e);
+    }
+  }
+  return ok1;
+}
+
 function _pbeMergeIntoStore() {
-  if (!window.Store || typeof Store.getDB !== 'function') return;
+  if (!window.Store || typeof Store.getDB !== 'function') return false;
   const parents = Store.getDB('parents');
-  if (!Array.isArray(parents) || !parents.length) return;
+  if (!Array.isArray(parents) || !parents.length) return false;
   const pbeStore = _pbeLoadStore();
   let modified = false;
   let anyCloudUpdate = false;  // [y6.11.1] 全 parent を通じて1つでもクラウド更新があったか
@@ -2237,15 +2304,10 @@ function _pbeMergeIntoStore() {
     }
 
     // [y6.11] クラウドから取得したデータを localStorage にもキャッシュ
-    //   (将来的にオフライン時でも参照できるよう)
-    // [y6.11.1] このパーセントが実際にクラウドからデータを取得した場合のみキャッシュ。
-    //   既存の localStorage データを空で上書きしないように、必ず実データの存在を確認する。
-    // [y6.11.1] さらに安全装置: 既存の localStorage データの方が新しいなら上書きしない
     if (cloudUpdated && par.par_id && (par.bloodline_data || par.source_screenshots)) {
       const existing = pbeStore[par.par_id];
       const existingTs = existing && existing.updated_at ? new Date(existing.updated_at).getTime() : 0;
       const cloudTs    = par.bloodline_updated_at ? new Date(par.bloodline_updated_at).getTime() : 0;
-      // クラウドの方が新しい、またはローカルにデータが無い場合のみ上書き
       if (!existing || cloudTs >= existingTs) {
         pbeStore[par.par_id] = {
           bloodline_data:     par.bloodline_data,
@@ -2298,8 +2360,47 @@ function _pbeMergeIntoStore() {
   }
 })();
 
+// ════════════════════════════════════════════════════════════════
+// [y6.16] 🔥 Pages.parentDetail を強制ラップ
+//   種親詳細画面が呼ばれる**直前に必ず**マージ + クラウドフォールバックを実行する。
+//   これにより以下のケースをすべてカバー:
+//     ・Store.parents に該当 par_id があり bloodline_data も展開済 (通常)
+//     ・Store.parents に該当 par_id はあるが bloodline_data が空 → localStorage から補完
+//     ・Store.parents に該当 par_id 自体がない → GAS getParents を直接呼んで Store にセット
+//   その後、本来の Pages.parentDetail を呼んで描画。
+// ────────────────────────────────────────────────────────────────
+//   ※ Pages.parentDetail はまだ未定義の可能性があるので、setInterval で監視して
+//     未ラップなら都度ラップする (parent_v2.js が後からロードされるケースに対応)。
+// ════════════════════════════════════════════════════════════════
+let _pbeWrappedParentDetail = false;
+function _pbeWrapParentDetail() {
+  if (_pbeWrappedParentDetail) return;
+  if (!window.Pages || typeof Pages.parentDetail !== 'function') return;
+  const original = Pages.parentDetail;
+  Pages.parentDetail = async function (parIdParam) {
+    try {
+      // [y6.16] 描画直前に必ずマージ + フォールバックを実行
+      //   (await は内部で getParents を呼ぶ場合だけ有効・通常はすぐ返る)
+      await _pbeMergeIntoStoreWithCloudFallback();
+    } catch (e) {
+      console.warn('[PBE] pre-parentDetail merge failed:', e);
+    }
+    return original.call(this, parIdParam);
+  };
+  _pbeWrappedParentDetail = true;
+  console.log('[PBE] Pages.parentDetail wrapped with merge hook');
+}
+// 即時試行 + 1秒後再試行 + 1秒間隔で監視 (ラップされたら停止)
+_pbeWrapParentDetail();
+setTimeout(_pbeWrapParentDetail, 1000);
+const _pbeWrapInterval = setInterval(function () {
+  _pbeWrapParentDetail();
+  if (_pbeWrappedParentDetail) clearInterval(_pbeWrapInterval);
+}, 1000);
+
 // 外部からも呼べるように公開 (画面再描画前に明示的に呼ぶ用途)
 Pages._pbeMergeIntoStore = _pbeMergeIntoStore;
+Pages._pbeMergeIntoStoreWithCloudFallback = _pbeMergeIntoStoreWithCloudFallback;
 
 // ════════════════════════════════════════════════════════════════
 // [y6.14] 自己診断機能 (PBE Diagnostic)
@@ -2558,4 +2659,4 @@ function _pbeRenderDiagFab() {
 //   (アプリ全体に影響する hashchange 購読は避け、軽量ポーリングで対応)
 setInterval(_pbeRenderDiagFab, 800);
 
-console.log('[PBE] parent_bloodline_extract.js loaded build=20260428y6.15');
+console.log('[PBE] parent_bloodline_extract.js loaded build=20260429y6.16');
