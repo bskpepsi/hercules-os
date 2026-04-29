@@ -2,33 +2,28 @@
 // ════════════════════════════════════════════════════════════════
 // parent_bloodline_extract.js — 種親血統情報の Vision 抽出機能
 //
-// build: 20260429y6.17
+// build: 20260429y6.18
 //
-// ── y6.17 での修正点 (本ビルド・最終決着版) ────────────────────
-// ・🔥 Store.setDB を強制ラップ (究極の根本対策)
-//   背景:
-//     ・y6.16 で Pages.parentDetail をラップしたが、画面側の描画タイミングと
-//       マージ完了のタイミングが噛み合わず、画面に bloodline_data が
-//       反映されない問題が残っていた (parent_v2.js が parents.find した
-//       オブジェクト参照は古いまま)。
-//   対策:
-//     ・Store.setDB('parents', value) が呼ばれたとき、value を Store に
-//       入れる**前に**各要素の bloodline_data_json を JSON.parse して
-//       bloodline_data フィールドにセットする。
-//     ・localStorage キャッシュからの補完も同段階で実行。
-//     ・これにより setDB 完了時点で _db.parents の中身は既に展開済み、
-//       購読者通知時点でも画面に正しく反映される。
-//   さらに保険:
-//     ・起動時 500ms / 2秒 / 5秒で _pbeForceReparseExistingParents を実行し、
-//       setDB ラップが間に合わなかったケースでも既存 _db.parents を直接走査して
-//       bloodline_data_json を展開し、Store._notify で再描画を促す。
-// ・🔧 診断ボタン表示条件を URL ハッシュベースに改善
-//   ・window.__currentRoute だけでは parent-detail を取れないケースに対応
-//   ・URL ハッシュの #page=parent-detail も判定材料に追加
+// ── y6.18 での修正点 (本ビルド・最終決着版) ────────────────────
+// ・🔥 Store.parents が空 (件数=0) の致命的状態を救済:
+//   診断で判明した事実:
+//     ・Store.parents 件数: 0 (完全に空)
+//     ・GAS getParents は 31 件返している
+//     ・つまり syncAll → setDB('parents') が呼ばれていない or 空配列で呼ばれている
+//   対策 (3経路):
+//     ① _pbeBootstrapIfEmpty を起動 1秒/3秒/6秒で実行
+//        Store.parents が空なら GAS getParents を直接呼んで Store にセット。
+//        bloodline_data も同時展開。
+//     ② _pbeMergeIntoStoreWithCloudFallback の先頭で空判定追加
+//        「Store.parents.length === 0」を最優先で検出して getParents を実行。
+//     ③ Store.setDB ラップ (y6.17) も継続運用
+//        どの経路で parents がセットされても bloodline_data 展開済みになる。
+//
+// ── y6.17 での修正点 ────────────────────────────────────────
+// ・Store.setDB を強制ラップ (parents セット時に必ず展開)
 //
 // ── y6.16 での修正点 ────────────────────────────────────────
 // ・Pages.parentDetail を強制ラップ (描画前マージ)
-// ・_pbeMergeIntoStoreWithCloudFallback で GAS 直叩きフォールバック追加
 //
 // ── y6.13 での修正点 ────────────────────────────────────────
 // ・🔥 クリティカルバグ修正: 「保存後に種親詳細画面から血統情報が消える」
@@ -2218,10 +2213,48 @@ Pages._pbeRenderBloodlineCard = _pbeRenderBloodlineCard;
 async function _pbeMergeIntoStoreWithCloudFallback() {
   // [y6.16] 通常マージを試行
   const ok1 = _pbeMergeIntoStore();
-  // Store.parents に主要 par_id がない、または bloodline_data がない場合の救済
-  //   (= Store がまだ syncAll 完了していない・または GAS が古いデータを返している)
   if (!window.Store || typeof Store.getDB !== 'function') return ok1;
   const parents = Store.getDB('parents') || [];
+
+  // [y6.17] 🔥 Store.parents が完全に空のケースを最優先で救済
+  //   診断レポートで「Store.parents 件数: 0」が判明したケース。
+  //   getAllData が parents を返していないか、setDB が呼ばれていない状態。
+  //   PBE 自身が getParents を呼んで Store.parents を構築する。
+  if (parents.length === 0) {
+    console.log('[PBE] 🚨 Store.parents が空 → GAS getParents を直接呼んで構築します');
+    try {
+      const data = await _pbeCallGAS('getParents', {});
+      if (data && Array.isArray(data.parents) && data.parents.length) {
+        // setDB を呼ぶ前に bloodline_data を展開しておく
+        //   (setDB のラップが既にあればそこでも展開されるが、念のため二重展開)
+        const pbeStore = _pbeLoadStore();
+        data.parents.forEach(function (par) {
+          if (!par) return;
+          if (par.bloodline_data_json && !par.bloodline_data) {
+            try { par.bloodline_data = JSON.parse(par.bloodline_data_json); }
+            catch (e) {}
+          }
+          if (par.source_screenshots_json && !par.source_screenshots) {
+            try { par.source_screenshots = JSON.parse(par.source_screenshots_json); }
+            catch (e) {}
+          }
+          // localStorage キャッシュからの補完
+          const rec = par.par_id ? pbeStore[par.par_id] : null;
+          if (rec) {
+            if (rec.bloodline_data && !par.bloodline_data) par.bloodline_data = rec.bloodline_data;
+            if (rec.source_screenshots && !par.source_screenshots) par.source_screenshots = rec.source_screenshots;
+          }
+        });
+        Store.setDB('parents', data.parents);
+        console.log('[PBE] ✅ Store.parents を GAS から構築完了 件数=' + data.parents.length);
+        return _pbeMergeIntoStore();
+      }
+    } catch (e) {
+      console.warn('[PBE] 🚨 getParents direct fetch failed:', e);
+    }
+    return ok1;
+  }
+
   // 「localStorage キャッシュに bloodline_data はあるが Store.parents の対応 par が
   //  bloodline_data を持っていない」状態を検出
   const pbeStore = _pbeLoadStore();
@@ -2394,6 +2427,45 @@ function _pbeMergeIntoStore() {
   setTimeout(_pbeForceReparseExistingParents,  500);
   setTimeout(_pbeForceReparseExistingParents, 2000);
   setTimeout(_pbeForceReparseExistingParents, 5000);
+
+  // [y6.17] 🔥 起動時に Store.parents が空なら GAS 直叩きで構築
+  //   診断で「Store.parents 件数: 0」が判明したケースの救済。
+  //   syncAll が走っていないか、走っても parents が空で返ってきている場合の保険。
+  async function _pbeBootstrapIfEmpty() {
+    if (!window.Store || typeof Store.getDB !== 'function') return;
+    const parents = Store.getDB('parents');
+    if (Array.isArray(parents) && parents.length > 0) return;  // 既に入っているのでスキップ
+    console.log('[PBE-bootstrap] Store.parents が空のため GAS getParents を呼び出します');
+    try {
+      const data = await _pbeCallGAS('getParents', {});
+      if (data && Array.isArray(data.parents) && data.parents.length) {
+        const pbeStore = _pbeLoadStore();
+        data.parents.forEach(function (par) {
+          if (!par) return;
+          if (par.bloodline_data_json && !par.bloodline_data) {
+            try { par.bloodline_data = JSON.parse(par.bloodline_data_json); }
+            catch (e) {}
+          }
+          if (par.source_screenshots_json && !par.source_screenshots) {
+            try { par.source_screenshots = JSON.parse(par.source_screenshots_json); }
+            catch (e) {}
+          }
+          const rec = par.par_id ? pbeStore[par.par_id] : null;
+          if (rec) {
+            if (rec.bloodline_data && !par.bloodline_data) par.bloodline_data = rec.bloodline_data;
+            if (rec.source_screenshots && !par.source_screenshots) par.source_screenshots = rec.source_screenshots;
+          }
+        });
+        Store.setDB('parents', data.parents);
+        console.log('[PBE-bootstrap] ✅ Store.parents 構築完了 件数=' + data.parents.length);
+      }
+    } catch (e) {
+      console.warn('[PBE-bootstrap] 失敗:', e);
+    }
+  }
+  setTimeout(_pbeBootstrapIfEmpty, 1000);
+  setTimeout(_pbeBootstrapIfEmpty, 3000);
+  setTimeout(_pbeBootstrapIfEmpty, 6000);
 })();
 
 // ════════════════════════════════════════════════════════════════
@@ -2772,4 +2844,4 @@ function _pbeRenderDiagFab() {
 //   (アプリ全体に影響する hashchange 購読は避け、軽量ポーリングで対応)
 setInterval(_pbeRenderDiagFab, 800);
 
-console.log('[PBE] parent_bloodline_extract.js loaded build=20260429y6.17');
+console.log('[PBE] parent_bloodline_extract.js loaded build=20260429y6.18');
