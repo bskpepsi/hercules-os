@@ -2,7 +2,25 @@
 // ════════════════════════════════════════════════════════════════
 // parent_bloodline_extract.js — 種親血統情報の Vision 抽出機能
 //
-// build: 20260429y6.18
+// build: 20260429z1
+//
+// ── 20260429z1 (本ビルド) ────────────────────────────────────
+// ・系統評価カードから重複項目を削除:
+//   旧: 種/学名/産地/累代/羽化期/体長/♂血統/♀血統 を表示していたが、
+//       これらはすべて parent_v2.js の「基本情報」「血統・親情報」セクションに
+//       既に存在しており重複していた。
+//   新: 系統評価カードでは feature_notes (血統的特徴) と
+//       kinship_records (同腹兄弟・系統実績) のみ表示する。
+// ・サムネ表示の堅牢化:
+//   ・drive_file_url もフォールバックとして許容
+//   ・onerror で「📷」プレースホルダに自動切替
+//   ・imgSrc が完全に空のときは番号付きプレースホルダ (#1, #2, ...) で枚数を可視化
+//   ・referrerpolicy="no-referrer" で Drive 直アクセスの Referer ブロック回避
+//   ・loading="lazy" で表示性能向上
+//   ・「スクショ N 枚」ラベルで実際の保存枚数を可視化
+//
+// ── 20260429y6.18 ────────────────────────────────────────
+// build: 20260429y6.18 (前ビルド)
 //
 // ── y6.18 での修正点 (本ビルド・最終決着版) ────────────────────
 // ・🔥 Store.parents が空 (件数=0) の致命的状態を救済:
@@ -2005,37 +2023,50 @@ function _pbeRenderBloodlineCard(par) {
   const b = par.bloodline_data;
   // 同腹兄弟実績を表示形式に整形
   const kinshipHtml = _pbeFormatKinshipDisplay(b.kinship_records || []);
-  // 抽出データの主要項目
-  const items = [];
-  if (b.common_name)     items.push({ label: '種',       value: b.common_name });
-  if (b.species_full)    items.push({ label: '学名',     value: b.species_full });
-  if (b.origin)          items.push({ label: '産地',     value: b.origin });
-  if (b.generation)      items.push({ label: '累代',     value: b.generation });
-  if (b.eclosion_period) items.push({ label: '羽化期',   value: b.eclosion_period });
-  if (b.body_size_mm)    items.push({ label: '体長',     value: b.body_size_mm + 'mm' });
-  if (b.paternal_blood)  items.push({ label: '♂血統',   value: b.paternal_blood });
-  if (b.maternal_blood)  items.push({ label: '♀血統',   value: b.maternal_blood });
 
-  const detailRows = items.map(function (it) {
-    return '<div style="display:flex;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.06)">'
-      + '<div style="width:5em;color:var(--text3);font-size:.78rem;flex-shrink:0">' + _pbeEsc(it.label) + '</div>'
-      + '<div style="flex:1;font-size:.85rem;font-weight:600;word-break:break-all">' + _pbeEsc(it.value) + '</div>'
-      + '</div>';
-  }).join('');
+  // [20260429z1] 系統評価カードから基本情報・血統親情報と重複する項目を削除:
+  //   旧: 種/学名/産地/累代/羽化期/体長/♂血統/♀血統 を表示していたが、
+  //       これらはすべて「基本情報」「血統・親情報」セクションに既にあり重複していた。
+  //   新: 系統評価カードでは feature_notes (血統的特徴) と
+  //       kinship_records (同腹兄弟・系統実績) のみ表示する。
+  const detailRows = '';
 
   const featureBlock = b.feature_notes
     ? '<div style="margin-top:8px;padding:8px 10px;background:rgba(200,168,75,.08);border-left:3px solid var(--gold);border-radius:4px;font-size:.82rem;line-height:1.55">'
       + '🌟 ' + _pbeEsc(b.feature_notes) + '</div>'
     : '';
 
-  const shotsThumbs = (par.source_screenshots || []).map(function (s) {
-    // [y6.11] thumbnail_data_url が無ければ Drive URL を使う (クラウド経由で読み込んだ場合)
-    const imgSrc = s.thumbnail_data_url || s.drive_view_url || '';
-    if (!imgSrc) return '';
-    return '<img src="' + imgSrc + '" '
-      + 'style="width:48px;height:48px;object-fit:cover;border-radius:4px;border:1px solid var(--surface3);cursor:pointer" '
-      + 'onclick="Pages._pbeViewScreenshot(\'' + _pbeEsc(par.par_id) + '\',\'' + _pbeEsc(s.id) + '\')">';
+  // [20260429z1] サムネール表示の堅牢化:
+  //   ・クラウドから取得した最新データには thumbnail_data_url が含まれない
+  //     (Sheets セル容量制限のため stripping されている)。
+  //   ・端末ローカルで保存された thumbnail_data_url は古い枚数のみ持つ。
+  //   ・そのため drive_view_url または drive_file_url からの表示も許容する。
+  //   ・どちらも無ければ番号付きプレースホルダで枚数だけは反映する。
+  //   ・referrerpolicy="no-referrer" を付与して Drive 直アクセスの Referer ブロックを回避。
+  const allShots = par.source_screenshots || [];
+  const shotsThumbs = allShots.map(function (s, idx) {
+    const imgSrc = s.thumbnail_data_url
+                || s.drive_view_url
+                || s.drive_file_url
+                || '';
+    const onclick = 'Pages._pbeViewScreenshot(\'' + _pbeEsc(par.par_id) + '\',\'' + _pbeEsc(s.id) + '\')';
+    if (imgSrc) {
+      return '<img src="' + imgSrc + '" '
+        + 'referrerpolicy="no-referrer" '
+        + 'loading="lazy" '
+        + 'style="width:48px;height:48px;object-fit:cover;border-radius:4px;border:1px solid var(--surface3);cursor:pointer;background:var(--surface3)" '
+        + 'onerror="this.style.display=&quot;none&quot;;this.nextElementSibling&&(this.nextElementSibling.style.display=&quot;inline-flex&quot;)" '
+        + 'onclick="' + onclick + '">'
+        + '<span style="display:none;width:48px;height:48px;border-radius:4px;border:1px solid var(--surface3);cursor:pointer;background:var(--surface3);align-items:center;justify-content:center;font-size:1.1rem" '
+        + 'onclick="' + onclick + '" title="画像読み込み失敗">📷</span>';
+    }
+    return '<span style="display:inline-flex;width:48px;height:48px;border-radius:4px;border:1px dashed var(--surface3);background:var(--surface2);align-items:center;justify-content:center;font-size:.7rem;color:var(--text3);cursor:pointer" '
+      + 'onclick="' + onclick + '" title="メタのみ・画像なし">#' + (idx + 1) + '</span>';
   }).join('');
+  // 枚数表示 (デバッグ性向上)
+  const shotsCountLabel = allShots.length
+    ? '<div style="font-size:.72rem;color:var(--text3);margin-top:6px">スクショ ' + allShots.length + ' 枚</div>'
+    : '';
 
   return '<div class="card" style="background:linear-gradient(135deg,rgba(200,168,75,.04),rgba(200,168,75,.01));border:1px solid rgba(200,168,75,.25)">'
     + '<div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">'
@@ -2045,6 +2076,7 @@ function _pbeRenderBloodlineCard(par) {
     + featureBlock
     + (kinshipHtml ? '<div style="margin-top:10px"><div style="font-size:.78rem;font-weight:700;color:var(--text2);margin-bottom:4px">同腹兄弟・系統実績</div>' + kinshipHtml + '</div>' : '')
     + (shotsThumbs ? '<div style="margin-top:8px;display:flex;gap:4px;flex-wrap:wrap">' + shotsThumbs + '</div>' : '')
+    + shotsCountLabel
     + '<div style="display:flex;gap:6px;margin-top:10px">'
     + '  <button class="btn btn-ghost btn-sm" style="flex:1;font-size:.78rem" '
     + '          onclick="Pages._pbeOpenExtractor(\'' + _pbeEsc(par.par_id) + '\')">📷 スクショ追加</button>'
@@ -2613,7 +2645,7 @@ async function _pbeDiagnose(parId) {
   function log(s) { lines.push(s); console.log('[PBE-DIAG]', s); }
   log('═══ PBE 自己診断 ═══');
   log('対象 par_id: ' + parId);
-  log('build: 20260429y6.18');
+  log('build: 20260429z1');
   log('時刻: ' + new Date().toISOString());
   log('');
 
@@ -3005,4 +3037,4 @@ setTimeout(_pbeInjectBloodlineCardFromCloud, 200);
 setTimeout(_pbeInjectBloodlineCardFromCloud, 800);
 setTimeout(_pbeInjectBloodlineCardFromCloud, 2000);
 
-console.log('[PBE] parent_bloodline_extract.js loaded build=20260429y6.18');
+console.log('[PBE] parent_bloodline_extract.js loaded build=20260429z1');

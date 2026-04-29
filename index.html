@@ -84,7 +84,7 @@
   <!-- [20260429y6-18] 本セッションでの実装内容反映:
        ・parent_bloodline_extract.js y6.18: 🔥 Store.parents が空のとき GAS 直叩きで構築
          + Store.setDB を強制ラップして parents 自動展開 -->
-  <script>window.__INDEX_BUILD= '20260429y6-18';console.log("[INDEX_BUILD]",window.__INDEX_BUILD,"loaded");</script>
+  <script>window.__INDEX_BUILD= '20260429z1';console.log("[INDEX_BUILD]",window.__INDEX_BUILD,"loaded");</script>
   <!-- [20260424j] 自己修復: api.js のビルドが古ければ強制リロード
        Android Chrome が index.html を古いままキャッシュした状態で誤って
        開かれるケースの救済。index.html が最新 (20260424j) なのに
@@ -143,13 +143,13 @@
 <!-- Phase2 拡張（v2ページ：parent_v2 / bloodline_v2 が v1 のルーティングを上書き） -->
 <script src="js/pages/bloodline_v2.js?v=20260413bi"></script>
 <!-- [20260426y6] parent_v2.js: 編集画面に「📷 スクリーンショットから血統抽出」ボタン+詳細画面の系統評価カード差込点を追加 -->
-<script src="js/pages/parent_v2.js?v=20260426y6"></script>
+<script src="js/pages/parent_v2.js?v=20260429z1"></script>
 <!-- [20260426y6-2] 種親血統情報 Vision 抽出 (parent_v2 の機能拡張モジュール)
      ・スクショ→Gemini Vision→構造化データを parents.bloodline_data に保存
      ・複数枚スクショ同時アップロード対応 (1リクエストで統合抽出)
      ・APIキーは設定画面と共通の保存先を使用 (二重入力なし)
      ・販売者名・店舗名・購入価格は抽出されない設計 -->
-<script src="js/pages/parent_bloodline_extract.js?v=20260429y6-18"></script>
+<script src="js/pages/parent_bloodline_extract.js?v=20260429z1"></script>
 <script src="js/pages/analysis.js?v=20260413bi"></script>
 <!-- Phase5/6: 販売管理（sale.js は manage.js より後に読む） -->
 <script src="js/pages/sale.js?v=20260413bi"></script>

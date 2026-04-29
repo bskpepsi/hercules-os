@@ -3,6 +3,22 @@
 // ・種親ID自動採番（M25-A / F25-01）
 // ・後食管理・ペアリング可能日表示
 // ・ペアリング履歴（回数・間隔・一覧）
+//
+// build: 20260429z1
+//
+// ── 20260429z1 修正 (本セッション) ──────────────────────────────
+// ・種親詳細画面 (Pages.parentDetail) のレイアウト変更:
+//   旧:  ヘッダー → 系統評価カード → クイックアクション(✏️編集/🏷ラベル/QR)
+//        → 抽出CTA → 本人情報 → 血統・親情報 → 入手・実績
+//        → ステータス操作(枠なし) → ペアリング管理(枠なし)
+//   新:  ヘッダー → 基本情報(旧:本人情報) → 血統・親情報
+//        → クイックアクション(✏️編集/🏷ラベル/QR) → 系統評価カード
+//        → 抽出CTA → 入手・実績
+//        → ステータス操作(accordion 枠) → ペアリング管理(accordion 枠)
+// ・「本人情報」というセクション名を「基本情報」に変更
+// ・ステータス操作・ペアリング管理を accordion で囲んでデザイン統一
+// ・_renderPairingStats 内の重複「ペアリング管理」ラベルを削除
+//   (accordion 側でセクションタイトルを表示するため二重表示防止)
 // ════════════════════════════════════════════════════════════════
 'use strict';
 
@@ -315,36 +331,9 @@ Pages.parentDetail = async function (parIdParam) {
         ${pairingBadge ? `<div style="margin-top:10px">${pairingBadge}</div>` : ''}
       </div>
 
-      <!-- [y6] 系統評価カード (bloodline_dataがある時のみ描画) -->
-      <div id="pbe-bloodline-card-mount"></div>
-
-      <!-- クイックアクション -->
-      <div style="display:flex;gap:8px">
-        <button class="btn btn-ghost" style="flex:1"
-          onclick="routeTo('parent-new',{editId:'${parId}'})">✏️ 編集</button>
-        <button class="btn btn-ghost" style="flex:1"
-          onclick="routeTo('label-gen',{targetType:'PAR',targetId:'${parId}',autoGenerate:true})">🏷 ラベル/QR</button>
-      </div>
-
-      <!-- [y6] 血統情報がない場合のCTAボタン -->
-      ${!p.bloodline_data ? `
-      <button class="btn btn-full"
-        style="background:rgba(200,168,75,.12);color:var(--gold);border:1px solid rgba(200,168,75,.4);font-weight:700;margin-top:8px"
-        onclick="Pages._pbeOpenExtractor('${parId}')">
-        📷 スクショからAIで血統情報を抽出
-      </button>` : ''}
-
-      <!-- 後食開始日未設定警告（編集フォームへ誘導） -->
-      ${!p.feeding_start_date ? `
-      <button class="btn btn-full"
-        style="background:rgba(230,150,0,.15);color:var(--amber);border:1px solid rgba(230,150,0,.4);font-weight:700"
-        onclick="routeTo('parent-new',{editId:'${parId}'})">
-        🍽️ 後食開始日が未設定です — 編集して設定する
-      </button>` : ''}
-
-      <!-- 本人情報 -->
+      <!-- [20260429z1] 基本情報 (旧: 本人情報) -->
       <div class="accordion" id="acc-par-basic">
-        <div class="acc-hdr open" onclick="_toggleAcc('acc-par-basic')">本人情報 <span class="acc-arrow">▼</span></div>
+        <div class="acc-hdr open" onclick="_toggleAcc('acc-par-basic')">基本情報 <span class="acc-arrow">▼</span></div>
         <div class="acc-body open">
           <div class="info-list">
             ${UI.detailRow('管理コード', pid)}
@@ -378,13 +367,13 @@ Pages.parentDetail = async function (parIdParam) {
           </div>
           ${(p.paternal_raw || pTags.length) ? `
           <div style="margin-top:8px;padding:10px;background:rgba(91,168,232,.06);border-radius:8px;border:1px solid rgba(91,168,232,.2)">
-            <div style="font-size:.72rem;font-weight:700;color:var(--male);margin-bottom:4px">♂ 血統（父方）</div>
+            <div style="font-size:.72rem;font-weight:700;color:var(--male);margin-bottom:4px">♂ 血統(父方)</div>
             ${p.paternal_raw ? `<div style="font-size:.8rem;color:var(--text2);font-family:var(--font-mono);word-break:break-all;margin-bottom:6px">${p.paternal_raw}</div>` : ''}
             ${pTags.length ? `<div style="display:flex;flex-wrap:wrap;gap:4px">${pTags.map(t=>`<span style="font-size:.72rem;padding:2px 8px;border-radius:20px;background:rgba(91,168,232,.12);color:var(--male);border:1px solid rgba(91,168,232,.3)">${t}</span>`).join('')}</div>` : ''}
           </div>` : ''}
           ${(p.maternal_raw || mTags.length) ? `
           <div style="margin-top:8px;padding:10px;background:rgba(232,127,160,.06);border-radius:8px;border:1px solid rgba(232,127,160,.2)">
-            <div style="font-size:.72rem;font-weight:700;color:var(--female);margin-bottom:4px">♀ 血統（母方）</div>
+            <div style="font-size:.72rem;font-weight:700;color:var(--female);margin-bottom:4px">♀ 血統(母方)</div>
             ${p.maternal_raw ? `<div style="font-size:.8rem;color:var(--text2);font-family:var(--font-mono);word-break:break-all;margin-bottom:6px">${p.maternal_raw}</div>` : ''}
             ${mTags.length ? `<div style="display:flex;flex-wrap:wrap;gap:4px">${mTags.map(t=>`<span style="font-size:.72rem;padding:2px 8px;border-radius:20px;background:rgba(232,127,160,.12);color:var(--female);border:1px solid rgba(232,127,160,.3)">${t}</span>`).join('')}</div>` : ''}
           </div>` : ''}
@@ -392,6 +381,33 @@ Pages.parentDetail = async function (parIdParam) {
           <div style="font-size:.8rem;color:var(--text3);padding:8px 0">血統情報なし — 編集から入力できます</div>` : ''}
         </div>
       </div>
+
+      <!-- [20260429z1] クイックアクション (基本情報・血統親情報の後に移動) -->
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn btn-ghost" style="flex:1"
+          onclick="routeTo('parent-new',{editId:'${parId}'})">✏️ 編集</button>
+        <button class="btn btn-ghost" style="flex:1"
+          onclick="routeTo('label-gen',{targetType:'PAR',targetId:'${parId}',autoGenerate:true})">🏷 ラベル/QR</button>
+      </div>
+
+      <!-- [20260429z1] [y6] 系統評価カード (bloodline_dataがある時のみ描画・クイックアクションの後に配置) -->
+      <div id="pbe-bloodline-card-mount"></div>
+
+      <!-- [20260429z1] [y6] 血統情報がない場合のCTAボタン (系統評価カードの下に移動) -->
+      ${!p.bloodline_data ? `
+      <button class="btn btn-full"
+        style="background:rgba(200,168,75,.12);color:var(--gold);border:1px solid rgba(200,168,75,.4);font-weight:700;margin-top:8px"
+        onclick="Pages._pbeOpenExtractor('${parId}')">
+        📷 スクショからAIで血統情報を抽出
+      </button>` : ''}
+
+      <!-- 後食開始日未設定警告(編集フォームへ誘導) -->
+      ${!p.feeding_start_date ? `
+      <button class="btn btn-full"
+        style="background:rgba(230,150,0,.15);color:var(--amber);border:1px solid rgba(230,150,0,.4);font-weight:700"
+        onclick="routeTo('parent-new',{editId:'${parId}'})">
+        🍽️ 後食開始日が未設定です — 編集して設定する
+      </button>` : ''}
 
       <!-- 入手・実績 -->
       ${(p.source || p.purchase_date || p.achievements || p.note) ? `
@@ -419,31 +435,36 @@ Pages.parentDetail = async function (parIdParam) {
         </div>
       </div>` : ''}
 
-      <!-- ステータス操作 -->
-      <div style="margin-top:12px">
-        <div style="font-size:.72rem;font-weight:700;color:var(--text3);letter-spacing:.06em;margin-bottom:6px">ステータス操作</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          ${p.status !== 'active' ? `
-          <button class="btn btn-ghost btn-sm" style="color:var(--green);border-color:var(--green)"
-            onclick="_parentChangeStatus('${parId}','active')">✅ 現役に戻す</button>` : ''}
-          ${p.status === 'active' ? `
-          <button class="btn btn-ghost btn-sm"
-            onclick="_parentChangeStatus('${parId}','retired')">📦 引退にする</button>` : ''}
-          ${p.status !== 'sold' ? `
-          <button class="btn btn-ghost btn-sm" style="color:var(--amber);border-color:var(--amber)"
-            onclick="_parentChangeStatus('${parId}','sold')">💴 売却済みにする</button>` : ''}
-          ${p.status !== 'dead' ? `
-          <button class="btn btn-ghost btn-sm" style="color:var(--red,#e05050);border-color:var(--red,#e05050);font-size:.75rem;opacity:.75"
-            onclick="_parentChangeStatus('${parId}','dead')">💀 死亡として記録</button>` : ''}
+      <!-- [20260429z1] ステータス操作 (accordion 枠で囲んで他のセクションとデザイン統一) -->
+      <div class="accordion" id="acc-par-status">
+        <div class="acc-hdr open" onclick="_toggleAcc('acc-par-status')">ステータス操作 <span class="acc-arrow">▼</span></div>
+        <div class="acc-body open">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;padding:4px 0">
+            ${p.status !== 'active' ? `
+            <button class="btn btn-ghost btn-sm" style="color:var(--green);border-color:var(--green)"
+              onclick="_parentChangeStatus('${parId}','active')">✅ 現役に戻す</button>` : ''}
+            ${p.status === 'active' ? `
+            <button class="btn btn-ghost btn-sm"
+              onclick="_parentChangeStatus('${parId}','retired')">📦 引退にする</button>` : ''}
+            ${p.status !== 'sold' ? `
+            <button class="btn btn-ghost btn-sm" style="color:var(--amber);border-color:var(--amber)"
+              onclick="_parentChangeStatus('${parId}','sold')">💴 売却済みにする</button>` : ''}
+            ${p.status !== 'dead' ? `
+            <button class="btn btn-ghost btn-sm" style="color:var(--red,#e05050);border-color:var(--red,#e05050);font-size:.75rem;opacity:.75"
+              onclick="_parentChangeStatus('${parId}','dead')">💀 死亡として記録</button>` : ''}
+          </div>
         </div>
       </div>
 
-      <div id="pairing-stats-section">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin:12px 0 4px">
-          <span style="font-size:.8rem;font-weight:700;color:var(--text3);letter-spacing:.06em">ペアリング管理</span>
-        </div>
-        <div class="card" style="text-align:center;padding:16px">
-          <div class="spinner"></div>
+      <!-- [20260429z1] ペアリング管理 (accordion 枠で囲んで他のセクションとデザイン統一) -->
+      <div class="accordion" id="acc-par-pairing">
+        <div class="acc-hdr open" onclick="_toggleAcc('acc-par-pairing')">ペアリング管理 <span class="acc-arrow">▼</span></div>
+        <div class="acc-body open">
+          <div id="pairing-stats-section">
+            <div class="card" style="text-align:center;padding:16px">
+              <div class="spinner"></div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -624,10 +645,7 @@ function _renderPairingManagement(parId, entries, isLoading) {
   }).join('');
 
   sec.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center;margin:12px 0 4px">
-      <span style="font-size:.8rem;font-weight:700;color:var(--text3);letter-spacing:.06em">ペアリング管理</span>
-      ${isLoading ? `<span style="font-size:.7rem;color:var(--text3)">同期中…</span>` : ''}
-    </div>
+    ${isLoading ? `<div style="text-align:right;font-size:.7rem;color:var(--text3);margin-bottom:6px">同期中…</div>` : ''}
 
     <!-- サマリーバー -->
     <div style="display:flex;gap:12px;padding:10px 12px;background:var(--surface2);
