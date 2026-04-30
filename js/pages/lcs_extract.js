@@ -23,7 +23,7 @@
 // ─────────────────────────────────────────────────────────────────
 'use strict';
 
-const LCS_BUILD = '20260430a';
+const LCS_BUILD = '20260430b';
 window.__LCS_BUILD = LCS_BUILD;
 console.log('[LCS_BUILD]', LCS_BUILD, 'loaded');
 
@@ -1069,7 +1069,7 @@ Pages.lcsExtract = function () {
 
       <div style="background:#f8f9fa;border:1px solid #dde;border-radius:8px;padding:14px;margin-bottom:14px">
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-          <input type="file" id="lcs-file" accept="image/*" capture="environment" multiple style="display:none">
+          <input type="file" id="lcs-file" accept="image/*" multiple style="display:none">
           <button id="lcs-take" style="padding:10px 20px;background:#0c5d2e;color:#fff;border:none;border-radius:6px;font-size:1em;cursor:pointer">
             📷 撮影 / 画像選択
           </button>
@@ -1121,6 +1121,21 @@ Pages.lcsExtract = function () {
 
   // 履歴表示
   _lcsRenderHistory();
+
+  // [20260430b] ライン台帳が空ならバックグラウンド同期を発動
+  //   LCS ページに直接アクセスしたケース (URL ハッシュ復元・FAB ボタン等) では
+  //   syncAll が走っていないため Store.getDB('lines') が空配列のことがある。
+  //   非同期で同期して、完了したら現在ページなら再描画する。
+  const linesNow = (window.Store && Store.getDB) ? (Store.getDB('lines') || []) : [];
+  if (linesNow.length === 0 && typeof syncAll === 'function') {
+    console.log('[LCS] ライン台帳が空のためバックグラウンド同期を実行');
+    syncAll(true).then(function () {
+      if (window.Store && Store.getPage && Store.getPage() === 'lcs-extract') {
+        console.log('[LCS] 同期完了 → 再描画');
+        Pages.lcsExtract();
+      }
+    }).catch(function (e) { console.warn('[LCS] 同期失敗:', e && e.message); });
+  }
 };
 
 // ═══════════════════════════════════════════════════════════════
