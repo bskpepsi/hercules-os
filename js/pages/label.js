@@ -198,7 +198,7 @@
 //   - Bug 3: _backRoute が存在する場合に「詳細に戻る」ボタンを追加
 'use strict';
 
-window._LABEL_BUILD = '20260430l';
+window._LABEL_BUILD = '20260430m';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 // ════════════════════════════════════════════════════════════════
@@ -1050,6 +1050,23 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         debugLabel:  'LABEL IND',
         debugInfo:   { ind_id: ind.ind_id, display_id: ind.display_id },
       });
+      // [20260430m] 由来情報を組み立て: T2個別化なら元のユニット、T1個別化なら元のロット
+      let _indOriginText = '';
+      try {
+        if (ind.origin_unit_display_id) {
+          _indOriginText = ind.origin_unit_display_id;
+        } else if (ind.origin_unit_id) {
+          const _u = (Store.getDB('breeding_units')||[]).find(u => u && u.unit_id === ind.origin_unit_id);
+          _indOriginText = _u ? (_u.display_id || ind.origin_unit_id) : ind.origin_unit_id;
+        } else if (ind.origin_lot_id) {
+          const _l = (Store.getLot && Store.getLot(ind.origin_lot_id)) || null;
+          const _disp = _l && _l.display_id ? _l.display_id : ind.origin_lot_id;
+          // ライン略号-Lxx だけに短縮 (例: HM2026-A1-L01)
+          const _short = (_disp.match(/[A-Z0-9]+-L\d+/) || [_disp])[0];
+          _indOriginText = _short + (ind.lot_item_no ? ' #' + ind.lot_item_no : '');
+        }
+      } catch(_eOrigin) {}
+
       ld = {
         qr_text:      `IND:${ind.ind_id || targetId}`,
         display_id:   ind.display_id    || targetId,
@@ -1064,6 +1081,7 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
         locality:     ind.locality      || '',
         generation:   ind.generation    || '',
         note_private: ind.note_private  || '',
+        origin_text:  _indOriginText,                    // [20260430m] 由来 (黒帯右側に表示)
         size_category:ind.size_category || '',
         records:      records.slice().sort((a,b)=>String(b.record_date).localeCompare(String(a.record_date))).slice(0,8),
         label_type:   labelType || 'ind_fixed',
@@ -1604,8 +1622,11 @@ function _buildLabelHTML(ld, qrSrc) {
       ? '  <div style="position:relative;background:#000;color:#fff;font-size:9px;font-weight:700;padding:0.8mm 2mm;height:5mm;display:flex;align-items:center;flex-shrink:0;overflow:hidden">'
         + '<span style="position:absolute;top:0;left:0;right:0;bottom:0;background:repeating-linear-gradient(45deg,transparent 0,transparent 4px,rgba(255,255,255,0.28) 4px,rgba(255,255,255,0.28) 6px);pointer-events:none"></span>'
         + '<span style="position:relative;z-index:1">' + headerLabel + ' | HerculesOS</span></div>\n'
-      : '  <div style="background:#000;color:#fff;font-size:9px;font-weight:700;padding:0.8mm 2mm;height:5mm;display:flex;align-items:center;flex-shrink:0">'
-        + headerLabel + ' | HerculesOS</div>\n')
+      // [20260430m] 個別ラベル黒帯: 左にタイトル、右に由来 (白文字)
+      : '  <div style="background:#000;color:#fff;font-size:9px;font-weight:700;padding:0.8mm 2mm;height:5mm;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;overflow:hidden;gap:2mm">'
+        + '<span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + headerLabel + ' | HerculesOS</span>'
+        + (ld.origin_text ? '<span style="font-size:7.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:30mm">由来：' + ld.origin_text + '</span>' : '')
+        + '</div>\n')
     + '  <div style="display:flex;padding:1mm 1.5mm 0;gap:0;flex-shrink:0">\n'
     + '    <div style="flex-shrink:0;margin-right:1.5mm">' + _qrBox(qrSrc, 44) + '</div>\n'
     + '    <div style="flex:1;min-width:0;padding-left:1.5mm;border-left:2px solid #000">\n'
@@ -1647,7 +1668,7 @@ function _buildLabelHTML(ld, qrSrc) {
       + '</tr></thead>\n'
       + '      <tbody>' + rowsHtml + '</tbody>\n    </table>\n  </div>\n'
     ))
-    + (noteShort ? '  <div style="padding:0.5mm 2mm 1mm;font-size:7px;font-weight:700;color:#000;overflow:hidden;white-space:nowrap">📝 ' + noteShort + '</div>\n' : '')
+    // [20260430m] 下端の📝メモ表示を削除 (由来情報は上の黒帯右側に移動済み)
     + '</div>\n</body></html>';
 }
 
@@ -2108,11 +2129,14 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
     + '  @media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }\n'
     + '</style></head><body>\n'
     + '<div style="width:62mm;height:70mm;display:flex;flex-direction:column">\n'
-    + '  <div style="position:relative;background:#000;color:#fff;font-size:9px;font-weight:700;padding:0.8mm 2mm;height:5mm;display:flex;align-items:center;flex-shrink:0;overflow:hidden">'
+    // [20260430m] ユニット黒帯: 左にタイトル、右に由来 (白文字)
+    + '  <div style="position:relative;background:#000;color:#fff;font-size:9px;font-weight:700;padding:0.8mm 2mm;height:5mm;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;overflow:hidden;gap:2mm">'
     + '<span style="position:absolute;top:0;left:0;right:0;bottom:0;background:repeating-linear-gradient(45deg,transparent 0,transparent 4px,rgba(255,255,255,0.28) 4px,rgba(255,255,255,0.28) 6px);pointer-events:none"></span>'
-    + '<span style="position:relative;z-index:1">ユニット | HerculesOS' + saleBadge + '</span></div>\n'
-    // [20260420k] outer padding 1mm → 0.5mm で上詰め
-    + '  <div style="display:flex;padding:0.5mm 1.5mm 0;gap:0;flex-shrink:0">\n'
+    + '<span style="position:relative;z-index:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">ユニット | HerculesOS' + saleBadge + '</span>'
+    + (originLS ? '<span style="position:relative;z-index:1;font-size:7.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:30mm">' + originLS + '</span>' : '')
+    + '</div>\n'
+    // [20260430m] H. QR位置を 0.5mm 上に移動 (padding-top: 0.5mm → 0)
+    + '  <div style="display:flex;padding:0 1.5mm 0;gap:0;flex-shrink:0">\n'
     + '    <div style="flex-shrink:0;margin-right:1.5mm">' + _qrBox(qr, 44) + '</div>\n'
     // [20260420k] position:relative を追加（absolute 配置の頭数+性別ボックスの基準点）
     + '    <div style="flex:1;min-width:0;padding-left:1.5mm;border-left:2px solid #000;position:relative">\n'
@@ -2127,8 +2151,7 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
     + lineBadgeHtml + unitSuffixHtml + '</div>\n'
     // 孵化日 (padding-right は hatchHtml 側のインラインスタイルで設定済み)
     + '      ' + hatchHtml + '\n'
-    // 由来 (フル幅、absolute 領域は孵化日の下で終わる想定)
-    + '      ' + originHtml + '\n'
+    // [20260430m] 孵化日下の由来表示を削除 (上の黒帯右側に移動済み)
     // [20260420k] 区分: → 区分： + &nbsp; 区切り
     + '      <div style="font-size:7px;font-weight:700;color:#000;line-height:1.6">区分：'
     + chkC('大', sizeCats.indexOf('大')>=0) + '&nbsp;'
