@@ -23,7 +23,7 @@
 // ─────────────────────────────────────────────────────────────────
 'use strict';
 
-const LCS_BUILD = '20260430h';
+const LCS_BUILD = '20260430i';
 window.__LCS_BUILD = LCS_BUILD;
 console.log('[LCS_BUILD]', LCS_BUILD, 'loaded');
 
@@ -64,6 +64,14 @@ let _lcsBusy = false;
 const _lcsLogs = [];   // {t: Date, level: 'info'|'warn'|'error', msg: string}
 const LCS_LOGS_MAX = 50;
 
+// [20260430i] LCS 専用ライン台帳キャッシュ
+//   原因: Store.getDB('lines') は何かに繰り返し空配列で上書きされている
+//        (29件 → 7秒後0件 → 同期で29件 → 17秒後また0件 のパターン)
+//   解決: LCS 内部に独自のキャッシュを持ち、_lcsResolveLine はこれを優先で参照
+//        ファイル選択時にキャッシュを最新化し、Vision API の17秒間に Store が
+//        空にされても影響を受けないようにする
+let _lcsLinesCache = null;
+
 function _lcsLog(level, msg) {
   const entry = { t: new Date(), level: level, msg: String(msg) };
   _lcsLogs.unshift(entry);
@@ -73,6 +81,38 @@ function _lcsLog(level, msg) {
   else if (level === 'warn') console.warn('[LCS]', msg);
   else console.log('[LCS]', msg);
   _lcsRenderLogPanel();
+}
+
+// [20260430i] LCS 専用ライン台帳キャッシュを更新
+//   1. 既に LCS キャッシュが存在すればそれを返す
+//   2. なければ Store.getDB('lines') を確認 → 29件あればそれを採用
+//   3. それでも空なら syncAll を呼んで取得
+async function _lcsEnsureLinesCache(forceRefresh) {
+  if (!forceRefresh && _lcsLinesCache && _lcsLinesCache.length > 0) {
+    return _lcsLinesCache;
+  }
+  // まず Store から取れるか試す
+  const fromStore = (window.Store && Store.getDB) ? (Store.getDB('lines') || []) : [];
+  if (fromStore.length > 0) {
+    _lcsLinesCache = fromStore.slice();
+    _lcsLog('info', 'LCSキャッシュ更新 (Store経由): ' + _lcsLinesCache.length + '件');
+    return _lcsLinesCache;
+  }
+  // Store も空なら syncAll を試す
+  if (typeof syncAll === 'function') {
+    try {
+      await syncAll(true);
+      const after = (window.Store && Store.getDB) ? (Store.getDB('lines') || []) : [];
+      if (after.length > 0) {
+        _lcsLinesCache = after.slice();
+        _lcsLog('info', 'LCSキャッシュ更新 (syncAll後): ' + _lcsLinesCache.length + '件');
+        return _lcsLinesCache;
+      }
+    } catch (e) {
+      _lcsLog('error', 'LCSキャッシュ更新失敗: ' + (e && e.message ? e.message : String(e)));
+    }
+  }
+  return _lcsLinesCache || [];
 }
 
 // [20260430g] Store.setDB('lines', ...) のトレース
@@ -750,22 +790,30 @@ function _lcsParseMatCode(codeRaw) {
 function _lcsResolveLine(lineCodeRaw) {
   const code = String(lineCodeRaw || '').trim().toUpperCase();
   if (!code) return null;
-  const lines = (window.Store && Store.getDB) ? (Store.getDB('lines') || []) : [];
+
+  // [20260430i] LCS 専用キャッシュを最優先で参照
+  //   Store.getDB('lines') が何かに上書きされていても影響を受けない
+  let lines = _lcsLinesCache;
+  let source = 'cache';
+  if (!lines || lines.length === 0) {
+    lines = (window.Store && Store.getDB) ? (Store.getDB('lines') || []) : [];
+    source = 'Store.getDB';
+  }
   const found = lines.find(function (l) { return l && l.line_code === code; }) || null;
 
   // [20260430e] 照合失敗時にデバッグログを残す
   if (typeof _lcsLog === 'function') {
     if (found) {
-      _lcsLog('info', 'ライン照合 OK: \'' + code + '\' → ' + (found.display_id || found.line_id));
+      _lcsLog('info', 'ライン照合 OK [' + source + ']: \'' + code + '\' → ' + (found.display_id || found.line_id));
     } else if (lines.length === 0) {
-      _lcsLog('warn', 'ライン照合スキップ: Store.getDB(\'lines\') が空 (同期未完了の可能性)');
+      _lcsLog('warn', 'ライン照合スキップ: cache=空 / Store=空 (両方とも未取得)');
     } else {
       // 失敗 → 候補のサンプルをログに出して原因特定する
       const sampleKeys = Object.keys(lines[0] || {}).slice(0, 10).join(',');
       const sampleCodes = lines.map(function (l) { return l && l.line_code; })
                               .filter(function (c) { return c; })
                               .slice(0, 8).join(',') || '(line_code フィールドが空)';
-      _lcsLog('warn', 'ライン照合失敗: \'' + code + '\' / 候補' + lines.length + '件 / line_code一覧(先頭8): ' + sampleCodes);
+      _lcsLog('warn', 'ライン照合失敗 [' + source + ']: \'' + code + '\' / 候補' + lines.length + '件 / line_code一覧(先頭8): ' + sampleCodes);
       _lcsLog('info', 'lines[0] のキー: ' + sampleKeys);
     }
   }
@@ -1214,6 +1262,7 @@ async function _lcsHandleFileSelect(e) {
   //   バックグラウンド同期と Vision API 呼び出しのタイミングが競合し、
   //   _lcsResolveLine が呼ばれる瞬間に lines が空になる現象に対応。
   //   ここで明示的に await することで、確実にライン照合が機能する状態にする。
+  // [20260430i] さらに LCS 専用キャッシュに固定する (Store の上書きから保護)
   let curLines = (window.Store && Store.getDB) ? (Store.getDB('lines') || []) : [];
   if (curLines.length === 0 && typeof syncAll === 'function') {
     _lcsLog('info', '解析前: ライン台帳が空 → 同期完了を待機 (await syncAll)');
@@ -1227,6 +1276,11 @@ async function _lcsHandleFileSelect(e) {
     }
   } else {
     _lcsLog('info', '解析前: ライン台帳 ' + curLines.length + '件 ロード済み');
+  }
+  // [20260430i] LCS 専用キャッシュを更新 (Vision API 中の上書きから保護)
+  if (curLines.length > 0) {
+    _lcsLinesCache = curLines.slice();
+    _lcsLog('info', 'LCSキャッシュに固定: ' + _lcsLinesCache.length + '件 (以後の照合はこちらを優先)');
   }
 
   // 進捗表示
@@ -1374,6 +1428,11 @@ Pages.lcsExtract = function () {
     syncAll(true).then(function () {
       const newLines = Store.getDB('lines') || [];
       _lcsLog('info', '同期完了: ライン台帳 ' + newLines.length + '件');
+      // [20260430i] 同期完了時に LCS キャッシュも更新
+      if (newLines.length > 0) {
+        _lcsLinesCache = newLines.slice();
+        _lcsLog('info', 'LCSキャッシュ更新 (Pages.lcsExtract初期同期): ' + _lcsLinesCache.length + '件');
+      }
       // [20260430e] サンプル情報を出して line_code フィールドが存在するか確認
       if (newLines.length > 0) {
         const sample = newLines[0];
@@ -1417,6 +1476,10 @@ window.LCS = {
   getApiKey:       _lcsGetApiKey,
   loadHistory:     _lcsLoadHistory,
   loadRecent:      _lcsLoadRecent,
+  // [20260430i] LCS 専用キャッシュアクセス
+  getLinesCache:   function () { return _lcsLinesCache; },
+  setLinesCache:   function (lines) { _lcsLinesCache = lines; },
+  ensureLines:     _lcsEnsureLinesCache,
 };
 
 console.log('[LCS] module loaded. window.LCS available for eval/debug.');
