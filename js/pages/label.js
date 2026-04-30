@@ -198,7 +198,7 @@
 //   - Bug 3: _backRoute が存在する場合に「詳細に戻る」ボタンを追加
 'use strict';
 
-window._LABEL_BUILD = '20260426a';
+window._LABEL_BUILD = '20260430l';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 // ════════════════════════════════════════════════════════════════
@@ -939,8 +939,16 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
       if (_needsFetch) {
         try {
           console.log('[LABEL] IND data looks empty for', targetId, '→ fetching from API');
-          const _fresh = await API.individual.get(targetId);
-          if (_fresh) {
+          const _res   = await API.individual.get(targetId);
+          // [20260430l] API.individual.get の返り値は { individual: {...} } 形式。
+          //   旧コードは _fresh._growthRecords を直接アクセスしていたため、_fresh が
+          //   undefined となり Store.setGrowthRecords が呼ばれていなかった。
+          //   これが「T2移行直後にラベル発行すると T1記録が表示されない」現象の原因。
+          //   個体詳細経由なら individual.js (820行) で setGrowthRecords が動くため
+          //   その後ラベル発行すれば反映される、というけいとさんの観察と一致。
+          //   修正: 両形式に対応 (個体詳細と同じ res.individual を取り出す)
+          const _fresh = _res && (_res.individual || _res);
+          if (_fresh && _fresh.ind_id) {
             // Store 反映 (individuals 配列に patch / add)
             try {
               const _individuals = Store.getDB('individuals') || [];
@@ -952,6 +960,10 @@ Pages._lblGenerate = async function (targetType, targetId, labelType) {
             // 成長記録も Store に入れ直す (ind_id キー)
             if (Array.isArray(_fresh._growthRecords) && _fresh._growthRecords.length > 0) {
               try { Store.setGrowthRecords(_fresh.ind_id, _fresh._growthRecords); } catch(_eGR){}
+              // display_id でも同じデータでセット (Store.growthMap は _resolveId 未対応)
+              if (_fresh.display_id && _fresh.display_id !== _fresh.ind_id) {
+                try { Store.setGrowthRecords(_fresh.display_id, _fresh._growthRecords); } catch(_eGR2){}
+              }
             }
             ind = Store.getIndividual(targetId) || _fresh;
             console.log('[LABEL] IND refetched:', _fresh.display_id, '_growthRecords=',

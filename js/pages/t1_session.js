@@ -979,11 +979,21 @@ Pages._t1UnitMenu = function (unitIdx) {
       fn: () => {
         u.members.forEach(m => {
           const ind = _findInd(s, m.lot_id, m.lot_item_no);
-          if (ind) { ind.assigned_to = 'single'; ind.unit_slot_no = undefined; }
+          // [20260430l] 個別飼育用の正式 display_id を予約し、ind 側と s.singles 側
+          //   両方に保存する。display_id が未設定だと _buildSavePayload で target_id
+          //   が lot_id にフォールバックし、GAS レスポンスとのマッピング不一致で
+          //   個別飼育の成長記録が Store に書き込まれなかった。
+          const formalId = _nextIndDisplayId(s);
+          if (ind) {
+            ind.assigned_to = 'single';
+            ind.unit_slot_no = undefined;
+            ind.display_id   = formalId;
+          }
           s.singles.push({
             lot_id: m.lot_id, lot_item_no: m.lot_item_no,
             lot_display_id: m.lot_display_id,
             size_category: m.size_category, weight_g: m.weight_g,
+            display_id:    formalId,
           });
         });
         s.units.splice(unitIdx, 1);
@@ -1001,6 +1011,10 @@ Pages._t1AssignSingle = function (lotId, itemNo) {
   ind._selected   = false;
   const lot = s.lots.find(l => l.lot_id === lotId);
   const formalId = _nextIndDisplayId(s);
+  // [20260430l] ind 側にも display_id を保存 (lots[].individuals[]).
+  //   _buildSavePayload で target_id に使うが、ind 側に未設定だと lot_id に
+  //   フォールバックして GAS レスポンスとマッピング不一致になる症状があった。
+  ind.display_id  = formalId;
   s.singles.push({
     lot_id:         lotId,
     lot_item_no:    itemNo,
@@ -1114,7 +1128,15 @@ Pages._t1SaleToSingle = function (idx) {
   const entry = s.saleIndividuals.splice(idx, 1)[0];
   if (!entry) return;
   const ind = _findInd(s, entry.lot_id, entry.lot_item_no);
-  if (ind) ind.assigned_to = 'single';
+  // [20260430l] 個別飼育に戻すときも ind 側に display_id を反映する
+  //   (entry に既に display_id があれば再利用、無ければ新規予約)
+  if (!entry.display_id) {
+    entry.display_id = _nextIndDisplayId(s);
+  }
+  if (ind) {
+    ind.assigned_to = 'single';
+    ind.display_id  = entry.display_id;
+  }
   s.singles.push(entry);
   _renderT1Session(s);
 };

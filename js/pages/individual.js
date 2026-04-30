@@ -1987,7 +1987,7 @@ Pages.individualNew = function (params = {}) {
             v('current_stage', 'L1L2')), true)}
         </div>
         <div class="form-row-2">
-          ${UI.field('孵化日', UI.input('hatch_date', 'date', v('hatch_date')))}
+          ${UI.field('孵化日', UI.input('hatch_date', 'date', v('hatch_date','').replace(/\//g,'-')))}
           ${UI.field('累代',   UI.input('generation', 'text', v('generation'), 'WF1 / CBF1'))}
         </div>
         <div class="form-row-2">
@@ -2013,10 +2013,10 @@ Pages.individualNew = function (params = {}) {
 
         <div class="form-title">種親</div>
         ${UI.field('親♂', UI.select('father_par_id',
-          parents.filter(p => p.sex === '♂').map(p => ({ code: p.par_id, label: `${p.display_name}${p.size_mm ? ' ' + p.size_mm + 'mm' : ''}` })),
+          parents.filter(p => p.sex === '♂').map(p => ({ code: p.par_id, label: `${p.parent_display_id || p.display_name}${p.size_mm ? '（' + p.size_mm + 'mm）' : ''}` })),
           v('father_par_id')))}
         ${UI.field('親♀', UI.select('mother_par_id',
-          parents.filter(p => p.sex === '♀').map(p => ({ code: p.par_id, label: `${p.display_name}${p.size_mm ? ' ' + p.size_mm + 'mm' : ''}` })),
+          parents.filter(p => p.sex === '♀').map(p => ({ code: p.par_id, label: `${p.parent_display_id || p.display_name}${p.size_mm ? '（' + p.size_mm + 'mm）' : ''}` })),
           v('mother_par_id')))}
 
         <div class="form-title">形態・成長データ</div>
