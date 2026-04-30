@@ -23,7 +23,7 @@
 // ─────────────────────────────────────────────────────────────────
 'use strict';
 
-const LCS_BUILD = '20260430d';
+const LCS_BUILD = '20260430f';
 window.__LCS_BUILD = LCS_BUILD;
 console.log('[LCS_BUILD]', LCS_BUILD, 'loaded');
 
@@ -250,6 +250,24 @@ raw には画像通りの文字列、parsed には ISO 風文字列(解釈でき
 良い例: "MT2" / "MMT2" / "T1M" / "M" / "MT2(追)" / "MT2⊙B"
 解釈は別の処理で行います。
 
+━━━ ★ 個別ラベル体重記録の記入順序ルール (極めて重要) ★ ━━━
+個別ラベルの体重記録テーブルは 3行 × 3列 = 最大9マスの構造ですが、
+記入は「**列ごとに上から下に**」進めます。1列目が3つ埋まったら2列目に移動。
+
+時系列順 (記入順):
+  step 1: row=1, col=1   ← 最初の体重
+  step 2: row=2, col=1
+  step 3: row=3, col=1   ← 1列目が満杯
+  step 4: row=1, col=2   ← 2列目の上から
+  step 5: row=2, col=2
+  step 6: row=3, col=2
+  step 7: row=1, col=3
+  step 8: row=2, col=3
+  step 9: row=3, col=3   ← 最後の体重
+
+⚠️ 横方向 (左→右) で読むのは間違いです。
+weight_records 配列の順序も、上記の時系列順 (col=1 を全部 → col=2 → col=3) で出力してください。
+
 ━━━ ユニットラベルのマスキングテープメモ ━━━
 ユニットラベル本体の上部や周囲のマスキングテープ領域に、最新の体重・性別が手書きされている場合があります。
 
@@ -312,6 +330,25 @@ ambiguous_fields にはJSONパスを文字列で列挙してください。
     "size_mm":null,"head_width_mm":null
   },
   "extraction_confidence": "high", "ambiguous_fields": [], "ai_notes": null
+}
+
+(個別ラベル例: A1 ♂ F0 / 6測定すべて 1列目→2列目の順序で出力)
+{
+  "label_type": "INDIVIDUAL", "label_type_confidence": "high",
+  "line_code_raw": "A1", "memo_full_raw": "A1",
+  "hatch_date": {"raw":"8/19~","parsed":null,"is_range":true,"requires_manual_input":false,"manual_input_reason":null},
+  "mat_checks": {"T0":false,"T1":true,"T2":true,"T3":false,"Tx":false},
+  "individual_data": {
+    "sex":"♂", "generation":"F0",
+    "weight_records":[
+      {"row":1,"col":1,"date_raw":"10/22","weight_g":10.4,"code_raw":"M"},
+      {"row":2,"col":1,"date_raw":"1/1",  "weight_g":55,  "code_raw":"M5b"},
+      {"row":3,"col":1,"date_raw":"1/7",  "weight_g":62,  "code_raw":"MT2"},
+      {"row":1,"col":2,"date_raw":"1/27", "weight_g":74,  "code_raw":null},
+      {"row":2,"col":2,"date_raw":"1/30", "weight_g":76,  "code_raw":"MMT2"},
+      {"row":3,"col":2,"date_raw":"3/1",  "weight_g":93,  "code_raw":"MMT2"}
+    ]
+  }
 }
 
 (ロットラベル例: B2 5匹)
@@ -655,7 +692,26 @@ function _lcsResolveLine(lineCodeRaw) {
   const code = String(lineCodeRaw || '').trim().toUpperCase();
   if (!code) return null;
   const lines = (window.Store && Store.getDB) ? (Store.getDB('lines') || []) : [];
-  return lines.find(function (l) { return l && l.line_code === code; }) || null;
+  const found = lines.find(function (l) { return l && l.line_code === code; }) || null;
+
+  // [20260430e] 照合失敗時にデバッグログを残す
+  if (typeof _lcsLog === 'function') {
+    if (found) {
+      _lcsLog('info', 'ライン照合 OK: \'' + code + '\' → ' + (found.display_id || found.line_id));
+    } else if (lines.length === 0) {
+      _lcsLog('warn', 'ライン照合スキップ: Store.getDB(\'lines\') が空 (同期未完了の可能性)');
+    } else {
+      // 失敗 → 候補のサンプルをログに出して原因特定する
+      const sampleKeys = Object.keys(lines[0] || {}).slice(0, 10).join(',');
+      const sampleCodes = lines.map(function (l) { return l && l.line_code; })
+                              .filter(function (c) { return c; })
+                              .slice(0, 8).join(',') || '(line_code フィールドが空)';
+      _lcsLog('warn', 'ライン照合失敗: \'' + code + '\' / 候補' + lines.length + '件 / line_code一覧(先頭8): ' + sampleCodes);
+      _lcsLog('info', 'lines[0] のキー: ' + sampleKeys);
+    }
+  }
+
+  return found;
 }
 
 // 不正日付フラグの自動設定
@@ -679,8 +735,15 @@ function _lcsPostProcess(result) {
     _lcsFlagInvalidDate(result[k]);
   });
 
-  // 個別ラベル: weight_records[].code_raw を解析
+  // [20260430f] 個別ラベル: weight_records を時系列順 (col,row 順) にソート
+  //   けいとさんの記入ルール: 1列目を上→下、終わったら2列目を上→下、最後に3列目
+  //   AI が左→右で読んでしまった場合の保険として、後処理で確実にソートする
   if (result.individual_data && Array.isArray(result.individual_data.weight_records)) {
+    result.individual_data.weight_records.sort(function (a, b) {
+      if ((a.col || 0) !== (b.col || 0)) return (a.col || 0) - (b.col || 0);
+      return (a.row || 0) - (b.row || 0);
+    });
+    // マット略号正規化
     result.individual_data.weight_records.forEach(function (w) {
       const parsed = _lcsParseMatCode(w.code_raw);
       w.mat_type      = parsed.mat_type;
@@ -1029,6 +1092,17 @@ function _lcsRenderHistory() {
   });
 }
 
+// [20260430e] ライン台帳カウントを動的に更新する
+function _lcsRefreshLineStatus() {
+  const el = document.getElementById('lcs-line-status');
+  if (!el) return;
+  const lines = (window.Store && Store.getDB) ? (Store.getDB('lines') || []) : [];
+  const apiKeySet = !!_lcsGetApiKey();
+  el.innerHTML = 'ライン台帳: <strong>' + lines.length + '</strong>件 ロード済み'
+               + (lines.length === 0 ? ' ⚠️ 同期してください' : '')
+               + ' / API: ' + (apiKeySet ? '✓ 準備OK' : '⚠️ 未設定');
+}
+
 // [20260430c] デバッグログを画面に永続表示する
 function _lcsRenderLogPanel() {
   const area = document.getElementById('lcs-log-panel');
@@ -1127,6 +1201,7 @@ async function _lcsHandleFileSelect(e) {
   }
   _lcsLog('info', 'バッチ完了: 成功 ' + success + ' / 失敗 ' + failed);
   _lcsBusy = false;
+  _lcsRefreshLineStatus();   // [20260430e] バッチ完了後にライン台帳カウントを更新
   e.target.value = '';
 }
 
@@ -1167,7 +1242,7 @@ Pages.lcsExtract = function () {
           </button>
         </div>
         <div id="lcs-status" style="margin-top:8px;color:#0c5d2e;font-weight:bold"></div>
-        <div style="margin-top:8px;font-size:.85em;color:#666">
+        <div id="lcs-line-status" style="margin-top:8px;font-size:.85em;color:#666">
           ライン台帳: <strong>${linesCount}</strong>件 ロード済み${linesCount === 0 ? ' ⚠️ 同期してください' : ''} 
           / API: ${apiKeySet ? '✓ 準備OK' : '⚠️ 未設定'}
         </div>
@@ -1219,8 +1294,16 @@ Pages.lcsExtract = function () {
   if (linesNow.length === 0 && typeof syncAll === 'function') {
     _lcsLog('info', 'ライン台帳が空 → バックグラウンド同期を実行');
     syncAll(true).then(function () {
-      const newCount = (Store.getDB('lines') || []).length;
-      _lcsLog('info', '同期完了: ライン台帳 ' + newCount + '件');
+      const newLines = Store.getDB('lines') || [];
+      _lcsLog('info', '同期完了: ライン台帳 ' + newLines.length + '件');
+      // [20260430e] サンプル情報を出して line_code フィールドが存在するか確認
+      if (newLines.length > 0) {
+        const sample = newLines[0];
+        const keys = Object.keys(sample).slice(0, 10).join(',');
+        _lcsLog('info', 'lines[0] サンプル: line_code=\'' + (sample.line_code || '(空)')
+                      + '\' display_id=\'' + (sample.display_id || '(空)') + '\' / keys: ' + keys);
+      }
+      _lcsRefreshLineStatus();   // [20260430e] 同期完了後にカウント表示を更新
       // 解析中なら再描画スキップ (画面状態を壊さない)
       if (_lcsBusy) {
         _lcsLog('warn', '解析中のため自動再描画をスキップ');
