@@ -95,10 +95,9 @@
 <!-- ════ JS 読み込み（順序厳守） ════ -->
 <script src="js/config.js?v=20260413bi"></script>
 <script src="js/api.js?v=20260424r"></script>
-  <!-- [20260430g] LCS Phase 1: ライン照合スキップ問題に対応
-       ・解析開始前に await syncAll で同期完了を保証
-       ・Store.setDB('lines', ...) のトレースフックで原因特定 -->
-  <script>window.__INDEX_BUILD= '20260430g';console.log("[INDEX_BUILD]",window.__INDEX_BUILD,"loaded");</script>
+  <!-- [20260430h] LCS Phase 1: 空欄ルール厳格化 (累代等の幻覚防止)
+       + ビルド更新時に直近結果・履歴を自動クリア -->
+  <script>window.__INDEX_BUILD= '20260430h';console.log("[INDEX_BUILD]",window.__INDEX_BUILD,"loaded");</script>
   <!-- [20260424j] 自己修復: api.js のビルドが古ければ強制リロード
        Android Chrome が index.html を古いままキャッシュした状態で誤って
        開かれるケースの救済。index.html が最新 (20260424j) なのに
@@ -187,8 +186,9 @@
      ・[20260430d] degenerate検知の誤判定修正 (JSONパース成功時はスキップ)
      ・[20260430e] ライン照合のデバッグログ強化 + ライン台帳カウントの動的更新
      ・[20260430f] 体重記録の時系列順序ルール反映 (1列上→下→2列上→下→3列)
-     ・[20260430g] 解析前 await syncAll で同期保証 + Store.setDB(lines)トレース -->
-<script src="js/pages/lcs_extract.js?v=20260430g"></script>
+     ・[20260430g] 解析前 await syncAll で同期保証 + Store.setDB(lines)トレース
+     ・[20260430h] 空欄ルール厳格化 (累代等の幻覚防止) + ビルド更新時の自動クリア -->
+<script src="js/pages/lcs_extract.js?v=20260430h"></script>
 
 </body>
 </html>

@@ -23,7 +23,7 @@
 // ─────────────────────────────────────────────────────────────────
 'use strict';
 
-const LCS_BUILD = '20260430g';
+const LCS_BUILD = '20260430h';
 window.__LCS_BUILD = LCS_BUILD;
 console.log('[LCS_BUILD]', LCS_BUILD, 'loaded');
 
@@ -44,6 +44,20 @@ const LCS_RECENT_LS = 'hercules_lcs_recent_v1';
 // 解析履歴(最大 N 件)
 const LCS_HISTORY_LS  = 'hercules_lcs_history_v1';
 const LCS_HISTORY_MAX = 30;
+// [20260430h] ビルド番号を localStorage に保存し、ビルドが変わったら古い結果を自動破棄
+const LCS_LAST_BUILD_LS = 'hercules_lcs_last_build_v1';
+
+(function _lcsClearOnBuildUpdate() {
+  try {
+    const lastBuild = localStorage.getItem(LCS_LAST_BUILD_LS);
+    if (lastBuild && lastBuild !== LCS_BUILD) {
+      console.log('[LCS] ビルド更新検知 (' + lastBuild + ' → ' + LCS_BUILD + ')。古い結果を自動クリアします。');
+      try { localStorage.removeItem(LCS_RECENT_LS);  } catch (_) {}
+      try { localStorage.removeItem(LCS_HISTORY_LS); } catch (_) {}
+    }
+    localStorage.setItem(LCS_LAST_BUILD_LS, LCS_BUILD);
+  } catch (_) {}
+})();
 
 // [20260430c] 解析中フラグ + デバッグログ (解析が silent に失敗する問題対応)
 let _lcsBusy = false;
@@ -210,6 +224,29 @@ function _lcsBuildVisionPrompt() {
    良い例: raw="125/11/20" のまま、parsed=null, requires_manual_input=true
 4. 独自表記(「8/19~」「10/下」等)は raw に保持し、is_range=true を立てる
 5. JSONの前後に解説文を書かない (純粋なJSONのみ)
+
+━━━ 🚨 空欄ルール (絶対厳守) ━━━
+ラベル上の各欄が空白 (何も書かれていない・/だけ・空欄) の場合は、
+**必ず null を返してください**。
+
+★ 絶対にやってはいけないこと:
+- 他の欄の値を流用する
+- 推測や類推で値を作る
+- 「たぶんこうだろう」で埋める
+- 別の位置の数字を当てはめる
+
+具体例 (★極めて重要):
+- 「累代」欄が空白 → individual_data.generation = null
+   ✗ 悪い例: 孵化日 "8/19~/下" を見て generation="8中~175" にする
+   ○ 良い例: generation = null (絶対に他の欄の値を入れない)
+- 「No.」欄が空白 → individual_data.no = null
+- 「親♂」「親♀」欄が空白 → parent_male_raw / parent_female_raw = null
+- 「性別」欄に印がつかず空白 → individual_data.sex = null
+- 「蛹化日」欄が空白または "/" のみ → pupa_date.raw = null
+- 「羽化日」欄が空白または "/" のみ → eclosion_date.raw = null
+
+迷ったら null。空白を埋めて返すよりも、null と返すほうが圧倒的に良いです。
+不確実な読み取りは ambiguous_fields に入れて、値は null にしてください。
 
 ━━━ ラベル種別の判別 ━━━
 本システムは3種類のラベルを扱います。最初に label_type を判別してください:
