@@ -23,7 +23,7 @@
 // ─────────────────────────────────────────────────────────────────
 'use strict';
 
-const LCS_BUILD = '20260430c';
+const LCS_BUILD = '20260430d';
 window.__LCS_BUILD = LCS_BUILD;
 console.log('[LCS_BUILD]', LCS_BUILD, 'loaded');
 
@@ -561,10 +561,12 @@ async function _lcsCallVision(imageDataUrl, apiKey, opts) {
     }
     throw new Error('Gemini レスポンスが空でした (finishReason=' + (finishReason || 'unknown') + ')');
   }
-  if (_lcsDetectDegenerate(text)) {
-    console.warn('[LCS] Degenerate output detected. Head:', text.slice(0, 200));
-    throw new Error('Gemini が異常な繰り返し出力を返しました。再試行してください。');
-  }
+
+  // [20260430d] degenerate 検知より先に JSON パースを試みる
+  //   理由: LCS の responseSchema は5つの日付フィールドが同じ構造で繰り返されるため、
+  //   PBE 由来の degenerate 検知ルール「30字スライスが5回以上」に必ず引っかかる。
+  //   Gemini は正しい JSON を返しているのに「異常出力」と誤判定されていた。
+  //   JSON が正常にパースできれば degenerate 検知の意味は無いのでスキップする。
   let jsonStr = text.trim();
   const fence = jsonStr.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
   if (fence) jsonStr = fence[1].trim();
@@ -576,11 +578,22 @@ async function _lcsCallVision(imageDataUrl, apiKey, opts) {
       try { parsed = JSON.parse(m2[0]); } catch (_e) {}
     }
   }
-  if (!parsed) {
-    console.warn('[LCS] JSON parse failed. Raw response head:', text.slice(0, 500));
-    throw new Error('抽出結果のJSONパースに失敗しました。再試行してください。');
+
+  if (parsed) {
+    // 正常にJSONパースできた → そのまま返す (degenerate 検知はスキップ)
+    return parsed;
   }
-  return parsed;
+
+  // JSONパース失敗時のみ、本物の degenerate (連続文字爆発・無限ループ系) かチェック
+  if (_lcsDetectDegenerate(text)) {
+    console.warn('[LCS] Degenerate output detected. Head:', text.slice(0, 200));
+    if (typeof _lcsLog === 'function') _lcsLog('warn', 'JSONパース失敗 + degenerate検知 → 異常出力');
+    throw new Error('Gemini が異常な繰り返し出力を返しました。再試行してください。');
+  }
+
+  console.warn('[LCS] JSON parse failed. Raw response head:', text.slice(0, 500));
+  if (typeof _lcsLog === 'function') _lcsLog('error', 'JSONパース失敗 (頭500字): ' + text.slice(0, 500));
+  throw new Error('抽出結果のJSONパースに失敗しました。再試行してください。');
 }
 
 // リトライ付きのラッパー (1度失敗したら 720px / 0.7温度 で再試行)
