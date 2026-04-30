@@ -23,7 +23,7 @@
 // ─────────────────────────────────────────────────────────────────
 'use strict';
 
-const LCS_BUILD = '20260430b';
+const LCS_BUILD = '20260430c';
 window.__LCS_BUILD = LCS_BUILD;
 console.log('[LCS_BUILD]', LCS_BUILD, 'loaded');
 
@@ -44,6 +44,22 @@ const LCS_RECENT_LS = 'hercules_lcs_recent_v1';
 // 解析履歴(最大 N 件)
 const LCS_HISTORY_LS  = 'hercules_lcs_history_v1';
 const LCS_HISTORY_MAX = 30;
+
+// [20260430c] 解析中フラグ + デバッグログ (解析が silent に失敗する問題対応)
+let _lcsBusy = false;
+const _lcsLogs = [];   // {t: Date, level: 'info'|'warn'|'error', msg: string}
+const LCS_LOGS_MAX = 50;
+
+function _lcsLog(level, msg) {
+  const entry = { t: new Date(), level: level, msg: String(msg) };
+  _lcsLogs.unshift(entry);
+  if (_lcsLogs.length > LCS_LOGS_MAX) _lcsLogs.length = LCS_LOGS_MAX;
+  // コンソールにも出す
+  if (level === 'error') console.error('[LCS]', msg);
+  else if (level === 'warn') console.warn('[LCS]', msg);
+  else console.log('[LCS]', msg);
+  _lcsRenderLogPanel();
+}
 
 // ═══════════════════════════════════════════════════════════════
 // ユーティリティ
@@ -527,8 +543,12 @@ async function _lcsCallVision(imageDataUrl, apiKey, opts) {
     body:    JSON.stringify(body),
   });
   if (!res.ok) {
-    const err = await res.json().catch(function () { return {}; });
-    throw new Error((err && err.error && err.error.message) || ('HTTP ' + res.status));
+    let errBody = null;
+    try { errBody = await res.json(); } catch (_) {}
+    const errMsg = (errBody && errBody.error && errBody.error.message)
+                || ('HTTP ' + res.status + ' ' + res.statusText);
+    if (typeof _lcsLog === 'function') _lcsLog('error', 'Gemini API HTTPエラー: ' + errMsg);
+    throw new Error(errMsg);
   }
   const data = await res.json();
   const cand = data && data.candidates && data.candidates[0];
@@ -568,7 +588,9 @@ async function _lcsCallVisionWithRetry(processedImage, apiKey) {
   try {
     return await _lcsCallVision(processedImage.image_data_url, apiKey, { isRetry: false });
   } catch (e1) {
-    console.warn('[LCS] First attempt failed, retrying...', e1.message);
+    const msg1 = (e1 && e1.message) || String(e1);
+    if (typeof _lcsLog === 'function') _lcsLog('warn', '1回目失敗 → リトライ (720px / 温度0.7): ' + msg1);
+    console.warn('[LCS] First attempt failed, retrying...', msg1);
     // 圧縮し直し
     let retryDataUrl = processedImage.image_data_url;
     if (processedImage.raw_data_url) {
@@ -582,7 +604,13 @@ async function _lcsCallVisionWithRetry(processedImage, apiKey) {
         retryDataUrl = recompressed.dataUrl;
       } catch (_) {}
     }
-    return await _lcsCallVision(retryDataUrl, apiKey, { isRetry: true });
+    try {
+      return await _lcsCallVision(retryDataUrl, apiKey, { isRetry: true });
+    } catch (e2) {
+      const msg2 = (e2 && e2.message) || String(e2);
+      if (typeof _lcsLog === 'function') _lcsLog('error', '2回目も失敗: ' + msg2);
+      throw e2;
+    }
   }
 }
 
@@ -988,6 +1016,33 @@ function _lcsRenderHistory() {
   });
 }
 
+// [20260430c] デバッグログを画面に永続表示する
+function _lcsRenderLogPanel() {
+  const area = document.getElementById('lcs-log-panel');
+  if (!area) return;
+  if (!_lcsLogs.length) { area.innerHTML = ''; return; }
+  let h = '<div style="background:#1e1e1e;color:#ddd;padding:10px;border-radius:6px;margin-top:12px;font-family:monospace;font-size:.82em;max-height:240px;overflow:auto">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">';
+  h += '<strong style="color:#9cdcfe">📋 デバッグログ (' + _lcsLogs.length + '件)</strong>';
+  h += '<button id="lcs-log-clear" style="font-size:.85em;padding:2px 8px;background:#444;border:none;color:#fff;border-radius:3px;cursor:pointer">クリア</button>';
+  h += '</div>';
+  _lcsLogs.forEach(function (e) {
+    const ts = e.t.toLocaleTimeString('ja-JP', { hour12: false });
+    const colors = { info: '#9cdcfe', warn: '#dcdcaa', error: '#f48771' };
+    const c = colors[e.level] || '#ddd';
+    h += '<div style="border-left:3px solid ' + c + ';padding:2px 8px;margin:2px 0;color:' + c + '">';
+    h += '<span style="color:#888">' + ts + '</span> ' + _lcsEsc(e.msg);
+    h += '</div>';
+  });
+  h += '</div>';
+  area.innerHTML = h;
+  const cb = document.getElementById('lcs-log-clear');
+  if (cb) cb.addEventListener('click', function () {
+    _lcsLogs.length = 0;
+    _lcsRenderLogPanel();
+  });
+}
+
 // ═══════════════════════════════════════════════════════════════
 // メインハンドラ: ファイル選択時の処理
 // ═══════════════════════════════════════════════════════════════
@@ -995,14 +1050,19 @@ async function _lcsHandleFileSelect(e) {
   const files = Array.from(e.target.files || []);
   if (!files.length) return;
 
+  // [20260430c] 解析中フラグを立てる(syncAll 自動再描画とぶつからないように)
+  _lcsBusy = true;
+  _lcsLog('info', 'ファイル選択: ' + files.length + '件');
+
   // API キー確認
   let apiKey = _lcsGetApiKey();
   if (!apiKey) {
     const k = prompt('Gemini API キーを入力してください\n(設定画面と共通の保存先に保存されます)');
-    if (!k) { e.target.value = ''; return; }
+    if (!k) { e.target.value = ''; _lcsBusy = false; return; }
     _lcsSetApiKey(k.trim());
     apiKey = k.trim();
   }
+  _lcsLog('info', 'API キー: ' + apiKey.slice(0, 8) + '... (長さ ' + apiKey.length + '文字)');
 
   // 進捗表示
   const status = document.getElementById('lcs-status');
@@ -1010,12 +1070,19 @@ async function _lcsHandleFileSelect(e) {
 
   for (let i = 0; i < files.length; i++) {
     const f = files[i];
-    if (status) status.innerHTML = '解析中... (' + (i + 1) + '/' + files.length + ') ' + _lcsEsc(f.name);
+    const tag = '(' + (i + 1) + '/' + files.length + ') ' + f.name;
+    if (status) status.innerHTML = '🔄 解析中... ' + _lcsEsc(tag);
     if (window.Store && Store.setLoading) Store.setLoading(true);
     try {
+      _lcsLog('info', tag + ' 画像処理開始 (' + Math.round(f.size / 1024) + 'KB)');
       const processed = await _lcsProcessImageFile(f);
-      const result    = await _lcsCallVisionWithRetry(processed, apiKey);
-      const enriched  = _lcsPostProcess(result);
+      _lcsLog('info', tag + ' 圧縮完了: ' + processed.width + 'x' + processed.height + ' / ' + Math.round(processed.image_data_url.length / 1024) + 'KB(base64)');
+
+      _lcsLog('info', tag + ' Gemini Vision 呼び出し中...');
+      const result = await _lcsCallVisionWithRetry(processed, apiKey);
+      _lcsLog('info', tag + ' Gemini レスポンス受信: label_type=' + (result && result.label_type) + ' / 信頼度=' + (result && result.extraction_confidence));
+
+      const enriched = _lcsPostProcess(result);
       const payload = {
         result:        enriched,
         thumb:         processed.image_thumb_url,
@@ -1026,21 +1093,27 @@ async function _lcsHandleFileSelect(e) {
       _lcsAddHistory(payload);
       _lcsRenderResult(payload);
       _lcsRenderHistory();
+      _lcsLog('info', tag + ' ✓ 結果を画面に反映完了');
       success++;
     } catch (err) {
+      const msg = (err && err.message) || String(err);
+      _lcsLog('error', tag + ' ❌ ' + msg);
       console.error('[LCS] file=' + f.name, err);
       failed++;
-      if (window.UI && UI.toast) UI.toast('解析エラー (' + f.name + '): ' + err.message, 'error');
+      if (window.UI && UI.toast) UI.toast('解析エラー (' + f.name + '): ' + msg, 'error');
     } finally {
       if (window.Store && Store.setLoading) Store.setLoading(false);
     }
   }
+
+  // 完了表示
   if (status) {
-    status.innerHTML = '';
-    if (success && !failed)        { if (UI && UI.toast) UI.toast(success + '件 解析完了 ✓', 'success'); }
-    else if (success && failed)    { if (UI && UI.toast) UI.toast('成功 ' + success + '件 / 失敗 ' + failed + '件', 'warn'); }
-    else                            { if (UI && UI.toast) UI.toast(failed + '件 すべて失敗', 'error'); }
+    if (success && !failed)        status.innerHTML = '<span style="color:#0c5d2e">✓ ' + success + '件 解析完了</span>';
+    else if (success && failed)    status.innerHTML = '<span style="color:#7d4d00">⚠️ 成功 ' + success + '件 / 失敗 ' + failed + '件 (詳細はデバッグログを確認)</span>';
+    else                            status.innerHTML = '<span style="color:#7a1c1c">❌ ' + failed + '件 すべて失敗 (詳細はデバッグログを確認)</span>';
   }
+  _lcsLog('info', 'バッチ完了: 成功 ' + success + ' / 失敗 ' + failed);
+  _lcsBusy = false;
   e.target.value = '';
 }
 
@@ -1089,6 +1162,8 @@ Pages.lcsExtract = function () {
 
       <div id="lcs-result"></div>
 
+      <div id="lcs-log-panel"></div>
+
       <div style="margin-top:24px;background:#f8f9fa;border:1px solid #dde;border-radius:8px;padding:14px">
         <div id="lcs-history-area"></div>
       </div>
@@ -1122,19 +1197,28 @@ Pages.lcsExtract = function () {
   // 履歴表示
   _lcsRenderHistory();
 
+  // ログパネル復元
+  _lcsRenderLogPanel();
+
   // [20260430b] ライン台帳が空ならバックグラウンド同期を発動
-  //   LCS ページに直接アクセスしたケース (URL ハッシュ復元・FAB ボタン等) では
-  //   syncAll が走っていないため Store.getDB('lines') が空配列のことがある。
-  //   非同期で同期して、完了したら現在ページなら再描画する。
+  // [20260430c] 解析中 (_lcsBusy=true) は再描画を遅延させる
   const linesNow = (window.Store && Store.getDB) ? (Store.getDB('lines') || []) : [];
   if (linesNow.length === 0 && typeof syncAll === 'function') {
-    console.log('[LCS] ライン台帳が空のためバックグラウンド同期を実行');
+    _lcsLog('info', 'ライン台帳が空 → バックグラウンド同期を実行');
     syncAll(true).then(function () {
+      const newCount = (Store.getDB('lines') || []).length;
+      _lcsLog('info', '同期完了: ライン台帳 ' + newCount + '件');
+      // 解析中なら再描画スキップ (画面状態を壊さない)
+      if (_lcsBusy) {
+        _lcsLog('warn', '解析中のため自動再描画をスキップ');
+        return;
+      }
       if (window.Store && Store.getPage && Store.getPage() === 'lcs-extract') {
-        console.log('[LCS] 同期完了 → 再描画');
         Pages.lcsExtract();
       }
-    }).catch(function (e) { console.warn('[LCS] 同期失敗:', e && e.message); });
+    }).catch(function (e) {
+      _lcsLog('error', '同期失敗: ' + (e && e.message ? e.message : String(e)));
+    });
   }
 };
 
