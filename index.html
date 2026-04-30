@@ -95,9 +95,10 @@
 <!-- ════ JS 読み込み（順序厳守） ════ -->
 <script src="js/config.js?v=20260413bi"></script>
 <script src="js/api.js?v=20260424r"></script>
-  <!-- [20260430f] LCS Phase 1: 個別ラベル体重記録の時系列順序ルール反映
-       (1列目を上→下→2列目を上→下→3列目 の順 = けいとさんの記入順) -->
-  <script>window.__INDEX_BUILD= '20260430f';console.log("[INDEX_BUILD]",window.__INDEX_BUILD,"loaded");</script>
+  <!-- [20260430g] LCS Phase 1: ライン照合スキップ問題に対応
+       ・解析開始前に await syncAll で同期完了を保証
+       ・Store.setDB('lines', ...) のトレースフックで原因特定 -->
+  <script>window.__INDEX_BUILD= '20260430g';console.log("[INDEX_BUILD]",window.__INDEX_BUILD,"loaded");</script>
   <!-- [20260424j] 自己修復: api.js のビルドが古ければ強制リロード
        Android Chrome が index.html を古いままキャッシュした状態で誤って
        開かれるケースの救済。index.html が最新 (20260424j) なのに
@@ -174,7 +175,7 @@
      ・Gemini 2.5 Flash + responseSchema + 自動リトライ
      ・種親 bloodline_data (Vision抽出データ) を本文に統合 -->
 <script src="js/pages/yahoo_listing.js?v=20260428y6-5"></script>
-<!-- [20260430a→f] LCS Phase 1: 現場ラベル取り込み (個別/ロット/ユニット 3種対応)
+<!-- [20260430a→g] LCS Phase 1: 現場ラベル取り込み (個別/ロット/ユニット 3種対応)
      ・Gemini Vision 2.5 Flash で構造化 JSON 抽出 (v1.1 スキーマ準拠)
      ・後処理: マット略号 (M/MM/MT2/MMT2/⊙B(追)) の正規化, ライン台帳マッチング,
        日付エラー検出 (requires_manual_input フラグ), 体重記録時系列ソート
@@ -185,8 +186,9 @@
      ・[20260430c] 永続デバッグログパネル追加 + busyフラグでsync再描画をガード
      ・[20260430d] degenerate検知の誤判定修正 (JSONパース成功時はスキップ)
      ・[20260430e] ライン照合のデバッグログ強化 + ライン台帳カウントの動的更新
-     ・[20260430f] 体重記録の時系列順序ルール反映 (1列上→下→2列上→下→3列) -->
-<script src="js/pages/lcs_extract.js?v=20260430f"></script>
+     ・[20260430f] 体重記録の時系列順序ルール反映 (1列上→下→2列上→下→3列)
+     ・[20260430g] 解析前 await syncAll で同期保証 + Store.setDB(lines)トレース -->
+<script src="js/pages/lcs_extract.js?v=20260430g"></script>
 
 </body>
 </html>

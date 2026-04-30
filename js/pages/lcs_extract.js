@@ -23,7 +23,7 @@
 // ─────────────────────────────────────────────────────────────────
 'use strict';
 
-const LCS_BUILD = '20260430f';
+const LCS_BUILD = '20260430g';
 window.__LCS_BUILD = LCS_BUILD;
 console.log('[LCS_BUILD]', LCS_BUILD, 'loaded');
 
@@ -60,6 +60,28 @@ function _lcsLog(level, msg) {
   else console.log('[LCS]', msg);
   _lcsRenderLogPanel();
 }
+
+// [20260430g] Store.setDB('lines', ...) のトレース
+//   何が lines を空にしているのかを特定するためのフック。
+//   1度だけインストールされ、setDB('lines', ...) が呼ばれるたびにログを残す。
+(function _lcsInstallSetDBHook() {
+  if (!window.Store || !Store.setDB || Store._lcsHooked) return;
+  const _origSetDB = Store.setDB.bind(Store);
+  Store.setDB = function (key, value) {
+    if (key === 'lines') {
+      const len = Array.isArray(value) ? value.length : 0;
+      // _lcsLog はまだ定義済みのはずだが念のため typeof チェック
+      if (typeof _lcsLog === 'function') {
+        const stack = (new Error()).stack || '';
+        // stack から呼び出し元を抜く (上位2-3行)
+        const caller = stack.split('\n').slice(2, 5).map(function (s) { return s.trim().slice(0, 80); }).join(' ← ');
+        _lcsLog(len === 0 ? 'warn' : 'info', 'Store.setDB(lines, ' + len + '件): ' + caller);
+      }
+    }
+    return _origSetDB(key, value);
+  };
+  Store._lcsHooked = true;
+})();
 
 // ═══════════════════════════════════════════════════════════════
 // ユーティリティ
@@ -1150,6 +1172,25 @@ async function _lcsHandleFileSelect(e) {
     apiKey = k.trim();
   }
   _lcsLog('info', 'API キー: ' + apiKey.slice(0, 8) + '... (長さ ' + apiKey.length + '文字)');
+
+  // [20260430g] 解析開始前にライン台帳が空なら同期完了を待つ
+  //   バックグラウンド同期と Vision API 呼び出しのタイミングが競合し、
+  //   _lcsResolveLine が呼ばれる瞬間に lines が空になる現象に対応。
+  //   ここで明示的に await することで、確実にライン照合が機能する状態にする。
+  let curLines = (window.Store && Store.getDB) ? (Store.getDB('lines') || []) : [];
+  if (curLines.length === 0 && typeof syncAll === 'function') {
+    _lcsLog('info', '解析前: ライン台帳が空 → 同期完了を待機 (await syncAll)');
+    try {
+      await syncAll(true);
+      curLines = Store.getDB('lines') || [];
+      _lcsLog('info', '解析前同期完了: ライン台帳 ' + curLines.length + '件');
+      _lcsRefreshLineStatus();
+    } catch (syncErr) {
+      _lcsLog('error', '解析前同期失敗: ' + (syncErr && syncErr.message ? syncErr.message : String(syncErr)));
+    }
+  } else {
+    _lcsLog('info', '解析前: ライン台帳 ' + curLines.length + '件 ロード済み');
+  }
 
   // 進捗表示
   const status = document.getElementById('lcs-status');
