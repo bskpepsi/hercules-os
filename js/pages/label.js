@@ -198,7 +198,7 @@
 //   - Bug 3: _backRoute が存在する場合に「詳細に戻る」ボタンを追加
 'use strict';
 
-window._LABEL_BUILD = '20260430p';
+window._LABEL_BUILD = '20260430q';
 console.log('[LABEL_BUILD]', window._LABEL_BUILD, 'loaded');
 
 // ════════════════════════════════════════════════════════════════
@@ -2136,10 +2136,11 @@ function _buildT1UnitLabelHTML(ld, _unused, qrSrc) {
     + '<span style="position:relative;z-index:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">ユニット | HerculesOS' + saleBadge + '</span>'
     + (originLS ? '<span style="position:relative;z-index:1;font-size:7.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:30mm">' + originLS + '</span>' : '')
     + '</div>\n'
-    // [20260430n] ユニット黒枠位置調整: 外側 padding-top を 0→1mm にして黒枠全体を1mm下げる
+    // [20260430q] 個別ラベルと QR 配置を完全に揃える
+    //   build n/p で margin-top でズラそうとしたが見栄えが悪化したためリセット。
+    //   個別ラベル (1631行) と同じ padding:1mm 1.5mm 0 / margin-top なし。
     + '  <div style="display:flex;padding:1mm 1.5mm 0;gap:0;flex-shrink:0">\n'
-    // [20260430p] QR 本体は黒枠内で 1mm 上に詰める (margin-top:-1mm) ※build n で -0.5mm から微調整
-    + '    <div style="flex-shrink:0;margin-right:1.5mm;margin-top:-1mm">' + _qrBox(qr, 44) + '</div>\n'
+    + '    <div style="flex-shrink:0;margin-right:1.5mm">' + _qrBox(qr, 44) + '</div>\n'
     // [20260420k] position:relative を追加（absolute 配置の頭数+性別ボックスの基準点）
     + '    <div style="flex:1;min-width:0;padding-left:1.5mm;border-left:2px solid #000;position:relative">\n'
     // [20260420k] 頭数+性別を absolute 配置で右上固定（ID/孵化日と横並びに見せる）
