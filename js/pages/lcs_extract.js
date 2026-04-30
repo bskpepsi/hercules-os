@@ -23,7 +23,7 @@
 // ─────────────────────────────────────────────────────────────────
 'use strict';
 
-const LCS_BUILD = '20260430i';
+const LCS_BUILD = '20260430j';
 window.__LCS_BUILD = LCS_BUILD;
 console.log('[LCS_BUILD]', LCS_BUILD, 'loaded');
 
@@ -1142,6 +1142,14 @@ function _lcsRenderResult(payload) {
   h += '<pre id="lcs-json-pre" style="background:#1e1e1e;color:#9cdcfe;padding:12px;border-radius:6px;overflow:auto;max-height:400px;font-size:.85em">' + _lcsEsc(JSON.stringify(r, null, 2)) + '</pre>';
   h += '<button id="lcs-copy-json" style="margin-top:6px;padding:6px 14px">📋 JSON をコピー</button></details>';
 
+  // [Phase 2-1 / 20260430j] 「編集して登録準備」ボタン
+  h += '<div style="margin-top:16px;padding:14px;background:#f0f8ff;border:1px solid #aac;border-radius:8px;text-align:center">';
+  h += '<button id="lcs-edit-mode" style="padding:12px 28px;background:#0c5d2e;color:#fff;border:none;border-radius:6px;font-size:1.05em;cursor:pointer;font-weight:bold">';
+  h += '✏️ 編集して登録準備に進む';
+  h += '</button>';
+  h += '<div style="margin-top:6px;font-size:.82em;color:#666">確認・修正フォームに切り替えて、内容を整えてから登録します</div>';
+  h += '</div>';
+
   area.innerHTML = h;
 
   const cb = document.getElementById('lcs-copy-json');
@@ -1153,6 +1161,14 @@ function _lcsRenderResult(payload) {
       });
     }
   });
+
+  // [Phase 2-1 / 20260430j] 編集モードへの遷移
+  const editBtn = document.getElementById('lcs-edit-mode');
+  if (editBtn) {
+    editBtn.addEventListener('click', function () {
+      _lcsRenderEditForm(payload);
+    });
+  }
 }
 
 function _lcsRenderHistory() {
@@ -1235,6 +1251,549 @@ function _lcsRenderLogPanel() {
     _lcsLogs.length = 0;
     _lcsRenderLogPanel();
   });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// [Phase 2-1 / 20260430j] 編集フォーム機能
+// ───────────────────────────────────────────────────────────────
+// AI 抽出結果を編集可能なフォームで表示し、ユーザーが内容を確認・修正
+// できるようにする。「💾 確認して登録」ボタンを押すと Phase 2-2 で
+// GAS に保存される(Phase 2-1 ではローカル保存のみ)。
+// ═══════════════════════════════════════════════════════════════
+
+// 編集中の payload (deep clone)
+let _lcsCurrentEdit = null;
+
+// path で値を取得 (例: 'individual_data.weight_records[0].weight_g')
+function _lcsGetByPath(obj, path) {
+  if (!obj || !path) return undefined;
+  const parts = path.split('.');
+  let cur = obj;
+  for (let i = 0; i < parts.length; i++) {
+    if (cur == null) return undefined;
+    const p = parts[i];
+    const m = p.match(/^(\w+)\[(\d+)\]$/);
+    if (m) {
+      cur = cur[m[1]];
+      if (cur == null) return undefined;
+      cur = cur[parseInt(m[2], 10)];
+    } else {
+      cur = cur[p];
+    }
+  }
+  return cur;
+}
+
+// path で値を設定
+function _lcsSetByPath(obj, path, value) {
+  if (!obj || !path) return;
+  const parts = path.split('.');
+  let cur = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const p = parts[i];
+    const m = p.match(/^(\w+)\[(\d+)\]$/);
+    if (m) {
+      if (!cur[m[1]]) cur[m[1]] = [];
+      const idx = parseInt(m[2], 10);
+      if (!cur[m[1]][idx]) cur[m[1]][idx] = {};
+      cur = cur[m[1]][idx];
+    } else {
+      if (!cur[p]) cur[p] = {};
+      cur = cur[p];
+    }
+  }
+  const last = parts[parts.length - 1];
+  const m = last.match(/^(\w+)\[(\d+)\]$/);
+  if (m) {
+    if (!cur[m[1]]) cur[m[1]] = [];
+    cur[m[1]][parseInt(m[2], 10)] = value;
+  } else {
+    cur[last] = value;
+  }
+}
+
+// 値を型に応じて正規化
+function _lcsCoerce(rawValue, type) {
+  if (type === 'number') {
+    if (rawValue === '' || rawValue == null) return null;
+    const n = parseFloat(rawValue);
+    return isNaN(n) ? null : n;
+  }
+  if (type === 'boolean') {
+    return rawValue === true || rawValue === 'true' || rawValue === 'on';
+  }
+  if (type === 'string-or-null') {
+    return (rawValue === '' || rawValue == null) ? null : String(rawValue);
+  }
+  return rawValue;
+}
+
+// ───── input 要素生成ヘルパー ─────
+function _lcsEditTextInput(path, opts) {
+  opts = opts || {};
+  const value = _lcsGetByPath(_lcsCurrentEdit.result, path);
+  const v = value == null ? '' : String(value);
+  return '<input type="text" data-lcs-edit="' + _lcsEsc(path) + '" data-lcs-type="string-or-null" value="' + _lcsEsc(v) + '"'
+       + (opts.placeholder ? ' placeholder="' + _lcsEsc(opts.placeholder) + '"' : '')
+       + ' style="padding:6px 8px;border:1px solid #ccc;border-radius:4px;width:' + (opts.width || '160px') + ';font-size:.95em">';
+}
+
+function _lcsEditNumInput(path, opts) {
+  opts = opts || {};
+  const value = _lcsGetByPath(_lcsCurrentEdit.result, path);
+  const v = value == null ? '' : String(value);
+  return '<input type="number" inputmode="decimal" data-lcs-edit="' + _lcsEsc(path) + '" data-lcs-type="number" value="' + _lcsEsc(v) + '"'
+       + (opts.step ? ' step="' + opts.step + '"' : ' step="any"')
+       + (opts.min != null ? ' min="' + opts.min + '"' : '')
+       + ' style="padding:6px 8px;border:1px solid #ccc;border-radius:4px;width:' + (opts.width || '70px') + ';font-size:.95em">';
+}
+
+function _lcsEditSelect(path, options, opts) {
+  opts = opts || {};
+  const value = _lcsGetByPath(_lcsCurrentEdit.result, path);
+  let h = '<select data-lcs-edit="' + _lcsEsc(path) + '" data-lcs-type="' + (opts.type || 'string-or-null') + '"'
+        + ' style="padding:6px 8px;border:1px solid #ccc;border-radius:4px;width:' + (opts.width || '180px') + ';font-size:.95em">';
+  options.forEach(function (o) {
+    const oVal   = (o && typeof o === 'object') ? o.value : o;
+    const oLabel = (o && typeof o === 'object') ? o.label : o;
+    const valStr = oVal == null ? '' : String(oVal);
+    const cmpStr = value == null ? '' : String(value);
+    h += '<option value="' + _lcsEsc(valStr) + '"' + (cmpStr === valStr ? ' selected' : '') + '>'
+       + _lcsEsc(oLabel == null ? '' : String(oLabel)) + '</option>';
+  });
+  h += '</select>';
+  return h;
+}
+
+function _lcsEditCheck(path, label) {
+  const value = _lcsGetByPath(_lcsCurrentEdit.result, path);
+  const checked = value === true;
+  return '<label style="display:inline-flex;align-items:center;gap:4px;margin-right:14px;cursor:pointer;user-select:none">'
+       + '<input type="checkbox" data-lcs-edit="' + _lcsEsc(path) + '" data-lcs-type="boolean"' + (checked ? ' checked' : '') + '>'
+       + _lcsEsc(label) + '</label>';
+}
+
+function _lcsEditRadio(path, options) {
+  const value = _lcsGetByPath(_lcsCurrentEdit.result, path);
+  let h = '';
+  options.forEach(function (o, idx) {
+    const oVal   = (o && typeof o === 'object') ? o.value : o;
+    const oLabel = (o && typeof o === 'object') ? o.label : o;
+    const valStr = oVal == null ? '' : String(oVal);
+    const cmpStr = value == null ? '' : String(value);
+    h += '<label style="display:inline-flex;align-items:center;gap:4px;margin-right:14px;cursor:pointer;user-select:none">'
+       + '<input type="radio" name="' + _lcsEsc(path) + '" data-lcs-edit="' + _lcsEsc(path)
+       + '" data-lcs-type="string-or-null" value="' + _lcsEsc(valStr) + '"'
+       + (cmpStr === valStr ? ' checked' : '') + '>'
+       + _lcsEsc(oLabel == null ? '' : String(oLabel)) + '</label>';
+  });
+  return h;
+}
+
+// ライン台帳から <select> を作る (line_id を value に)
+function _lcsEditLineSelect(currentLineId, currentLineCode) {
+  const lines = _lcsLinesCache || ((window.Store && Store.getDB) ? (Store.getDB('lines') || []) : []);
+  let h = '<select id="lcs-edit-line-id"'
+        + ' style="padding:6px 8px;border:1px solid #ccc;border-radius:4px;font-size:.95em;min-width:200px">';
+  h += '<option value="">— ライン未選択 —</option>';
+  lines.forEach(function (l) {
+    if (!l || !l.line_id) return;
+    const sel = (currentLineId && l.line_id === currentLineId) ? ' selected' : '';
+    const label = (l.display_id || l.line_id) + (l.line_code ? ' (' + l.line_code + ')' : '');
+    h += '<option value="' + _lcsEsc(l.line_id) + '" data-line-code="' + _lcsEsc(l.line_code || '') + '"'
+       + ' data-display-id="' + _lcsEsc(l.display_id || '') + '"'
+       + ' data-father="' + _lcsEsc(l.father_par_id || '') + '"'
+       + ' data-mother="' + _lcsEsc(l.mother_par_id || '') + '"'
+       + sel + '>' + _lcsEsc(label) + '</option>';
+  });
+  h += '</select>';
+  return h;
+}
+
+// 不確実フィールドかどうか判定 (赤枠強調用)
+function _lcsIsAmbiguous(path) {
+  const list = (_lcsCurrentEdit && _lcsCurrentEdit.result && _lcsCurrentEdit.result.ambiguous_fields) || [];
+  return list.indexOf(path) >= 0;
+}
+
+function _lcsAmbiguousMark(path) {
+  return _lcsIsAmbiguous(path)
+    ? ' <span title="AI が自信のないフィールド" style="color:#d96400;font-size:.85em">⚠️</span>'
+    : '';
+}
+
+// 行ラッパー
+function _lcsEditRow(label, content, opts) {
+  opts = opts || {};
+  const ambig = opts.ambiguousPath && _lcsIsAmbiguous(opts.ambiguousPath);
+  const bg = ambig ? '#fff8e1' : 'transparent';
+  const border = ambig ? 'border-left:3px solid #ffb300;padding-left:8px;' : '';
+  return '<div style="display:flex;align-items:center;gap:10px;padding:6px 4px;background:' + bg + ';' + border + 'flex-wrap:wrap">'
+       + '<div style="min-width:90px;color:#555;font-size:.92em">' + _lcsEsc(label) + (ambig ? ' ⚠️' : '') + '</div>'
+       + '<div style="flex:1;min-width:140px">' + content + '</div>'
+       + '</div>';
+}
+
+// ───── 共通フィールド編集 ─────
+function _lcsRenderEditCommon(r) {
+  let h = '<div style="background:#fff;border:1px solid #dde;border-radius:8px;padding:14px;margin-top:12px">';
+  h += '<h4 style="margin:0 0 10px;color:#333">📋 共通フィールド</h4>';
+
+  // ライン (専用 select)
+  const lm = r._line_match || {};
+  h += _lcsEditRow('ライン *',
+    _lcsEditLineSelect(lm.line_id, r.line_code_raw)
+    + (r.line_code_raw ? ' <span style="color:#888;font-size:.85em;margin-left:8px">(AI読取: <code>' + _lcsEsc(r.line_code_raw) + '</code>)</span>' : ''));
+
+  // 日付 5 種
+  const dateFields = [
+    ['採卵日', 'egg_collect_date'],
+    ['移動日', 'transfer_date'],
+    ['孵化日', 'hatch_date'],
+    ['蛹化日', 'pupa_date'],
+    ['羽化日', 'eclosion_date'],
+  ];
+  dateFields.forEach(function (df) {
+    const label = df[0], key = df[1];
+    const dateField = r[key] || {};
+    const ambig = dateField.requires_manual_input;
+    let content = _lcsEditTextInput(key + '.raw', { placeholder: 'YYYY-MM-DD など', width: '160px' });
+    if (dateField.is_range) content += ' <span style="color:#7a5b00;font-size:.85em;margin-left:6px">(期間表記)</span>';
+    if (ambig)               content += ' <span style="color:#7a1c1c;font-size:.85em;margin-left:6px">⚠️ 要確認: ' + _lcsEsc(dateField.manual_input_reason || '読取困難') + '</span>';
+    h += _lcsEditRow(label, content);
+  });
+
+  // マット履歴
+  let chk = '';
+  ['T0','T1','T2','T3','Tx'].forEach(function (t) {
+    chk += _lcsEditCheck('mat_checks.' + t, t);
+  });
+  h += _lcsEditRow('マット履歴☑', chk);
+
+  // T1/T2 ☑日付
+  h += _lcsEditRow('T1☑日付', _lcsEditTextInput('t1_check_date_raw', { placeholder: '任意', width: '120px' }));
+  h += _lcsEditRow('T2☑日付', _lcsEditTextInput('t2_check_date_raw', { placeholder: '任意', width: '120px' }));
+
+  // サイズ区分
+  h += _lcsEditRow('サイズ',
+    _lcsEditRadio('size_category', [
+      { value: '',  label: 'なし' },
+      { value: '大', label: '大' },
+      { value: '中', label: '中' },
+      { value: '小', label: '小' },
+    ]));
+
+  h += '</div>';
+  return h;
+}
+
+// ───── 個別データ編集 ─────
+function _lcsRenderEditIndividual(ind) {
+  if (!ind) {
+    _lcsCurrentEdit.result.individual_data = {};
+    ind = _lcsCurrentEdit.result.individual_data;
+  }
+  let h = '<div style="background:#fff;border:1px solid #dde;border-radius:8px;padding:14px;margin-top:12px">';
+  h += '<h4 style="margin:0 0 10px;color:#0d5d3e">🪲 個別データ</h4>';
+
+  h += _lcsEditRow('個体No.', _lcsEditTextInput('individual_data.no', { placeholder: 'Phase 2-2 で自動採番', width: '120px' }));
+  h += _lcsEditRow('性別', _lcsEditRadio('individual_data.sex', [
+    { value: '', label: '不明' },
+    { value: '♂', label: '♂' },
+    { value: '♀', label: '♀' },
+  ]));
+  h += _lcsEditRow('累代', _lcsEditTextInput('individual_data.generation', { placeholder: 'F0, S.0, etc.', width: '120px' }),
+    { ambiguousPath: 'individual_data.generation' });
+  h += _lcsEditRow('親♂(任意)', _lcsEditTextInput('individual_data.parent_male_raw', { width: '180px' }));
+  h += _lcsEditRow('親♀(任意)', _lcsEditTextInput('individual_data.parent_female_raw', { width: '180px' }));
+
+  // 体重記録テーブル
+  const records = Array.isArray(ind.weight_records) ? ind.weight_records : [];
+  h += '<div style="margin-top:14px">';
+  h += '<div style="display:flex;align-items:center;gap:10px"><strong>⚖️ 体重記録 (' + records.length + '件)</strong>';
+  h += '<button id="lcs-edit-add-weight" style="padding:4px 10px;background:#fff;border:1px solid #0c5d2e;color:#0c5d2e;border-radius:4px;cursor:pointer;font-size:.9em">＋ 行追加</button>';
+  h += '</div>';
+  h += '<div style="overflow-x:auto;margin-top:8px"><table style="width:100%;border-collapse:collapse;font-size:.9em">';
+  h += '<tr style="background:#f4f4f4">'
+     + '<th style="padding:5px;text-align:left">位置</th>'
+     + '<th style="padding:5px;text-align:left">日付</th>'
+     + '<th style="padding:5px;text-align:left">体重(g)</th>'
+     + '<th style="padding:5px;text-align:left">原文コード</th>'
+     + '<th style="padding:5px;text-align:left">マット</th>'
+     + '<th style="padding:5px;text-align:left">モルト</th>'
+     + '<th style="padding:5px;text-align:left">追加</th>'
+     + '<th style="padding:5px"></th></tr>';
+  records.forEach(function (w, idx) {
+    const ambigCode = _lcsIsAmbiguous('individual_data.weight_records[' + idx + '].code_raw');
+    const bg = ambigCode ? 'background:#fff8e1;' : '';
+    h += '<tr style="border-top:1px solid #eee;' + bg + '">';
+    h += '<td style="padding:4px;color:#888">r' + (w.row || 1) + 'c' + (w.col || 1) + '</td>';
+    h += '<td style="padding:4px">' + _lcsEditTextInput('individual_data.weight_records[' + idx + '].date_raw', { placeholder: 'M/D', width: '70px' }) + '</td>';
+    h += '<td style="padding:4px">' + _lcsEditNumInput('individual_data.weight_records[' + idx + '].weight_g', { step: '0.1', min: 0, width: '60px' }) + '</td>';
+    h += '<td style="padding:4px">' + _lcsEditTextInput('individual_data.weight_records[' + idx + '].code_raw', { placeholder: 'M/MT2 等', width: '80px' }) + (ambigCode ? ' ⚠️' : '') + '</td>';
+    h += '<td style="padding:4px">' + _lcsEditSelect('individual_data.weight_records[' + idx + '].mat_type', [
+      { value: '',   label: '—' },
+      { value: 'T0', label: 'T0' },
+      { value: 'T1', label: 'T1' },
+      { value: 'T2', label: 'T2' },
+      { value: 'T3', label: 'T3' },
+    ], { width: '70px' }) + '</td>';
+    h += '<td style="padding:4px;text-align:center">' + _lcsEditCheck('individual_data.weight_records[' + idx + '].has_malt', '') + '</td>';
+    h += '<td style="padding:4px">' + _lcsEditSelect('individual_data.weight_records[' + idx + '].exchange_type', [
+      { value: 'exchange', label: '交換' },
+      { value: 'add',      label: '追加(⊙B)' },
+    ], { width: '110px' }) + '</td>';
+    h += '<td style="padding:4px"><button class="lcs-del-weight" data-idx="' + idx + '" style="padding:3px 8px;background:#fff0f0;border:1px solid #d99;border-radius:3px;color:#a33;cursor:pointer">×</button></td>';
+    h += '</tr>';
+  });
+  h += '</table></div>';
+  h += '</div>';
+
+  // 形態測定 (任意)
+  h += '<details style="margin-top:14px"><summary style="cursor:pointer;padding:6px 8px;background:#f4f4f4;border-radius:4px"><strong>📏 形態測定 (任意・羽化後)</strong></summary>';
+  h += '<div style="padding:8px 4px">';
+  h += _lcsEditRow('頭幅 mm',     _lcsEditNumInput('individual_data.head_width_mm', { step: '0.1', min: 0 }));
+  h += _lcsEditRow('前蛹体重 g',  _lcsEditNumInput('individual_data.pre_pupa_weight_g', { step: '0.1', min: 0 }));
+  h += _lcsEditRow('蛹全長 mm',   _lcsEditNumInput('individual_data.pupa_length_mm', { step: '0.1', min: 0 }));
+  h += _lcsEditRow('胸角 mm',     _lcsEditNumInput('individual_data.thorax_horn_mm', { step: '0.1', min: 0 }));
+  h += _lcsEditRow('蛹サイズ mm', _lcsEditNumInput('individual_data.pupa_size_mm', { step: '0.1', min: 0 }));
+  h += _lcsEditRow('成虫サイズ mm', _lcsEditNumInput('individual_data.adult_size_mm', { step: '0.1', min: 0 }));
+  h += _lcsEditRow('突前 mm',     _lcsEditNumInput('individual_data.horn_protrusion_mm', { step: '0.1', min: 0 }));
+  h += '</div></details>';
+
+  h += '</div>';
+  return h;
+}
+
+// ───── ロットデータ編集 ─────
+function _lcsRenderEditLot(lot) {
+  if (!lot) {
+    _lcsCurrentEdit.result.lot_data = {};
+    lot = _lcsCurrentEdit.result.lot_data;
+  }
+  let h = '<div style="background:#fff;border:1px solid #dde;border-radius:8px;padding:14px;margin-top:12px">';
+  h += '<h4 style="margin:0 0 10px;color:#7d4d00">🥚 ロットデータ</h4>';
+  h += _lcsEditRow('頭数', _lcsEditNumInput('lot_data.head_count', { step: '1', min: 0, width: '80px' })
+                       + ' <span style="color:#888;font-size:.85em">匹</span>');
+  if (lot.head_count_raw && lot.head_count_raw !== String(lot.head_count) + '匹') {
+    h += '<div style="margin-top:4px;font-size:.85em;color:#888">AI読取: <code>' + _lcsEsc(lot.head_count_raw) + '</code></div>';
+  }
+  h += '</div>';
+  return h;
+}
+
+// ───── ユニットデータ編集 ─────
+function _lcsRenderEditUnit(unit) {
+  if (!unit) {
+    _lcsCurrentEdit.result.unit_data = { initial_weights: [], intermediate_weights: [] };
+    unit = _lcsCurrentEdit.result.unit_data;
+  }
+  let h = '<div style="background:#fff;border:1px solid #dde;border-radius:8px;padding:14px;margin-top:12px">';
+  h += '<h4 style="margin:0 0 10px;color:#0c5070">🪲 ユニットデータ</h4>';
+  h += _lcsEditRow('頭数', _lcsEditNumInput('unit_data.head_count', { step: '1', min: 0, width: '80px' })
+                       + ' <span style="color:#888;font-size:.85em">匹</span>');
+
+  // 初期体重
+  const inits = Array.isArray(unit.initial_weights) ? unit.initial_weights : [];
+  h += '<div style="margin-top:14px">';
+  h += '<strong>📌 初期体重 (' + inits.length + '件)</strong>';
+  h += '<div style="overflow-x:auto;margin-top:6px"><table style="width:100%;border-collapse:collapse;font-size:.9em">';
+  h += '<tr style="background:#f4f4f4"><th style="padding:5px">slot</th><th style="padding:5px">日付</th><th style="padding:5px">体重(g)</th><th style="padding:5px">コード</th></tr>';
+  inits.forEach(function (w, idx) {
+    h += '<tr style="border-top:1px solid #eee">'
+       + '<td style="padding:4px;color:#555">' + (w.slot_no || (idx + 1)) + '</td>'
+       + '<td style="padding:4px">' + _lcsEditTextInput('unit_data.initial_weights[' + idx + '].date_raw', { width: '80px' }) + '</td>'
+       + '<td style="padding:4px">' + _lcsEditNumInput('unit_data.initial_weights[' + idx + '].weight_g', { step: '0.1', min: 0, width: '70px' }) + '</td>'
+       + '<td style="padding:4px">' + _lcsEditTextInput('unit_data.initial_weights[' + idx + '].code_raw', { width: '90px' }) + '</td>'
+       + '</tr>';
+  });
+  h += '</table></div></div>';
+
+  // マステ最新メモ
+  const tape = unit.tape_memo;
+  if (tape && Array.isArray(tape.members_latest) && tape.members_latest.length) {
+    h += '<div style="margin-top:14px;background:#fff8e1;border-left:4px solid #ffb300;padding:8px 12px;border-radius:4px">';
+    h += '<strong>🩹 マステ上書きメモ (最新状態)</strong>';
+    h += '<div style="font-size:.85em;color:#666;margin:4px 0">原文: <code>' + _lcsEsc(tape.raw_text || '') + '</code></div>';
+    h += '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:.9em">';
+    h += '<tr style="background:rgba(255,255,255,.5)"><th style="padding:5px">slot</th><th style="padding:5px">最新体重(g)</th><th style="padding:5px">性別</th><th style="padding:5px">日付</th></tr>';
+    tape.members_latest.forEach(function (m, idx) {
+      h += '<tr style="border-top:1px solid rgba(0,0,0,.1)">'
+         + '<td style="padding:4px;color:#555">' + (m.slot_no || (idx + 1)) + '</td>'
+         + '<td style="padding:4px">' + _lcsEditNumInput('unit_data.tape_memo.members_latest[' + idx + '].weight_g', { step: '0.1', min: 0, width: '70px' }) + '</td>'
+         + '<td style="padding:4px">' + _lcsEditSelect('unit_data.tape_memo.members_latest[' + idx + '].sex',
+              [{ value: '', label: '—' }, { value: '♂', label: '♂' }, { value: '♀', label: '♀' }], { width: '70px' }) + '</td>'
+         + '<td style="padding:4px">' + _lcsEditTextInput('unit_data.tape_memo.members_latest[' + idx + '].memo_date_raw', { width: '80px' }) + '</td>'
+         + '</tr>';
+    });
+    h += '</table></div></div>';
+  }
+
+  h += '</div>';
+  return h;
+}
+
+// ───── メイン: 編集フォームレンダリング ─────
+function _lcsRenderEditForm(payload) {
+  const area = document.getElementById('lcs-result');
+  if (!area) return;
+  if (!payload || !payload.result) {
+    area.innerHTML = '';
+    return;
+  }
+  // 編集状態を初期化 (deep clone)
+  _lcsCurrentEdit = JSON.parse(JSON.stringify(payload));
+  const r = _lcsCurrentEdit.result;
+
+  let h = '';
+  // ヘッダ (画像サムネ + ファイル名 + 信頼度)
+  h += '<div style="background:#f8f9fa;border:1px solid #dde;border-radius:8px;padding:14px;margin-top:12px">';
+  h += '<div style="display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap">';
+  if (payload.thumb) {
+    h += '<img src="' + payload.thumb + '" style="width:100px;height:auto;border-radius:6px;border:1px solid #ccc">';
+  }
+  h += '<div style="flex:1;min-width:180px">';
+  h += '<div style="font-size:1.05em;font-weight:bold">' + _lcsEsc(payload.file_name || '(image)') + '</div>';
+  h += '<div style="margin-top:4px">ラベル種別: <strong>' + _lcsEsc(r.label_type || '?') + '</strong> ' + _lcsConfidenceBadge(r.label_type_confidence) + '</div>';
+  h += '<div style="margin-top:4px;font-size:.9em">読み取り信頼度: ' + _lcsConfidenceBadge(r.extraction_confidence) + '</div>';
+  if (r.ai_notes) {
+    h += '<div style="margin-top:6px;font-size:.85em;color:#7a5b00;background:#fff8e1;padding:6px 8px;border-radius:4px">📝 ' + _lcsEsc(r.ai_notes) + '</div>';
+  }
+  h += '</div></div>';
+  // 表示モードへの戻りボタン
+  h += '<div style="margin-top:10px;text-align:right">';
+  h += '<button id="lcs-edit-cancel" style="padding:5px 12px;background:#fff;border:1px solid #ccc;border-radius:4px;cursor:pointer;font-size:.9em">👁 表示モードに戻る</button>';
+  h += '</div>';
+  h += '</div>';
+
+  // 共通フィールド
+  h += _lcsRenderEditCommon(r);
+
+  // 種別別データ
+  if (r.label_type === 'INDIVIDUAL') {
+    h += _lcsRenderEditIndividual(r.individual_data);
+  } else if (r.label_type === 'LOT') {
+    h += _lcsRenderEditLot(r.lot_data);
+  } else if (r.label_type === 'UNIT') {
+    h += _lcsRenderEditUnit(r.unit_data);
+  }
+
+  // 「確認して登録」ボタン (Phase 2-2 で動作実装)
+  h += '<div style="margin-top:20px;padding:14px;background:#f0f8ff;border:1px solid #aac;border-radius:8px;text-align:center">';
+  h += '<div style="margin-bottom:10px;color:#444;font-size:.9em">内容を確認・修正したら下のボタンで登録してください</div>';
+  h += '<button id="lcs-save" style="padding:12px 28px;background:#0c5d2e;color:#fff;border:none;border-radius:6px;font-size:1.05em;cursor:pointer;font-weight:bold">';
+  h += '💾 確認して登録';
+  h += '</button>';
+  h += '<div style="margin-top:8px;font-size:.8em;color:#888">⏸️ Phase 2-2 で DB 保存実装予定 (現在は編集内容のローカル保存のみ)</div>';
+  h += '</div>';
+
+  area.innerHTML = h;
+  _lcsBindEditEvents();
+}
+
+// ───── 編集要素にイベント結合 ─────
+function _lcsBindEditEvents() {
+  // input/select/textarea の change で _lcsCurrentEdit を更新
+  document.querySelectorAll('[data-lcs-edit]').forEach(function (el) {
+    const path = el.dataset.lcsEdit;
+    const type = el.dataset.lcsType || 'string-or-null';
+    const handler = function () {
+      let v;
+      if (el.type === 'checkbox') v = el.checked;
+      else                        v = el.value;
+      _lcsSetByPath(_lcsCurrentEdit.result, path, _lcsCoerce(v, type));
+    };
+    el.addEventListener('change', handler);
+    if (el.type === 'text' || el.type === 'number') el.addEventListener('blur', handler);
+  });
+
+  // ライン select 専用ハンドラ (line_id を変えたら _line_match も更新)
+  const lineSel = document.getElementById('lcs-edit-line-id');
+  if (lineSel) {
+    lineSel.addEventListener('change', function () {
+      const opt = lineSel.selectedOptions[0];
+      if (!opt || !opt.value) {
+        _lcsCurrentEdit.result._line_match = null;
+        return;
+      }
+      _lcsCurrentEdit.result._line_match = {
+        line_id:       opt.value,
+        display_id:    opt.dataset.displayId || '',
+        line_code:     opt.dataset.lineCode || '',
+        father_par_id: opt.dataset.father || '',
+        mother_par_id: opt.dataset.mother || '',
+      };
+      // line_code_raw も自動的に更新
+      _lcsCurrentEdit.result.line_code_raw = opt.dataset.lineCode || _lcsCurrentEdit.result.line_code_raw;
+      _lcsLog('info', 'ライン手動選択: ' + (opt.dataset.displayId || opt.value));
+    });
+  }
+
+  // 体重記録 行追加
+  const addBtn = document.getElementById('lcs-edit-add-weight');
+  if (addBtn) {
+    addBtn.addEventListener('click', function () {
+      if (!_lcsCurrentEdit.result.individual_data) _lcsCurrentEdit.result.individual_data = {};
+      const ind = _lcsCurrentEdit.result.individual_data;
+      if (!Array.isArray(ind.weight_records)) ind.weight_records = [];
+      // 次の (col, row) を計算: 1列目を上→下から先に埋める
+      const recs = ind.weight_records;
+      let nextRow = 1, nextCol = 1;
+      for (let c = 1; c <= 3; c++) {
+        for (let row = 1; row <= 3; row++) {
+          if (!recs.find(function (w) { return w.row === row && w.col === c; })) {
+            nextRow = row; nextCol = c;
+            // break out
+            c = 99; break;
+          }
+        }
+      }
+      recs.push({
+        row: nextRow, col: nextCol,
+        date_raw: null, weight_g: null, code_raw: null,
+        mat_type: null, has_malt: false, exchange_type: 'exchange',
+      });
+      _lcsRenderEditForm(_lcsCurrentEdit);  // 再描画
+    });
+  }
+
+  // 体重記録 行削除
+  document.querySelectorAll('.lcs-del-weight').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      const idx = parseInt(btn.dataset.idx, 10);
+      if (isNaN(idx)) return;
+      const recs = _lcsCurrentEdit.result.individual_data.weight_records;
+      recs.splice(idx, 1);
+      _lcsRenderEditForm(_lcsCurrentEdit);  // 再描画
+    });
+  });
+
+  // 表示モードに戻る
+  const cancelBtn = document.getElementById('lcs-edit-cancel');
+  if (cancelBtn) {
+    cancelBtn.addEventListener('click', function () {
+      const recent = _lcsLoadRecent();
+      if (recent) _lcsRenderResult(recent);
+    });
+  }
+
+  // 保存ボタン (Phase 2-1 ではローカル保存のみ)
+  const saveBtn = document.getElementById('lcs-save');
+  if (saveBtn) {
+    saveBtn.addEventListener('click', function () {
+      // 編集内容を直近結果と履歴の最新エントリに反映 (ローカル保存)
+      _lcsSaveRecent(_lcsCurrentEdit);
+      const hist = _lcsLoadHistory();
+      if (hist.length > 0) {
+        hist[0] = JSON.parse(JSON.stringify(_lcsCurrentEdit));
+        _lcsSaveHistory(hist);
+      }
+      _lcsLog('info', '✓ 編集内容をローカル保存しました (Phase 2-2 で DB 保存実装予定)');
+      if (window.UI && UI.toast) UI.toast('編集内容を保存しました (Phase 2-1)', 'success');
+      // 表示モードに戻る
+      _lcsRenderResult(_lcsCurrentEdit);
+    });
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════

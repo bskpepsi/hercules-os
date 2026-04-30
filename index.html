@@ -95,11 +95,13 @@
 <!-- ════ JS 読み込み（順序厳守） ════ -->
 <script src="js/config.js?v=20260413bi"></script>
 <script src="js/api.js?v=20260424r"></script>
-  <!-- [20260430i] LCS Phase 1: LCS 専用ライン台帳キャッシュを導入
-       Store.getDB('lines') が何かに繰り返し空配列で上書きされる問題を回避
-       (29件→0件→29件→0件 のパターン)。LCSページ初期化時とファイル選択時に
-       _lcsLinesCache に固定し、Vision API 呼び出し中も影響を受けない。 -->
-  <script>window.__INDEX_BUILD= '20260430i';console.log("[INDEX_BUILD]",window.__INDEX_BUILD,"loaded");</script>
+  <!-- [20260430j] LCS Phase 2-1 開始: 確認・修正フォーム UI 実装
+       ・AI 抽出結果を編集可能フォームで表示 (個別/ロット/ユニット 全種対応)
+       ・⚠️ AI が自信のないフィールドを赤枠強調 (要確認)
+       ・ライン未マッチ時は手動セレクトでライン台帳から選択
+       ・体重記録の行追加・削除・編集
+       ・「💾 確認して登録」ボタン (Phase 2-1 ではローカル保存・Phase 2-2 で DB保存) -->
+  <script>window.__INDEX_BUILD= '20260430j';console.log("[INDEX_BUILD]",window.__INDEX_BUILD,"loaded");</script>
   <!-- [20260424j] 自己修復: api.js のビルドが古ければ強制リロード
        Android Chrome が index.html を古いままキャッシュした状態で誤って
        開かれるケースの救済。index.html が最新 (20260424j) なのに
@@ -190,8 +192,9 @@
      ・[20260430f] 体重記録の時系列順序ルール反映 (1列上→下→2列上→下→3列)
      ・[20260430g] 解析前 await syncAll で同期保証 + Store.setDB(lines)トレース
      ・[20260430h] 空欄ルール厳格化 (累代等の幻覚防止) + ビルド更新時の自動クリア
-     ・[20260430i] LCS専用ライン台帳キャッシュ (Store上書き対策・確実な照合) -->
-<script src="js/pages/lcs_extract.js?v=20260430i"></script>
+     ・[20260430i] LCS専用ライン台帳キャッシュ (Store上書き対策・確実な照合)
+     ・[20260430j] Phase 2-1: 確認・修正フォーム UI (編集可能・行追加削除) -->
+<script src="js/pages/lcs_extract.js?v=20260430j"></script>
 
 </body>
 </html>
